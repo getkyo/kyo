@@ -24,7 +24,7 @@ import scala.language.implicitConversions
   * Layout defaults (640x480, matching `ChartLower` constants):
   *   plotX = 60, plotY = 20, plotW = 560, plotH = 420, baseline = 440.
   */
-class ChartTypedValuesTest extends Test:
+class ChartTypedValuesTest extends kyo.test.Test[Any]:
 
     // ---- domain types ----
 
@@ -54,14 +54,14 @@ class ChartTypedValuesTest extends Test:
     private val Baseline = PlotY + PlotH // 440.0
     private val Tol      = 1.0e-6
 
-    private def assertClose(actual: Double, expected: Double, msg: String = ""): Assertion =
+    private def assertClose(actual: Double, expected: Double, msg: String = "")(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
 
-    private def numOf(c: Maybe[Coord]): Double = c match
+    private def numOf(c: Maybe[Coord])(using Frame, kyo.test.AssertScope): Double = c match
         case Present(Coord.Num(v)) => v
         case other                 => fail(s"Expected Coord.Num but got $other")
 
-    private def colorOf(fill: Maybe[Svg.Paint]): Style.Color = fill match
+    private def colorOf(fill: Maybe[Svg.Paint])(using Frame, kyo.test.AssertScope): Style.Color = fill match
         case Present(Svg.Paint.Color(c)) => c
         case other                       => fail(s"Expected Svg.Paint.Color but got $other")
 

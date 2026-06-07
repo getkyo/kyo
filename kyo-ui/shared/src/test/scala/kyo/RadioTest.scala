@@ -7,27 +7,27 @@ class RadioTest extends UITest:
 
     // ---- Rendering ----
 
-    "type radio" in run {
+    "type radio" in {
         withUI(UI.div(UI.radio.id("r"))) {
-            Browser.assertAttribute(Selector.id("r"), "type", "radio").andThen(succeed)
+            Browser.assertAttribute(Selector.id("r"), "type", "radio").unit
         }
     }
 
-    "checked true" in run {
+    "checked true" in {
         withUI(UI.div(UI.radio.checked(true).id("r"))) {
-            Browser.assertChecked(Selector.id("r")).andThen(succeed)
+            Browser.assertChecked(Selector.id("r")).unit
         }
     }
 
-    "name attribute" in run {
+    "name attribute" in {
         withUI(UI.div(UI.radio.name("group1").id("r"))) {
-            Browser.assertAttribute(Selector.id("r"), "name", "group1").andThen(succeed)
+            Browser.assertAttribute(Selector.id("r"), "name", "group1").unit
         }
     }
 
     // ---- Group behavior ----
 
-    "same name check one unchecks other" in run {
+    "same name check one unchecks other" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -41,11 +41,11 @@ class RadioTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "a")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "b")
-            yield succeed
+            yield ()
         }
     }
 
-    "three radios same name cycle" in run {
+    "three radios same name cycle" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -62,11 +62,11 @@ class RadioTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "b")
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "c")
-            yield succeed
+            yield ()
         }
     }
 
-    "different name groups independent" in run {
+    "different name groups independent" in {
         val app: UI < Async =
             for
                 g1 <- Signal.initRef("")
@@ -85,13 +85,13 @@ class RadioTest extends UITest:
                 _ <- Browser.click(Selector.id("a2"))
                 _ <- Browser.assertText(Selector.id("v2"), "g2:a2")
                 _ <- Browser.assertText(Selector.id("v1"), "g1:a1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Interaction ----
 
-    "check fires onChange true" in run {
+    "check fires onChange true" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -102,13 +102,13 @@ class RadioTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Keyboard ----
 
-    "pressKey Enter checks" in run {
+    "pressKey Enter checks" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -119,11 +119,11 @@ class RadioTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey Space checks" in run {
+    "pressKey Space checks" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -134,22 +134,22 @@ class RadioTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Focus ----
 
-    "focus assertFocused" in run {
+    "focus assertFocused" in {
         withUI(UI.div(UI.radio.id("r"))) {
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertVisible(Selector.id("r"))
-            yield succeed
+            yield ()
         }
     }
 
-    "onFocus fires" in run {
+    "onFocus fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -160,11 +160,11 @@ class RadioTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "onBlur fires" in run {
+    "onBlur fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -177,13 +177,13 @@ class RadioTest extends UITest:
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Disabled ----
 
-    "disabled no fire" in run {
+    "disabled no fire" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -194,11 +194,11 @@ class RadioTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled signal toggle" in run {
+    "disabled signal toggle" in {
         val app: UI < Async =
             for
                 disabled <- Signal.initRef(true)
@@ -215,13 +215,13 @@ class RadioTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("r"))
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Reactive ----
 
-    "checked signal" in run {
+    "checked signal" in {
         val app: UI < Async =
             for flag <- Signal.initRef(true)
             yield UI.div(
@@ -233,19 +233,19 @@ class RadioTest extends UITest:
                 _ <- Browser.assertChecked(Selector.id("r"))
                 _ <- Browser.click(Selector.id("t"))
                 _ <- Browser.assertVisible(Selector.id("r"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from CheckboxRadioTest (radio scenarios) ----
 
-    "radio exists (merged)" in run {
+    "radio exists (merged)" in {
         withUI(UI.div(UI.radio.id("r"))) {
-            Browser.assertVisible(Selector.id("r")).andThen(succeed)
+            Browser.assertVisible(Selector.id("r")).unit
         }
     }
 
-    "radio onChange fires (merged)" in run {
+    "radio onChange fires (merged)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -256,13 +256,13 @@ class RadioTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "radio disabled (merged)" in run {
+    "radio disabled (merged)" in {
         withUI(UI.div(UI.radio.id("r").disabled(true))) {
-            Browser.assertDisabled(Selector.id("r")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("r")).unit
         }
     }
 

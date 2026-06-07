@@ -1,9 +1,8 @@
 package kyo
 
-import kyo.Test
 import kyo.internal.TimeFormat
 
-class TimeFormatTest extends Test:
+class TimeFormatTest extends kyo.test.Test[Any]:
 
     // 2024-06-01 00:00:00 UTC = 1717200000000L epoch millis
     // 2024-06-03 00:00:00 UTC = 1717372800000L epoch millis

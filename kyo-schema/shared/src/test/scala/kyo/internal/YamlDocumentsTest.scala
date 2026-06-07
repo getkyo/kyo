@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-class YamlDocumentsTest extends Test:
+class YamlDocumentsTest extends kyo.test.Test[Any]:
 
     "YamlDocuments" - {
 

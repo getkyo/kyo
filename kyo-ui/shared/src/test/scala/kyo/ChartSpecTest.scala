@@ -5,7 +5,7 @@ import kyo.UI.*
 import kyo.UI.Ast.*
 import scala.language.implicitConversions
 
-class ChartSpecTest extends Test:
+class ChartSpecTest extends kyo.test.Test[Any]:
 
     // ---- domain types used across tests ----
 
@@ -100,13 +100,11 @@ class ChartSpecTest extends Test:
     }
 
     "onHover(ref) stores the ref in spec.onHover" in {
-        run {
-            Signal.initRef(Maybe.empty[Sale]).map: ref =>
-                val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).onHover(ref)
-                spec.onHover match
-                    case Present(storedRef) => assert(storedRef eq ref)
-                    case Absent             => fail("Expected onHover to be Present")
-        }
+        Signal.initRef(Maybe.empty[Sale]).map: ref =>
+            val spec = Chart(sales)(bar(x = _.month, y = _.revenue)).onHover(ref)
+            spec.onHover match
+                case Present(storedRef) => assert(storedRef eq ref)
+                case Absent             => fail("Expected onHover to be Present")
     }
 
     // ---- two overloads: Chunk and Signal ----
@@ -119,13 +117,11 @@ class ChartSpecTest extends Test:
     }
 
     "Chart(signal)(...) produces DataSource.Live" in {
-        run {
-            Signal.initRef[Seq[Sale]](sales).map: sig =>
-                val spec = Chart(sig)(bar(x = _.month, y = _.revenue))
-                spec.data match
-                    case DataSource.Live(_)   => succeed
-                    case DataSource.Static(_) => fail("Expected Live but got Static")
-        }
+        Signal.initRef[Seq[Sale]](sales).map: sig =>
+            val spec = Chart(sig)(bar(x = _.month, y = _.revenue))
+            spec.data match
+                case DataSource.Live(_)   => succeed
+                case DataSource.Static(_) => fail("Expected Live but got Static")
     }
 
     // ---- legend config ----
@@ -392,7 +388,7 @@ class ChartSpecTest extends Test:
         end match
     }
 
-    private def assertClose(actual: Double, expected: Double, msg: String): Assertion =
+    private def assertClose(actual: Double, expected: Double, msg: String)(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < 1e-9, s"$msg: expected $expected but got $actual")
 
     // ---- Phase 6: a11y, responsive, margins ----

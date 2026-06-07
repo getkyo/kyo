@@ -5,9 +5,8 @@ import kyo.*
 import kyo.internal.RegisterFunction
 import kyo.internal.TagTestMacro.test
 import scala.annotation.nowarn
-import scala.concurrent.Future
 
-class TagTest extends Test:
+class TagTest extends kyo.test.Test[Any]:
 
     "without variance" - {
         "equal tags" - {
@@ -281,10 +280,9 @@ class TagTest extends Test:
             assert(Tag[Thread].show == "java.lang.Thread")
         }
 
-        "type params" in pendingUntilFixed {
+        "type params".pendingUntilFixed("Tag.show does not yet render type parameters (Tag[Test[Int]].show omits the type argument)") in {
             class Test[A]
             assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
-            ()
         }
 
         "primitive" in {
@@ -296,7 +294,8 @@ class TagTest extends Test:
         }
         "custom" in {
             trait CustomType
-            assert(Tag[CustomType].show == "kyo.TagTest._$CustomType")
+            // kyo-test runs leaf bodies in a deferred closure (the AssertScope context function), which adds one owner level to leaf-local type names.
+            assert(Tag[CustomType].show == "kyo.TagTest._$_$CustomType")
         }
     }
 
@@ -470,8 +469,9 @@ class TagTest extends Test:
                 trait A
                 trait B
 
-                assert(Tag[A].show == "kyo.TagTest._$A")
-                assert(showSet(Tag[A | B]) == Set("kyo.TagTest._$B", "kyo.TagTest._$A"))
+                // kyo-test runs leaf bodies in a deferred closure (the AssertScope context function), which adds one owner level to leaf-local type names.
+                assert(Tag[A].show == "kyo.TagTest._$_$A")
+                assert(showSet(Tag[A | B]) == Set("kyo.TagTest._$_$B", "kyo.TagTest._$_$A"))
             }
         }
     }
@@ -1182,7 +1182,7 @@ class TagTest extends Test:
 
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
     given RegisterFunction = (name, test, pending) =>
-        if pending then name ignore Future.successful(test)
-        else name in Future.successful(test)
+        if pending then name.ignore in test
+        else name in { test; succeed("the real check is the scala.Predef.assert inside test; succeed registers the leaf with AssertScope") }
 
 end TagTest

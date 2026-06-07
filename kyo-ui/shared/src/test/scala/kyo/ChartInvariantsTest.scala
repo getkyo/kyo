@@ -18,11 +18,11 @@ import scala.language.implicitConversions
   * Tests correspond to invariants INV-001 through INV-004 as defined in
   * `design/04-invariants.md`.
   */
-class ChartInvariantsTest extends Test:
+class ChartInvariantsTest extends kyo.test.Test[Any]:
 
     // ---- INV-001: NaN y does not poison ticks or coordinates ----
 
-    "INV-001: NaN y value does not appear in lowered SVG HTML output" in run {
+    "INV-001: NaN y value does not appear in lowered SVG HTML output" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
@@ -36,7 +36,7 @@ class ChartInvariantsTest extends Test:
 
     // INV-001 (non-bar): NaN/Infinity must not appear in point/line chart SVG output (exercises Scale.apply directly)
 
-    "INV-001: NaN y value does not appear in POINT chart SVG output" in run {
+    "INV-001: NaN y value does not appear in POINT chart SVG output" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
         val spec = Chart(rows)(point(x = _.x, y = _.y))
@@ -48,7 +48,7 @@ class ChartInvariantsTest extends Test:
         end for
     }
 
-    "INV-001: NaN y value does not appear in LINE chart SVG output" in run {
+    "INV-001: NaN y value does not appear in LINE chart SVG output" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, Double.PositiveInfinity), Row(3, 3.0))
         val spec = Chart(rows)(line(x = _.x, y = _.y))
@@ -62,7 +62,7 @@ class ChartInvariantsTest extends Test:
 
     // ---- INV-004: single-pass resolveAllScales is byte-identical to the baseline ----
 
-    "INV-004: single-pass scale resolution produces a non-empty SVG matching the baseline" in run {
+    "INV-004: single-pass scale resolution produces a non-empty SVG matching the baseline" in {
         // A 3-mark chart (bar + line + point) with a right axis exercises all scale-resolution paths.
         case class Row(x: String, yL: Double, yR: Double)
         val rows = Chunk(
@@ -90,7 +90,7 @@ class ChartInvariantsTest extends Test:
 
     // ---- INV-004: golden full-SVG string pins the fused single-pass scale resolution ----
 
-    "INV-004: golden SVG pins the fused single-pass scale resolution" in run {
+    "INV-004: golden SVG pins the fused single-pass scale resolution" in {
         // Same no-gradient 3-mark (bar + line + point) right-axis chart as the determinism test above.
         // It emits NO <linearGradient> (no sequential colorScale), so the AtomicInt gradient-id prefix
         // never appears and the rendered HTML is fully deterministic. A future refactor that perturbs the
@@ -195,7 +195,7 @@ class ChartInvariantsTest extends Test:
     }
 
     // INV-021: text mark lowers to Svg.Text elements and contributes to extent.
-    "INV-021: text mark lowers to at least one Svg.Text element (crash-if-violated)" in run {
+    "INV-021: text mark lowers to at least one Svg.Text element (crash-if-violated)" in {
         case class Row(x: String, y: Double)
         val rows = Chunk(Row("a", 5.0), Row("b", 3.0))
         val spec = Chart(rows)(text(x = _.x, y = _.y, label = _.x))
@@ -206,7 +206,7 @@ class ChartInvariantsTest extends Test:
     }
 
     // INV-022: errorBar lowers to plain SVG lines/circles with no url(#id).
-    "INV-022: errorBar lowers without url(# references (crash-if-violated)" in run {
+    "INV-022: errorBar lowers without url(# references (crash-if-violated)" in {
         case class Row(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(Row("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
@@ -219,7 +219,7 @@ class ChartInvariantsTest extends Test:
     }
 
     // INV-023: line mark with onSelect carries a click handler.
-    "INV-023: line mark with onSelect carries a Present onClick on the rendered path" in run {
+    "INV-023: line mark with onSelect carries a Present onClick on the rendered path" in {
         case class Pt(x: String, y: Double)
         given CanEqual[Pt, Pt] = CanEqual.derived
         for

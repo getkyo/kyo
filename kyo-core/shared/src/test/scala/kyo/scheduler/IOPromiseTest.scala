@@ -1,10 +1,9 @@
 package kyo.scheduler
 
 import kyo.*
-import org.scalatest.compatible.Assertion
 import scala.annotation.tailrec
 
-class IOPromiseTest extends Test:
+class IOPromiseTest extends kyo.test.Test[Any]:
 
     def deadline(after: Duration = timeout) =
         import AllowUnsafe.embrace.danger
@@ -1124,7 +1123,7 @@ class IOPromiseTest extends Test:
     }
 
     "reuseTake" - {
-        "reuseTake receives next put" in run {
+        "reuseTake receives next put" in {
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
@@ -1136,7 +1135,7 @@ class IOPromiseTest extends Test:
             }
         }
 
-        "reuseTake multiple cycles" in run {
+        "reuseTake multiple cycles" in {
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
@@ -1149,11 +1148,11 @@ class IOPromiseTest extends Test:
                     assert(value == i)
                     assert(promise.reset())
                 end for
-                assert(true)
+                succeed
             }
         }
 
-        "reuseTake with offer" in run {
+        "reuseTake with offer" in {
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
@@ -1165,7 +1164,7 @@ class IOPromiseTest extends Test:
             }
         }
 
-        "reuseTake on closed channel" in run {
+        "reuseTake on closed channel" in {
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
@@ -1177,7 +1176,7 @@ class IOPromiseTest extends Test:
             }
         }
 
-        "reuseTake interleaved with regular takeFiber" in run {
+        "reuseTake interleaved with regular takeFiber" in {
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](4)
@@ -1199,11 +1198,11 @@ class IOPromiseTest extends Test:
                 val r3 = blockValue(promise2)
                 assert(r3 == 3)
 
-                assert(true)
+                succeed
             }
         }
 
-        "reuseTake concurrent puts" in run {
+        "reuseTake concurrent puts" in {
             import AllowUnsafe.embrace.danger
             Sync.defer {
                 val ch      = Channel.Unsafe.init[Int](16)

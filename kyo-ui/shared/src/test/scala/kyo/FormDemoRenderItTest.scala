@@ -70,7 +70,7 @@ class FormDemoRenderItTest extends UITest:
     /** Asserts that the element matched by `firstCss` precedes the element matched by `secondCss` in DOM order. Robust against text
       * appearing in multiple places (e.g. cell contents that also surface in a status message).
       */
-    private def assertElementAbove(firstCss: String, secondCss: String)(using Frame) =
+    private def assertElementAbove(firstCss: String, secondCss: String)(using Frame, kyo.test.AssertScope) =
         for
             order <- Browser.eval(
                 s"""(() => {
@@ -91,7 +91,7 @@ class FormDemoRenderItTest extends UITest:
     // In TUI scroll moves rows in/out of viewport. In browser, all rows are in DOM regardless of
     // viewport; we verify scrolling actually changes scrollY and a far-away row is reachable.
 
-    "mouse scroll shifts rendered content" in run {
+    "mouse scroll shifts rendered content" in {
         // The original TUI invariant ("scroll changes which rows are visible in the buffer") doesn't
         // translate: in a browser all 200 rows live in the DOM regardless of viewport, and scrolling
         // never adds/removes nodes. The browser-equivalent check is "scrollTo a far-away row succeeds
@@ -105,13 +105,13 @@ class FormDemoRenderItTest extends UITest:
                 _ <- Browser.scrollTo(Selector.id("r150"))
                 _ <- Browser.assertVisible(Selector.id("r150"))
                 _ <- Browser.assertText(Selector.id("r150"), "row150")
-            yield succeed
+            yield ()
         }
     }
 
     // ==== Bug 2: Placeholder doesn't hide when focused and typing ====
 
-    "placeholder visible in empty unfocused input" in run {
+    "placeholder visible in empty unfocused input" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -119,12 +119,12 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.assertAttribute(Selector.id("email"), "placeholder", "user@co.com")
                     _ <- Browser.assertAttribute(Selector.id("name"), "value", "")
                     _ <- Browser.assertAttribute(Selector.id("email"), "value", "")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "placeholder disappears after typing" in run {
+    "placeholder disappears after typing" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -132,7 +132,7 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.fill(Selector.id("name"), "Alice")
                     // Browser hides placeholder natively when value is non-empty; verify via value.
                     _ <- Browser.assertAttribute(Selector.id("name"), "value", "Alice")
-                yield succeed
+                yield ()
             }
         }
     }
@@ -141,18 +141,18 @@ class FormDemoRenderItTest extends UITest:
     // Cursor glyph is a TUI artifact. The browser-equivalent invariant is: a focused input
     // has document.activeElement set, which is what makes the native OS caret render.
 
-    "focused input has cursor character in rendered output" in run {
+    "focused input has cursor character in rendered output" in {
         withUI(UI.div(UI.input.id("i").placeholder("type here"))) {
             for
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.assertFocused(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
     // ==== Bug 4: Values hide after submit but come back on edit ====
 
-    "after submit inputs render empty" in run {
+    "after submit inputs render empty" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -163,12 +163,12 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.assertText(Selector.id("status"), "Added Alice")
                     _ <- Browser.assertAttribute(Selector.id("name"), "value", "")
                     _ <- Browser.assertAttribute(Selector.id("email"), "value", "")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "after submit refocus input still shows empty" in run {
+    "after submit refocus input still shows empty" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -178,14 +178,14 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.click(Selector.id("name"))
                     _ <- Browser.assertFocused(Selector.id("name"))
                     _ <- Browser.assertAttribute(Selector.id("name"), "value", "")
-                yield succeed
+                yield ()
             }
         }
     }
 
     // ==== Bug 5: Table is completely broken ====
 
-    "table renders with header and entry rows" in run {
+    "table renders with header and entry rows" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -199,12 +199,12 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.assertText(Selector.css("#table tr:nth-of-type(2) td:nth-of-type(1)"), "Alice")
                     _ <- Browser.assertText(Selector.css("#table tr:nth-of-type(2) td:nth-of-type(2)"), "a@co.com")
                     _ <- Browser.assertText(Selector.css("#table tr:nth-of-type(2) td:nth-of-type(3)"), "developer")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "table header above entry data" in run {
+    "table header above entry data" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -213,12 +213,12 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.click(Selector.id("add"))
                     _ <- assertAbove("Name", "Alice")
                     _ <- assertAbove("Email", "a@co.com")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "two entries render in order" in run {
+    "two entries render in order" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -236,20 +236,20 @@ class FormDemoRenderItTest extends UITest:
                         "#table tr:nth-of-type(2) td:nth-of-type(1)",
                         "#table tr:nth-of-type(3) td:nth-of-type(1)"
                     )
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "no entries renders empty message" in run {
+    "no entries renders empty message" in {
         formApp.flatMap { ui =>
             withUI(ui) {
-                Browser.assertText(Selector.id("empty"), "No entries").andThen(succeed)
+                Browser.assertText(Selector.id("empty"), "No entries").unit
             }
         }
     }
 
-    "empty message disappears after adding entry" in run {
+    "empty message disappears after adding entry" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -258,14 +258,14 @@ class FormDemoRenderItTest extends UITest:
                     _ <- Browser.fill(Selector.id("email"), "a@co.com")
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertNotExists(Selector.id("empty"))
-                yield succeed
+                yield ()
             }
         }
     }
 
     // ==== Bug 6: Text repeats when clicking between text boxes ====
 
-    "switch focus between inputs no text duplication" in run {
+    "switch focus between inputs no text duplication" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -287,11 +287,11 @@ class FormDemoRenderItTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "world")
                 _ <- Browser.assertText(Selector.id("va"), "a-val:hello")
                 _ <- Browser.assertText(Selector.id("vb"), "b-val:world")
-            yield succeed
+            yield ()
         }
     }
 
-    "type in A click B type in B click A renders correctly" in run {
+    "type in A click B type in B click A renders correctly" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -316,13 +316,13 @@ class FormDemoRenderItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vb"), "b:y")
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "xz")
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "y")
-            yield succeed
+            yield ()
         }
     }
 
     // ==== Overall form layout ====
 
-    "form elements in correct vertical order" in run {
+    "form elements in correct vertical order" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -331,14 +331,14 @@ class FormDemoRenderItTest extends UITest:
                     _ <- assertAbove("Email:", "Role:")
                     _ <- assertAbove("Role:", "Add")
                     _ <- assertAbove("Add", "Employees")
-                yield succeed
+                yield ()
             }
         }
     }
 
     // ==== Table row layout ====
 
-    "table rows render on separate lines" in run {
+    "table rows render on separate lines" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -357,7 +357,7 @@ class FormDemoRenderItTest extends UITest:
                         "#table tr:nth-of-type(2) td:nth-of-type(1)",
                         "#table tr:nth-of-type(3) td:nth-of-type(1)"
                     )
-                yield succeed
+                yield ()
             }
         }
     }

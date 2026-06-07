@@ -84,6 +84,22 @@ object Path extends PathPlatformSpecific:
             else Present(Path(ps.init*))
         end parent
 
+        /** Lazily yields self, its parent, its grandparent, ..., up to and including the filesystem root.
+          *
+          * Use with `Stream.find` for "first ancestor where X" lookups (e.g., finding a project root
+          * marker like `.git` or `build.sbt`). The stream is pure: it does not stat anything on disk.
+          */
+        def ancestors(using tag: Tag[Emit[Chunk[Path]]], frame: Frame): Stream[Path, Any] =
+            @scala.annotation.tailrec
+            def loop(cur: Path, acc: Chunk[Path]): Chunk[Path] =
+                val next = acc.append(cur)
+                cur.parent match
+                    case Maybe.Present(parent) => loop(parent, next)
+                    case Maybe.Absent          => next
+            end loop
+            Stream.init(loop(self, Chunk.empty))
+        end ancestors
+
         /** Returns `true` if this path is absolute (begins at a filesystem root).
           *
           * Absolute paths are normalised to start with a leading `""` segment.
@@ -126,6 +142,41 @@ object Path extends PathPlatformSpecific:
         /** Returns `true` if this path is a symbolic link. */
         def isSymbolicLink(using Frame): Boolean < Sync =
             Sync.Unsafe.defer(self.unsafe.isSymbolicLink())
+
+        /** Returns the canonical absolute path with every symbolic link in the chain resolved.
+          *
+          * Fails with `FileNotFoundException` if any element of the path does not exist, or
+          * `FileAccessDeniedException` if the filesystem denies access. Useful for safe
+          * path-under-root validation: compare `path.realPath` against `root.realPath` instead
+          * of relying on syntactic checks (which miss symlinks that point outside the root).
+          */
+        def realPath(using Frame): Path < (Sync & Abort[FileException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.realPath()))
+
+        /** Returns this path resolved to its canonical real path, but only if that real path is contained
+          * within `root` (after resolving `root`'s own symlinks).
+          *
+          * The check follows every symbolic link in both `self` and `root`, so a symlink inside `root`
+          * pointing outside is rejected. The pure path-prefix comparison runs against the canonical parts
+          * of both paths; a path equal to `root` is considered contained.
+          *
+          * Both `self` and `root` must exist; if either does not, fails with `FileNotFoundException`.
+          * If `self`'s real path is outside `root`'s real path, fails with `FileAccessDeniedException`
+          * carrying the offending real path.
+          *
+          * Useful for any tool that exposes a configured root and accepts user-supplied relative paths:
+          * call `(root / userInput).confinedTo(root)` to obtain a path that is statically known to live
+          * under the root, defending against symlink escapes.
+          */
+        def confinedTo(root: Path)(using Frame): Path < (Sync & Abort[FileException]) =
+            Sync.Unsafe.defer {
+                Abort.get(root.unsafe.realPath()).map { rootReal =>
+                    Abort.get(self.unsafe.realPath()).map { selfReal =>
+                        if selfReal.parts.take(rootReal.parts.size) == rootReal.parts then (selfReal: Path < Abort[FileException])
+                        else Abort.fail[FileException](FileAccessDeniedException(selfReal))
+                    }
+                }
+            }
 
         // --- Read ---
 
@@ -431,6 +482,14 @@ object Path extends PathPlatformSpecific:
 
     // --- System directories ---
 
+    /** The current working directory of the JVM (JVM/Native) or Node process (JS).
+      *
+      * Reads at call time, so subsequent `process.chdir` (or test fixtures that fork with a
+      * different working dir) take effect on the next access. Use with `path.ancestors` for
+      * "find the project root containing X" style lookups.
+      */
+    def cwd(using Frame): Path < Sync = Sync.Unsafe.defer(cwdPath)
+
     /** Well-known base directories for the current OS (cache, config, data, etc.). */
     lazy val basePaths: BasePaths = platformBasePaths
 
@@ -533,6 +592,7 @@ object Path extends PathPlatformSpecific:
         def isDirectory()(using AllowUnsafe): Boolean
         def isRegularFile()(using AllowUnsafe): Boolean
         def isSymbolicLink()(using AllowUnsafe): Boolean
+        def realPath()(using AllowUnsafe, Frame): Result[FileException, Path]
 
         // --- Read ---
 

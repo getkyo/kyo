@@ -192,6 +192,7 @@ final private[kyo] class JvmCommandUnsafe(
                             stdinSource match
                                 case Process.Input.Inherit       => discard(pb.redirectInput(JProcessBuilder.Redirect.INHERIT))
                                 case Process.Input.FromStream(_) => discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
+                                case Process.Input.Pipe          => discard(pb.redirectInput(JProcessBuilder.Redirect.PIPE))
                             end match
                     end match
                 end if
@@ -350,6 +351,7 @@ final private[kyo] class JvmCommandUnsafe(
                                         stdinSource match
                                             case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
                                             case Process.Input.Inherit        => ()
+                                            case Process.Input.Pipe           => ()
                                 end match
                                 Result.succeed(proc)
                             catch
@@ -389,6 +391,7 @@ final private[kyo] class JvmCommandUnsafe(
                                 firstCmd.stdinSource match
                                     case Process.Input.FromStream(is) => feedInputStream(is, jp.getOutputStream)
                                     case Process.Input.Inherit        => ()
+                                    case Process.Input.Pipe           => ()
                                 end match
                         end match
                         Result.succeed(proc)

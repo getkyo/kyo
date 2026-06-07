@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class FormValidationScenarioItTest extends UITest:
 
-    "submit empty shows first validation error" in run {
+    "submit empty shows first validation error" in {
         val app: UI < Async =
             for
                 name  <- Signal.initRef("")
@@ -32,11 +32,11 @@ class FormValidationScenarioItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("err"), "Name required")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill name submit shows email error name preserved" in run {
+    "fill name submit shows email error name preserved" in {
         val app: UI < Async =
             for
                 name  <- Signal.initRef("")
@@ -66,11 +66,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("err"), "Email required")
                 _ <- Browser.assertText(Selector.id("vn"), "name:Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill all submit success" in run {
+    "fill all submit success" in {
         val app: UI < Async =
             for
                 name   <- Signal.initRef("")
@@ -98,11 +98,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("email"), "a@b.com")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "ok:Alice,a@b.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "check advanced shows extra fields fill submit captures all" in run {
+    "check advanced shows extra fields fill submit captures all" in {
         val app: UI < Async =
             for
                 name     <- Signal.initRef("")
@@ -130,11 +130,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("phone"), "555-1234")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Alice|555-1234")
-            yield succeed
+            yield ()
         }
     }
 
-    "uncheck advanced submit only basic fields" in run {
+    "uncheck advanced submit only basic fields" in {
         val app: UI < Async =
             for
                 name     <- Signal.initRef("")
@@ -162,11 +162,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("adv"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Bob|none")
-            yield succeed
+            yield ()
         }
     }
 
-    "error disappears when field corrected" in run {
+    "error disappears when field corrected" in {
         val app: UI < Async =
             for
                 name  <- Signal.initRef("")
@@ -189,11 +189,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("err"), "Required")
                 _ <- Browser.fill(Selector.id("name"), "x")
                 _ <- Browser.assertText(Selector.id("err"), "")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled submit until required filled" in run {
+    "disabled submit until required filled" in {
         val app: UI < Async =
             for
                 name    <- Signal.initRef("")
@@ -212,11 +212,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("sub"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "submit error fix resubmit success" in run {
+    "submit error fix resubmit success" in {
         val app: UI < Async =
             for
                 name    <- Signal.initRef("")
@@ -244,11 +244,11 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("name"), "Alice")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("ok"), "ok:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill name submit email error name preserved fill email success" in run {
+    "fill name submit email error name preserved fill email success" in {
         val app: UI < Async =
             for
                 name   <- Signal.initRef("")
@@ -283,7 +283,7 @@ class FormValidationScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("email"), "a@b.com")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("ok"), "ok:Alice|a@b.com")
-            yield succeed
+            yield ()
         }
     }
 

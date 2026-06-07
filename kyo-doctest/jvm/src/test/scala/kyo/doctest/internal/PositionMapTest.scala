@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for PositionMap covering synthetic-line to README-line translation. */
-class PositionMapTest extends Test:
+class PositionMapTest extends kyo.test.Test[Any]:
 
     // Helper: builds a standard Block with the given parameters.
     private def makeBlock(
@@ -39,7 +39,7 @@ class PositionMapTest extends Test:
             setupBlocks = setupBlocks
         )
 
-    "translate returns correct (block, blockBodyLine) for a mapped synth line" in run {
+    "translate returns correct (block, blockBodyLine) for a mapped synth line" in {
         val block = makeBlock(lineStart = 40)
         val wb    = makeWrapped(block, lineMap = Chunk((3, 1), (4, 2), (5, 3)))
         val pm    = PositionMap.init(Chunk(wb))
@@ -61,10 +61,9 @@ class PositionMapTest extends Test:
         val md = mapped.get
         assert(md.readmeLine == 41, s"expected readmeLine=41, got ${md.readmeLine}")
         assert(md.col == 5, s"expected col=5, got ${md.col}")
-        succeed
     }
 
-    "translate for block starting at lineStart=1 returns readmeLine=2 for blockBodyLine=1" in run {
+    "translate for block starting at lineStart=1 returns readmeLine=2 for blockBodyLine=1" in {
         val block = makeBlock(lineStart = 1, lineEnd = 5, body = "val a = 0")
         val wb    = makeWrapped(block, synthFileName = "Block_abc12345_1.scala", lineMap = Chunk((3, 1)))
         val pm    = PositionMap.init(Chunk(wb))
@@ -80,30 +79,27 @@ class PositionMapTest extends Test:
         val mapped = pm.translateDiagnostic(diag)
         assert(mapped.isDefined, "should translate for lineStart=1")
         assert(mapped.get.readmeLine == 2, s"expected readmeLine=2, got ${mapped.get.readmeLine}")
-        succeed
     }
 
-    "translate is carrier-agnostic for Visible carrier" in run {
+    "translate is carrier-agnostic for Visible carrier" in {
         val block = makeBlock(lineStart = 40, carrier = Block.Carrier.Visible)
         val wb    = makeWrapped(block, lineMap = Chunk((3, 1)))
         val pm    = PositionMap.init(Chunk(wb))
 
         val result = pm.translate(kyo.Path("Block_3a7f9c1b_40.scala"), 3)
         assert(result == Present((block, 1)), s"Visible carrier should not affect translate result")
-        succeed
     }
 
-    "translate is carrier-agnostic for Hidden carrier" in run {
+    "translate is carrier-agnostic for Hidden carrier" in {
         val block = makeBlock(lineStart = 40, carrier = Block.Carrier.Hidden)
         val wb    = makeWrapped(block, lineMap = Chunk((3, 1)))
         val pm    = PositionMap.init(Chunk(wb))
 
         val result = pm.translate(kyo.Path("Block_3a7f9c1b_40.scala"), 3)
         assert(result == Present((block, 1)), s"Hidden carrier should not affect translate result")
-        succeed
     }
 
-    "translate for multi-line block maps each synth line independently" in run {
+    "translate for multi-line block maps each synth line independently" in {
         val block = makeBlock(lineStart = 50, lineEnd = 55, body = "val a = 1\nval b = 2\nval c = a + b")
         val wb    = makeWrapped(block, synthFileName = "Block_deadbeef_50.scala", lineMap = Chunk((3, 1), (4, 2), (5, 3)))
         val pm    = PositionMap.init(Chunk(wb))
@@ -117,10 +113,9 @@ class PositionMapTest extends Test:
         val d2 = Driver.Diagnostic(Driver.Diagnostic.Severity.Error, kyo.Path("Block_deadbeef_50.scala"), 5, 3, "err2", Chunk.empty)
         val m2 = pm.translateDiagnostic(d2)
         assert(m2.isDefined && m2.get.readmeLine == 53, s"line5: expected readmeLine=53, got ${m2.map(_.readmeLine)}")
-        succeed
     }
 
-    "warning diagnostic translates the same way as an error" in run {
+    "warning diagnostic translates the same way as an error" in {
         val block = makeBlock(lineStart = 100, lineEnd = 104, body = "import java.util.Date")
         val wb    = makeWrapped(block, synthFileName = "Block_cafebabe_100.scala", lineMap = Chunk((3, 1)))
         val pm    = PositionMap.init(Chunk(wb))
@@ -139,10 +134,9 @@ class PositionMapTest extends Test:
         assert(md.severity == Driver.Diagnostic.Severity.Warning, "severity should be Warning")
         assert(md.readmeLine == 101, s"expected readmeLine=101, got ${md.readmeLine}")
         assert(md.col == 8, s"expected col=8, got ${md.col}")
-        succeed
     }
 
-    "translateDiagnostic returns Absent for a line not in any lineMap entry" in run {
+    "translateDiagnostic returns Absent for a line not in any lineMap entry" in {
         val block = makeBlock(lineStart = 40)
         val wb    = makeWrapped(block, lineMap = Chunk((3, 1), (4, 2), (5, 3)))
         val pm    = PositionMap.init(Chunk(wb))
@@ -155,10 +149,9 @@ class PositionMapTest extends Test:
 
         assert(pm.translateDiagnostic(diagOnBoilerplate) == Absent, "line 1 (package) should be Absent")
         assert(pm.translateDiagnostic(diagUnknown) == Absent, "line 99 (not in map) should be Absent")
-        succeed
     }
 
-    "translate returns Absent for synthetic boilerplate lines (package, object header)" in run {
+    "translate returns Absent for synthetic boilerplate lines (package, object header)" in {
         val block = makeBlock(lineStart = 40)
         // lineMap only covers lines 3, 4, 5 (body lines); lines 1 and 2 are boilerplate.
         val wb = makeWrapped(block, lineMap = Chunk((3, 1), (4, 2), (5, 3)))
@@ -170,7 +163,6 @@ class PositionMapTest extends Test:
         assert(pm.translate(synthFile, 2) == Absent, "line 2 (object header) should be Absent")
         // Confirm that line 3 IS present (the body starts there).
         assert(pm.translate(synthFile, 3) == Present((block, 1)), "line 3 should be Present")
-        succeed
     }
 
 end PositionMapTest

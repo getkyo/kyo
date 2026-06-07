@@ -4,7 +4,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import kyo.internal.client.*
 
-class ConnectionPoolTest extends Test:
+class ConnectionPoolTest extends BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 

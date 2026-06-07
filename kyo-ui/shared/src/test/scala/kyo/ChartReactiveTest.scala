@@ -29,7 +29,7 @@ import scala.language.implicitConversions
   *   4. Signal-driven height changes: SignalRef.set produces updated rect heights in the reactive region.
   *   5. Reactive BAND x-axis: category labels from the data appear; linear-fallback numeric labels do not.
   */
-class ChartReactiveTest extends Test:
+class ChartReactiveTest extends kyo.test.Test[Any]:
 
     // ---- shared domain types ----
 
@@ -55,7 +55,7 @@ class ChartReactiveTest extends Test:
     private val Baseline = PlotY + PlotH // 440.0
     private val Tol      = 1.0e-6
 
-    private def assertClose(actual: Double, expected: Double, msg: String = ""): Assertion =
+    private def assertClose(actual: Double, expected: Double, msg: String = "")(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
 
     // ---- Test 1: structural split ----
@@ -91,7 +91,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Test 2: inferred domain updates tick labels ----
 
-    "inferred domain: new max via signal updates marks and y-axis tick labels in the reactive region" in run {
+    "inferred domain: new max via signal updates marks and y-axis tick labels in the reactive region" in {
         // Initial data: max revenue = 200.
         // niceTicks(0, 200, 5): step=50, tks=[0,50,100,150,200]; math.max(200,200)=200 -> domain=[0,200].
         //   Scale.Linear(0, 200, 440, 20).ticks(5) = [0,50,100,150,200]. Labels include "200"; "4000" absent.
@@ -179,7 +179,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Test 4: SignalRef.set changes rect heights ----
 
-    "driving the signal with SignalRef changes the marks region rect heights to new scaled values" in run {
+    "driving the signal with SignalRef changes the marks region rect heights to new scaled values" in {
         // Fixed domain yScale(_.linear(0, 4000)) so the scale does not change between emissions.
         // This isolates the height-change assertion to the marks values, not scale changes.
         // Scale.Linear(0, 4000, 440, 20), nice=false (linear override):
@@ -210,7 +210,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Test 5: reactive BAND x-axis emits category labels, not linear-fallback numerics ----
 
-    "reactive bar chart x-axis emits band category labels (Jan, Feb) not linear-fallback numerics (0.25)" in run {
+    "reactive bar chart x-axis emits band category labels (Jan, Feb) not linear-fallback numerics (0.25)" in {
         // x-axis for a bar chart with categories "Jan" and "Feb" must use a Band scale sourced from
         // the live data. If the x-axis is built from Chunk.empty (the old static approach), the extent
         // is Continuous(0, -1) (empty data default), which resolves to a Linear [0, 1] fallback and
@@ -235,7 +235,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Test 6: live legend with explicit colorScale emits swatches+labels in the rendered emission ----
 
-    "live chart .legend(_.top.colorScale{...}) emits a legend (swatches + labels) in the rendered HTML" in run {
+    "live chart .legend(_.top.colorScale{...}) emits a legend (swatches + labels) in the rendered HTML" in {
         // The live legend is built inside the reactive region (INV-029), so its swatches and labels appear in
         // the rendered HTML of each emission. The category set (2xx/4xx/5xx) comes from the live stack groups.
         val rows = Chunk(
@@ -282,7 +282,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Leaf 18 (INV-029): a late color category gets a swatch on the emission that introduces it ----
 
-    "a live chart legend gains a swatch for a category that appears after the first emission (INV-029)" in run {
+    "a live chart legend gains a swatch for a category that appears after the first emission (INV-029)" in {
         given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk(StatusRow("/x", "a", 5.0)))
@@ -303,7 +303,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Leaf 19 (INV-029): a fixed-category live legend is unchanged across emissions ----
 
-    "a live chart legend with a fixed category set is unchanged across emissions (INV-029)" in run {
+    "a live chart legend with a fixed category set is unchanged across emissions (INV-029)" in {
         given CanEqual[Chunk[StatusRow], Chunk[StatusRow]] = CanEqual.derived
         for
             ref <- Signal.initRef[Seq[StatusRow]](Chunk(StatusRow("/x", "a", 5.0), StatusRow("/y", "b", 7.0)))
@@ -325,7 +325,7 @@ class ChartReactiveTest extends Test:
 
     // ---- Leaf 20 (INV-029): the legend is reactive, built from emitted rows, not a one-shot sample ----
 
-    "live chart legend is built from reactive rows: an empty first emission yields no swatch, a later one does (INV-029)" in run {
+    "live chart legend is built from reactive rows: an empty first emission yields no swatch, a later one does (INV-029)" in {
         // If the lowering still sampled signal.current once (the removed one-shot), the FIRST render would show
         // swatches sampled from the ref's current value. Because the legend is now built per emission from the
         // emitted rows, an empty first emission yields NO swatch, and a later non-empty emission yields one.

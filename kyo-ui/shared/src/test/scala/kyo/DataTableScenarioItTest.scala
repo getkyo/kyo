@@ -8,7 +8,7 @@ class DataTableScenarioItTest extends UITest:
 
     case class Row(name: String, email: String) derives CanEqual
 
-    "click header sorts ascending" in run {
+    "click header sorts ascending" in {
         val app: UI < Async =
             for
                 rows    <- Signal.initRef(Chunk.from(Seq(Row("Charlie", "c@"), Row("Alice", "a@"), Row("Bob", "b@"))))
@@ -32,11 +32,11 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "Alice,Bob,Charlie")
                 _ <- Browser.click(Selector.id("sort"))
                 _ <- Browser.assertText(Selector.id("v"), "Charlie,Bob,Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "click cell to edit inline" in run {
+    "click cell to edit inline" in {
         val app: UI < Async =
             for
                 rows    <- Signal.initRef(Chunk.from(Seq(Row("Alice", "a@"), Row("Bob", "b@"))))
@@ -72,11 +72,11 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("edit"), "Alicia")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "names:Alicia,Bob")
-            yield succeed
+            yield ()
         }
     }
 
-    "sort then edit correct row" in run {
+    "sort then edit correct row" in {
         val app: UI < Async =
             for
                 rows   <- Signal.initRef(Chunk.from(Seq(Row("Charlie", "c@"), Row("Alice", "a@"))))
@@ -97,11 +97,11 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "clicked:Alice")
                 _ <- Browser.click(Selector.id("row-1"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:Charlie")
-            yield succeed
+            yield ()
         }
     }
 
-    "sort by different column clears previous" in run {
+    "sort by different column clears previous" in {
         val app: UI < Async =
             for
                 rows    <- Signal.initRef(Chunk.from(Seq(Row("Charlie", "z@"), Row("Alice", "a@"))))
@@ -122,11 +122,11 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("se"))
                 _ <- Browser.assertText(Selector.id("sc"), "sort:email")
                 _ <- Browser.assertText(Selector.id("v"), "Alice,Charlie")
-            yield succeed
+            yield ()
         }
     }
 
-    "cancel cancels edit" in run {
+    "cancel cancels edit" in {
         val app: UI < Async =
             for
                 rows    <- Signal.initRef(Chunk.from(Seq(Row("Alice", "a@"))))
@@ -152,11 +152,11 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("edit"), "Modified")
                 _ <- Browser.click(Selector.id("cancel"))
                 _ <- Browser.assertText(Selector.id("v"), "names:Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "20 rows all cells clickable" in run {
+    "20 rows all cells clickable" in {
         val app: UI < Async =
             for
                 rows    <- Signal.initRef(Chunk.from((0 until 20).map(i => Row(s"name$i", s"e$i@"))))
@@ -175,11 +175,11 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "clicked:name0")
                 _ <- Browser.click(Selector.id("row-19"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:name19")
-            yield succeed
+            yield ()
         }
     }
 
-    "sorted data remains sorted after edit" in run {
+    "sorted data remains sorted after edit" in {
         val app: UI < Async =
             for
                 rows    <- Signal.initRef(Chunk.from(Seq(Row("Charlie", "c@"), Row("Alice", "a@"), Row("Bob", "b@"))))
@@ -209,7 +209,7 @@ class DataTableScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("editField"), "Zara")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "names:Zara,Bob,Charlie")
-            yield succeed
+            yield ()
         }
     }
 

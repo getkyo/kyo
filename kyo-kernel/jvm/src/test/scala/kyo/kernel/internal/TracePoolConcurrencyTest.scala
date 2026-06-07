@@ -1,9 +1,8 @@
 package kyo.kernel.internal
 
 import java.util.concurrent.Executors
-import kyo.Test
 
-class TracePoolConcurrencyTest extends Test:
+class TracePoolConcurrencyTest extends kyo.test.Test[Any]:
 
     class TestLocal extends TracePool.Local
 

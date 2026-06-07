@@ -10,11 +10,11 @@ import scala.language.implicitConversions
   * Asserts that the projected pixel coordinates match the coordinates actually emitted in the SVG, that
   * category projection works for a band axis, and that the public surface never leaks the internal `Scale` type.
   */
-class ChartScalesTest extends Test:
+class ChartScalesTest extends kyo.test.Test[Any]:
 
     private val Tol = 1.0e-6
 
-    private def assertClose(actual: Double, expected: Double, msg: String): Assertion =
+    private def assertClose(actual: Double, expected: Double, msg: String)(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
 
     private def circlesIn(root: Svg.Root): Chunk[Svg.Circle] =

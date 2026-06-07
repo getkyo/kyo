@@ -5,9 +5,9 @@ import caseapp.core.RemainingArgs
 import scala.collection.mutable.ListBuffer
 
 /** Compile-time and runtime checks that [[KyoCaseApp.run]] overloads resolve without explicit type annotations. */
-class KyoCaseAppRunOverloadTest extends Test:
+class KyoCaseAppRunOverloadTest extends kyo.test.Test[Any]:
 
-    "all run overloads compile and infer options type" in runNotJS {
+    "all run overloads compile and infer options type".notJs in {
         val log = new ListBuffer[String]
 
         val app = new KyoCaseApp[GreetOptions]:
@@ -34,7 +34,7 @@ class KyoCaseAppRunOverloadTest extends Test:
         yield assert(log.toList == List("by-name", "options-only:cli", "full:cli:1"))
     }
 
-    "mixed overload registration order" in runNotJS {
+    "mixed overload registration order".notJs in {
         val log = new ListBuffer[String]
         val app = new KyoCaseApp[GreetOptions]:
             run { Sync.defer(log += "1") }
@@ -46,7 +46,7 @@ class KyoCaseAppRunOverloadTest extends Test:
         yield assert(log.toList == List("1", "2:mix", "3:mix", "4"))
     }
 
-    "KyoCommand run overloads infer without annotations" in runNotJS {
+    "KyoCommand run overloads infer without annotations".notJs in {
         val log = new ListBuffer[String]
         val cmd = new KyoCommand[GreetOptions]:
             override def name = "greet"
@@ -59,7 +59,7 @@ class KyoCaseAppRunOverloadTest extends Test:
         yield assert(log.toList == List("cmd:cmd"))
     }
 
-    "for-comprehension in by-name run infers effect" in runNotJS {
+    "for-comprehension in by-name run infers effect".notJs in {
         val log = new ListBuffer[String]
         val app = new KyoCaseApp[GreetOptions]:
             run {

@@ -1,15 +1,15 @@
 package kyo
 
-class TRefTest extends Test:
+class TRefTest extends kyo.test.Test[Any]:
 
-    "init and get" in run {
+    "init and get" in {
         for
             ref   <- TRef.init(42)
             value <- STM.run(ref.get)
         yield assert(value == 42)
     }
 
-    "set and get" in run {
+    "set and get" in {
         for
             ref   <- TRef.init(42)
             _     <- STM.run(ref.set(100))
@@ -17,7 +17,7 @@ class TRefTest extends Test:
         yield assert(value == 100)
     }
 
-    "multiple operations in transaction" in run {
+    "multiple operations in transaction" in {
         for
             ref1 <- TRef.init(10)
             ref2 <- TRef.init(20)
@@ -35,14 +35,14 @@ class TRefTest extends Test:
     }
 
     "initNow behavior" - {
-        "creates ref with new transaction ID outside transaction" in run {
+        "creates ref with new transaction ID outside transaction" in {
             for
                 ref   <- TRef.init(1)
                 value <- STM.run(ref.get)
             yield assert(value == 1)
         }
 
-        "uses current transaction ID within transaction" in run {
+        "uses current transaction ID within transaction" in {
             STM.run {
                 for
                     ref1 <- TRef.init(1)
@@ -55,7 +55,7 @@ class TRefTest extends Test:
             }
         }
 
-        "nests properly in nested transactions" in run {
+        "nests properly in nested transactions" in {
             STM.run {
                 for
                     ref1 <- TRef.init(1)
@@ -239,7 +239,7 @@ class TRefTest extends Test:
     }
 
     "early writer abort" - {
-        "writer succeeds when readTick <= tick" in run {
+        "writer succeeds when readTick <= tick" in {
             for
                 ref   <- TRef.init(0)
                 _     <- STM.run(ref.set(42))
@@ -247,7 +247,7 @@ class TRefTest extends Test:
             yield assert(value == 42)
         }
 
-        "concurrent readers and writers maintain consistency" in run {
+        "concurrent readers and writers maintain consistency" in {
             // This tests that the early abort optimization works correctly
             // under concurrent load - writers yield to fresher readers
             for
@@ -275,7 +275,7 @@ class TRefTest extends Test:
 
     "TRef class" - {
 
-        "equals and hashCode are reference-identity" in run {
+        "equals and hashCode are reference-identity" in {
             import kyo.AllowUnsafe.embrace.danger
             Sync.defer {
                 val refA      = TRef.Unsafe.init(7)
@@ -290,7 +290,7 @@ class TRefTest extends Test:
 
     "TRef.id" - {
 
-        "sequential allocations produce strictly increasing positive ids" in run {
+        "sequential allocations produce strictly increasing positive ids" in {
             import kyo.AllowUnsafe.embrace.danger
             Sync.defer {
                 val n                  = 10
@@ -302,7 +302,7 @@ class TRefTest extends Test:
             }
         }
 
-        "uniqueness across many allocations" in run {
+        "uniqueness across many allocations" in {
             import kyo.AllowUnsafe.embrace.danger
             Sync.defer {
                 val n    = 1000
@@ -312,7 +312,7 @@ class TRefTest extends Test:
             }
         }
 
-        "id field provides a total order suitable for lock-acquisition sort" in run {
+        "id field provides a total order suitable for lock-acquisition sort" in {
             import kyo.AllowUnsafe.embrace.danger
             Sync.defer {
                 val refs      = Vector.fill(50)(TRef.Unsafe.init(0))
@@ -324,7 +324,7 @@ class TRefTest extends Test:
 
     "TRef.update" - {
 
-        "function with pending Sync effect runs the effect and commits the new value" in run {
+        "function with pending Sync effect runs the effect and commits the new value" in {
             for
                 sideRef <- AtomicInt.init(0)
                 ref     <- TRef.init(0)
@@ -338,7 +338,7 @@ class TRefTest extends Test:
                 assert(refObs == 5, "TRef.update must store the result of the effectful lambda")
         }
 
-        "returns Unit, not the new value" in run {
+        "returns Unit, not the new value" in {
             for
                 ref    <- TRef.init(99)
                 result <- STM.run(ref.update(_ + 1))
@@ -348,7 +348,7 @@ class TRefTest extends Test:
                 assert(obs == 100, "the new value must be committed to the ref")
         }
 
-        "identity update commits without changing visible state" in run {
+        "identity update commits without changing visible state" in {
             for
                 ref    <- TRef.init(13)
                 before <- STM.run(ref.get)
@@ -357,7 +357,7 @@ class TRefTest extends Test:
             yield assert(before == 13 && after == 13, "identity update must leave the observable value unchanged")
         }
 
-        "lambda invocation count equals retry count + 1" in run {
+        "lambda invocation count equals retry count + 1" in {
             val n = 3
             for
                 counter <- AtomicInt.init(0)
@@ -374,7 +374,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "panicking lambda must surface the panic, not silently swallow or commit" in run {
+        "panicking lambda must surface the panic, not silently swallow or commit" in {
             for
                 ref      <- TRef.init(7)
                 out      <- Abort.run[Throwable](STM.run(ref.update(_ => throw new RuntimeException("boom"))))
@@ -384,7 +384,7 @@ class TRefTest extends Test:
                 assert(observed == 7, "ref must remain at the pre-update value (no partial commit)")
         }
 
-        "lambda sees the current in-log value, not the live entry" in run {
+        "lambda sees the current in-log value, not the live entry" in {
             for
                 ref <- TRef.init(0)
                 _ <- STM.run {
@@ -400,14 +400,14 @@ class TRefTest extends Test:
 
     "TRef.use" - {
 
-        "applies a non-identity lambda within a transaction" in run {
+        "applies a non-identity lambda within a transaction" in {
             for
                 ref    <- TRef.init(10)
                 result <- STM.run(ref.use(x => x * 3 + 1))
             yield assert(result == 31, "TRef.use must return f(currentValue), not the value itself")
         }
 
-        "pending Sync in lambda surfaces in the return effect set" in run {
+        "pending Sync in lambda surfaces in the return effect set" in {
             for
                 ref     <- TRef.init(7)
                 sideRef <- AtomicInt.init(0)
@@ -419,7 +419,7 @@ class TRefTest extends Test:
                 assert(side == 1, "the Sync effect must run exactly once on the committed path")
         }
 
-        "pins B to a derived type distinct from A" in run {
+        "pins B to a derived type distinct from A" in {
             for
                 ref      <- TRef.init(42)
                 asString <- STM.run(ref.use(_.toString))
@@ -429,7 +429,7 @@ class TRefTest extends Test:
                 assert(asTuple == (42, true), "use must permit tuple result for TRef[Int]")
         }
 
-        "second use within same transaction observes the value committed before transaction start" in run {
+        "second use within same transaction observes the value committed before transaction start" in {
             for
                 ref <- TRef.init(0)
                 program =
@@ -442,7 +442,7 @@ class TRefTest extends Test:
             yield assert(pair._1 == pair._2, s"two reads inside one transaction must agree (got ${pair._1}, ${pair._2})")
         }
 
-        "log-level snapshot consistency: two reads inside one transaction agree on value" in run {
+        "log-level snapshot consistency: two reads inside one transaction agree on value" in {
             for
                 ref <- TRef.init(42)
                 pair <- STM.run {
@@ -456,7 +456,7 @@ class TRefTest extends Test:
                 assert(pair._1 == 42 && pair._2 == 42, "both reads must equal the initial value 42")
         }
 
-        "lambda throws after Read log add: outer transaction state unchanged" in run {
+        "lambda throws after Read log add: outer transaction state unchanged" in {
             for
                 ref      <- TRef.init(11)
                 otherRef <- TRef.init(0)
@@ -474,7 +474,7 @@ class TRefTest extends Test:
                 assert(obs == 0, "otherRef must NOT have been committed (transaction was aborted by the throw)")
         }
 
-        "get is equivalent to use(identity) for any value" in run {
+        "get is equivalent to use(identity) for any value" in {
             for
                 ref    <- TRef.init(123)
                 viaGet <- STM.run(ref.get)
@@ -487,7 +487,7 @@ class TRefTest extends Test:
 
     "TRef.set" - {
 
-        "assigning v then reading yields v in the same transaction" in run {
+        "assigning v then reading yields v in the same transaction" in {
             for
                 ref <- TRef.init("a")
                 read <- STM.run {
@@ -499,7 +499,7 @@ class TRefTest extends Test:
             yield assert(read == "b", "set then get within one transaction must yield the set value")
         }
 
-        "storing null on a reference-typed TRef yields null on get" in run {
+        "storing null on a reference-typed TRef yields null on get" in {
             for
                 ref <- TRef.init[String]("initial")
                 out <- Abort.run[Throwable] {
@@ -513,7 +513,7 @@ class TRefTest extends Test:
             yield assert(out == Result.succeed(null))
         }
 
-        "pure value parameter (no effect): set is a 1-arg method with no S" in run {
+        "pure value parameter (no effect): set is a 1-arg method with no S" in {
             for
                 ref <- TRef.init(0)
                 _   <- STM.run(ref.set(7))
@@ -524,7 +524,7 @@ class TRefTest extends Test:
 
     "TRef commit semantics" - {
 
-        "read-only transaction leaves the value unchanged" in run {
+        "read-only transaction leaves the value unchanged" in {
             for
                 ref      <- TRef.init("initial")
                 readOnly <- STM.run(ref.get)
@@ -532,7 +532,7 @@ class TRefTest extends Test:
             yield assert(readOnly == "initial" && after == "initial", "a read-only transaction must leave the value at 'initial'")
         }
 
-        "second transaction sees the first transaction's committed write" in run {
+        "second transaction sees the first transaction's committed write" in {
             for
                 ref <- TRef.init(0)
                 _   <- STM.run(ref.set(7))
@@ -544,7 +544,7 @@ class TRefTest extends Test:
 
     "TRef.toString" - {
 
-        "format includes state, readTick, and lock summary" in run {
+        "format includes state, readTick, and lock summary" in {
             import kyo.AllowUnsafe.embrace.danger
             Sync.defer {
                 val s = TRef.Unsafe.init(7).toString
@@ -556,7 +556,7 @@ class TRefTest extends Test:
             }
         }
 
-        "sequential same-value writes advance the entry tick (no value-fallback at write time)" in run {
+        "sequential same-value writes advance the entry tick (no value-fallback at write time)" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 ref        <- Sync.defer(TRef.Unsafe.init(0))
@@ -573,7 +573,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "after STM.run completes, a fresh read reflects the committed value" in run {
+        "after STM.run completes, a fresh read reflects the committed value" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 ref    <- Sync.defer(TRef.Unsafe.init(0))
@@ -587,7 +587,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "sequential observations during sequential commits are consistent" in run {
+        "sequential observations during sequential commits are consistent" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 ref <- Sync.defer(TRef.Unsafe.init(0))
@@ -610,7 +610,7 @@ class TRefTest extends Test:
 
     "TRef.init" - {
 
-        "accepts null for a reference-typed TRef and yields null on get" in run {
+        "accepts null for a reference-typed TRef and yields null on get" in {
             for
                 ref <- TRef.init[String](null)
                 out <- Abort.run[Throwable](STM.run(ref.get))
@@ -620,7 +620,7 @@ class TRefTest extends Test:
 
     "TRef.initWith" - {
 
-        "invokes f exactly once with the new ref and returns f's value" in run {
+        "invokes f exactly once with the new ref and returns f's value" in {
             for
                 counter <- AtomicInt.init(0)
                 pair <- TRef.initWith(21) { ref =>
@@ -633,7 +633,7 @@ class TRefTest extends Test:
                 assert(count == 1, "f must be invoked exactly once")
         }
 
-        "when called inside STM.run, init+f share the surrounding transaction" in run {
+        "when called inside STM.run, init+f share the surrounding transaction" in {
             for
                 out <- STM.run {
                     TRef.initWith(1) { ref =>
@@ -646,7 +646,7 @@ class TRefTest extends Test:
             yield assert(out == 2, "init+set+get inside a single STM.run via initWith must commit as one transaction and yield 2")
         }
 
-        "inline expansion accepts method reference, function literal, and eta-expanded forms" in run {
+        "inline expansion accepts method reference, function literal, and eta-expanded forms" in {
             def methodRef(ref: TRef[Int]): Int < STM = ref.get
             val asLit: TRef[Int] => Int < STM        = ref => ref.get
             for
@@ -660,7 +660,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "return type carries the lambda's effect set S" in run {
+        "return type carries the lambda's effect set S" in {
             val program: Int < (Sync & STM & Env[Int]) =
                 TRef.initWith(1) { ref =>
                     for
@@ -672,7 +672,7 @@ class TRefTest extends Test:
             yield assert(result == 42, "initWith must propagate Env[Int] in S; with cfg=41 + v=1, expected 42")
         }
 
-        "inline value is evaluated exactly once per call" in run {
+        "inline value is evaluated exactly once per call" in {
             import kyo.AllowUnsafe.embrace.danger
             val counter = AtomicInt.Unsafe.init(0)
             def expensive: Int =
@@ -686,7 +686,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "TRef created inside doomed outer txn is observable post-rollback, still at initial value" in run {
+        "TRef created inside doomed outer txn is observable post-rollback, still at initial value" in {
             for
                 capture <- AtomicRef.init[Maybe[TRef[Int]]](Absent)
                 out <- Abort.run {
@@ -711,7 +711,7 @@ class TRefTest extends Test:
 
     "TRef.Unsafe.init" - {
 
-        "public no-arg overload produces a usable TRef" in run {
+        "public no-arg overload produces a usable TRef" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 ref  <- Sync.defer(TRef.Unsafe.init("hello"))
@@ -720,7 +720,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "counter advances per call, no rollback semantics" in run {
+        "counter advances per call, no rollback semantics" in {
             import kyo.AllowUnsafe.embrace.danger
             Sync.defer {
                 val before = TRef.Unsafe.init(0).id
@@ -733,7 +733,7 @@ class TRefTest extends Test:
             }
         }
 
-        "tick parameter is accepted and the ref's value round-trips" in run {
+        "tick parameter is accepted and the ref's value round-trips" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 ref  <- Sync.defer(TRef.Unsafe.init(STM.Tick.next(), "zero-tick"))
@@ -745,7 +745,7 @@ class TRefTest extends Test:
 
     "TRef.idCounter irreversibility" - {
 
-        "idCounter is consumed per retry inside a doomed STM.run" in run {
+        "idCounter is consumed per retry inside a doomed STM.run" in {
             import kyo.AllowUnsafe.embrace.danger
             val n = 5
             for
@@ -765,7 +765,7 @@ class TRefTest extends Test:
             end for
         }
 
-        "initWith idCounter is consumed per retry attempt" in run {
+        "initWith idCounter is consumed per retry attempt" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 before <- Sync.defer(TRef.Unsafe.init(0).id)
@@ -784,7 +784,7 @@ class TRefTest extends Test:
 
     "TRef payload type" - {
 
-        "A may be a Kyo computation type; the stored value is opaque to STM" in run {
+        "A may be a Kyo computation type; the stored value is opaque to STM" in {
             import kyo.AllowUnsafe.embrace.danger
             for
                 ref        <- Sync.defer(TRef.Unsafe.init(Sync.defer(99)))
@@ -797,7 +797,7 @@ class TRefTest extends Test:
 
     "TRef.validate access gate" - {
 
-        "requires AllowUnsafe; safe context cannot invoke (compile-time guard)" in run {
+        "requires AllowUnsafe; safe context cannot invoke (compile-time guard)" in {
             typeCheckFailure(
                 """
                 import kyo.*
@@ -811,7 +811,7 @@ class TRefTest extends Test:
 
     "TRef JVM visibility" - {
 
-        "JVM-only sanity: single-fiber sequential read sees written value" in runJVM {
+        "JVM-only sanity: single-fiber sequential read sees written value".onlyJvm in {
             for
                 ref <- TRef.init(0)
                 _   <- STM.run(ref.set(123))

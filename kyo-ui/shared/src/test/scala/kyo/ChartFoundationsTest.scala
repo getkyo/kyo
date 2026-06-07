@@ -10,7 +10,7 @@ import kyo.internal.Domain
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-class ChartFoundationsTest extends Test:
+class ChartFoundationsTest extends kyo.test.Test[Any]:
 
     // Two enum cases that override toString to the same label: they collide under toString-keyed
     // dedup but stay distinct under CatKey (keyed by tag + value, the case being its own value).
@@ -110,7 +110,7 @@ class ChartFoundationsTest extends Test:
 
     // ---- INV-001: filterFinite drops NaN/Inf and the finite extent of {1.0, NaN, 3.0} is exactly [1.0, 3.0] ----
 
-    "INV-001: filterFinite retains finite values and the fitted extent for {1.0, NaN, 3.0} is exactly [1.0, 3.0]" in run {
+    "INV-001: filterFinite retains finite values and the fitted extent for {1.0, NaN, 3.0} is exactly [1.0, 3.0]" in {
         case class Row(x: Int, y: Double)
         val rows = Chunk(Row(0, 1.0), Row(1, Double.NaN), Row(2, 3.0))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))

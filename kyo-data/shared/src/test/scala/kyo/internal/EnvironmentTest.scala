@@ -1,9 +1,10 @@
 package kyo.internal
 
-import org.scalatest.freespec.AnyFreeSpec
-import org.scalatest.matchers.should.Matchers
+class EnvironmentTest extends kyo.test.Test[Any]:
 
-class EnvironmentTest extends AnyFreeSpec with Matchers:
+    // Each leaf sets the process-global `kyo.development` system property; run sequentially so concurrent leaves
+    // do not clobber each other's property value.
+    override def config = super.config.sequential
 
     "infers as development" - {
         "if system property is enabled, which should be the case in this test execution" in {

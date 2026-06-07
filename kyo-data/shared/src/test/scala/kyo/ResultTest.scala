@@ -3,7 +3,7 @@ package kyo
 import kyo.Result.*
 import scala.util.Try
 
-class ResultTest extends Test:
+class ResultTest extends kyo.test.Test[Any]:
 
     val ex = new Exception
 
@@ -296,7 +296,7 @@ class ResultTest extends Test:
             }
 
             "should throw for Panic" in {
-                assertThrows[Exception] {
+                interceptThrown[Exception] {
                     panic.foldOrThrow(_ => 42, _ => -1)
                 }
             }
@@ -524,20 +524,21 @@ class ResultTest extends Test:
             "should match Failure" in {
                 val result = Result.fail("FAIL!")
                 result match
-                    case Error(_) => succeed
+                    case Error(e) => assert(e.isInstanceOf[String] && e.asInstanceOf[String] == "FAIL!")
                     case _        => fail()
             }
             "should match Panic" in {
-                val result = Result.panic(new AssertionError)
+                val ae     = new AssertionError
+                val result = Result.panic(ae)
                 result match
-                    case Error(_) => succeed
+                    case Error(e) => assert(e.isInstanceOf[AssertionError] && (e.asInstanceOf[AssertionError] eq ae))
                     case _        => fail()
             }
             "should not match Success" in {
                 val result = Result.succeed(1)
                 result match
                     case Error(_) => fail()
-                    case _        => succeed
+                    case _        => succeed("Success does not match the Error extractor; reaching this arm is the verification")
             }
         }
 
@@ -1452,7 +1453,7 @@ class ResultTest extends Test:
         "construct" in {
             val success: Partial[String, Int] = Success(23)
             val failure: Partial[String, Int] = Failure("failed")
-            succeed
+            assert(success.isSuccess && failure.isFailure) // both typed ascriptions succeed and have the expected shapes
         }
 
         "is Result" in {

@@ -7,8 +7,14 @@ object Platform:
     val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
     inline def isJVM: Boolean              = false
     inline def isJS                        = true
+    inline def isWasm: Boolean             = false
     inline def isNative: Boolean           = false
     inline def isDebugEnabled: Boolean     = false
+
+    // Frames a synchronous chain runs before the kernel suspends through Safepoint to stay
+    // stack-safe. 512 fits comfortably within Node's JS call stack.
+    inline def maxStackDepth: Int = 512
+
     def exit(code: Int): Unit =
         scala.scalajs.js.Dynamic.global.process.exitCode = code
 

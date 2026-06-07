@@ -6,22 +6,27 @@ import kyo.System.Arch
 import kyo.System.OS
 import kyo.System.Unsafe
 
-class SystemTest extends Test:
+class SystemTest extends kyo.test.Test[Any]:
+
+    // The property tests mutate the PROCESS-GLOBAL JVM system properties (j.System.setProperty/clearProperty)
+    // around a shared key; running leaves in parallel lets one test's value leak into another's read. Run this
+    // suite sequentially (shared global state). ScalaTest ran it sequentially too.
+    override def config = super.config.sequential
 
     "env" - {
-        "existing variable" in runNotJS {
+        "existing variable".notJs in {
             for
                 path <- System.env[String]("PATH")
             yield assert(path.isDefined && path.get.nonEmpty)
         }
 
-        "non-existing variable" in run {
+        "non-existing variable" in {
             for
                 result <- System.env[String]("NON_EXISTING_VARIABLE")
             yield assert(result.isEmpty)
         }
 
-        "with default value" in run {
+        "with default value" in {
             for
                 result <- System.env[String]("NON_EXISTING_VARIABLE", "default")
             yield assert(result == "default")
@@ -29,7 +34,7 @@ class SystemTest extends Test:
     }
 
     "property" - {
-        "existing property" in run {
+        "existing property" in {
             val key = "java.version"
             for
                 result <- System.property[String](key)
@@ -38,19 +43,19 @@ class SystemTest extends Test:
             end for
         }
 
-        "non-existing property" in run {
+        "non-existing property" in {
             for
                 result <- System.property[String]("non.existing.property")
             yield assert(result.isEmpty)
         }
 
-        "with default value" in run {
+        "with default value" in {
             for
                 result <- System.property[String]("non.existing.property", "default")
             yield assert(result == "default")
         }
 
-        "set and get property" in run {
+        "set and get property" in {
             val key   = "test.property"
             val value = "test.value"
             j.System.setProperty(key, value)
@@ -63,44 +68,44 @@ class SystemTest extends Test:
         }
     }
 
-    "lineSeparator" in run {
+    "lineSeparator" in {
         for
             separator <- System.lineSeparator
             expected = j.System.lineSeparator()
         yield assert(separator == expected)
     }
 
-    "userName" in run {
+    "userName" in {
         for
             name <- System.userName
             expected = j.System.getProperty("user.name")
         yield assert(name == expected)
     }
 
-    "operatingSystem" in run {
+    "operatingSystem" in {
         for
             os <- System.operatingSystem
         yield assert(OS.values.contains(os))
     }
 
-    "availableProcessors returns positive" in run {
+    "availableProcessors returns positive" in {
         System.availableProcessors.map(n => assert(n >= 1))
     }
 
-    "availableProcessors is stable across calls" in run {
+    "availableProcessors is stable across calls" in {
         for
             a <- System.availableProcessors
             b <- System.availableProcessors
         yield assert(a == b)
     }
 
-    "let overrides availableProcessors" in run {
+    "let overrides availableProcessors" in {
         import AllowUnsafe.embrace.danger
         val custom = System(new TestUnsafeSystem(processors = 42))
         System.let(custom)(System.availableProcessors).map(n => assert(n == 42))
     }
 
-    "Unsafe.availableProcessors matches safe" in run {
+    "Unsafe.availableProcessors matches safe" in {
         import AllowUnsafe.embrace.danger
         for
             safe <- System.availableProcessors
@@ -109,7 +114,7 @@ class SystemTest extends Test:
         end for
     }
 
-    "custom System implementation" in run {
+    "custom System implementation" in {
         val customSystem = new System:
             def unsafe: Unsafe = ???
             def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & Sync) =
@@ -142,13 +147,13 @@ class SystemTest extends Test:
         val TEST_PROP = "TEST_PROP"
 
         "String" - {
-            "valid string" in run {
+            "valid string" in {
                 j.System.setProperty(TEST_PROP, "test_value")
                 for
                     result <- System.property[String](TEST_PROP)
                 yield assert(result == Maybe("test_value"))
             }
-            "empty string" in run {
+            "empty string" in {
                 j.System.setProperty(TEST_PROP, "")
                 for
                     result <- System.property[String](TEST_PROP)
@@ -157,25 +162,25 @@ class SystemTest extends Test:
         }
 
         "Int" - {
-            "valid int" in run {
+            "valid int" in {
                 j.System.setProperty(TEST_PROP, "42")
                 for
                     result <- System.property[Int](TEST_PROP)
                 yield assert(result == Maybe(42))
             }
-            "negative int" in run {
+            "negative int" in {
                 j.System.setProperty(TEST_PROP, "-10")
                 for
                     result <- System.property[Int](TEST_PROP)
                 yield assert(result == Maybe(-10))
             }
-            "zero" in run {
+            "zero" in {
                 j.System.setProperty(TEST_PROP, "0")
                 for
                     result <- System.property[Int](TEST_PROP)
                 yield assert(result == Maybe(0))
             }
-            "invalid int" in run {
+            "invalid int" in {
                 j.System.setProperty(TEST_PROP, "not_a_number")
                 for
                     result <- Abort.run(System.property[Int](TEST_PROP))
@@ -184,19 +189,19 @@ class SystemTest extends Test:
         }
 
         "Boolean" - {
-            "true" in run {
+            "true" in {
                 j.System.setProperty(TEST_PROP, "true")
                 for
                     result <- System.property[Boolean](TEST_PROP)
                 yield assert(result == Maybe(true))
             }
-            "false" in run {
+            "false" in {
                 j.System.setProperty(TEST_PROP, "false")
                 for
                     result <- System.property[Boolean](TEST_PROP)
                 yield assert(result == Maybe(false))
             }
-            "invalid boolean" in run {
+            "invalid boolean" in {
                 j.System.setProperty(TEST_PROP, "not_a_boolean")
                 for
                     result <- Abort.run(System.property[Boolean](TEST_PROP))
@@ -205,31 +210,31 @@ class SystemTest extends Test:
         }
 
         "Double" - {
-            "valid double" in run {
+            "valid double" in {
                 j.System.setProperty(TEST_PROP, "3.14")
                 for
                     result <- System.property[Double](TEST_PROP)
                 yield assert(result == Maybe(3.14))
             }
-            "negative double" in run {
+            "negative double" in {
                 j.System.setProperty(TEST_PROP, "-2.5")
                 for
                     result <- System.property[Double](TEST_PROP)
                 yield assert(result == Maybe(-2.5))
             }
-            "zero double" in run {
+            "zero double" in {
                 j.System.setProperty(TEST_PROP, "0.0")
                 for
                     result <- System.property[Double](TEST_PROP)
                 yield assert(result == Maybe(0.0))
             }
-            "scientific notation" in run {
+            "scientific notation" in {
                 j.System.setProperty(TEST_PROP, "1.23e-4")
                 for
                     result <- System.property[Double](TEST_PROP)
                 yield assert(result == Maybe(1.23e-4))
             }
-            "invalid double" in run {
+            "invalid double" in {
                 j.System.setProperty(TEST_PROP, "not_a_double")
                 for
                     result <- Abort.run(System.property[Double](TEST_PROP))
@@ -238,19 +243,19 @@ class SystemTest extends Test:
         }
 
         "Long" - {
-            "valid long" in run {
+            "valid long" in {
                 j.System.setProperty(TEST_PROP, "9223372036854775807")
                 for
                     result <- System.property[Long](TEST_PROP)
                 yield assert(result == Maybe(Long.MaxValue))
             }
-            "negative long" in run {
+            "negative long" in {
                 j.System.setProperty(TEST_PROP, "-9223372036854775808")
                 for
                     result <- System.property[Long](TEST_PROP)
                 yield assert(result == Maybe(Long.MinValue))
             }
-            "invalid long" in run {
+            "invalid long" in {
                 j.System.setProperty(TEST_PROP, "not_a_long")
                 for
                     result <- Abort.run(System.property[Long](TEST_PROP))
@@ -259,19 +264,19 @@ class SystemTest extends Test:
         }
 
         "Char" - {
-            "valid char" in run {
+            "valid char" in {
                 j.System.setProperty(TEST_PROP, "a")
                 for
                     result <- System.property[Char](TEST_PROP)
                 yield assert(result == Maybe('a'))
             }
-            "invalid char (empty string)" in run {
+            "invalid char (empty string)" in {
                 j.System.setProperty(TEST_PROP, "")
                 for
                     result <- Abort.run(System.property[Char](TEST_PROP))
                 yield assert(result.isFailure)
             }
-            "invalid char (multiple characters)" in run {
+            "invalid char (multiple characters)" in {
                 j.System.setProperty(TEST_PROP, "abc")
                 for
                     result <- Abort.run(System.property[Char](TEST_PROP))
@@ -280,13 +285,13 @@ class SystemTest extends Test:
         }
 
         "Duration" - {
-            "valid duration" in run {
+            "valid duration" in {
                 j.System.setProperty(TEST_PROP, "10s")
                 for
                     result <- System.property[Duration](TEST_PROP)
                 yield assert(result == Maybe(10.seconds))
             }
-            "invalid duration" in run {
+            "invalid duration" in {
                 j.System.setProperty(TEST_PROP, "not_a_duration")
                 for
                     result <- Abort.run(System.property[Duration](TEST_PROP))
@@ -295,14 +300,14 @@ class SystemTest extends Test:
         }
 
         "UUID" - {
-            "valid UUID" in run {
+            "valid UUID" in {
                 val validUUID = "550e8400-e29b-41d4-a716-446655440000"
                 j.System.setProperty(TEST_PROP, validUUID)
                 for
                     result <- System.property[java.util.UUID](TEST_PROP)
                 yield assert(result.get.equals(java.util.UUID.fromString(validUUID)))
             }
-            "invalid UUID" in run {
+            "invalid UUID" in {
                 j.System.setProperty(TEST_PROP, "not_a_uuid")
                 for
                     result <- Abort.run(System.property[java.util.UUID](TEST_PROP))
@@ -311,13 +316,13 @@ class SystemTest extends Test:
         }
 
         "LocalDate" - {
-            "valid LocalDate" in run {
+            "valid LocalDate" in {
                 j.System.setProperty(TEST_PROP, "2023-05-17")
                 for
                     result <- System.property[java.time.LocalDate](TEST_PROP)
                 yield assert(result.get.equals(java.time.LocalDate.of(2023, 5, 17)))
             }
-            "invalid LocalDate" in run {
+            "invalid LocalDate" in {
                 j.System.setProperty(TEST_PROP, "not_a_date")
                 for
                     result <- Abort.run(System.property[java.time.LocalDate](TEST_PROP))
@@ -369,9 +374,10 @@ class SystemTest extends Test:
         }
 
         "should convert to safe System" in {
-            val testUnsafe = new TestUnsafeSystem()
-            val safeSystem = testUnsafe.safe
-            assert(safeSystem.isInstanceOf[System])
+            val testUnsafe         = new TestUnsafeSystem()
+            val safeSystem: System = testUnsafe.safe
+            discard(safeSystem)
+            succeed("Unsafe.safe returns a safe System wrapper (verified by the System ascription)")
         }
     }
 

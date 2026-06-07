@@ -5,7 +5,7 @@ import kyo.*
 // RFC 6750: The OAuth 2.0 Authorization Framework: Bearer Token Usage
 // Tests validate Bearer auth behavior per the RFC specification.
 // Failing tests indicate RFC non-compliance — do NOT adjust assertions to match implementation.
-class Rfc6750Test extends Test:
+class Rfc6750Test extends BaseHttpTest:
 
     val rawRoute = HttpRoute.getRaw("raw").response(_.bodyText)
 
@@ -36,7 +36,7 @@ class Rfc6750Test extends Test:
 
     // ==================== Section 2.1: Authorization Request Header Field ====================
 
-    "Section 2.1 - Valid token extraction" in runNotNative {
+    "Section 2.1 - Valid token extraction".notNative in {
         // RFC 6750 §2.1: "Authorization: Bearer <token>"
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
@@ -47,7 +47,7 @@ class Rfc6750Test extends Test:
         }
     }
 
-    "Section 2.1 - Missing Bearer prefix returns 401" in runNotNative {
+    "Section 2.1 - Missing Bearer prefix returns 401".notNative in {
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", "valid-token-123") // No "Bearer " prefix
@@ -55,26 +55,26 @@ class Rfc6750Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Missing prefix should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => ()
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2.1 - No Authorization header returns 401 with WWW-Authenticate: Bearer" in runNotNative {
+    "Section 2.1 - No Authorization header returns 401 with WWW-Authenticate: Bearer".notNative in {
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
             Abort.run(send(port, rawRoute, req)).map { result =>
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"No auth should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => ()
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2.1 - Empty token returns 401" in runNotNative {
+    "Section 2.1 - Empty token returns 401".notNative in {
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", "Bearer ") // Empty token
@@ -82,13 +82,13 @@ class Rfc6750Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Empty token should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => ()
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2.1 - Case-insensitive scheme" in runNotNative {
+    "Section 2.1 - Case-insensitive scheme".notNative in {
         // RFC 9110 §11.1: Authentication scheme names are case-insensitive
         // "bearer" (lowercase) should be accepted
         withServer(bearerEndpoint) { port =>
@@ -106,7 +106,7 @@ class Rfc6750Test extends Test:
         }
     }
 
-    "Section 2.1 - Token with special chars" in runNotNative {
+    "Section 2.1 - Token with special chars".notNative in {
         // b64token = 1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *( "=" )
         val specialToken = "abc-._~+/def123=="
         val ep = bearerRoute
@@ -123,7 +123,7 @@ class Rfc6750Test extends Test:
 
     // ==================== Additional Bearer Auth Tests ====================
 
-    "Section 2.1 - Wrong token returns 401" in runNotNative {
+    "Section 2.1 - Wrong token returns 401".notNative in {
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", "Bearer wrong-token")
@@ -131,13 +131,13 @@ class Rfc6750Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Wrong token should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => ()
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2.1 - UPPER CASE scheme accepted" in runNotNative {
+    "Section 2.1 - UPPER CASE scheme accepted".notNative in {
         // RFC 9110 §11.1: Authentication scheme names are case-insensitive
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
@@ -148,7 +148,7 @@ class Rfc6750Test extends Test:
         }
     }
 
-    "Section 2.1 - Mixed case scheme accepted" in runNotNative {
+    "Section 2.1 - Mixed case scheme accepted".notNative in {
         withServer(bearerEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
                 .setHeader("Authorization", "bEaReR valid-token-123")
@@ -158,7 +158,7 @@ class Rfc6750Test extends Test:
         }
     }
 
-    "Section 2.1 - Basic scheme rejected by bearer auth filter" in runNotNative {
+    "Section 2.1 - Basic scheme rejected by bearer auth filter".notNative in {
         withServer(bearerEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("user:pass".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/api"))
@@ -167,13 +167,13 @@ class Rfc6750Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Basic on bearer endpoint should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => ()
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2.1 - Long token accepted" in runNotNative {
+    "Section 2.1 - Long token accepted".notNative in {
         val longToken = "x" * 1000
         val ep = bearerRoute
             .filter(HttpFilter.server.bearerAuth(token => token == longToken))
@@ -189,7 +189,7 @@ class Rfc6750Test extends Test:
 
     // ==================== Client-side Bearer auth filter ====================
 
-    "Client-side bearer auth filter adds Authorization header" in runNotNative {
+    "Client-side bearer auth filter adds Authorization header".notNative in {
         val route = HttpRoute.getRaw("api")
             .request(_.headerOpt[String]("authorization"))
             .response(_.bodyText)

@@ -6,7 +6,7 @@ import kyo.internal.transport.*
 import kyo.internal.util.*
 import kyo.internal.websocket.*
 
-class WebSocketCodecTest extends kyo.Test:
+class WebSocketCodecTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -207,8 +207,9 @@ class WebSocketCodecTest extends kyo.Test:
     // ── Fragmented messages (continuation frames) ──────────────
 
     "fragmented messages (continuation frames) reassemble into a single message" - {
-        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1" in run {
-            pending
+        "three-frame text message: text/FIN=0 + continuation/FIN=0 + continuation/FIN=1".ignore(
+            "WebSocketCodec.readFrameWith does not yet reassemble multi-frame continuation messages; it delivers each frame raw (proper reassembly is a follow-up)"
+        ) in {
             // Spec: a WebSocket message MAY be split across multiple frames per RFC 6455.
             // The first frame carries the opcode (text or binary) with FIN=0; subsequent
             // frames use opcode 0x0 (continuation) with FIN=0; the final frame uses
@@ -237,7 +238,7 @@ class WebSocketCodecTest extends kyo.Test:
     // ── Roundtrip ───────────────────────────────────────────────
 
     "writeFrame → readFrame roundtrip" - {
-        "text unmasked" in run {
+        "text unmasked" in {
             val writeConn = new MockConn(Array.empty[Byte])
             WebSocketCodec.writeFrame(writeConn, HttpWebSocket.Payload.Text("hello"), mask = false).andThen {
                 val readConn = new MockConn(writeConn.written)
@@ -251,7 +252,7 @@ class WebSocketCodecTest extends kyo.Test:
             }
         }
 
-        "binary masked" in run {
+        "binary masked" in {
             val data      = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
             val writeConn = new MockConn(Array.empty[Byte])
             WebSocketCodec.writeFrame(writeConn, HttpWebSocket.Payload.Binary(data), mask = true).andThen {
@@ -266,7 +267,7 @@ class WebSocketCodecTest extends kyo.Test:
             }
         }
 
-        "close frame aborts" in run {
+        "close frame aborts" in {
             val writeConn = new MockConn(Array.empty[Byte])
             WebSocketCodec.writeClose(writeConn, 1000, "bye", mask = false).andThen {
                 val readConn = new MockConn(writeConn.written)
@@ -276,7 +277,7 @@ class WebSocketCodecTest extends kyo.Test:
             }
         }
 
-        "rejects frame larger than maxFrameSize" in run {
+        "rejects frame larger than maxFrameSize" in {
             val payload = "hello".getBytes(Utf8)
             val frame = Array[Byte](
                 (0x80 | 0x01).toByte,
@@ -288,7 +289,7 @@ class WebSocketCodecTest extends kyo.Test:
             }
         }
 
-        "rejects 64-bit frame lengths before integer overflow" in run {
+        "rejects 64-bit frame lengths before integer overflow" in {
             val frame = Array[Byte](
                 (0x80 | 0x01).toByte,
                 127.toByte,
@@ -311,7 +312,7 @@ class WebSocketCodecTest extends kyo.Test:
     // ── Upgrade handshake ───────────────────────────────────────
 
     "acceptUpgrade" - {
-        "writes 101 with correct accept key" in run {
+        "writes 101 with correct accept key" in {
             val conn    = new MockConn(Array.empty[Byte])
             val headers = HttpHeaders.empty.add("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
             WebSocketCodec.acceptUpgrade(conn, headers, HttpWebSocket.Config()).andThen {
@@ -322,7 +323,7 @@ class WebSocketCodecTest extends kyo.Test:
             }
         }
 
-        "fails on missing key" in run {
+        "fails on missing key" in {
             val conn = new MockConn(Array.empty[Byte])
             Abort.run[HttpException] {
                 WebSocketCodec.acceptUpgrade(conn, HttpHeaders.empty, HttpWebSocket.Config())
@@ -333,7 +334,7 @@ class WebSocketCodecTest extends kyo.Test:
     }
 
     "requestUpgrade" - {
-        "writes correct upgrade request" in run {
+        "writes correct upgrade request" in {
             // Create a mock that returns a 101 response when read.
             // We can't predict the exact accept key since requestUpgradeWith generates a random client key,
             // so we test the write side only by examining what was written before the read fails.
@@ -349,7 +350,7 @@ class WebSocketCodecTest extends kyo.Test:
             }
         }
 
-        "fails on non-101 response" in run {
+        "fails on non-101 response" in {
             val response = "HTTP/1.1 400 Bad Request\r\n\r\n"
             // A conn that discards writes and serves a 400 response on read
             val conn = new MockConn(response.getBytes(Utf8)):
@@ -364,7 +365,7 @@ class WebSocketCodecTest extends kyo.Test:
 
     // ── Ping/Pong handling ────────────────────────────────────
 
-    "ping auto-sends pong and returns next data frame" in run {
+    "ping auto-sends pong and returns next data frame" in {
         val textPayload = "after-ping".getBytes(Utf8)
         val pingPayload = "pingdata".getBytes(Utf8)
 
@@ -391,7 +392,7 @@ class WebSocketCodecTest extends kyo.Test:
         }
     }
 
-    "pong is ignored, returns next data frame" in run {
+    "pong is ignored, returns next data frame" in {
         val textPayload = "afterpong".getBytes(Utf8)
         val pongPayload = "pongdata".getBytes(Utf8)
 
@@ -414,7 +415,7 @@ class WebSocketCodecTest extends kyo.Test:
         }
     }
 
-    "unknown opcode causes Abort[Closed]" in run {
+    "unknown opcode causes Abort[Closed]" in {
         val unknownFrame = Array[Byte](
             (0x80 | 0x0f).toByte, // FIN + opcode 15 (unknown)
             0x00.toByte           // no payload

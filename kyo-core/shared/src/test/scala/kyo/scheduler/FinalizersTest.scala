@@ -3,7 +3,7 @@ package kyo.scheduler
 import kyo.*
 import kyo.Result.Error
 
-class FinalizersTest extends Test:
+class FinalizersTest extends kyo.test.Test[Any]:
 
     "isEmpty" - {
         "zero" in {

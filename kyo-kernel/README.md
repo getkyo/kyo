@@ -737,7 +737,7 @@ val result: List[Greeting] =
 
 A few hardcoded behaviors of the runtime occasionally matter when reading stack traces or benchmarking.
 
-The kernel suspends a synchronous chain every 512 frames (`maxStackDepth = 512`). A long-running pure chain that the JIT could in principle inline does not get inlined past this depth; it suspends through `Safepoint` instead. This is what makes Kyo stack-safe without unbounded recursion. Reader expectation: "stack-safe = unbounded recursion at no cost" is wrong; deep synchronous chains still pay the suspension cost periodically.
+The kernel suspends a synchronous chain every `maxStackDepth` frames. This threshold is platform-specific (set in `kyo.internal.Platform`): 512 on the JVM and JS, 256 on Native and WebAssembly, which run on smaller call stacks. A long-running pure chain that the JIT could in principle inline does not get inlined past this depth; it suspends through `Safepoint` instead. This is what makes Kyo stack-safe without unbounded recursion. Reader expectation: "stack-safe = unbounded recursion at no cost" is wrong; deep synchronous chains still pay the suspension cost periodically.
 
 `Safepoint.enter` checks both stack depth and thread id. A `Kyo` value created on thread A and resumed on thread B forces a re-entry through the suspension machinery. Cross-thread reuse is not a no-op; if you build a pending value on one thread and execute it on another, expect the first step to take the suspension path.
 

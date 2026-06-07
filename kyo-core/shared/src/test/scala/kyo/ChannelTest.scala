@@ -1,9 +1,11 @@
 package kyo
 
-class ChannelTest extends Test:
+class ChannelTest extends kyo.test.Test[Any]:
+
+    override def config = super.config.sequential
 
     "initWith" - {
-        "uses channel" in run {
+        "uses channel" in {
             Channel.initWith[Int](10) { c =>
                 for
                     b <- c.offer(1)
@@ -12,7 +14,7 @@ class ChannelTest extends Test:
             }
         }
 
-        "resource safety" in run {
+        "resource safety" in {
             Scope.run(Channel.initWith[Int](10) { c =>
                 for
                     b <- c.put(1)
@@ -25,7 +27,7 @@ class ChannelTest extends Test:
         }
     }
 
-    "use" in run {
+    "use" in {
         Channel.use[Int](10) { c =>
             for
                 b <- c.put(1)
@@ -37,7 +39,7 @@ class ChannelTest extends Test:
                     assert(v == 1 && isClosed)
     }
 
-    "initUnscopedWith" in run {
+    "initUnscopedWith" in {
         Channel.initUnscopedWith[Int](10) { c =>
             for
                 b <- c.put(1)
@@ -50,21 +52,21 @@ class ChannelTest extends Test:
                         assert(v == 1 && !isClosed)
     }
 
-    "offer and poll" in run {
+    "offer and poll" in {
         for
             c <- Channel.init[Int](2)
             b <- c.offer(1)
             v <- c.poll
         yield assert(b && v == Maybe(1))
     }
-    "put and take" in run {
+    "put and take" in {
         for
             c <- Channel.init[Int](2)
             _ <- c.put(1)
             v <- c.take
         yield assert(v == 1)
     }
-    "offer, put, and take" in run {
+    "offer, put, and take" in {
         for
             c  <- Channel.init[Int](2)
             b  <- c.offer(1)
@@ -73,7 +75,7 @@ class ChannelTest extends Test:
             v2 <- c.take
         yield assert(b && v1 == 1 && v2 == 2)
     }
-    "offer, put, and poll" in run {
+    "offer, put, and poll" in {
         for
             c  <- Channel.init[Int](2)
             b  <- c.offer(1)
@@ -83,12 +85,12 @@ class ChannelTest extends Test:
             b2 <- c.empty
         yield assert(b && v1 == Maybe(1) && v2 == Maybe(2) && b2)
     }
-    "offer, put, and take in parallel" in run {
+    "offer, put, and take in parallel" in {
         for
             c     <- Channel.init[Int](2)
             b     <- c.offer(1)
             put   <- Fiber.initUnscoped(c.put(2))
-            _     <- untilTrue(c.full)
+            _     <- assertEventually(c.full)
             take1 <- Fiber.initUnscoped(c.take)
             take2 <- Fiber.initUnscoped(c.take)
             v1    <- take1.get
@@ -96,7 +98,7 @@ class ChannelTest extends Test:
             v2    <- take2.get
         yield assert(b && Set(v1, v2) == Set(1, 2))
     }
-    "blocking put" in run {
+    "blocking put" in {
         for
             c  <- Channel.init[Int](2)
             _  <- c.put(1)
@@ -105,42 +107,42 @@ class ChannelTest extends Test:
             _  <- Async.sleep(10.millis)
             d1 <- f.done
             v1 <- c.poll
-            _  <- untilTrue(f.done)
+            _  <- assertEventually(f.done)
             v2 <- c.poll
             v3 <- c.poll
         yield assert(!d1 && v1 == Maybe(1) && v2 == Maybe(2) && v3 == Maybe(3))
     }
-    "blocking take" in run {
+    "blocking take" in {
         for
             c  <- Channel.init[Int](2)
             f  <- Fiber.initUnscoped(c.take)
             _  <- Async.sleep(10.millis)
             d1 <- f.done
             _  <- c.put(1)
-            _  <- untilTrue(f.done)
+            _  <- assertEventually(f.done)
             v  <- f.get
         yield assert(!d1 && v == 1)
     }
     "takeWith" - {
-        "applies function to taken value" in run {
+        "applies function to taken value" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
                 v <- c.takeWith(_ * 10)
             yield assert(v == 10)
         }
-        "blocks when empty then applies function" in run {
+        "blocks when empty then applies function" in {
             for
                 c  <- Channel.init[Int](2)
                 f  <- Fiber.initUnscoped(c.takeWith(_ + 5))
                 _  <- Async.sleep(10.millis)
                 d1 <- f.done
                 _  <- c.put(3)
-                _  <- untilTrue(f.done)
+                _  <- assertEventually(f.done)
                 v  <- f.get
             yield assert(!d1 && v == 8)
         }
-        "fails on closed channel" in run {
+        "fails on closed channel" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.close
@@ -150,14 +152,14 @@ class ChannelTest extends Test:
     }
     "putBatch" - {
         "non-nested" - {
-            "should put a batch" in run {
+            "should put a batch" in {
                 for
                     c   <- Channel.init[Int](2)
                     _   <- c.putBatch(Chunk(1, 2))
                     res <- c.drain
                 yield assert(res == Chunk(1, 2))
             }
-            "should put batch incrementally if exceeds channel size" in run {
+            "should put batch incrementally if exceeds channel size" in {
                 for
                     c   <- Channel.init[Int](2)
                     f   <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3, 4, 5, 6)))
@@ -165,14 +167,14 @@ class ChannelTest extends Test:
                     _   <- Fiber.get(f)
                 yield assert(res == Chunk(1, 2, 3, 4, 5, 6))
             }
-            "should put empty batch" in run {
+            "should put empty batch" in {
                 for
                     c       <- Channel.init[Int](2)
                     _       <- c.putBatch(Chunk.empty)
                     isEmpty <- c.empty
                 yield assert(isEmpty)
             }
-            "should fail when non-empty and channel is closed" in run {
+            "should fail when non-empty and channel is closed" in {
                 val effect =
                     for
                         c <- Channel.init[Int](2)
@@ -180,10 +182,10 @@ class ChannelTest extends Test:
                         _ <- c.putBatch(Chunk(1, 2))
                     yield ()
                 Abort.run[Closed](effect).map:
-                    case Result.Failure(closed: Closed) => assert(true)
+                    case Result.Failure(closed: Closed) => succeed
                     case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
-            "should notify waiting takers immediately" in run {
+            "should notify waiting takers immediately" in {
                 for
                     c     <- Channel.init[Int](2)
                     take1 <- Fiber.initUnscoped(c.take)
@@ -193,7 +195,7 @@ class ChannelTest extends Test:
                     v2    <- take2.get
                 yield assert(Set(v1, v2) == Set(1, 2))
             }
-            "should handle channel at capacity" in run {
+            "should handle channel at capacity" in {
                 for
                     c     <- Channel.init[Int](2)
                     _     <- c.put(1)
@@ -207,22 +209,22 @@ class ChannelTest extends Test:
                     _     <- fiber.get
                 yield assert(v1 == 1 && v2 == 2 && !done1)
             }
-            "should handle empty sequence" in run {
+            "should handle empty sequence" in {
                 for
                     c   <- Channel.init[Int](2)
                     res <- c.putBatch(Seq())
-                yield assert(true)
+                yield succeed
             }
-            "should fail when channel is closed" in run {
+            "should fail when channel is closed" in {
                 for
                     c      <- Channel.init[Int](2)
                     _      <- c.close
                     result <- Abort.run(c.putBatch(Seq(1, 2)))
                 yield result match
-                    case Result.Failure(_: Closed) => assert(true)
+                    case Result.Failure(_: Closed) => succeed
                     case other                     => fail(s"Expected Fail(Closed) but got $other")
             }
-            "should preserve elements put before closure during partial batch put" in run {
+            "should preserve elements put before closure during partial batch put" in {
                 for
                     c     <- Channel.init[Int](2)
                     fiber <- Fiber.initUnscoped(c.putBatch(Chunk(1, 2, 3, 4, 5)))
@@ -235,14 +237,14 @@ class ChannelTest extends Test:
         }
         "nested upper bound" - {
             given ch[A]: CanEqual[Chunk[Any], Chunk[A]] = CanEqual.derived
-            "should put a batch" in run {
+            "should put a batch" in {
                 for
                     c   <- Channel.init[Any](2)
                     _   <- c.putBatch(Chunk(Chunk(1), Chunk(2)))
                     res <- c.drain
                 yield assert(res == Chunk(Chunk(1), Chunk(2)))
             }
-            "should put batch incrementally if exceeds channel size" in run {
+            "should put batch incrementally if exceeds channel size" in {
                 for
                     c   <- Channel.init[Any](2)
                     f   <- Fiber.initUnscoped(c.putBatch(Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6))))
@@ -250,14 +252,14 @@ class ChannelTest extends Test:
                     _   <- Fiber.get(f)
                 yield assert(res == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6)))
             }
-            "should put empty batch" in run {
+            "should put empty batch" in {
                 for
                     c       <- Channel.init[Any](2)
                     _       <- c.putBatch(Chunk.empty)
                     isEmpty <- c.empty
                 yield assert(isEmpty)
             }
-            "should fail when non-empty and channel is closed" in run {
+            "should fail when non-empty and channel is closed" in {
                 val effect =
                     for
                         c <- Channel.init[Any](2)
@@ -265,19 +267,19 @@ class ChannelTest extends Test:
                         _ <- c.putBatch(Chunk(Chunk(1), Chunk(2)))
                     yield ()
                 Abort.run[Closed](effect).map:
-                    case Result.Failure(closed: Closed) => assert(true)
+                    case Result.Failure(closed: Closed) => succeed
                     case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
         }
         "nested lower bound" - {
-            "should put a batch" in run {
+            "should put a batch" in {
                 for
                     c   <- Channel.init[Chunk.Indexed[Int]](2)
                     _   <- c.putBatch(Chunk(Chunk(1).toIndexed, Chunk(2).toIndexed))
                     res <- c.drain
                 yield assert(res == Chunk(Chunk(1), Chunk(2)))
             }
-            "should put batch incrementally if exceeds channel size" in run {
+            "should put batch incrementally if exceeds channel size" in {
                 for
                     c <- Channel.init[Chunk.Indexed[Int]](2)
                     f <- Fiber.initUnscoped(c.putBatch(Chunk(
@@ -292,14 +294,14 @@ class ChannelTest extends Test:
                     _   <- Fiber.get(f)
                 yield assert(res == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4), Chunk(5), Chunk(6)))
             }
-            "should put empty batch" in run {
+            "should put empty batch" in {
                 for
                     c       <- Channel.init[Chunk.Indexed[Int]](2)
                     _       <- c.putBatch(Chunk.empty)
                     isEmpty <- c.empty
                 yield assert(isEmpty)
             }
-            "should fail when non-empty and channel is closed" in run {
+            "should fail when non-empty and channel is closed" in {
                 val effect =
                     for
                         c <- Channel.init[Chunk.Indexed[Int]](2)
@@ -307,13 +309,13 @@ class ChannelTest extends Test:
                         _ <- c.putBatch(Chunk(Chunk(1).toIndexed, Chunk(2).toIndexed))
                     yield ()
                 Abort.run[Closed](effect).map:
-                    case Result.Failure(closed: Closed) => assert(true)
+                    case Result.Failure(closed: Closed) => succeed
                     case other                          => fail(s"$other was not Result.Failure[Closed]")
             }
         }
     }
     "takeExactly" - {
-        "should return empty chunk if n <= 0" in run {
+        "should return empty chunk if n <= 0" in {
             for
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
@@ -322,7 +324,7 @@ class ChannelTest extends Test:
                 s  <- c.size
             yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 3)
         }
-        "should take all contents if in n == capacity" in run {
+        "should take all contents if in n == capacity" in {
             for
                 c <- Channel.init[Int](3)
                 _ <- Kyo.foreach(1 to 3)(c.put(_))
@@ -330,17 +332,17 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2, 3) && s == 0)
         }
-        "should take all contents and block if in n > capacity" in run {
+        "should take all contents and block if in n > capacity" in {
             for
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
                 f  <- Fiber.initUnscoped(c.takeExactly(5))
-                _  <- untilTrue(c.size.map(_ == 0))
+                _  <- assertEventually(c.size.map(_ == 0))
                 fd <- f.done
                 _  <- f.interrupt
             yield assert(!fd)
         }
-        "should take partial contents if channel capacity > n" in run {
+        "should take partial contents if channel capacity > n" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put(_))
@@ -348,12 +350,12 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 2)
         }
-        "should take incrementally as elements are added to channel" in run {
+        "should take incrementally as elements are added to channel" in {
             for
                 c  <- Channel.init[Int](3)
                 _  <- Kyo.foreach(1 to 3)(c.put(_))
                 f  <- Fiber.initUnscoped(c.takeExactly(6))
-                _  <- untilTrue(c.empty)
+                _  <- assertEventually(c.empty)
                 fd <- f.done
                 _  <- Kyo.foreach(4 to 6)(c.put(_))
                 r  <- Fiber.get(f)
@@ -362,13 +364,13 @@ class ChannelTest extends Test:
         }
     }
     "drain" - {
-        "empty" in run {
+        "empty" in {
             for
                 c <- Channel.init[Int](2)
                 r <- c.drain
             yield assert(r == Seq())
         }
-        "non-empty" in run {
+        "non-empty" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -376,42 +378,42 @@ class ChannelTest extends Test:
                 r <- c.drain
             yield assert(r == Seq(1, 2))
         }
-        "should consider pending puts" in run {
+        "should consider pending puts" in {
             for
                 c         <- Channel.init[Int](2)
                 _         <- Fiber.initUnscoped(c.put(1))
                 _         <- Fiber.initUnscoped(c.put(2))
                 _         <- Fiber.initUnscoped(c.put(3))
-                _         <- untilTrue(c.pendingPuts.map(_ == 1))
+                _         <- assertEventually(c.pendingPuts.map(_ == 1))
                 result    <- c.drain
                 finalSize <- c.size
             yield assert(result.sorted == Chunk(1, 2, 3) && finalSize == 0)
             end for
         }
-        "should consider pending puts - zero capacity" in run {
+        "should consider pending puts - zero capacity" in {
             for
                 c         <- Channel.init[Int](0)
                 _         <- Fiber.initUnscoped(c.put(1))
                 _         <- Fiber.initUnscoped(c.put(2))
                 _         <- Fiber.initUnscoped(c.put(3))
-                _         <- untilTrue(c.pendingPuts.map(_ == 3))
+                _         <- assertEventually(c.pendingPuts.map(_ == 3))
                 result    <- c.drain
                 finalSize <- c.size
             yield assert(result.sorted == Chunk(1, 2, 3) && finalSize == 0)
             end for
         }
-        "race with close" in run {
+        "race with close" in {
             verifyRaceDrainWithClose(2, _.drain, _.close)
         }
-        "race with closeAwaitEmpty" in run {
+        "race with closeAwaitEmpty" in {
             verifyRaceDrainWithClose(2, _.drain, _.closeAwaitEmpty)
         }
-        "race with close and zero capacity" in run {
+        "race with close and zero capacity" in {
             verifyRaceDrainWithClose(2, _.drain, _.close)
         }
     }
     "drainUpTo" - {
-        "zero or negative" in run {
+        "zero or negative" in {
             for
                 c  <- Channel.init[Int](2)
                 r0 <- c.drainUpTo(0)
@@ -419,14 +421,14 @@ class ChannelTest extends Test:
                 s  <- c.size
             yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 0)
         }
-        "empty" in run {
+        "empty" in {
             for
                 c <- Channel.init[Int](2)
                 r <- c.drainUpTo(2)
                 s <- c.size
             yield assert(r == Chunk.empty && s == 0)
         }
-        "non-empty channel drain up to the channel contents" in run {
+        "non-empty channel drain up to the channel contents" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -435,7 +437,7 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 0)
         }
-        "non-empty channel drain up to more than is in the channel" in run {
+        "non-empty channel drain up to more than is in the channel" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -444,7 +446,7 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 0)
         }
-        "non-empty channel drain up to less than is in the channel" in run {
+        "non-empty channel drain up to less than is in the channel" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put(_))
@@ -452,49 +454,49 @@ class ChannelTest extends Test:
                 s <- c.size
             yield assert(r == Seq(1, 2) && s == 2)
         }
-        "should consider pending puts" in run {
+        "should consider pending puts" in {
             for
                 c         <- Channel.init[Int](2)
                 _         <- Fiber.initUnscoped(c.put(1))
                 _         <- Fiber.initUnscoped(c.put(2))
                 _         <- Fiber.initUnscoped(c.put(3))
                 _         <- Fiber.initUnscoped(c.put(4))
-                _         <- untilTrue(c.pendingPuts.map(_ == 2))
+                _         <- assertEventually(c.pendingPuts.map(_ == 2))
                 result    <- c.drainUpTo(3)
                 finalSize <- c.size
             yield assert(result.size == 3 && finalSize == 1)
         }
-        "should consider pending puts - zero capacity" in run {
+        "should consider pending puts - zero capacity" in {
             for
                 c         <- Channel.init[Int](0)
                 _         <- Fiber.initUnscoped(c.put(1))
                 _         <- Fiber.initUnscoped(c.put(2))
                 _         <- Fiber.initUnscoped(c.put(3))
                 _         <- Fiber.initUnscoped(c.put(4))
-                _         <- untilTrue(c.pendingPuts.map(_ == 4))
+                _         <- assertEventually(c.pendingPuts.map(_ == 4))
                 result    <- c.drainUpTo(3)
                 finalSize <- c.size
             yield assert(result.size == 3 && finalSize == 0)
         }
-        "race with close" in run {
+        "race with close" in {
             verifyRaceDrainWithClose(2, _.drainUpTo(2), _.close)
         }
-        "race with closeAwaitEmpty" in run {
+        "race with closeAwaitEmpty" in {
             verifyRaceDrainWithClose(2, _.drainUpTo(2), _.closeAwaitEmpty)
         }
-        "race with close and zero capacity" in run {
+        "race with close and zero capacity" in {
             verifyRaceDrainWithClose(0, _.drainUpTo(Int.MaxValue), _.close)
         }
     }
     "close" - {
-        "empty" in run {
+        "empty" in {
             for
                 c <- Channel.init[Int](2)
                 r <- c.close
                 t <- Abort.run(c.offer(1))
             yield assert(r == Maybe(Seq()) && t.isFailure)
         }
-        "non-empty" in run {
+        "non-empty" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -503,7 +505,7 @@ class ChannelTest extends Test:
                 t <- Abort.run(c.empty)
             yield assert(r == Maybe(Seq(1, 2)) && t.isFailure)
         }
-        "pending take" in run {
+        "pending take" in {
             for
                 c <- Channel.init[Int](2)
                 f <- Fiber.initUnscoped(c.take)
@@ -512,7 +514,7 @@ class ChannelTest extends Test:
                 t <- Abort.run(c.full)
             yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
-        "pending put" in run {
+        "pending put" in {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -523,7 +525,7 @@ class ChannelTest extends Test:
                 e <- Abort.run(c.offer(1))
             yield assert(r == Maybe(Seq(1, 2)) && d.isFailure && e.isFailure)
         }
-        "no buffer w/ pending put" in run {
+        "no buffer w/ pending put" in {
             for
                 c <- Channel.init[Int](0)
                 f <- Fiber.initUnscoped(c.put(1))
@@ -532,7 +534,7 @@ class ChannelTest extends Test:
                 t <- Abort.run(c.poll)
             yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
-        "no buffer w/ pending take" in run {
+        "no buffer w/ pending take" in {
             for
                 c <- Channel.init[Int](0)
                 f <- Fiber.initUnscoped(c.take)
@@ -542,7 +544,7 @@ class ChannelTest extends Test:
             yield assert(r == Maybe(Seq()) && d.isFailure && t.isFailure)
         }
     }
-    "no buffer" in run {
+    "no buffer" in {
         for
             c <- Channel.init[Int](0)
             _ <- Fiber.initUnscoped(c.put(1))
@@ -552,7 +554,7 @@ class ChannelTest extends Test:
         yield assert(v == 1 && f && e)
     }
     "contention" - {
-        "with buffer" in run {
+        "with buffer" in {
             for
                 c  <- Channel.init[Int](10)
                 f1 <- Fiber.initUnscoped(Async.fill(1000, 1000)(c.put(1)))
@@ -563,7 +565,7 @@ class ChannelTest extends Test:
             yield assert(b)
         }
 
-        "no buffer" in run {
+        "no buffer" in {
             for
                 c  <- Channel.init[Int](0)
                 f1 <- Fiber.initUnscoped(Async.fill(1000, 1000)(c.put(1)))
@@ -576,14 +578,14 @@ class ChannelTest extends Test:
     }
 
     "Kyo computations" - {
-        "Sync" in run {
+        "Sync" in {
             for
                 channel <- Channel.init[Int < Sync](2)
                 _       <- channel.put(Sync.defer(42))
                 result  <- channel.take.flatten
             yield assert(result == 42)
         }
-        "AtomicBoolean" in run {
+        "AtomicBoolean" in {
             for
                 flag    <- AtomicBoolean.init(false)
                 channel <- Channel.init[Int < Sync](2)
@@ -593,7 +595,7 @@ class ChannelTest extends Test:
                 after   <- flag.get
             yield assert(!before && result == 42 && after)
         }
-        "Env" in run {
+        "Env" in {
             for
                 channel <- Channel.init[Int < Env[Int]](2)
                 _       <- channel.put(Env.use[Int](_ + 22))
@@ -606,7 +608,7 @@ class ChannelTest extends Test:
 
         val repeats = 100
 
-        "offer and close" in run {
+        "offer and close" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -616,7 +618,6 @@ class ChannelTest extends Test:
                 )
                 closeFiber    <- Fiber.initUnscoped(latch.await.andThen(channel.close))
                 _             <- latch.release
-                _             <- Async.sleep(100.millis)
                 offered       <- offerFiber.get
                 backlog       <- closeFiber.get
                 closedChannel <- channel.close
@@ -634,10 +635,10 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "offer and poll" in run {
+        "offer and poll" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -654,10 +655,10 @@ class ChannelTest extends Test:
                 channelSize <- channel.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + channelSize))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "put and take" in run {
+        "put and take" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -673,10 +674,10 @@ class ChannelTest extends Test:
                 takes <- takeFiber.get
             yield assert(puts.count(_.isSuccess) == takes.count(_.isSuccess) && takes.flatMap(_.toMaybe.toList).toSet == (1 to 100).toSet))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "offer to full channel during close" in run {
+        "offer to full channel during close" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -707,10 +708,10 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent close attempts" in run {
+        "concurrent close attempts" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -735,10 +736,10 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "offer, poll, put, take, and close" in run {
+        "offer, poll, put, take, and close" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -775,10 +776,10 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch and take" in run {
+        "putBatch and take" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -798,10 +799,10 @@ class ChannelTest extends Test:
                 finalSize <- channel.size
             yield assert(putRes.flatten.toSet == takeRes.toSet))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch and takeExactly" in run {
+        "putBatch and takeExactly" in {
             (for
                 size    <- Choice.eval(1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -823,10 +824,10 @@ class ChannelTest extends Test:
                 finalSize <- channel.size
             yield assert(putRes.flatten.toSet == takeRes.flatten.toSet))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with multiple producers" in run {
+        "putBatch contiguity with multiple producers" in {
             // Core bug from #1380: items from a single putBatch call should remain
             // contiguous even when multiple producers race.
             // Each producer puts batches of 3 tagged with a unique offset so we can
@@ -887,10 +888,10 @@ class ChannelTest extends Test:
                 assert(allConsecutive, s"Items reordered within batch. Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with batch size > capacity" in run {
+        "putBatch contiguity with batch size > capacity" in {
             // When batch size exceeds channel capacity, the batch is split between
             // offerAll (sync) and putBatchFiber (async). The remainder must not be
             // reordered behind other producers.
@@ -934,10 +935,10 @@ class ChannelTest extends Test:
                 assert(runs.size <= 2, s"Batch interleaved. Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with zero-capacity channel" in run {
+        "putBatch contiguity with zero-capacity channel" in {
             // Zero-capacity channels use direct producer-to-consumer transfer via flush().
             // Partial batches re-enqueued in poll()/drainUpTo()/flush() must not be
             // reordered behind other producers' batches.
@@ -980,10 +981,10 @@ class ChannelTest extends Test:
                 assert(allMultiplesOf3, s"Batch split detected (zero-capacity). Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with capacity 1" in run {
+        "putBatch contiguity with capacity 1" in {
             // Capacity 1 is the most likely to trigger batch splitting since almost
             // every batch exceeds capacity.
             (for
@@ -1030,10 +1031,10 @@ class ChannelTest extends Test:
                 assert(allConsecutive, s"Items reordered within batch (cap=1). Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with drainUpTo consumer" in run {
+        "putBatch contiguity with drainUpTo consumer" in {
             // drainUpTo can split a pending batch in ZeroCapacity.drainUpTo() and
             // NonZeroCapacity.drainUpTo() (via flush). Verify remainder stays contiguous.
             (for
@@ -1086,10 +1087,10 @@ class ChannelTest extends Test:
                 assert(allMultiplesOf6, s"Batch split via drainUpTo. Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with three producers" in run {
+        "putBatch contiguity with three producers" in {
             // Increases contention to make interleaving more likely
             (for
                 size    <- Choice.eval(1, 2, 4)
@@ -1144,10 +1145,10 @@ class ChannelTest extends Test:
                 assert(allMultiplesOf3, s"Batch split with 3 producers. Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with concurrent consumers" in run {
+        "putBatch contiguity with concurrent consumers" in {
             // Multiple consumers can trigger concurrent flush() calls, increasing
             // the chance of partial batch re-ordering
             (for
@@ -1203,10 +1204,10 @@ class ChannelTest extends Test:
                 assert(bFromConsB == bFromConsB.sorted, s"Producer B out of order in consumer B: $bFromConsB")
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with many concurrent producers" in run {
+        "putBatch contiguity with many concurrent producers" in {
             // Forces many concurrent partial batches in the puts queue.
             // A single-slot priority mechanism can't protect all of them.
             (for
@@ -1245,10 +1246,10 @@ class ChannelTest extends Test:
                 assert(allMultiplesOf3, s"Batch split with 5 producers. Runs: ${runs.map(_.toSeq)}")
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with concurrent producers and consumers" in run {
+        "putBatch contiguity with concurrent producers and consumers" in {
             // Multiple consumers trigger concurrent flush() calls, each potentially
             // partially processing a different batch. A single priority slot can't
             // hold multiple partial batches — needs a queue.
@@ -1299,10 +1300,10 @@ class ChannelTest extends Test:
                 }
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "putBatch contiguity with concurrent batch calls per producer" in run {
+        "putBatch contiguity with concurrent batch calls per producer" in {
             // Each producer sends batches concurrently (concurrency > 1).
             // This creates more partial batches simultaneously than sequential producers.
             (for
@@ -1362,7 +1363,7 @@ class ChannelTest extends Test:
                             case _         => ()
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
     }
@@ -1370,7 +1371,7 @@ class ChannelTest extends Test:
     def producerOf(item: Int): Int = (item - 1) / 1000
 
     "stream" - {
-        "should stream from channel" in run {
+        "should stream from channel" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1378,7 +1379,7 @@ class ChannelTest extends Test:
                 v <- stream.run
             yield assert(v == Chunk(1, 2, 3, 4))
         }
-        "stream with zero or negative maxChunkSize should stop" in run {
+        "stream with zero or negative maxChunkSize should stop" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1390,7 +1391,7 @@ class ChannelTest extends Test:
             yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 4)
             end for
         }
-        "stream with maxChunkSize of 1 should stream in chunks of 1" in run {
+        "stream with maxChunkSize of 1 should stream in chunks of 1" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1400,7 +1401,7 @@ class ChannelTest extends Test:
             yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
             end for
         }
-        "should stream from channel without specified chunk size" in run {
+        "should stream from channel without specified chunk size" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1410,7 +1411,7 @@ class ChannelTest extends Test:
             yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
         }
 
-        "should stream from channel with a specified chunk size" in run {
+        "should stream from channel with a specified chunk size" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1420,7 +1421,7 @@ class ChannelTest extends Test:
             yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
         }
 
-        "should stream concurrently with ingest, without specified chunk size" in run {
+        "should stream concurrently with ingest, without specified chunk size" in {
             for
                 c  <- Channel.init[Int](4)
                 bg <- Fiber.initUnscoped(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
@@ -1430,7 +1431,7 @@ class ChannelTest extends Test:
             yield assert(v.flattenChunk == Chunk.from(0 until 20))
         }
 
-        "should stream concurrently with ingest, never exceeding specified chunk size" in run {
+        "should stream concurrently with ingest, never exceeding specified chunk size" in {
             for
                 c  <- Channel.init[Int](4)
                 bg <- Fiber.initUnscoped(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
@@ -1440,7 +1441,7 @@ class ChannelTest extends Test:
             yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))
         }
 
-        "should fail when channel is closed" in run {
+        "should fail when channel is closed" in {
             for
                 c  <- Channel.init[Int](3)
                 bg <- Fiber.initUnscoped(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
@@ -1448,11 +1449,11 @@ class ChannelTest extends Test:
                 v <- Abort.run(stream.run)
             yield v match
                 case Result.Success(v)         => fail(s"Stream succeeded unexpectedly: ${v}")
-                case Result.Failure(_: Closed) => assert(true)
+                case Result.Failure(_: Closed) => succeed
                 case Result.Panic(ex)          => fail(s"Stream panicked unexpectedly: ${ex}")
         }
 
-        "should deliver all items when wrapped in Abort.run with closeAwaitEmpty" in run {
+        "should deliver all items when wrapped in Abort.run with closeAwaitEmpty" in {
             (for
                 size <- Choice.eval(1, 2, 4, 32)
                 c    <- Channel.initUnscoped[Int](size)
@@ -1466,10 +1467,10 @@ class ChannelTest extends Test:
                 _      <- producerFiber.get
             yield assert(result == Chunk(1, 2, 3, 4, 5), s"capacity=$size: expected Chunk(1,2,3,4,5) but got $result"))
                 .handle(Choice.run, _.unit, Loop.repeat(1000))
-                .andThen(succeed)
+                .unit
         }
 
-        "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in run {
+        "should stream concurrently with ingest via putBatch, yielding consistent chunk sizes" in {
             for
                 c  <- Channel.init[Int](9)
                 bg <- Fiber.initUnscoped(Loop(0)(i => c.putBatch(Chunk(i, i + 1, i + 2)).andThen(Loop.continue(i + 3))))
@@ -1484,7 +1485,7 @@ class ChannelTest extends Test:
     }
 
     "streamUntilClosed" - {
-        "should stream from channel" in run {
+        "should stream from channel" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1492,7 +1493,7 @@ class ChannelTest extends Test:
                 v <- stream.run
             yield assert(v == Chunk(1, 2, 3, 4))
         }
-        "stream with zero or negative maxChunkSize should stop" in run {
+        "stream with zero or negative maxChunkSize should stop" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1504,7 +1505,7 @@ class ChannelTest extends Test:
             yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 4)
             end for
         }
-        "stream with maxChunkSize of 1 should stream in chunks of 1" in run {
+        "stream with maxChunkSize of 1 should stream in chunks of 1" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1514,7 +1515,7 @@ class ChannelTest extends Test:
             yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
             end for
         }
-        "should stream from channel without specified chunk size" in run {
+        "should stream from channel without specified chunk size" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1524,7 +1525,7 @@ class ChannelTest extends Test:
             yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
         }
 
-        "should stream from channel with a specified chunk size" in run {
+        "should stream from channel with a specified chunk size" in {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put)
@@ -1534,7 +1535,7 @@ class ChannelTest extends Test:
             yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
         }
 
-        "should stream concurrently with ingest, without specified chunk size" in run {
+        "should stream concurrently with ingest, without specified chunk size" in {
             for
                 c  <- Channel.init[Int](4)
                 bg <- Fiber.initUnscoped(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
@@ -1544,7 +1545,7 @@ class ChannelTest extends Test:
             yield assert(v.flattenChunk == Chunk.from(0 until 20))
         }
 
-        "should stream concurrently with ingest, with specified chunk size" in run {
+        "should stream concurrently with ingest, with specified chunk size" in {
             for
                 c  <- Channel.init[Int](4)
                 bg <- Fiber.initUnscoped(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
@@ -1554,7 +1555,7 @@ class ChannelTest extends Test:
             yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))
         }
 
-        "should stop when channel is closed" in run {
+        "should stop when channel is closed" in {
             val fullStream = Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8)
             for
                 c <- Channel.init[Int](3)
@@ -1566,7 +1567,7 @@ class ChannelTest extends Test:
             end for
         }
 
-        "should stop when channel is closed async" in run {
+        "should stop when channel is closed async" in {
             val fullStream = Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8)
             for
                 c <- Channel.init[Int](3)
@@ -1579,7 +1580,7 @@ class ChannelTest extends Test:
             end for
         }
 
-        "should deliver all items with closeAwaitEmpty" in run {
+        "should deliver all items with closeAwaitEmpty" in {
             (for
                 size <- Choice.eval(1, 2, 4, 32)
                 c    <- Channel.initUnscoped[Int](size)
@@ -1590,10 +1591,10 @@ class ChannelTest extends Test:
                 _      <- producerFiber.get
             yield assert(result == Chunk(1, 2, 3, 4, 5), s"capacity=$size: expected Chunk(1,2,3,4,5) but got $result"))
                 .handle(Choice.run, _.unit, Loop.repeat(1000))
-                .andThen(succeed)
+                .unit
         }
 
-        "should deliver all items with closeAwaitEmpty and maxChunkSize" in run {
+        "should deliver all items with closeAwaitEmpty and maxChunkSize" in {
             (for
                 size <- Choice.eval(1, 2, 4, 32)
                 c    <- Channel.initUnscoped[Int](size)
@@ -1604,19 +1605,19 @@ class ChannelTest extends Test:
                 _      <- producerFiber.get
             yield assert(result == Chunk(1, 2, 3, 4, 5), s"capacity=$size chunkSize=2: expected Chunk(1,2,3,4,5) but got $result"))
                 .handle(Choice.run, _.unit, Loop.repeat(1000))
-                .andThen(succeed)
+                .unit
         }
     }
 
     "closeAwaitEmpty" - {
-        "returns true when channel is already empty" in run {
+        "returns true when channel is already empty" in {
             for
                 c      <- Channel.init[Int](10)
                 result <- c.closeAwaitEmpty
             yield assert(result)
         }
 
-        "returns true when channel becomes empty after closing" in run {
+        "returns true when channel becomes empty after closing" in {
             for
                 c       <- Channel.init[Int](10)
                 _       <- c.put(1)
@@ -1631,7 +1632,7 @@ class ChannelTest extends Test:
             yield assert(result && !closed1 && !closed2 && closed3)
         }
 
-        "returns false if channel is already closed" in run {
+        "returns false if channel is already closed" in {
             for
                 c      <- Channel.init[Int](10)
                 _      <- c.close
@@ -1639,7 +1640,7 @@ class ChannelTest extends Test:
             yield assert(!result)
         }
 
-        "concurrent taking and waiting" in run {
+        "concurrent taking and waiting" in {
             for
                 c      <- Channel.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => c.put(i))
@@ -1649,14 +1650,14 @@ class ChannelTest extends Test:
             yield assert(result)
         }
 
-        "zero capacity channel" in run {
+        "zero capacity channel" in {
             for
                 c      <- Channel.init[Int](0)
                 result <- c.closeAwaitEmpty
             yield assert(result)
         }
 
-        "should discard new takes" in run {
+        "should discard new takes" in {
             for
                 c      <- Channel.init[Int](2)
                 _      <- c.put(1)
@@ -1669,7 +1670,7 @@ class ChannelTest extends Test:
             yield assert(result && take.isFailure)
         }
 
-        "concurrent closeAwaitEmpty calls" in run {
+        "concurrent closeAwaitEmpty calls" in {
             for
                 c      <- Channel.init[Int](10)
                 _      <- c.put(1)
@@ -1681,7 +1682,7 @@ class ChannelTest extends Test:
             yield assert(closes.count(identity) == 1)
         }
 
-        "race between closeAwaitEmpty and close" in run {
+        "race between closeAwaitEmpty and close" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -1703,10 +1704,10 @@ class ChannelTest extends Test:
                 assert((result1 && result2.isEmpty) || (!result1 && result2.isDefined))
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
-                .andThen(succeed)
+                .unit
         }
 
-        "two producers calling closeAwaitEmpty" in run {
+        "two producers calling closeAwaitEmpty" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -1743,10 +1744,10 @@ class ChannelTest extends Test:
                 assert(consumerResults.count(_.isSuccess) <= 50)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
-                .andThen(succeed)
+                .unit
         }
 
-        "producer calling closeAwaitEmpty and another calling close" in run {
+        "producer calling closeAwaitEmpty and another calling close" in {
             (for
                 size    <- Choice.eval(0, 1, 2, 10, 100)
                 channel <- Channel.init[Int](size)
@@ -1782,12 +1783,12 @@ class ChannelTest extends Test:
                 assert(consumerResults.count(_.isSuccess) <= 50)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
-                .andThen(succeed)
+                .unit
         }
     }
 
     "pendingPuts and pendingTakes" - {
-        "should return 0 for empty channel" in run {
+        "should return 0 for empty channel" in {
             for
                 c     <- Channel.init[Int](2)
                 puts  <- c.pendingPuts
@@ -1795,7 +1796,7 @@ class ChannelTest extends Test:
             yield assert(puts == 0 && takes == 0)
         }
 
-        "should count pending puts when channel is full" in run {
+        "should count pending puts when channel is full" in {
             for
                 c     <- Channel.init[Int](2)
                 _     <- c.put(1)
@@ -1812,7 +1813,7 @@ class ChannelTest extends Test:
             yield assert(puts == 2 && takes == 0)
         }
 
-        "should count pending takes when channel is empty" in run {
+        "should count pending takes when channel is empty" in {
             for
                 c     <- Channel.init[Int](2)
                 f1    <- Fiber.initUnscoped(c.take)
@@ -1827,7 +1828,7 @@ class ChannelTest extends Test:
             yield assert(puts == 0 && takes == 2)
         }
 
-        "should fail when channel is closed" in run {
+        "should fail when channel is closed" in {
             for
                 c     <- Channel.init[Int](2)
                 _     <- c.close
@@ -1841,7 +1842,7 @@ class ChannelTest extends Test:
         capacity: Int,
         drain: Channel[Int] => Any < (Abort[Closed] & Sync),
         close: Channel[Int] => (Any < Async)
-    ) =
+    )(using kyo.test.AssertScope) =
         for
             c0  <- Channel.init[Int](capacity)
             ref <- AtomicRef.init(c0)

@@ -2,9 +2,9 @@ package kyo
 
 import kyo.*
 
-class LocalTest extends Test:
+class LocalTest extends kyo.test.Test[Any]:
 
-    def withBuilder[A](f: ((=> Int) => Local[Int]) => Assertion) =
+    def withBuilder[A](f: ((=> Int) => Local[Int]) => (kyo.test.AssertScope ?=> Unit)) =
         "noninheritable" in f(Local.initNoninheritable)
         "regular" in f(Local.init)
 

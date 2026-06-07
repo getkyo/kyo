@@ -5,7 +5,7 @@ import kyo.*
 import kyo.internal.http1.*
 import kyo.internal.util.*
 
-class ChunkedBodyDecoderTest extends kyo.Test:
+class ChunkedBodyDecoderTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -24,7 +24,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
 
         "readBuffered" - {
 
-            "single chunk complete in one read" in run {
+            "single chunk complete in one read" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("5\r\nhello\r\n0\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound, initial)).map { result =>
@@ -33,7 +33,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "multiple chunks" in run {
+            "multiple chunks" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound, initial)).map { result =>
@@ -42,7 +42,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "chunk size split across reads" in run {
+            "chunk size split across reads" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 // First read contains only "5" (partial hex line), second completes it
                 val initial = spanOf("5")
@@ -53,7 +53,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "chunk data split across reads" in run {
+            "chunk data split across reads" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("5\r\nhel")
                 discard(inbound.offer(spanOf("lo\r\n0\r\n\r\n")))
@@ -63,7 +63,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "chunk header and data in separate reads" in run {
+            "chunk header and data in separate reads" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("5\r\n")
                 discard(inbound.offer(spanOf("hello\r\n0\r\n\r\n")))
@@ -73,7 +73,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "zero-length chunk terminates" in run {
+            "zero-length chunk terminates" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("0\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound, initial)).map { result =>
@@ -82,7 +82,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "chunk extensions ignored" in run {
+            "chunk extensions ignored" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("5;ext=val\r\nhello\r\n0\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound, initial)).map { result =>
@@ -91,7 +91,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "trailer headers after final chunk" in run {
+            "trailer headers after final chunk" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("5\r\nhello\r\n0\r\nTrailer: value\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound, initial)).map { result =>
@@ -100,7 +100,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "buffered mode accumulates all chunks" in run {
+            "buffered mode accumulates all chunks" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("3\r\nabc\r\n")
                 discard(inbound.offer(spanOf("4\r\ndefg\r\n")))
@@ -111,7 +111,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "large chunk size (hex)" in run {
+            "large chunk size (hex)" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 // ffff = 65535 bytes
                 val size = 0xffff
@@ -145,7 +145,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "empty body (immediate terminal chunk)" in run {
+            "empty body (immediate terminal chunk)" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("0\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound, initial)).map { result =>
@@ -154,7 +154,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "inbound closed mid-chunk" in run {
+            "inbound closed mid-chunk" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("5\r\nhel") // Partial chunk data
                 discard(inbound.close()) // Close the channel — next take will fail
@@ -163,7 +163,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "decoder reset between requests" in run {
+            "decoder reset between requests" in {
                 val inbound1 = Channel.Unsafe.init[Span[Byte]](16)
                 val initial1 = spanOf("5\r\nhello\r\n0\r\n\r\n")
                 Abort.run[Closed](ChunkedBodyDecoder.readBuffered(inbound1, initial1)).map { result1 =>
@@ -178,7 +178,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "mixed chunk sizes" in run {
+            "mixed chunk sizes" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 // 1 byte, 100 bytes, 10000 bytes
                 val data1   = "X"
@@ -201,7 +201,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
                 }
             }
 
-            "CRLF boundary split" in run {
+            "CRLF boundary split" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 // Split the CRLF after chunk data: \r at end of one read, \n at start of next
                 val initial = spanOf("5\r\nhello\r")
@@ -215,7 +215,7 @@ class ChunkedBodyDecoderTest extends kyo.Test:
 
         "readStreaming" - {
 
-            "streaming mode delivers chunks to body channel" in run {
+            "streaming mode delivers chunks to body channel" in {
                 val inbound = Channel.Unsafe.init[Span[Byte]](16)
                 val output  = Channel.Unsafe.init[Span[Byte]](16)
                 val initial = spanOf("3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n")

@@ -26,7 +26,7 @@ import scala.language.implicitConversions
   *      rule's scaled y.
   *   6. Linked views: rule(x = hovered.map(...)) follows the published hover signal.
   */
-class ChartInteractionTest extends Test:
+class ChartInteractionTest extends kyo.test.Test[Any]:
 
     // ---- shared domain types ----
 
@@ -82,7 +82,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Test 1: each mark shape carries Present onHover and onClick handlers ----
 
-    "each mark shape carries Present onHover and onClick handlers when onHover/onSelect are configured" in run {
+    "each mark shape carries Present onHover and onClick handlers when onHover/onSelect are configured" in {
         for
             hoverRef  <- Signal.initRef[Maybe[Sale]](Absent)
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
@@ -106,7 +106,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Test 2: hover/unhover handlers set and clear the user SignalRef ----
 
-    "hover handler sets onHover SignalRef to Present(row); unhover sets Absent" in run {
+    "hover handler sets onHover SignalRef to Present(row); unhover sets Absent" in {
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
@@ -141,7 +141,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Test 3: onClick sets onSelect SignalRef ----
 
-    "onClick handler sets onSelect SignalRef to the clicked row" in run {
+    "onClick handler sets onSelect SignalRef to the clicked row" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Mar", Rev(3000.0)), Sale("Apr", Rev(4000.0)))
@@ -163,7 +163,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Test 4: tooltip(f) renders overlay text after simulated hover ----
 
-    "tooltip(f) renders f(row) in the overlay Reactive after simulated hover" in run {
+    "tooltip(f) renders f(row) in the overlay Reactive after simulated hover" in {
         for
             rows = Chunk(Sale("May", Rev(500.0)))
             spec = Chart(rows)(bar(x = _.month, y = _.revenue))
@@ -192,7 +192,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Test 5: reactive rule lowers inside Reactive; new signal value moves scaled y ----
 
-    "rule(y = signal) lowers inside a Reactive; a new threshold moves the rule's scaled y" in run {
+    "rule(y = signal) lowers inside a Reactive; a new threshold moves the rule's scaled y" in {
         // Scale: linear(0, 4000), baseline=440.
         //   y=1000: pixel = 440 - 1000*0.105 = 335
         //   y=3000: pixel = 440 - 3000*0.105 = 125
@@ -224,7 +224,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Test 6: linked views: rule(x = hovered.map(...)) tracks published hover ----
 
-    "rule(x = hovered.map(...)) follows the hover signal from another chart" in run {
+    "rule(x = hovered.map(...)) follows the hover signal from another chart" in {
         // Layout: band x-scale over [Jan, Feb, Mar]. Chart B uses a rule tracking hovered month.
         // Band scale: 3 categories in plotW=560. Each slot = 560/3 = 186.666... px.
         //   padding=0.1, bandW = 560*0.9/3 = 168.0 px
@@ -307,7 +307,7 @@ class ChartInteractionTest extends Test:
     // ---- Phase-4 tests: line/area interaction (INV-023) ----
 
     // Test 8 (plan leaf 12): line chart onSelect fires on click (INV-023)
-    "line chart with onSelect carries a Present onClick handler that fires (INV-023)" in run {
+    "line chart with onSelect carries a Present onClick handler that fires (INV-023)" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -328,7 +328,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 9 (plan leaf 13): area chart onHover fires (INV-023)
-    "area chart with onHover carries a Present onHover handler that fires (INV-023)" in run {
+    "area chart with onHover carries a Present onHover handler that fires (INV-023)" in {
         for
             hoverRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -345,7 +345,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 10 (plan leaf 14): stacked area attaches one handler per segment path (INV-023)
-    "stacked area with onSelect carries Present onClick on each segment path (INV-023)" in run {
+    "stacked area with onSelect carries Present onClick on each segment path (INV-023)" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(
@@ -371,11 +371,11 @@ class ChartInteractionTest extends Test:
                 interactivePaths.size == 4,
                 s"Stacked area with 4 stack groups must have exactly 4 paths with onClick, got ${interactivePaths.size} (${paths.size} total paths)"
             )
-        yield succeed
+        yield ()
     }
 
     // Test 11 (plan leaf 15): line single series has exactly one handler (INV-023)
-    "line without color split has exactly one interaction-bearing path (INV-023)" in run {
+    "line without color split has exactly one interaction-bearing path (INV-023)" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -406,7 +406,7 @@ class ChartInteractionTest extends Test:
             case _ => Chunk.empty
 
     // Test 12 (plan leaf 16): highlightSelect drives the active bar's style from the select ref (INV-024)
-    "bar with highlightSelect: after the select ref is set, the active bar carries the select style (INV-024)" in run {
+    "bar with highlightSelect: after the select ref is set, the active bar carries the select style (INV-024)" in {
         // Default highlight (no custom style) is a dark 2px stroke outline on the active bar only.
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
@@ -439,7 +439,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 13 (plan leaf 17): highlightHover with a custom hoverStyle applies that style value (INV-024)
-    "bar with a custom hoverStyle: the hovered bar carries the custom style value in the output (INV-024)" in run {
+    "bar with a custom hoverStyle: the hovered bar carries the custom style value in the output (INV-024)" in {
         // Custom hover style: a purple fill (Style.Color.purple == #a855f7), chosen distinct from the default
         // palette fill (palette(0) == blue == #3b82f6). When the hover ref points at the row, the active bar's
         // emitted fill must become the custom color.
@@ -466,7 +466,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 14 (plan leaf 18): highlight with no ref configured is a no-op (INV-024)
-    "interaction(_.highlightSelect) with no onSelect configured is a no-op (INV-024)" in run {
+    "interaction(_.highlightSelect) with no onSelect configured is a no-op (INV-024)" in {
         val rows = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
             .interaction(_.highlightSelect) // highlight configured, but no onSelect ref
@@ -486,7 +486,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 15 (plan leaf 19): highlight is a Reactive region driven by the user ref, with no internal cell (INV-024)
-    "highlight is a Reactive region driven by the user onSelect ref, with no internal SignalRef (INV-024)" in run {
+    "highlight is a Reactive region driven by the user onSelect ref, with no internal SignalRef (INV-024)" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows = Chunk(Sale("Jan", Rev(1000.0)))
@@ -529,7 +529,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Leaf 5 (INV-026): clicking a swatch toggles its label in the hiddenSeries ref ----
 
-    "clicking a legend swatch toggles its label in the user hiddenSeries ref (INV-026)" in run {
+    "clicking a legend swatch toggles its label in the user hiddenSeries ref (INV-026)" in {
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
             hidden <- Signal.initRef(Set.empty[String])
@@ -553,7 +553,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Leaf 6 (INV-026): the hidden filter drops the specified series from the marks ----
 
-    "with hiddenSeries={catA}, the catA bar is dropped from the marks while catB remains (INV-026)" in run {
+    "with hiddenSeries={catA}, the catA bar is dropped from the marks while catB remains (INV-026)" in {
         // catA at x-band "p", catB at x-band "q". Hiding catA must drop catA's bar (the one at band "p")
         // while keeping catB's bar. The bar count drops from 2 to 1, and the remaining bar is NOT at band "p".
         val rowsFull = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
@@ -584,7 +584,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Leaf 7 (INV-026): the hidden filter applies before color-splitting ----
 
-    "with 3 series and catB hidden, mark colors index over the visible set {catA, catC} only (INV-026)" in run {
+    "with 3 series and catB hidden, mark colors index over the visible set {catA, catC} only (INV-026)" in {
         val rows = Chunk(
             CatRow("p", 1.0, "catA"),
             CatRow("q", 2.0, "catB"),
@@ -619,7 +619,7 @@ class ChartInteractionTest extends Test:
 
     // ---- Leaf 8 (INV-026): hiding all series leaves the legend visible but the marks empty ----
 
-    "hiding all series leaves the legend swatches visible but the marks region empty (INV-026)" in run {
+    "hiding all series leaves the legend swatches visible but the marks region empty (INV-026)" in {
         val rows = Chunk(CatRow("p", 1.0, "catA"), CatRow("q", 2.0, "catB"))
         for
             hidden <- Signal.initRef(Set("catA", "catB"))
@@ -648,7 +648,7 @@ class ChartInteractionTest extends Test:
     case class EB(x: String, y: Double, lo: Double, hi: Double) derives CanEqual
 
     // Test 16 (L20): line with highlightSelect: the active series path carries stroke="#000000" (INV-024)
-    "line with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in run {
+    "line with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in {
         // 2-row chart: Jan and Feb. Select Jan; the single-series line path must carry the dark stroke.
         // Before fix: withHighlight is not called in lowerLine, so no stroke appears after selection.
         for
@@ -679,7 +679,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 17 (L20): area with highlightSelect: the active series path carries stroke="#000000" (INV-024)
-    "area with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in run {
+    "area with highlightSelect: after the select ref is set, the active series path carries the select style (L20)" in {
         // 2-row chart: Jan and Feb. Select Jan; the single-series area path must carry the dark stroke.
         // Before fix: withHighlight is not called in lowerArea, so no stroke appears after selection.
         for
@@ -711,7 +711,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 18 (L20): text with highlightSelect: the active glyph carries stroke="#000000" (INV-024)
-    "text with highlightSelect: after the select ref is set, the active glyph carries the select style (L20)" in run {
+    "text with highlightSelect: after the select ref is set, the active glyph carries the select style (L20)" in {
         // 2-row chart: Jan and Feb. Select Jan; only the Jan glyph must carry the dark stroke.
         // Before fix: withHighlight is not called in lowerText, so no stroke appears after selection.
         for
@@ -743,7 +743,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 19 (L20): errorBar with highlightSelect: the active row GROUP carries stroke="#000000" once (INV-024)
-    "errorBar with highlightSelect: after the select ref is set, the active row group carries the select style once (L20)" in run {
+    "errorBar with highlightSelect: after the select ref is set, the active row group carries the select style once (L20)" in {
         // 2-row chart: Jan and Feb. Select Jan; the Jan error-bar GROUP must carry the dark stroke exactly once.
         // Before fix: withHighlight is not called in lowerErrorBar, so no stroke appears after selection.
         // The group wraps the 4 sub-shapes (vLine, capLow, capHigh, marker) so highlight fires once, not 4 times.
@@ -785,7 +785,7 @@ class ChartInteractionTest extends Test:
     // Each test is expected to FAIL before the fix and PASS after.
 
     // Test 20: live bar carries onClick handler from onSelect
-    "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click (live-path interaction bug)" in run {
+    "LIVE bar with onSelect: rendered rect carries data-kyo-ev=click (live-path interaction bug)" in {
         // AnimateConfig.default.enabled=true, so Chart(signal)(...) routes through
         // marksRegionWithTransitions -> lowerBarSimpleWithTransitions. Before the fix that
         // arm never calls buildInteractionAttrs, so no data-kyo-ev attribute is emitted.
@@ -804,7 +804,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 21: live bar with highlightSelect: after setting selectRef the active bar carries the select stroke
-    "LIVE bar with highlightSelect: after selectRef is set, the active bar carries stroke=#000000 (live-path highlight bug)" in run {
+    "LIVE bar with highlightSelect: after selectRef is set, the active bar carries stroke=#000000 (live-path highlight bug)" in {
         // Before the fix: withHighlight is not called in lowerBarSimpleWithTransitions, so
         // no Reactive highlight region is created and the select stroke never appears.
         for
@@ -829,7 +829,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 22: live line carries onClick handler from onSelect
-    "LIVE line with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in run {
+    "LIVE line with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in {
         // Before the fix: lowerLineWithTransitions calls lowerLineSeries without spec/internalHoverRef,
         // so no interaction attrs are attached to the line path.
         for
@@ -847,7 +847,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 23: live line with highlightSelect fires after selection
-    "LIVE line with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in run {
+    "LIVE line with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -870,7 +870,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 24: live area carries onClick handler from onSelect
-    "LIVE area with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in run {
+    "LIVE area with onSelect: rendered path carries data-kyo-ev=click (live-path interaction bug)" in {
         // Before the fix: lowerAreaWithTransitions calls lowerArea without internalHoverRef for the
         // non-stacked path, so no interaction attrs are on the area path element.
         for
@@ -888,7 +888,7 @@ class ChartInteractionTest extends Test:
     }
 
     // Test 25: live area with highlightSelect fires after selection
-    "LIVE area with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in run {
+    "LIVE area with highlightSelect: after selectRef is set, the active series path carries stroke=#000000 (live-path highlight bug)" in {
         for
             selectRef <- Signal.initRef[Maybe[Sale]](Absent)
             rows   = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))

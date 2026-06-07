@@ -117,7 +117,7 @@ final case class YamlHellServerConfig(
 ) derives CanEqual
 final case class YamlHellFlushCache(on: List[String], priority: String) derives CanEqual
 
-class YamlParserTest extends Test:
+class YamlParserTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -899,7 +899,7 @@ class YamlParserTest extends Test:
         }
     }
 
-    private def field(node: Yaml.Node, name: String): Yaml.Node =
+    private def field(node: Yaml.Node, name: String)(using kyo.test.AssertScope): Yaml.Node =
         node match
             case Yaml.Node.Mapping(entries, _) =>
                 entries.collectFirst {

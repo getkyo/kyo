@@ -2,7 +2,7 @@ package kyo
 
 import java.nio.charset.StandardCharsets
 
-class HttpHeadersPackedTest extends Test:
+class HttpHeadersPackedTest extends BaseHttpTest:
 
     /** Builds a standalone packed headers array from name-value pairs.
       *

@@ -7,53 +7,53 @@ class ButtonTest extends UITest:
 
     // ---- Rendering ----
 
-    "renders button with text" in run {
+    "renders button with text" in {
         withUI(UI.div(UI.button("Click me").id("b"))) {
-            Browser.assertText(Selector.id("b"), "Click me").andThen(succeed)
+            Browser.assertText(Selector.id("b"), "Click me").unit
         }
     }
 
-    "renders multiple children" in run {
+    "renders multiple children" in {
         withUI(UI.div(UI.button(UI.span("A").id("a"), UI.span("B").id("b")).id("btn"))) {
             for
                 _ <- Browser.assertVisible(Selector.id("a"))
                 _ <- Browser.assertVisible(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("a"), "A")
                 _ <- Browser.assertText(Selector.id("b"), "B")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled attribute present when true" in run {
+    "disabled attribute present when true" in {
         withUI(UI.div(UI.button("X").disabled(true).id("b"))) {
-            Browser.assertDisabled(Selector.id("b")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("b")).unit
         }
     }
 
-    "empty button renders" in run {
+    "empty button renders" in {
         withUI(UI.div(UI.button.id("b"))) {
-            Browser.assertVisible(Selector.id("b")).andThen(succeed)
+            Browser.assertVisible(Selector.id("b")).unit
         }
     }
 
-    "button with mixed children span and text" in run {
+    "button with mixed children span and text" in {
         withUI(UI.div(UI.button(UI.span("inner").id("s"), "text").id("b"))) {
             for
                 _ <- Browser.assertVisible(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("s"), "inner")
-            yield succeed
+            yield ()
         }
     }
 
-    "default type is submit" in run {
+    "default type is submit" in {
         withUI(UI.div(UI.button("X").id("b"))) {
-            Browser.assertAttribute(Selector.id("b"), "type", "submit").andThen(succeed)
+            Browser.assertAttribute(Selector.id("b"), "type", "submit").unit
         }
     }
 
     // ---- Click (pending due to kyo-browser double-click bug) ----
 
-    "click button increments counter" in run {
+    "click button increments counter" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -65,11 +65,11 @@ class ButtonTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "count:0")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "enabled button fires onClick" in run {
+    "enabled button fires onClick" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -81,11 +81,11 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled button is not clickable" in run {
+    "disabled button is not clickable" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -97,11 +97,11 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled via signal blocks click then enables" in run {
+    "disabled via signal blocks click then enables" in {
 
         val app: UI < Async =
             for
@@ -120,11 +120,11 @@ class ButtonTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("b"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "click updates sibling reactively" in run {
+    "click updates sibling reactively" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -138,11 +138,11 @@ class ButtonTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "1")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "2")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid 5 clicks counter equals 5" in run {
+    "rapid 5 clicks counter equals 5" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -158,11 +158,11 @@ class ButtonTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "5")
-            yield succeed
+            yield ()
         }
     }
 
-    "two buttons click one other unchanged" in run {
+    "two buttons click one other unchanged" in {
 
         val app: UI < Async =
             for
@@ -179,11 +179,11 @@ class ButtonTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "click handler reads signal value" in run {
+    "click handler reads signal value" in {
 
         val app: UI < Async =
             for
@@ -202,11 +202,11 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "10")
-            yield succeed
+            yield ()
         }
     }
 
-    "click handler updates two signals" in run {
+    "click handler updates two signals" in {
 
         val app: UI < Async =
             for
@@ -224,11 +224,11 @@ class ButtonTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:10")
-            yield succeed
+            yield ()
         }
     }
 
-    "click on nested child bubbles to button onClick" in run {
+    "click on nested child bubbles to button onClick" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -240,13 +240,13 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("inner"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Focus ----
 
-    "focus button onFocus fires" in run {
+    "focus button onFocus fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -258,11 +258,11 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus then elsewhere onBlur fires" in run {
+    "focus then elsewhere onBlur fires" in {
 
         val app: UI < Async =
             for ref <- Signal.initRef(false)
@@ -276,13 +276,13 @@ class ButtonTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b2"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Keyboard ----
 
-    "pressKey Enter on button fires onClick" in run {
+    "pressKey Enter on button fires onClick" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -294,11 +294,11 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("b"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey Space on button fires onClick" in run {
+    "pressKey Space on button fires onClick" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -309,13 +309,13 @@ class ButtonTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("b"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "button with style attribute" in run {
+    "button with style attribute" in {
         withUI(UI.div(UI.button("Styled").id("b").style(_.bold))) {
-            Browser.assertAttribute(Selector.id("b"), "style", "font-weight: bold;").andThen(succeed)
+            Browser.assertAttribute(Selector.id("b"), "style", "font-weight: bold;").unit
         }
     }
 

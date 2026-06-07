@@ -10,7 +10,7 @@ class ForeachTest extends UITest:
 
     // === Basic ===
 
-    "foreach renders initial items" in run {
+    "foreach renders initial items" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(items.foreach(s => UI.span(s)))
@@ -19,11 +19,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("A")
                 _ <- assertContains("B")
                 _ <- assertContains("C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach empty Chunk renders no children" in run {
+    "foreach empty Chunk renders no children" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -31,20 +31,20 @@ class ForeachTest extends UITest:
                 UI.span("sentinel").id("sentinel")
             )
         withUI(app) {
-            Browser.assertVisible(Selector.id("sentinel")).andThen(succeed)
+            Browser.assertVisible(Selector.id("sentinel")).unit
         }
     }
 
-    "foreach single item" in run {
+    "foreach single item" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("only")))
             yield UI.div(items.foreach(s => UI.span(s).id("only-item")))
         withUI(app) {
-            Browser.assertText(Selector.id("only-item"), "only").andThen(succeed)
+            Browser.assertText(Selector.id("only-item"), "only").unit
         }
     }
 
-    "foreach item text matches data" in run {
+    "foreach item text matches data" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("alpha", "beta", "gamma")))
             yield UI.div(items.foreach(s => UI.span(s"item:$s")))
@@ -53,13 +53,13 @@ class ForeachTest extends UITest:
                 _ <- assertContains("item:alpha")
                 _ <- assertContains("item:beta")
                 _ <- assertContains("item:gamma")
-            yield succeed
+            yield ()
         }
     }
 
     // === Dynamic ===
 
-    "append item appears" in run {
+    "append item appears" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
             yield UI.div(
@@ -70,11 +70,11 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("add"))
                 _ <- assertContains("C")
-            yield succeed
+            yield ()
         }
     }
 
-    "remove last item disappears" in run {
+    "remove last item disappears" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -90,11 +90,11 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertText(Selector.id("count"), "count:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "remove first item others shift" in run {
+    "remove first item others shift" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -106,11 +106,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertText(Selector.id("item-B"), "v:B")
                 _ <- Browser.assertText(Selector.id("item-C"), "v:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "remove middle item others intact" in run {
+    "remove middle item others intact" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -124,11 +124,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertText(Selector.id("item-A"), "v:A")
                 _ <- Browser.assertText(Selector.id("item-C"), "v:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "clear all items" in run {
+    "clear all items" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -140,11 +140,11 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("clear"))
                 _ <- Browser.assertVisible(Selector.id("sentinel"))
-            yield succeed
+            yield ()
         }
     }
 
-    "replace entire Chunk shows new items" in run {
+    "replace entire Chunk shows new items" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
             yield UI.div(
@@ -157,11 +157,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("v:X")
                 _ <- assertContains("v:Y")
                 _ <- assertContains("v:Z")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid 3 updates final correct" in run {
+    "rapid 3 updates final correct" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A")))
             yield UI.div(
@@ -178,11 +178,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("v:E")
                 _ <- assertContains("v:F")
                 _ <- assertContains("v:G")
-            yield succeed
+            yield ()
         }
     }
 
-    "update single item content same length different value" in run {
+    "update single item content same length different value" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -195,13 +195,13 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("upd"))
                 _ <- assertContains("v:X")
-            yield succeed
+            yield ()
         }
     }
 
     // === foreachIndexed ===
 
-    "foreachIndexed correct indices" in run {
+    "foreachIndexed correct indices" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("a", "b", "c")))
             yield UI.div(items.foreachIndexed((i, s) => UI.span(s"$i:$s")))
@@ -210,11 +210,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("0:a")
                 _ <- assertContains("1:b")
                 _ <- assertContains("2:c")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachIndexed indices update after removal" in run {
+    "foreachIndexed indices update after removal" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("a", "b", "c")))
             yield UI.div(
@@ -226,11 +226,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- assertContains("0:b")
                 _ <- assertContains("1:c")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachIndexed indices after insertion at beginning" in run {
+    "foreachIndexed indices after insertion at beginning" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("b", "c")))
             yield UI.div(
@@ -245,13 +245,13 @@ class ForeachTest extends UITest:
                 _ <- assertContains("0:a")
                 _ <- assertContains("1:b")
                 _ <- assertContains("2:c")
-            yield succeed
+            yield ()
         }
     }
 
     // === foreachKeyed ===
 
-    "foreachKeyed renders correct content" in run {
+    "foreachKeyed renders correct content" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("x", "y", "z")))
             yield UI.div(items.foreachKeyed(identity)(s => UI.span(s"k:$s")))
@@ -260,11 +260,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("k:x")
                 _ <- assertContains("k:y")
                 _ <- assertContains("k:z")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachKeyed reorder matches new order" in run {
+    "foreachKeyed reorder matches new order" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -277,11 +277,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("k:A")
                 _ <- assertContains("k:B")
                 _ <- assertContains("k:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachKeyed add at end" in run {
+    "foreachKeyed add at end" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
             yield UI.div(
@@ -292,11 +292,11 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("add"))
                 _ <- assertContains("k:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachKeyed add at beginning" in run {
+    "foreachKeyed add at beginning" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("B", "C")))
             yield UI.div(
@@ -311,11 +311,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("k:A")
                 _ <- assertContains("k:B")
                 _ <- assertContains("k:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachKeyed remove from middle" in run {
+    "foreachKeyed remove from middle" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
             yield UI.div(
@@ -327,11 +327,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertText(Selector.id("key-A"), "k:A")
                 _ <- Browser.assertText(Selector.id("key-C"), "k:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachKeyed swap two items" in run {
+    "foreachKeyed swap two items" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
             yield UI.div(
@@ -343,11 +343,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("swap"))
                 _ <- assertContains("k:A")
                 _ <- assertContains("k:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreachKeyed duplicate keys edge case" in run {
+    "foreachKeyed duplicate keys edge case" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "A", "B")))
             yield UI.div(items.foreachKeyed(identity)(s => UI.span(s"k:$s")))
@@ -355,13 +355,13 @@ class ForeachTest extends UITest:
             for
                 _ <- assertContains("k:A")
                 _ <- assertContains("k:B")
-            yield succeed
+            yield ()
         }
     }
 
     // === Interactive ===
 
-    "item onClick increments own counter" in run {
+    "item onClick increments own counter" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("item")))
@@ -378,11 +378,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "count:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "item onClick sibling unaffected" in run {
+    "item onClick sibling unaffected" in {
         val app: UI < Async =
             for
                 items  <- Signal.initRef(Chunk.from(Seq("a", "b")))
@@ -401,11 +401,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("btnA"))
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "add button and new item clickable" in run {
+    "add button and new item clickable" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("first")))
@@ -422,11 +422,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.click(Selector.id("btn-second"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:second")
-            yield succeed
+            yield ()
         }
     }
 
-    "remove button others still work" in run {
+    "remove button others still work" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -443,11 +443,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.click(Selector.id("btn-B"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "two inputs fill one others unchanged" in run {
+    "two inputs fill one others unchanged" in {
         val app: UI < Async =
             for
                 text1 <- Signal.initRef("")
@@ -463,11 +463,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.fill(Selector.id("i1"), "hello")
                 _ <- Browser.assertText(Selector.id("v1"), "t1:hello")
                 _ <- Browser.assertText(Selector.id("v2"), "t2:")
-            yield succeed
+            yield ()
         }
     }
 
-    "two checkboxes check one others unchanged" in run {
+    "two checkboxes check one others unchanged" in {
         val app: UI < Async =
             for
                 check1 <- Signal.initRef(false)
@@ -483,11 +483,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.click(Selector.id("c1"))
                 _ <- Browser.assertText(Selector.id("v1"), "c1:true")
                 _ <- Browser.assertText(Selector.id("v2"), "c2:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "two selects select one others unchanged" in run {
+    "two selects select one others unchanged" in {
         val app: UI < Async =
             for
                 sel1 <- Signal.initRef("")
@@ -505,13 +505,13 @@ class ForeachTest extends UITest:
                 _ <- Browser.select(Selector.id("s1"), "b")
                 _ <- Browser.assertText(Selector.id("v1"), "s1:b")
                 _ <- Browser.assertText(Selector.id("v2"), "s2:")
-            yield succeed
+            yield ()
         }
     }
 
     // === Focus ===
 
-    "focus button in foreach item" in run {
+    "focus button in foreach item" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("X")))
@@ -526,11 +526,11 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("fbtn"))
                 _ <- Browser.assertText(Selector.id("v"), "focused:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus input in foreach item fill works" in run {
+    "focus input in foreach item fill works" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("item")))
@@ -543,11 +543,11 @@ class ForeachTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("finp"), "typed")
                 _ <- Browser.assertText(Selector.id("v"), "t:typed")
-            yield succeed
+            yield ()
         }
     }
 
-    "tab through foreach items each focusable" in run {
+    "tab through foreach items each focusable" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("a", "b")))
@@ -564,13 +564,13 @@ class ForeachTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "focused:a")
                 _ <- Browser.click(Selector.id("btn-b"))
                 _ <- Browser.assertText(Selector.id("v"), "focused:b")
-            yield succeed
+            yield ()
         }
     }
 
     // === Nested ===
 
-    "foreach inside foreach grid" in run {
+    "foreach inside foreach grid" in {
         val app: UI < Async =
             for
                 row1 <- Signal.initRef(Chunk.from(Seq("1a", "1b")))
@@ -585,11 +585,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("1b")
                 _ <- assertContains("2a")
                 _ <- assertContains("2b")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach inside reactive" in run {
+    "foreach inside reactive" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -608,11 +608,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("hidden")
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- assertContains("v:A")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach many items" in run {
+    "foreach many items" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from((1 to 20).map(i => s"item$i")))
             yield UI.div(items.foreach(s => UI.span(s)))
@@ -621,11 +621,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("item1")
                 _ <- assertContains("item5")
                 _ <- assertContains("item10")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach item returns fragment" in run {
+    "foreach item returns fragment" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A", "B")))
             yield UI.div(items.foreach(s =>
@@ -637,11 +637,11 @@ class ForeachTest extends UITest:
                 _ <- assertContains("value:A")
                 _ <- assertContains("label:B")
                 _ <- assertContains("value:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach items with disabled buttons" in run {
+    "foreach items with disabled buttons" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -657,11 +657,11 @@ class ForeachTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("btn-A"))
                 _ <- Browser.assertDisabled(Selector.id("btn-B"))
                 _ <- Browser.assertText(Selector.id("v"), "count:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach with UI.when inside items" in run {
+    "foreach with UI.when inside items" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -680,7 +680,7 @@ class ForeachTest extends UITest:
                 _ <- assertContains("label:A")
                 _ <- Browser.click(Selector.id("show"))
                 _ <- assertContains("detail:A")
-            yield succeed
+            yield ()
         }
     }
 

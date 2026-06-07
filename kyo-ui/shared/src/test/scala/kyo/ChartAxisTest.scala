@@ -17,7 +17,7 @@ import scala.language.implicitConversions
   * baseline=440 (default 640x480, MarginL=60, MarginR=20, MarginT=20, MarginB=40).
   * Two-axis layout: MarginR=60, so plotW=520.
   */
-class ChartAxisTest extends Test:
+class ChartAxisTest extends kyo.test.Test[Any]:
 
     // ---- shared domain types ----
 
@@ -48,7 +48,7 @@ class ChartAxisTest extends Test:
     private val PlotWTwoAx = 520.0         // with right axis (MarginR=60)
     private val Tol        = 1.0e-6
 
-    private def assertClose(actual: Double, expected: Double, msg: String = ""): Assertion =
+    private def assertClose(actual: Double, expected: Double, msg: String = "")(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
 
     // ---- SVG tree navigation helpers ----
@@ -72,12 +72,12 @@ class ChartAxisTest extends Test:
             case _           => Chunk.empty
 
     /** Extract the double value from a `Maybe[Coord]`. */
-    private def numOf(c: Maybe[Coord]): Double = c match
+    private def numOf(c: Maybe[Coord])(using Frame, kyo.test.AssertScope): Double = c match
         case Present(Coord.Num(v)) => v
         case other                 => fail(s"Expected Coord.Num but got $other")
 
     /** Extract the `Style.Color` from a `Svg.Paint.Color`. */
-    private def colorOf(fill: Maybe[Svg.Paint]): Style.Color = fill match
+    private def colorOf(fill: Maybe[Svg.Paint])(using Frame, kyo.test.AssertScope): Style.Color = fill match
         case Present(Svg.Paint.Color(c)) => c
         case other                       => fail(s"Expected Paint.Color but got $other")
 
@@ -111,7 +111,7 @@ class ChartAxisTest extends Test:
         val expectedYPx    = Chunk(440.0, 230.0, 20.0)
         val gridYs         = gridLines.map(l => l.svgAttrs.y1.getOrElse(0.0)).toSeq.sorted
         val expectedSorted = expectedYPx.toSeq.sorted
-        gridYs.zip(expectedSorted).foldLeft(succeed): (_, pair) =>
+        gridYs.zip(expectedSorted).foldLeft(()): (_, pair) =>
             assertClose(pair._1, pair._2, "gridline y pixel")
     }
 
@@ -178,7 +178,7 @@ class ChartAxisTest extends Test:
         assertClose(numOf(rects(0).svgAttrs.width), bandW, "band bar width")
 
         // Widths must all equal bandW (not varying as with a Linear scale)
-        rects.toSeq.foldLeft(succeed): (_, r) =>
+        rects.toSeq.foldLeft(()): (_, r) =>
             assertClose(numOf(r.svgAttrs.width), bandW, "all band bars same width")
     }
 
@@ -331,7 +331,7 @@ class ChartAxisTest extends Test:
             t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End) &&
                 t.svgAttrs.x.exists { case Coord.Num(v) => v < PlotX; case _ => false }
         assert(leftTickLabels.nonEmpty, "Expected left-axis tick labels")
-        leftTickLabels.foldLeft(succeed): (_, t) =>
+        leftTickLabels.foldLeft(()): (_, t) =>
             assert(colorOf(t.svgAttrs.fill) == Style.Color.blue, s"Left tick label should be palette(0) (blue) but was ${t.svgAttrs.fill}")
 
         // Right axis tick labels: TextAnchor.Start at x > plotX + plotW. Their fill must be palette(1) = orange.
@@ -339,7 +339,7 @@ class ChartAxisTest extends Test:
             t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start) &&
                 t.svgAttrs.x.exists { case Coord.Num(v) => v > PlotX + PlotWTwoAx; case _ => false }
         assert(rightTickLabels.nonEmpty, "Expected right-axis tick labels")
-        rightTickLabels.foldLeft(succeed): (_, t) =>
+        rightTickLabels.foldLeft(()): (_, t) =>
             assert(
                 colorOf(t.svgAttrs.fill) == Style.Color.orange,
                 s"Right tick label should be palette(1) (orange) but was ${t.svgAttrs.fill}"
@@ -367,7 +367,7 @@ class ChartAxisTest extends Test:
         // The shared x-axis chrome stays neutral (not tied to either series color).
         val xTickLabels = texts.filter(t => t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Hanging))
         assert(xTickLabels.nonEmpty, "Expected x-axis tick labels")
-        xTickLabels.foldLeft(succeed): (_, t) =>
+        xTickLabels.foldLeft(()): (_, t) =>
             assert(colorOf(t.svgAttrs.fill) == neutral, s"X-axis tick label should stay neutral ($neutral) but was ${t.svgAttrs.fill}")
     }
 
@@ -427,7 +427,7 @@ class ChartAxisTest extends Test:
         // encoded the BUG (it assumed plotX stayed at the default 60), so it is replaced by an anchor-only filter.
         val leftTickLabels = texts.filter(t => t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left-axis tick numbers")
-        leftTickLabels.foldLeft(succeed): (_, t) =>
+        leftTickLabels.foldLeft(()): (_, t) =>
             val tx = numOf(t.svgAttrs.x)
             assert(revenueX < tx, s"Revenue label ($revenueX) must be left of tick number anchor ($tx)")
     }
@@ -858,7 +858,7 @@ class ChartAxisTest extends Test:
         // Left y-axis tick labels use TextAnchor.End. Their fill must be the neutral chrome, not blue.
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the grouped bar")
-        leftTickLabels.foldLeft(succeed): (_, t) =>
+        leftTickLabels.foldLeft(()): (_, t) =>
             val c = colorOf(t.svgAttrs.fill)
             assert(c == neutral, s"Grouped-bar y-axis tick should be neutral ($neutral) but was $c")
             assert(c != Style.Color.blue, s"Grouped-bar y-axis tick must NOT be palette(0) (blue) but was $c")
@@ -881,7 +881,7 @@ class ChartAxisTest extends Test:
 
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the stacked bar")
-        leftTickLabels.foldLeft(succeed): (_, t) =>
+        leftTickLabels.foldLeft(()): (_, t) =>
             val c = colorOf(t.svgAttrs.fill)
             assert(c == neutral, s"Stacked-bar y-axis tick should be neutral ($neutral) but was $c")
             assert(c != Style.Color.blue, s"Stacked-bar y-axis tick must NOT be palette(0) (blue) but was $c")
@@ -901,7 +901,7 @@ class ChartAxisTest extends Test:
 
         val leftTickLabels = frameTextsIn(root).filter(_.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTickLabels.nonEmpty, "Expected left y-axis tick labels for the line chart")
-        leftTickLabels.foldLeft(succeed): (_, t) =>
+        leftTickLabels.foldLeft(()): (_, t) =>
             assert(
                 colorOf(t.svgAttrs.fill) == Style.Color.blue,
                 s"Single-color line y-axis tick should be palette(0) (blue) but was ${t.svgAttrs.fill}"
@@ -936,7 +936,7 @@ class ChartAxisTest extends Test:
         )
 
         // Despite the color-coded chrome, gridlines stay neutral, never palette(0).
-        gridLines.foldLeft(succeed): (_, l) =>
+        gridLines.foldLeft(()): (_, l) =>
             val c = colorOf(l.svgAttrs.stroke)
             assert(c == neutral, s"Gridline stroke should be the neutral grid color ($neutral) but was $c")
             assert(c != Style.Color.blue, s"Gridline must NOT be palette(0) (blue) but was $c")
@@ -972,7 +972,7 @@ class ChartAxisTest extends Test:
         val root   = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val labels = xTickLabelsIn(root)
         assert(labels.nonEmpty, "Expected x tick labels")
-        labels.foldLeft(succeed): (_, t) =>
+        labels.foldLeft(()): (_, t) =>
             val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
             rot match
                 case Some(r) => assertClose(r.deg, -45.0, "x tick label rotate degrees")
@@ -987,7 +987,7 @@ class ChartAxisTest extends Test:
         val root   = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val labels = xTickLabelsIn(root)
         assert(labels.nonEmpty, "Expected x tick labels")
-        labels.foldLeft(succeed): (_, t) =>
+        labels.foldLeft(()): (_, t) =>
             assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), s"Expected text-anchor=end but got ${t.svgAttrs.textAnchor}")
     }
 
@@ -1214,7 +1214,7 @@ class ChartAxisTest extends Test:
 
         // Each sample circle's full extent (center +/- radius) must sit ABOVE the plot data area (cy + r <= plotY),
         // so it never overlaps a plotted point.
-        sampleCircles.foldLeft(succeed): (_, c) =>
+        sampleCircles.foldLeft(()): (_, c) =>
             val cy = c.svgAttrs.cy.getOrElse(0.0)
             val r  = c.svgAttrs.r.getOrElse(0.0)
             assert(cy + r <= plotY, s"Size-legend bubble (cy=$cy r=$r) dips into the plot data area (plotY=$plotY)")
@@ -1226,7 +1226,7 @@ class ChartAxisTest extends Test:
     // DEFECT 3 (visual-review #218): GUARD. A bar+line combo lists bar THEN line, so spec order must place the
     // line path AFTER all bar rects in the SVG so the line draws ON TOP of the bars. This was reported as a
     // possible z-order bug; it is correct already, and this test guards that the spec-order layering holds.
-    "bar+line combo emits the line path after all bar rects (z-order guard, defect 3)" in run {
+    "bar+line combo emits the line path after all bar rects (z-order guard, defect 3)" in {
         val rows = Chunk(
             ComboRow("Jan", 45000, 0.0),
             ComboRow("Feb", 52000, 15.6),
@@ -1272,7 +1272,7 @@ class ChartAxisTest extends Test:
         val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val ticks = leftYTickLabelsIn(root)
         assert(ticks.nonEmpty, "Expected left Y tick labels")
-        ticks.foldLeft(succeed): (_, t) =>
+        ticks.foldLeft(()): (_, t) =>
             val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
             rot match
                 case Some(r) => assertClose(r.deg, -45.0, "Y tick label rotate degrees")
@@ -1289,7 +1289,7 @@ class ChartAxisTest extends Test:
         val root  = summon[Conversion[Chart.Spec[Row2Ax], Svg.Root]](spec)
         val ticks = rightYTickLabelsIn(root)
         assert(ticks.nonEmpty, "Expected right Y tick labels")
-        ticks.foldLeft(succeed): (_, t) =>
+        ticks.foldLeft(()): (_, t) =>
             val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
             rot match
                 case Some(r) => assertClose(r.deg, 30.0, "Right Y tick label rotate degrees")
@@ -1308,7 +1308,7 @@ class ChartAxisTest extends Test:
         // Use dominantBaseline.Middle to isolate Y ticks (not Hanging=X, not absent=rotated-title).
         val ticks = frameTextsIn(root).filter(_.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle))
         assert(ticks.nonEmpty, "Expected Y tick labels with DominantBaseline.Middle")
-        ticks.foldLeft(succeed): (_, t) =>
+        ticks.foldLeft(()): (_, t) =>
             assert(
                 t.svgAttrs.textAnchor.contains(Svg.TextAnchor.Start),
                 s"Y tick with explicit anchor(Start) must have text-anchor=start but got ${t.svgAttrs.textAnchor}"
@@ -1323,7 +1323,7 @@ class ChartAxisTest extends Test:
         val root  = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val ticks = leftYTickLabelsIn(root)
         assert(ticks.nonEmpty, "Expected left Y tick labels")
-        ticks.foldLeft(succeed): (_, t) =>
+        ticks.foldLeft(()): (_, t) =>
             assert(
                 t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End),
                 s"Default left Y tick must retain text-anchor=end (side-default) but got ${t.svgAttrs.textAnchor}"
@@ -1395,7 +1395,7 @@ class ChartAxisTest extends Test:
         val rows = Chunk(Sale("Jan", Usd(1000)), Sale("Feb", Usd(2000)))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
         val root = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
-        frameTextsIn(root).foldLeft(succeed): (_, t) =>
+        frameTextsIn(root).foldLeft(()): (_, t) =>
             assert(t.svgAttrs.fontFamily.isEmpty, s"Default theme must NOT add font-family; got ${t.svgAttrs.fontFamily}")
             assert(t.svgAttrs.fontSize.isEmpty, s"Default theme must NOT add font-size; got ${t.svgAttrs.fontSize}")
     }
@@ -1412,7 +1412,7 @@ class ChartAxisTest extends Test:
         val rotRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](rotSpec)
         val xTicks  = xTickLabelsIn(rotRoot)
         assert(xTicks.nonEmpty, "Expected x tick labels")
-        xTicks.foldLeft(succeed): (_, t) =>
+        xTicks.foldLeft(()): (_, t) =>
             val rot = t.svgAttrs.transform.toSeq.collectFirst { case r: Svg.Transform.Rotate => r }
             rot match
                 case Some(r) => assertClose(r.deg, -45.0, "x tick rotate (L17 co-pin)")
@@ -1421,13 +1421,13 @@ class ChartAxisTest extends Test:
         // Anchor (mirrors Phase 6 Leaf 2 at line 987):
         val ancSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).xAxis(_.anchor(TextAnchor.End))
         val ancRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](ancSpec)
-        xTickLabelsIn(ancRoot).foldLeft(succeed): (_, t) =>
+        xTickLabelsIn(ancRoot).foldLeft(()): (_, t) =>
             assert(t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End), "x tick anchor (L17 co-pin)")
 
         // Font:
         val fntSpec = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.font("monospace").fontSize(14))
         val fntRoot = summon[Conversion[Chart.Spec[Sale], Svg.Root]](fntSpec)
-        xTickLabelsIn(fntRoot).foldLeft(succeed): (_, t) =>
+        xTickLabelsIn(fntRoot).foldLeft(()): (_, t) =>
             assert(t.svgAttrs.fontFamily.contains("monospace"), "x tick font-family (L17 co-pin)")
             assert(t.svgAttrs.fontSize.exists(_.toString.contains("14")), "x tick font-size (L17 co-pin)")
     }
@@ -1572,7 +1572,7 @@ class ChartAxisTest extends Test:
         // Right scale: Linear(5.0, 20.0, rangeLo=440, rangeHi=20): apply(v) = 440 + (v-5)/(20-5)*(20-440).
         val expectedYs = Chunk(440.0, 300.0, 160.0, 20.0) // apply(5), apply(10), apply(15), apply(20)
         val actualYs   = gridLines.flatMap(l => l.svgAttrs.y1.map(_.toDouble)).sorted.reverse
-        expectedYs.zip(actualYs).foldLeft(succeed): (_, pair) =>
+        expectedYs.zip(actualYs).foldLeft(()): (_, pair) =>
             val (expected, actual) = pair
             assertClose(actual, expected, s"L13a: gridline y-position mismatch (expected $expected, got $actual)")
     }

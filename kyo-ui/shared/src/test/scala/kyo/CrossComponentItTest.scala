@@ -6,7 +6,7 @@ import scala.language.implicitConversions
 
 class CrossComponentItTest extends UITest:
 
-    "input value preserved when focus moves away and back" in run {
+    "input value preserved when focus moves away and back" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -24,11 +24,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("va"), "a:first")
                 _ <- Browser.assertText(Selector.id("vb"), "b:second")
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "first")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill in two inputs independently preserves values" in run {
+    "fill in two inputs independently preserves values" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -45,11 +45,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.fill(Selector.id("b"), "y")
                 _ <- Browser.assertText(Selector.id("va"), "a:xz")
                 _ <- Browser.assertText(Selector.id("vb"), "b:y")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox enables input" in run {
+    "checkbox enables input" in {
         val app: UI < Async =
             for
                 enabled <- Signal.initRef(false)
@@ -68,11 +68,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("i"))
                 _ <- Browser.fill(Selector.id("i"), "now enabled")
                 _ <- Browser.assertText(Selector.id("v"), "val:now enabled")
-            yield succeed
+            yield ()
         }
     }
 
-    "select option enables corresponding input" in run {
+    "select option enables corresponding input" in {
         val app: UI < Async =
             for
                 mode  <- Signal.initRef("none")
@@ -94,11 +94,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.select(Selector.id("mode"), "custom")
                 _ <- Browser.fill(Selector.id("custom-val"), "my value")
                 _ <- Browser.assertText(Selector.id("v"), "val:my value")
-            yield succeed
+            yield ()
         }
     }
 
-    "input updates multiple display elements" in run {
+    "input updates multiple display elements" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -113,11 +113,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("echo"), "echo:hello")
                 _ <- Browser.assertText(Selector.id("len"), "len:5")
                 _ <- Browser.assertText(Selector.id("upper"), "upper:HELLO")
-            yield succeed
+            yield ()
         }
     }
 
-    "input value drives button disabled state" in run {
+    "input value drives button disabled state" in {
         val app: UI < Async =
             for
                 text    <- Signal.initRef("")
@@ -136,11 +136,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("sub"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "form with input checkbox select radio all contribute to output" in run {
+    "form with input checkbox select radio all contribute to output" in {
         val app: UI < Async =
             for
                 text     <- Signal.initRef("")
@@ -176,11 +176,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.click(Selector.id("r2"))
                 _ <- Browser.click(Selector.id("go"))
                 _ <- Browser.assertText(Selector.id("out"), "hello|true|b|r2")
-            yield succeed
+            yield ()
         }
     }
 
-    "button click updates multiple signals" in run {
+    "button click updates multiple signals" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(0)
@@ -200,11 +200,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:10")
                 _ <- Browser.assertText(Selector.id("vc"), "c:100")
-            yield succeed
+            yield ()
         }
     }
 
-    "delete from middle of list then fill remaining input" in run {
+    "delete from middle of list then fill remaining input" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -223,11 +223,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "log:A:hello")
                 _ <- Browser.fill(Selector.id("inp-C"), "world")
                 _ <- Browser.assertText(Selector.id("v"), "log:C:world")
-            yield succeed
+            yield ()
         }
     }
 
-    "label click focuses associated input" in run {
+    "label click focuses associated input" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -239,11 +239,11 @@ class CrossComponentItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("lbl"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "two forms submit independently" in run {
+    "two forms submit independently" in {
         val app: UI < Async =
             for
                 r1 <- Signal.initRef("")
@@ -271,11 +271,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v2"), "")
                 _ <- Browser.click(Selector.id("sub2"))
                 _ <- Browser.assertText(Selector.id("v2"), "f2:bbb")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid fill across 5 inputs" in run {
+    "rapid fill across 5 inputs" in {
         val app: UI < Async =
             for refs <- Kyo.foreach(Chunk.from(0 until 5))(i => Signal.initRef("").map(r => (i, r)))
             yield
@@ -298,11 +298,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v2"), "v2:c")
                 _ <- Browser.assertText(Selector.id("v3"), "v3:d")
                 _ <- Browser.assertText(Selector.id("v4"), "v4:e")
-            yield succeed
+            yield ()
         }
     }
 
-    "select changes which component is rendered" in run {
+    "select changes which component is rendered" in {
         val app: UI < Async =
             for
                 mode   <- Signal.initRef("text")
@@ -328,11 +328,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.select(Selector.id("mode"), "check")
                 _ <- Browser.click(Selector.id("field"))
                 _ <- Browser.assertText(Selector.id("v"), "check:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "form submit reads all SignalRef values all current" in run {
+    "form submit reads all SignalRef values all current" in {
         val app: UI < Async =
             for
                 a      <- Signal.initRef("")
@@ -358,11 +358,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.fill(Selector.id("b"), "world")
                 _ <- Browser.click(Selector.id("go"))
                 _ <- Browser.assertText(Selector.id("v"), "result:hello|world")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill form fields in reverse order all captured" in run {
+    "fill form fields in reverse order all captured" in {
         val app: UI < Async =
             for
                 a      <- Signal.initRef("")
@@ -390,11 +390,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.fill(Selector.id("a"), "first")
                 _ <- Browser.click(Selector.id("go"))
                 _ <- Browser.assertText(Selector.id("v"), "result:first|second|third")
-            yield succeed
+            yield ()
         }
     }
 
-    "interact switch page come back values preserved" in run {
+    "interact switch page come back values preserved" in {
         val app: UI < Async =
             for
                 page <- Signal.initRef(1)
@@ -419,11 +419,11 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vb"), "b:world")
                 _ <- Browser.click(Selector.id("p1"))
                 _ <- Browser.assertText(Selector.id("va"), "a:hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox enables input fill uncheck disabled signal preserved" in run {
+    "checkbox enables input fill uncheck disabled signal preserved" in {
         val app: UI < Async =
             for
                 enabled <- Signal.initRef(false)
@@ -446,7 +446,7 @@ class CrossComponentItTest extends UITest:
                 _ <- Browser.click(Selector.id("toggle"))
                 _ <- Browser.assertText(Selector.id("off"), "disabled")
                 _ <- Browser.assertText(Selector.id("v"), "val:data")
-            yield succeed
+            yield ()
         }
     }
 

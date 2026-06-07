@@ -5,7 +5,7 @@ import kyo.*
 // RFC 6265: HTTP State Management Mechanism (Cookies)
 // Tests validate cookie serialization/parsing per the RFC specification.
 // Failing tests indicate RFC non-compliance — do NOT adjust assertions to match implementation.
-class Rfc6265Test extends Test:
+class Rfc6265Test extends BaseHttpTest:
 
     // ==================== Set-Cookie Serialization ====================
 
@@ -220,7 +220,7 @@ class Rfc6265Test extends Test:
             )(identity)
         }
 
-    "Section 4.1 - Server sets cookie via Set-Cookie header" in runNotNative {
+    "Section 4.1 - Server sets cookie via Set-Cookie header".notNative in {
         val route = HttpRoute.getRaw("set-cookie").response(_.bodyText)
         val ep = route.handler { _ =>
             HttpResponse.ok("ok")
@@ -236,7 +236,7 @@ class Rfc6265Test extends Test:
         }
     }
 
-    "Section 4.2 - Client sends cookie via Cookie header" in runNotNative {
+    "Section 4.2 - Client sends cookie via Cookie header".notNative in {
         val route = HttpRoute.getRaw("read-cookie")
             .request(_.headerOpt[String]("cookie"))
             .response(_.bodyText)
@@ -254,7 +254,7 @@ class Rfc6265Test extends Test:
         }
     }
 
-    "Section 4.1 - Server sets multiple cookies" in runNotNative {
+    "Section 4.1 - Server sets multiple cookies".notNative in {
         val route = HttpRoute.getRaw("multi-cookie").response(_.bodyText)
         val ep = route.handler { _ =>
             HttpResponse.ok("ok")

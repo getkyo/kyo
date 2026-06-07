@@ -16,7 +16,7 @@ import scala.jdk.CollectionConverters.*
   * Shutdown hooks are stored in `java.lang.ApplicationShutdownHooks.hooks` (an IdentityHashMap). The global test JVM opens
   * `java.base/java.lang` via `--add-opens`, so setAccessible(true) is allowed in the test suite.
   */
-class BrowserLauncherPlatformTest extends Test:
+class BrowserLauncherPlatformTest extends BaseBrowserTest:
 
     // --- helpers ---
 
@@ -89,7 +89,7 @@ class BrowserLauncherPlatformTest extends Test:
     }
 
     // Hook installation: register then remove; assert removeShutdownHook returns true.
-    "registerShutdownHook installs a shutdown hook that can be found and removed" in run {
+    "registerShutdownHook installs a shutdown hook that can be found and removed" in {
         Scope.run {
             Command("sh", "-c", "sleep 30").spawn.map { proc =>
                 BrowserLauncherPlatform.registerShutdownHook(proc).map { _ =>
@@ -178,7 +178,7 @@ class BrowserLauncherPlatformTest extends Test:
     }
 
     // Hook thread is non-daemon.
-    "registerShutdownHook installs a non-daemon thread" in run {
+    "registerShutdownHook installs a non-daemon thread" in {
         Scope.run {
             Command("sh", "-c", "sleep 30").spawn.map { proc =>
                 BrowserLauncherPlatform.registerShutdownHook(proc).map { _ =>

@@ -2,11 +2,11 @@ package kyo
 
 import scala.util.control.NoStackTrace
 
-class LogTest extends Test:
+class LogTest extends kyo.test.Test[Any]:
 
     case object ex extends NoStackTrace
 
-    "log" in run {
+    "log" in {
         for
             _ <- Log.trace("trace")
             _ <- Log.debug("debug")
@@ -18,7 +18,7 @@ class LogTest extends Test:
             _ <- Log.info("info", ex)
             _ <- Log.warn("warn", ex)
             _ <- Log.error("error", ex)
-        yield succeed
+        yield succeed("all log methods complete without error")
         end for
     }
 
@@ -34,7 +34,7 @@ class LogTest extends Test:
         Log.live.unsafe.info("info", ex)
         Log.live.unsafe.warn("warn", ex)
         Log.live.unsafe.error("error", ex)
-        succeed
+        succeed("all unsafe log methods complete without error")
     }
 
     "withConsoleLogger" in {

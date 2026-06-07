@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.CdpTypes.*
 
-class CdpTypesTest extends kyo.Test:
+class CdpTypesTest extends kyo.BaseBrowserTest:
 
     "MouseEventType wire values" - {
         "Moved.wire == \"mouseMoved\"" in {

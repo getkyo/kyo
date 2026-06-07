@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-class YamlEventReaderTest extends Test:
+class YamlEventReaderTest extends kyo.test.Test[Any]:
 
     import Yaml.Events.CollectionKind
     import Yaml.Events.Event

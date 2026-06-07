@@ -18,6 +18,14 @@ private[kyo] trait PathDirectories:
     /** The current user's home directory. */
     private[kyo] def homePath: Path
 
+    /** The current working directory at the time of the call.
+      *
+      * On JVM/Native this reads the `user.dir` system property; on Node it calls `process.cwd()`.
+      * The value is captured eagerly — if the application changes its working directory at
+      * runtime (e.g., via `process.chdir`), call this method again to get the new path.
+      */
+    private[kyo] def cwdPath: Path
+
     /** Normalised OS tag: `"mac"`, `"linux"`, or `"win"`. */
     private[kyo] def osPlatform: String
 

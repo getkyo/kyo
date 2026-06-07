@@ -10,7 +10,7 @@ import kyo.internal.util.*
   *
   * Tests that FAIL expose real vulnerabilities -- that is the desired outcome. These tests must NOT be weakened to pass.
   */
-class HttpSecurityTest extends kyo.Test:
+class HttpSecurityTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -42,7 +42,7 @@ class HttpSecurityTest extends kyo.Test:
     end parseRaw
 
     /** Assert that the parser rejects the input: either no request produced, or onClosed called. */
-    private def assertRejected(rawRequest: String, context: String = ""): Unit =
+    private def assertRejected(rawRequest: String, context: String = "")(using kyo.test.AssertScope): Unit =
         val (req, closed) = parseRaw(rawRequest)
         val ctx           = if context.nonEmpty then s" ($context)" else ""
         discard(assert(
@@ -104,7 +104,7 @@ class HttpSecurityTest extends kyo.Test:
                         s"Content-Length=${req.contentLength}. This enables request smuggling attacks (CVE-2019-20445)."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject duplicate Content-Length with same values (still ambiguous per RFC)" in {
@@ -122,7 +122,7 @@ class HttpSecurityTest extends kyo.Test:
                         "Strict parsers should reject any duplicate Content-Length."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -151,7 +151,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -185,7 +185,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject Transfer-Encoding with space before colon" in {
@@ -204,7 +204,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -234,7 +234,7 @@ class HttpSecurityTest extends kyo.Test:
                 // because the continuation line " chunked" might be interpreted as a
                 // separate header by some implementations
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject obs-fold continuation line (space after CRLF)" in {
@@ -261,7 +261,7 @@ class HttpSecurityTest extends kyo.Test:
                         "Obs-fold MUST be rejected per RFC 7230 section 3.2.4 (CVE-2022-32215)."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -300,7 +300,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject bare LF as header terminator" in {
@@ -315,7 +315,7 @@ class HttpSecurityTest extends kyo.Test:
                         "Only CRLF (\\r\\n) is valid per RFC 7230."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -345,7 +345,7 @@ class HttpSecurityTest extends kyo.Test:
                 end if
                 // contentLength == -1 means it was rejected (parseContentLength returned -1), which is acceptable
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject negative Content-Length" in {
@@ -361,7 +361,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject Content-Length with leading plus sign" in {
@@ -381,7 +381,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject Content-Length with hex value" in {
@@ -400,7 +400,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject Content-Length exceeding Int.MaxValue" in {
@@ -417,7 +417,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -440,7 +440,7 @@ class HttpSecurityTest extends kyo.Test:
                 )
             end if
             // Acceptable: NeedMore (waiting for 2GB of data) -- not ideal but not a crash
-            succeed
+            succeed("security check passed: decoder did not overflow on large chunk size")
         }
 
         "Hyper GHSA: reject chunk size exceeding 64-bit range" in {
@@ -455,7 +455,7 @@ class HttpSecurityTest extends kyo.Test:
                         "Integer overflow in chunk size parsing (Hyper GHSA)."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "CVE-2025-22871: reject bare LF as chunk line terminator" in {
@@ -471,7 +471,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject chunk with missing CRLF after data" in {
@@ -488,7 +488,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject negative chunk size" in {
@@ -500,7 +500,7 @@ class HttpSecurityTest extends kyo.Test:
                         "Chunk sizes must be non-negative hex values."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -525,7 +525,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject multiple spaces in request line" in {
@@ -551,7 +551,7 @@ class HttpSecurityTest extends kyo.Test:
                     end if
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -576,7 +576,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject Transfer-Encoding: xchunked" in {
@@ -593,7 +593,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject Transfer-Encoding with tab after colon" in {
@@ -616,7 +616,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -649,7 +649,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
 
         "reject null byte in header value" in {
@@ -672,7 +672,7 @@ class HttpSecurityTest extends kyo.Test:
                     )
                 end if
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 
@@ -700,7 +700,7 @@ class HttpSecurityTest extends kyo.Test:
                         "Header lines without colons must cause request rejection (CVE-2019-20444)."
                 )
             end if
-            succeed
+            succeed("security check passed: parser correctly rejected or did not exhibit the vulnerability")
         }
     }
 

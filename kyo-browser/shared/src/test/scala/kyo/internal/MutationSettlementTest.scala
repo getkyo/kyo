@@ -8,37 +8,37 @@ class MutationSettlementTest extends kyo.BrowserTest:
 
     "MutationSettlement.parseSettlementValue" - {
 
-        "non-JSON input → Malformed" in run {
+        "non-JSON input → Malformed" in {
             val r = MutationSettlement.parseSettlementValue("done")
             assert(r == MutationSettlement.SettlementResult.Malformed, s"expected Malformed got $r")
         }
 
-        "JSON object missing `tag` → Malformed" in run {
+        "JSON object missing `tag` → Malformed" in {
             val r = MutationSettlement.parseSettlementValue("""{"count":5,"delta":3}""")
             assert(r == MutationSettlement.SettlementResult.Malformed, s"expected Malformed got $r")
         }
 
-        "tag=done with count and delta → Done" in run {
+        "tag=done with count and delta → Done" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"done","count":5,"delta":123}""")
             assert(r == MutationSettlement.SettlementResult.Done, s"expected Done got $r")
         }
 
-        "tag=done without count/delta → Done (fields ignored)" in run {
+        "tag=done without count/delta → Done (fields ignored)" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"done"}""")
             assert(r == MutationSettlement.SettlementResult.Done, s"expected Done got $r")
         }
 
-        "tag=timeout with count/delta → Timeout(count, delta)" in run {
+        "tag=timeout with count/delta → Timeout(count, delta)" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"timeout","count":7,"delta":999}""")
             assert(r == MutationSettlement.SettlementResult.Timeout(7L, 999L), s"expected Timeout(7, 999) got $r")
         }
 
-        "tag=timeout missing count → Malformed" in run {
+        "tag=timeout missing count → Malformed" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"timeout","delta":3}""")
             assert(r == MutationSettlement.SettlementResult.Malformed, s"expected Malformed got $r")
         }
 
-        "tag=postfail with error → PostFailed(error)" in run {
+        "tag=postfail with error → PostFailed(error)" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"postfail","error":"server unreachable"}""")
             assert(
                 r == MutationSettlement.SettlementResult.PostFailed("server unreachable"),
@@ -46,7 +46,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
             )
         }
 
-        "tag=postfail with error containing JSON-significant characters preserves the message" in run {
+        "tag=postfail with error containing JSON-significant characters preserves the message" in {
             val payload = """{"tag":"postfail","error":"fetch failed: code 500 | retry 0|0"}"""
             val r       = MutationSettlement.parseSettlementValue(payload)
             assert(
@@ -55,22 +55,22 @@ class MutationSettlementTest extends kyo.BrowserTest:
             )
         }
 
-        "tag=postfail with empty error → PostFailed('')" in run {
+        "tag=postfail with empty error → PostFailed('')" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"postfail","error":""}""")
             assert(r == MutationSettlement.SettlementResult.PostFailed(""), s"expected PostFailed('') got $r")
         }
 
-        "tag=postfail missing error → Malformed" in run {
+        "tag=postfail missing error → Malformed" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"postfail"}""")
             assert(r == MutationSettlement.SettlementResult.Malformed, s"expected Malformed got $r")
         }
 
-        "unknown tag → Malformed" in run {
+        "unknown tag → Malformed" in {
             val r = MutationSettlement.parseSettlementValue("""{"tag":"weird","count":5,"delta":10}""")
             assert(r == MutationSettlement.SettlementResult.Malformed, s"expected Malformed for unknown tag, got $r")
         }
 
-        "tag=timeout, Long.MaxValue / -1 → Timeout(MaxValue, -1)" in run {
+        "tag=timeout, Long.MaxValue / -1 → Timeout(MaxValue, -1)" in {
             val r = MutationSettlement.parseSettlementValue(s"""{"tag":"timeout","count":${Long.MaxValue},"delta":-1}""")
             assert(
                 r == MutationSettlement.SettlementResult.Timeout(Long.MaxValue, -1L),
@@ -88,7 +88,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // verifies a click that would otherwise wait for a 200ms-deferred mutation returns ~immediately under the
     // opt-out).
 
-    "Duration.Zero opt-out: pure config check" in run {
+    "Duration.Zero opt-out: pure config check" in {
         val cfg = Browser.SessionConfig.default.mutationQuiescenceWindow(Duration.Zero)
         assert(
             cfg.mutationQuiescenceWindow == Duration.Zero,
@@ -96,7 +96,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
         )
     }
 
-    "Duration.Zero opt-out: browser-localhost: click skips settlement and returns immediately" in run {
+    "Duration.Zero opt-out: browser-localhost: click skips settlement and returns immediately" in {
         // Click handler defers a DOM mutation by 200ms. With default settlement, the click waits past 200ms+50ms
         // (the quiescence window) before returning. Under the `Duration.Zero` opt-out the click MUST return
         // BEFORE the deferred mutation lands; the post-action `text` read still sees the pre-mutation value.
@@ -143,7 +143,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // `BrowserAssertionTimedOutException`. Assertion is on Abort shape (the typed timeout, not a generic
     // BrowserException), not on elapsed timing.
 
-    "awaitQuiescence Timeout propagates through afterAction as BrowserAssertionTimedOutException" in run {
+    "awaitQuiescence Timeout propagates through afterAction as BrowserAssertionTimedOutException" in {
         withBrowserOnLocalhost {
             // Static button on page load (no mutations yet); actionability passes immediately.
             // The addEventListener call attaches the handler that starts a setInterval churn loop AFTER
@@ -184,7 +184,8 @@ class MutationSettlementTest extends kyo.BrowserTest:
                     }.map { result =>
                         // Behavioural assertion on Abort SHAPE, NOT on timing.
                         result match
-                            case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                            case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                                assert(ex.getMessage.contains("Assertion failed"))
                             case other =>
                                 fail(s"expected BrowserAssertionTimedOutException from awaitQuiescence Timeout propagation, got $other")
                     }
@@ -205,7 +206,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // We then redefine `__kyoMutCount` as a throwing getter, so when `awaitQuiescence` reads it the IIFE
     // rejects with an exception.
 
-    "awaitQuiescence Malformed propagates through afterAction as BrowserProtocolErrorException" in run {
+    "awaitQuiescence Malformed propagates through afterAction as BrowserProtocolErrorException" in {
         withBrowserOnLocalhost {
             Browser.eval(
                 """document.body.innerHTML = '<button id="b">click</button>';
@@ -252,7 +253,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // awaitQuiescence returns `postfail|<msg>` and `afterAction` surfaces it as
     // `BrowserProtocolErrorException` carrying the original kyo-ui POST failure message.
 
-    "awaitQuiescence PostFailed propagates through afterAction as BrowserProtocolErrorException" in run {
+    "awaitQuiescence PostFailed propagates through afterAction as BrowserProtocolErrorException" in {
         withBrowserOnLocalhost {
             Browser.eval(
                 """document.body.innerHTML = '<button id="b">click</button>';
@@ -290,7 +291,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // subtree, settlement must still observe the mutation. Without sibling observation, the quiet window
     // would close before the framework's reactive re-render landed.
 
-    "installObserver also watches [data-kyo-reactive] siblings" in run {
+    "installObserver also watches [data-kyo-reactive] siblings" in {
         withBrowserOnLocalhost {
             // Without sibling observation, settlement sees no mutation in the button's subtree and exits at firstGrace.
             // With (a), the 200ms-delayed sibling write lands within firstGrace, settlement transitions into the
@@ -338,7 +339,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // reactive zone, awaitQuiescence must await the queue before counting quiescence. Otherwise the queued
     // continuation lands after settlement returns and the test would see a stale DOM.
 
-    "awaitQuiescence awaits window._kyoPostQ before counting quiescence" in run {
+    "awaitQuiescence awaits window._kyoPostQ before counting quiescence" in {
         withBrowserOnLocalhost {
             // Without the `_kyoPostQ` await, settlement starts the quiescence loop immediately and exits at firstGrace.
             // With the await, settlement blocks until the 200ms-delayed promise resolves, so the click takes >= 200ms.
@@ -394,7 +395,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // (the 'shared' branch in installObserver). Both `Async.zip` arms must complete cleanly; the assertion is
     // that neither arm raises, proving the ref-count handshake correctly admits the overlapping caller.
 
-    "'shared' install path: two concurrent afterAction calls succeed via Async.zip" in run {
+    "'shared' install path: two concurrent afterAction calls succeed via Async.zip" in {
         // Targets the "shared install" branch in `installObserver`: exercised when one `afterAction` overlaps
         // another in the same tab. We invoke `MutationSettlement.afterAction` directly (it is `private[kyo]`
         // and accessible from this `kyo.internal` test) with a simple `Browser.eval` payload as the "action".
@@ -456,7 +457,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
     // document-rooted observer, settlement would see the staggered out-of-scope mutations and raise
     // `BrowserAssertionTimedOutException` at the deadline. Negative assertion: click MUST succeed.
 
-    "scopeSelector = Present(s): out-of-scope mutations do NOT trigger settlement" in run {
+    "scopeSelector = Present(s): out-of-scope mutations do NOT trigger settlement" in {
         // NOTE on JS setup: same as the other browser scenarios; set innerHTML first, then install handlers
         // via top-level eval (innerHTML-injected `<script>` tags don't execute per HTML5 spec).
         withBrowserOnLocalhost {
@@ -507,7 +508,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
         }
     }
 
-    "two parallel Browser.click on the same tab share a single observer install" in run {
+    "two parallel Browser.click on the same tab share a single observer install" in {
         // Resolver concurrency contract: two parallel `Browser.click` calls on the same tab must both run
         // end-to-end without their resolution state colliding. The Resolver pipeline must use a handle that
         // is stable across DOM mutations (i.e. `Runtime.evaluate(returnByValue=false)` → `objectId` →
@@ -547,7 +548,7 @@ class MutationSettlementTest extends kyo.BrowserTest:
                                 n >= 1,
                                 s"expected window.__clickCount>=1 (parallel Browser.click pipeline ran end-to-end past the handle-stable Resolver), got '$counter'"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }

@@ -6,13 +6,12 @@ import kyo.Chart.*
 import kyo.Chunk
 import kyo.Maybe
 import kyo.Present
-import kyo.Test
 import kyo.UI
 import kyo.UI.*
 import kyo.UI.Ast.*
 import scala.language.implicitConversions
 
-class ScaleTest extends Test:
+class ScaleTest extends kyo.test.Test[Any]:
 
     "niceTicks(0, 61200, 5) returns the demo snapped ticks" in {
         // The BarChart demo calls niceTicks(0, 61200, 5).

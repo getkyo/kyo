@@ -1656,3 +1656,5 @@ Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cov
 - [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
 - [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
 - [**Snake**](shared/src/test/scala/demo/Snake.scala): the classic game on the raw [SVG](#svg) API: a grid of `Svg.rect`s driven by a background game-loop fiber and arrow-key / WASD input, with all state in one `SignalRef`.
+- [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
+- [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.

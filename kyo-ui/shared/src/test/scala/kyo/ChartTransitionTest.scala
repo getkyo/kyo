@@ -33,7 +33,7 @@ import scala.language.implicitConversions
   *      produces the same from/to animate pair on both pulls, not from==to (dead animation) on the second.
   *   6. Default key (x encoding) vs explicit `.key(...)` override: controls which rects update vs enter.
   */
-class ChartTransitionTest extends Test:
+class ChartTransitionTest extends kyo.test.Test[Any]:
 
     // ---- shared domain types ----
 
@@ -52,7 +52,7 @@ class ChartTransitionTest extends Test:
     private val Baseline = 440.0
     private val Tol      = 1.0e-4
 
-    private def assertClose(actual: Double, expected: Double, tag: String): Assertion =
+    private def assertClose(actual: Double, expected: Double, tag: String)(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < Tol, s"$tag: expected $expected but got $actual")
 
     /** Extract all Svg.Animate children from a rect's children list. */
@@ -85,7 +85,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Test 1: UPDATE emits animate with from=prev and to=new ----
 
-    "UPDATE: a key present before and after emits a rect with two Svg.Animate children (from=prev, to=new)" in run {
+    "UPDATE: a key present before and after emits a rect with two Svg.Animate children (from=prev, to=new)" in {
         // Scale: linear(0, 4000), baseline=440.
         //   rev=1000: barY=335, barH=105
         //   rev=2000: barY=230, barH=210
@@ -138,7 +138,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Test 2: ENTER emits animate with from at baseline ----
 
-    "ENTER: a new key emits animate with from=0 (height) and from=baseline (y)" in run {
+    "ENTER: a new key emits animate with from=0 (height) and from=baseline (y)" in {
         // "Feb" is a new key that appears only in the updated data.
         // ENTER: height animate from=0 to=barH(Feb), y animate from=baseline to=barY(Feb).
         // rev=2000: barH=210, barY=230, baseline=440.
@@ -170,7 +170,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Test 3: .animate(_.none) emits zero animate children ----
 
-    "animate(_.none): zero Svg.Animate children on emitted rects" in run {
+    "animate(_.none): zero Svg.Animate children on emitted rects" in {
         val initial = Chunk(Sale("Jan", Rev(1000.0)))
         val updated = Chunk(Sale("Jan", Rev(2000.0)))
         for
@@ -194,7 +194,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Test 4: LINE under .animate(_.ease(...)) emits a SMIL <animate> on d (Phase 08 morph) ----
 
-    "LINE animate: stable-category update emits <animate attributeName=\"d\"> with from/to d strings" in run {
+    "LINE animate: stable-category update emits <animate attributeName=\"d\"> with from/to d strings" in {
         // Phase 08: a line chart with animation enabled and stable categories (same command structure)
         // now emits a SMIL `<animate attributeName="d" from=... to=...>` child on the path element.
         // Jan and Feb are present in both emissions, so the Band scale produces the same x positions
@@ -246,7 +246,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Test 5: multi-pull idempotency (engine double-pull hazard) ----
 
-    "double-pull idempotency: rendering the same emission twice produces the same from/to animate pair" in run {
+    "double-pull idempotency: rendering the same emission twice produces the same from/to animate pair" in {
         // Simulates the reactive engine pulling the render projection more than once per emission
         // (e.g. at normalize AND at emit). Both pulls must produce the SAME correct from->new delta,
         // not from==to (a dead animation) on the second pull.
@@ -308,7 +308,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Test 6 (was Test 5): default key (x encoding) vs explicit .key(...) override ----
 
-    "key defaults to x encoding; .key(...) override controls update vs enter" in run {
+    "key defaults to x encoding; .key(...) override controls update vs enter" in {
         // Without an explicit key override, the key is the x encoding value (month string).
         // Row "Jan" in initial and updated -> UPDATE (same x-key "Jan").
         //
@@ -354,7 +354,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Leaf 8 (INV-036 + INV-016): curved-path morph with Curve.monotone ----
 
-    "curved line (Curve.monotone) morphs via SMIL when point count is stable" in run {
+    "curved line (Curve.monotone) morphs via SMIL when point count is stable" in {
         // INV-016: curve=Curve.monotone produces cubic Bezier commands (C).
         // INV-036: with stable point count the SMIL morph fires.
         //
@@ -417,7 +417,7 @@ class ChartTransitionTest extends Test:
     // After the fix, `lowerLineWithTransitions` resolves colors via resolvePalette, so the "a" series path
     // carries the colorScale cyan and the "b" series path carries the colorScale amber, matching the legend
     // and the static (non-animated) line path.
-    "an animated color-split line honors an explicit categorical colorScale (FIX B, transitions path)" in run {
+    "an animated color-split line honors an explicit categorical colorScale (FIX B, transitions path)" in {
         case class SRow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
         val amber = Style.Color.rgb(245, 158, 11)
@@ -477,7 +477,7 @@ class ChartTransitionTest extends Test:
 
     // ---- Leaf L18 (GAP-TRANS-BAR-ENCODINGS): animated bar emits opacity/label/tooltip encodings ----
 
-    "animated bar emits opacity/label/tooltip encodings matching the static path (L18, GAP-TRANS-BAR-ENCODINGS)" in run {
+    "animated bar emits opacity/label/tooltip encodings matching the static path (L18, GAP-TRANS-BAR-ENCODINGS)" in {
         // Static bar (no Signal ref): lowerBarSimple -> applyBarEncodings -> encodings applied.
         // Animated bar (Signal ref + .animate): lowerBarSimpleWithTransitions -> was missing applyBarEncodings.
         // Both must emit fill-opacity="0.5", a <title> tooltip child, and a sibling label <text>.
@@ -542,7 +542,7 @@ class ChartTransitionTest extends Test:
 
     // ---- L18 co-pin: no-encoding animated bar is byte-identical to today (L8 co-pin arm for transitions) ----
 
-    "no-encoding animated bar is byte-identical through the fix (L18 co-pin)" in run {
+    "no-encoding animated bar is byte-identical through the fix (L18 co-pin)" in {
         // A bar with NO opacity/label/tooltip encodings. After the fix, applyBarEncodings returns the rect
         // unchanged (Absent arms for all three encodings) and an empty label Chunk. The SMIL animates are
         // attached as before. Output must be byte-identical to the pre-fix animated bar.

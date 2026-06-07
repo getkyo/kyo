@@ -8,7 +8,7 @@ import kyo.internal.SizeScale
   *
   * All tests are pure deterministic math (AF1 from prep.md).
   */
-class SizeScaleTest extends Test:
+class SizeScaleTest extends kyo.test.Test[Any]:
 
     private val Tol = 1e-9
 

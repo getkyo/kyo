@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpStatusTest extends Test:
+class HttpStatusTest extends BaseHttpTest:
 
     "code" - {
         "informational codes are in 1xx range" in {
@@ -127,13 +127,13 @@ class HttpStatusTest extends Test:
         }
 
         "rejects code below 100" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 HttpStatus(99)
             }
         }
 
         "rejects code above 599" in {
-            assertThrows[IllegalArgumentException] {
+            interceptThrown[IllegalArgumentException] {
                 HttpStatus(600)
             }
         }
@@ -220,7 +220,7 @@ class HttpStatusTest extends Test:
                     s"HttpStatus($code) should be a named enum value, not Custom"
                 )
             }
-            succeed
+            ()
         }
     }
 

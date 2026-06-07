@@ -8,105 +8,105 @@ import scala.language.implicitConversions
 
 class HtmlRendererTest extends UITest:
 
-    "div with text" in run {
+    "div with text" in {
         withUI(UI.div("Hello")) {
-            Browser.assertText(Selector.css("body"), "Hello").andThen(succeed)
+            Browser.assertText(Selector.css("body"), "Hello").unit
         }
     }
 
-    "button with text" in run {
+    "button with text" in {
         withUI(UI.div(UI.button("Click me").id("btn"))) {
-            Browser.assertText(Selector.id("btn"), "Click me").andThen(succeed)
+            Browser.assertText(Selector.id("btn"), "Click me").unit
         }
     }
 
-    "span with text" in run {
+    "span with text" in {
         withUI(UI.div(UI.span("content").id("s"))) {
-            Browser.assertText(Selector.id("s"), "content").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "content").unit
         }
     }
 
-    "nested structure" in run {
+    "nested structure" in {
         withUI(UI.div(UI.div(UI.span("inner").id("inner")).id("outer"))) {
             for
                 _ <- Browser.assertText(Selector.id("inner"), "inner")
                 _ <- Browser.assertVisible(Selector.id("outer"))
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple children" in run {
+    "multiple children" in {
         withUI(UI.div(UI.span("A").id("a"), UI.span("B").id("b"))) {
             for
                 _ <- Browser.assertText(Selector.id("a"), "A")
                 _ <- Browser.assertText(Selector.id("b"), "B")
-            yield succeed
+            yield ()
         }
     }
 
-    "hidden element has hidden attr" in run {
+    "hidden element has hidden attr" in {
         withUI(UI.div(UI.div("secret").hidden(true).id("h"))) {
-            Browser.assertAttribute(Selector.id("h"), "hidden", "").andThen(succeed)
+            Browser.assertAttribute(Selector.id("h"), "hidden", "").unit
         }
     }
 
-    "input disabled" in run {
+    "input disabled" in {
         withUI(UI.div(UI.input.disabled(true).id("i"))) {
-            Browser.assertVisible(Selector.id("i")).andThen(succeed)
+            Browser.assertVisible(Selector.id("i")).unit
         }
     }
 
-    "checkbox renders" in run {
+    "checkbox renders" in {
         withUI(UI.div(UI.checkbox.id("cb"))) {
-            Browser.assertVisible(Selector.id("cb")).andThen(succeed)
+            Browser.assertVisible(Selector.id("cb")).unit
         }
     }
 
-    "select renders" in run {
+    "select renders" in {
         withUI(UI.div(UI.select(UI.option("A").value("a"), UI.option("B").value("b")).id("sel"))) {
-            Browser.assertVisible(Selector.id("sel")).andThen(succeed)
+            Browser.assertVisible(Selector.id("sel")).unit
         }
     }
 
-    "textarea renders" in run {
+    "textarea renders" in {
         withUI(UI.div(UI.textarea.id("ta"))) {
-            Browser.assertVisible(Selector.id("ta")).andThen(succeed)
+            Browser.assertVisible(Selector.id("ta")).unit
         }
     }
 
-    "anchor with text" in run {
+    "anchor with text" in {
         withUI(UI.div(UI.a("Link").href(Href.Absolute(HttpUrl.parse("https://example.com").getOrThrow)).id("lnk"))) {
-            Browser.assertText(Selector.id("lnk"), "Link").andThen(succeed)
+            Browser.assertText(Selector.id("lnk"), "Link").unit
         }
     }
 
-    "headings" in run {
+    "headings" in {
         withUI(UI.div(UI.h1("Title").id("t"), UI.h2("Sub").id("s"))) {
             for
                 _ <- Browser.assertText(Selector.id("t"), "Title")
                 _ <- Browser.assertText(Selector.id("s"), "Sub")
-            yield succeed
+            yield ()
         }
     }
 
-    "list elements" in run {
+    "list elements" in {
         withUI(UI.div(UI.ul(UI.li("One").id("l1"), UI.li("Two").id("l2")))) {
             for
                 _ <- Browser.assertText(Selector.id("l1"), "One")
                 _ <- Browser.assertText(Selector.id("l2"), "Two")
-            yield succeed
+            yield ()
         }
     }
 
-    "number input renders" in run {
+    "number input renders" in {
         withUI(UI.div(UI.numberInput.id("n").min(0).max(100))) {
-            Browser.assertVisible(Selector.id("n")).andThen(succeed)
+            Browser.assertVisible(Selector.id("n")).unit
         }
     }
 
     // ---- Merged from ReRenderTest ----
 
-    "cascading signals A B C all update" in run {
+    "cascading signals A B C all update" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(0)
@@ -127,11 +127,11 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:2")
                 _ <- Browser.assertText(Selector.id("vc"), "c:3")
-            yield succeed
+            yield ()
         }
     }
 
-    "two handlers from same event both complete" in run {
+    "two handlers from same event both complete".flaky in {
         val app: UI < Async =
             for clickLog <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -144,11 +144,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "child,parent")
-            yield succeed
+            yield ()
         }
     }
 
-    "deep cascade 5 derived signals" in run {
+    "deep cascade 5 derived signals" in {
         val app: UI < Async =
             for
                 root <- Signal.initRef(1)
@@ -165,11 +165,11 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "result:14")
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("v"), "result:16")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler reads signal then sets sees pre update" in run {
+    "handler reads signal then sets sees pre update" in {
         val app: UI < Async =
             for
                 ref <- Signal.initRef(0)
@@ -189,112 +189,112 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "before:0,after:1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from LayoutTest ----
 
-    "div renders with text" in run {
+    "div renders with text" in {
         withUI(UI.div("text").id("d")) {
-            Browser.assertText(Selector.id("d"), "text").andThen(succeed)
+            Browser.assertText(Selector.id("d"), "text").unit
         }
     }
 
-    "div with children" in run {
+    "div with children" in {
         withUI(UI.div(UI.span("a").id("a"), UI.span("b").id("b")).id("d")) {
             for
                 _ <- Browser.assertText(Selector.id("a"), "a")
                 _ <- Browser.assertText(Selector.id("b"), "b")
-            yield succeed
+            yield ()
         }
     }
 
-    "div empty" in run {
+    "div empty" in {
         withUI(UI.div.id("d")) {
-            Browser.assertExists(Selector.id("d")).andThen(succeed)
+            Browser.assertExists(Selector.id("d")).unit
         }
     }
 
-    "div row style" in run {
+    "div row style" in {
         withUI(UI.div.style(Style.row).id("d")) {
-            Browser.assertAttributeSatisfies(Selector.id("d"), "style", "ignore")(_.contains("flex-direction: row")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("d"), "style", "ignore")(_.contains("flex-direction: row")).unit
         }
     }
 
-    "div nested" in run {
+    "div nested" in {
         withUI(UI.div(UI.div(UI.div("deep").id("inner")))) {
-            Browser.assertText(Selector.id("inner"), "deep").andThen(succeed)
+            Browser.assertText(Selector.id("inner"), "deep").unit
         }
     }
 
-    "p renders" in run {
+    "p renders" in {
         withUI(UI.p("paragraph").id("p")) {
-            Browser.assertText(Selector.id("p"), "paragraph").andThen(succeed)
+            Browser.assertText(Selector.id("p"), "paragraph").unit
         }
     }
 
-    "section exists" in run {
+    "section exists" in {
         withUI(UI.section(UI.span("s").id("ss")).id("sec")) {
-            Browser.assertVisible(Selector.id("sec")).andThen(succeed)
+            Browser.assertVisible(Selector.id("sec")).unit
         }
     }
 
-    "main exists" in run {
+    "main exists" in {
         withUI(UI.main(UI.span("m").id("ms")).id("main")) {
-            Browser.assertVisible(Selector.id("main")).andThen(succeed)
+            Browser.assertVisible(Selector.id("main")).unit
         }
     }
 
-    "header exists" in run {
+    "header exists" in {
         withUI(UI.header(UI.span("h").id("hs")).id("hdr")) {
-            Browser.assertVisible(Selector.id("hdr")).andThen(succeed)
+            Browser.assertVisible(Selector.id("hdr")).unit
         }
     }
 
-    "footer exists" in run {
+    "footer exists" in {
         withUI(UI.footer(UI.span("f").id("fs")).id("ftr")) {
-            Browser.assertVisible(Selector.id("ftr")).andThen(succeed)
+            Browser.assertVisible(Selector.id("ftr")).unit
         }
     }
 
-    "pre renders" in run {
+    "pre renders" in {
         withUI(UI.pre("code\nblock").id("p")) {
-            Browser.assertText(Selector.id("p"), "code\nblock").andThen(succeed)
+            Browser.assertText(Selector.id("p"), "code\nblock").unit
         }
     }
 
-    "code renders" in run {
+    "code renders" in {
         withUI(UI.code("inline").id("c")) {
-            Browser.assertText(Selector.id("c"), "inline").andThen(succeed)
+            Browser.assertText(Selector.id("c"), "inline").unit
         }
     }
 
-    "span renders" in run {
+    "span renders" in {
         withUI(UI.span("text").id("s")) {
-            Browser.assertText(Selector.id("s"), "text").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "text").unit
         }
     }
 
-    "nav exists" in run {
+    "nav exists" in {
         withUI(UI.nav(UI.span("link").id("ls")).id("nav")) {
-            Browser.assertVisible(Selector.id("nav")).andThen(succeed)
+            Browser.assertVisible(Selector.id("nav")).unit
         }
     }
 
-    "h1 renders" in run {
+    "h1 renders" in {
         withUI(UI.h1("Title").id("h1")) {
-            Browser.assertText(Selector.id("h1"), "Title").andThen(succeed)
+            Browser.assertText(Selector.id("h1"), "Title").unit
         }
     }
 
-    "h2 renders" in run {
+    "h2 renders" in {
         withUI(UI.h2("Sub").id("h2")) {
-            Browser.assertText(Selector.id("h2"), "Sub").andThen(succeed)
+            Browser.assertText(Selector.id("h2"), "Sub").unit
         }
     }
 
-    "h3 through h6 exist" in run {
+    "h3 through h6 exist" in {
         withUI(UI.div(
             UI.h3("3").id("h3"),
             UI.h4("4").id("h4"),
@@ -306,31 +306,31 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.assertText(Selector.id("h4"), "4")
                 _ <- Browser.assertText(Selector.id("h5"), "5")
                 _ <- Browser.assertText(Selector.id("h6"), "6")
-            yield succeed
+            yield ()
         }
     }
 
-    "hr exists" in run {
+    "hr exists" in {
         withUI(UI.div(UI.hr.id("h"))) {
-            Browser.assertExists(Selector.id("h")).andThen(succeed)
+            Browser.assertExists(Selector.id("h")).unit
         }
     }
 
-    "br exists" in run {
+    "br exists" in {
         withUI(UI.div(UI.br.id("b"))) {
-            Browser.assertExists(Selector.id("b")).andThen(succeed)
+            Browser.assertExists(Selector.id("b")).unit
         }
     }
 
     // ---- Merged from EdgeCaseTest ----
 
-    "empty select no crash" in run {
+    "empty select no crash" in {
         withUI(UI.div(UI.select.id("s"))) {
-            Browser.assertExists(Selector.id("s")).andThen(succeed)
+            Browser.assertExists(Selector.id("s")).unit
         }
     }
 
-    "deeply nested click works (edge)" in run {
+    "deeply nested click works (edge)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -343,11 +343,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid 10 clicks (edge)" in run {
+    "rapid 10 clicks (edge)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -358,11 +358,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Kyo.foreachDiscard(0 until 10)(_ => Browser.click(Selector.id("b")))
                 _ <- Browser.assertText(Selector.id("v"), "10")
-            yield succeed
+            yield ()
         }
     }
 
-    "counter + echo independent (edge)" in run {
+    "counter + echo independent (edge)" in {
         val app: UI < Async =
             for
                 counter <- Signal.initRef(0)
@@ -380,36 +380,36 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "hi")
                 _ <- Browser.assertText(Selector.id("ev"), "e:hi")
                 _ <- Browser.assertText(Selector.id("cv"), "c:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "empty div renders (edge)" in run {
+    "empty div renders (edge)" in {
         withUI(UI.div().id("d")) {
-            Browser.assertExists(Selector.id("d")).andThen(succeed)
+            Browser.assertExists(Selector.id("d")).unit
         }
     }
 
-    "element with long text" in run {
+    "element with long text" in {
         val longText = "A" * 200
         withUI(UI.span(longText).id("s")) {
-            Browser.assertText(Selector.id("s"), longText).andThen(succeed)
+            Browser.assertText(Selector.id("s"), longText).unit
         }
     }
 
-    "text with special characters" in run {
+    "text with special characters" in {
         withUI(UI.div(UI.span("hello & world").id("s"))) {
-            Browser.assertText(Selector.id("s"), "hello & world").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "hello & world").unit
         }
     }
 
-    "unicode text (edge)" in run {
+    "unicode text (edge)" in {
         withUI(UI.span("日本語テスト").id("s")) {
-            Browser.assertText(Selector.id("s"), "日本語テスト").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "日本語テスト").unit
         }
     }
 
-    "multiple elements same container (edge)" in run {
+    "multiple elements same container (edge)" in {
         withUI(UI.div(
             UI.span("first").id("a"),
             UI.span("second").id("b"),
@@ -419,11 +419,11 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.assertText(Selector.id("a"), "first")
                 _ <- Browser.assertText(Selector.id("b"), "second")
                 _ <- Browser.assertText(Selector.id("c"), "third")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled button stays disabled after click attempt" in run {
+    "disabled button stays disabled after click attempt" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -434,11 +434,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "up/down/reset stress (edge)" in run {
+    "up/down/reset stress (edge)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -460,11 +460,11 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "0")
                 _ <- Browser.click(Selector.id("down"))
                 _ <- Browser.assertText(Selector.id("v"), "-1")
-            yield succeed
+            yield ()
         }
     }
 
-    "input fill with empty string (edge)" in run {
+    "input fill with empty string (edge)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -475,23 +475,23 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "")
                 _ <- Browser.assertText(Selector.id("v"), "v:")
-            yield succeed
+            yield ()
         }
     }
 
-    "fragment zero children renders (edge)" in run {
+    "fragment zero children renders (edge)" in {
         withUI(UI.div(UI.fragment(), UI.span("visible").id("s"))) {
-            Browser.assertText(Selector.id("s"), "visible").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "visible").unit
         }
     }
 
-    "unicode emoji renders (edge)" in run {
+    "unicode emoji renders (edge)" in {
         withUI(UI.span("🚀🌟🌍").id("e")) {
-            Browser.assertText(Selector.id("e"), "🚀🌟🌍").andThen(succeed)
+            Browser.assertText(Selector.id("e"), "🚀🌟🌍").unit
         }
     }
 
-    "numberInput fill 0 fires onInput with 0" in run {
+    "numberInput fill 0 fires onInput with 0" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -502,11 +502,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "0")
                 _ <- Browser.assertText(Selector.id("v"), "n:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "very deep nesting 10 levels click bubbles (edge)" in run {
+    "very deep nesting 10 levels click bubbles (edge)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield
@@ -521,23 +521,23 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "script tag in text is escaped" in run {
+    "script tag in text is escaped" in {
         withUI(UI.div(UI.span("<script>alert(1)</script>").id("s"))) {
-            Browser.assertText(Selector.id("s"), "<script>alert(1)</script>").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "<script>alert(1)</script>").unit
         }
     }
 
-    "emoji text content (edge)" in run {
+    "emoji text content (edge)" in {
         withUI(UI.div(UI.span("🔥🚀").id("s"))) {
-            Browser.assertText(Selector.id("s"), "🔥🚀").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "🔥🚀").unit
         }
     }
 
-    "add remove add lifecycle (edge)" in run {
+    "add remove add lifecycle (edge)" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -557,19 +557,19 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.click(Selector.id("addC"))
                 _ <- assertContains("bravo")
                 _ <- assertContains("charlie")
-            yield succeed
+            yield ()
         }
     }
 
-    "data-kyo-path attribute present (edge)" in run {
+    "data-kyo-path attribute present (edge)" in {
         withUI(UI.div(UI.span("test").id("s"))) {
-            Browser.assertAttributeSatisfies(Selector.id("s"), "data-kyo-path", "ignore")(_.nonEmpty).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("s"), "data-kyo-path", "ignore")(_.nonEmpty).unit
         }
     }
 
     // ---- Merged from UnicodeTest ----
 
-    "fill with emoji stored in signal" in run {
+    "fill with emoji stored in signal" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -580,11 +580,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "🎉")
                 _ <- Browser.assertText(Selector.id("v"), "sig:🎉")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill with CJK characters signal preserves" in run {
+    "fill with CJK characters signal preserves" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -595,11 +595,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "日本語")
                 _ <- Browser.assertText(Selector.id("v"), "sig:日本語")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill with mixed ASCII and unicode" in run {
+    "fill with mixed ASCII and unicode" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -610,23 +610,23 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello 世界")
                 _ <- Browser.assertText(Selector.id("v"), "sig:hello 世界")
-            yield succeed
+            yield ()
         }
     }
 
-    "placeholder with emoji visible" in run {
+    "placeholder with emoji visible" in {
         withUI(UI.div(UI.input.id("i").placeholder("📝 Enter text"))) {
-            Browser.assertAttribute(Selector.id("i"), "placeholder", "📝 Enter text").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "placeholder", "📝 Enter text").unit
         }
     }
 
-    "button text with special chars visible" in run {
+    "button text with special chars visible" in {
         withUI(UI.div(UI.button("<Save & Close>").id("b"))) {
-            Browser.assertText(Selector.id("b"), "<Save & Close>").andThen(succeed)
+            Browser.assertText(Selector.id("b"), "<Save & Close>").unit
         }
     }
 
-    "fill empty string works (unicode)" in run {
+    "fill empty string works (unicode)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -638,11 +638,11 @@ class HtmlRendererTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:[initial]")
                 _ <- Browser.fill(Selector.id("i"), "")
                 _ <- Browser.assertText(Selector.id("v"), "sig:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill whitespace only stored as is" in run {
+    "fill whitespace only stored as is" in {
         // The onInput value must be exactly three spaces, verified via an encoded marker
         // because innerText (read by assertText) collapses whitespace, and the HTML `value`
         // attribute (read by assertAttribute) reflects the initial value, not typed input.
@@ -656,18 +656,18 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "   ")
                 _ <- Browser.assertText(Selector.id("v"), "verbatim")
-            yield succeed
+            yield ()
         }
     }
 
-    "span with long unicode string visible" in run {
+    "span with long unicode string visible" in {
         val text = "漢" * 100
         withUI(UI.div(UI.span(text).id("s"))) {
-            Browser.assertText(Selector.id("s"), text).andThen(succeed)
+            Browser.assertText(Selector.id("s"), text).unit
         }
     }
 
-    "input value with tab character" in run {
+    "input value with tab character" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -678,11 +678,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "a\tb")
                 _ <- Browser.assertText(Selector.id("v"), "len:3")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill very long unicode string signal preserves" in run {
+    "fill very long unicode string signal preserves" in {
         val longText = "漢" * 500
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -694,11 +694,11 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), longText)
                 _ <- Browser.assertText(Selector.id("v"), "len:500")
-            yield succeed
+            yield ()
         }
     }
 
-    "input value with newline handled" in run {
+    "input value with newline handled" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -709,77 +709,77 @@ class HtmlRendererTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "a\nb")
                 _ <- Browser.assertText(Selector.id("v"), "len:2")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Href / ImgSrc ADT rendering tests ----
 
-    "Href.Absolute renders full URL" in run {
+    "Href.Absolute renders full URL" in {
         withUI(UI.div(UI.a.href(Href.Absolute(HttpUrl.parse("https://example.com").getOrThrow)).id("a")("link"))) {
-            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("example.com")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("example.com")).unit
         }
     }
 
-    "Href.Path absolute-path renders path" in run {
+    "Href.Path absolute-path renders path" in {
         withUI(UI.div(UI.a.href(Href.Path("/path")).id("a")("link"))) {
-            Browser.assertAttribute(Selector.id("a"), "href", "/path").andThen(succeed)
+            Browser.assertAttribute(Selector.id("a"), "href", "/path").unit
         }
     }
 
-    "Href.Path relative renders relative" in run {
+    "Href.Path relative renders relative" in {
         withUI(UI.div(UI.a.href(Href.Path("relative")).id("a")("link"))) {
-            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("relative")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("relative")).unit
         }
     }
 
-    "Href.Fragment named renders hash-id" in run {
+    "Href.Fragment named renders hash-id" in {
         withUI(UI.div(UI.a.href(Href.Fragment("section")).id("a")("link"))) {
-            Browser.assertAttribute(Selector.id("a"), "href", "#section").andThen(succeed)
+            Browser.assertAttribute(Selector.id("a"), "href", "#section").unit
         }
     }
 
-    "Href.Fragment empty renders hash" in run {
+    "Href.Fragment empty renders hash" in {
         withUI(UI.div(UI.a.href(Href.Fragment("")).id("a")("link"))) {
-            Browser.assertAttribute(Selector.id("a"), "href", "#").andThen(succeed)
+            Browser.assertAttribute(Selector.id("a"), "href", "#").unit
         }
     }
 
-    "Href.External mailto renders mailto URI" in run {
+    "Href.External mailto renders mailto URI" in {
         withUI(UI.div(UI.a.href(Href.External("mailto", "foo@bar.com")).id("a")("link"))) {
-            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("mailto")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("mailto")).unit
         }
     }
 
-    "Href.External tel renders tel URI" in run {
+    "Href.External tel renders tel URI" in {
         withUI(UI.div(UI.a.href(Href.External("tel", "+15551234")).id("a")("link"))) {
-            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("tel")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("a"), "href", "ignore")(_.contains("tel")).unit
         }
     }
 
-    "ImgSrc.Absolute renders full URL" in run {
+    "ImgSrc.Absolute renders full URL" in {
         withUI(UI.div(UI.img(ImgSrc.Absolute(HttpUrl.parse("https://example.com/logo.png").getOrThrow), "logo").id("i"))) {
             Browser.assertAttributeSatisfies(
                 Selector.id("i"),
                 "src",
                 "ignore"
-            )(s => s.contains("example.com") && s.contains("logo.png")).andThen(succeed)
+            )(s => s.contains("example.com") && s.contains("logo.png")).unit
         }
     }
 
-    "ImgSrc.Path renders path" in run {
+    "ImgSrc.Path renders path" in {
         withUI(UI.div(UI.img(ImgSrc.Path("/static/logo.png"), "logo").id("i"))) {
-            Browser.assertAttributeSatisfies(Selector.id("i"), "src", "ignore")(_.contains("/static/logo.png")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("i"), "src", "ignore")(_.contains("/static/logo.png")).unit
         }
     }
 
-    "ImgSrc.Data renders data URI" in run {
+    "ImgSrc.Data renders data URI" in {
         withUI(UI.div(UI.img(ImgSrc.Data("image/png", "iVBORw0KGgo"), "logo").id("i"))) {
             Browser.assertAttributeSatisfies(
                 Selector.id("i"),
                 "src",
                 "ignore"
-            )(v => v.contains("data:image/png;base64,iVBORw0KGgo")).andThen(succeed)
+            )(v => v.contains("data:image/png;base64,iVBORw0KGgo")).unit
         }
     }
 

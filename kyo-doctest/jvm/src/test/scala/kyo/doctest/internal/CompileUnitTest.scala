@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for CompileUnit covering Isolated, Inherited, Env, Nested, and setup block grouping. */
-class CompileUnitTest extends Test:
+class CompileUnitTest extends kyo.test.Test[Any]:
 
     private def makeBlock(
         body: String,
@@ -22,7 +22,7 @@ class CompileUnitTest extends Test:
             carrier = Block.Carrier.Visible
         )
 
-    "Isolated blocks each become their own compile unit" in run {
+    "Isolated blocks each become their own compile unit" in {
         val b1 = makeBlock("val a = 1", Block.Visibility.Isolated, lineStart = 1)
         val b2 = makeBlock("val b = 2", Block.Visibility.Isolated, lineStart = 10)
         val b3 = makeBlock("val c = 3", Block.Visibility.Isolated, lineStart = 20)
@@ -36,10 +36,9 @@ class CompileUnitTest extends Test:
         assert(!units(0).syntheticSource.content.contains("val b = 2"))
         assert(units(1).syntheticSource.content.contains("val b = 2"))
         assert(!units(1).syntheticSource.content.contains("val a = 1"))
-        succeed
     }
 
-    "Inherited blocks accumulate prior bodies as prelude" in run {
+    "Inherited blocks accumulate prior bodies as prelude" in {
         val b1 = makeBlock("val a = 1", Block.Visibility.Inherited, lineStart = 1)
         val b2 = makeBlock("val b = a + 1", Block.Visibility.Inherited, lineStart = 10)
         val b3 = makeBlock("val c = b + 1", Block.Visibility.Inherited, lineStart = 20)
@@ -57,10 +56,9 @@ class CompileUnitTest extends Test:
         assert(unit3.contains("val a = 1"), s"unit 3 should include val a: $unit3")
         assert(unit3.contains("val b = a + 1"), s"unit 3 should include val b: $unit3")
         assert(unit3.contains("val c = b + 1"), s"unit 3 should include val c: $unit3")
-        succeed
     }
 
-    "Env(\"tutorial\") blocks compile together as one unit" in run {
+    "Env(\"tutorial\") blocks compile together as one unit" in {
         val b1 = makeBlock("val x = 1", Block.Visibility.Env("tutorial"), lineStart = 1)
         val b2 = makeBlock("val y = x + 1", Block.Visibility.Env("tutorial"), lineStart = 10)
         val b3 = makeBlock("val z = y + 1", Block.Visibility.Env("tutorial"), lineStart = 20)
@@ -76,10 +74,9 @@ class CompileUnitTest extends Test:
         assert(content.contains("Env_tutorial_"), s"expected Env_tutorial_ object name in:\n$content")
         // All three blocks are referenced in the unit.
         assert(units(0).blocks.size == 3, s"expected 3 blocks in the env unit, got ${units(0).blocks.size}")
-        succeed
     }
 
-    "Nested block body is in a local block; names do not leak forward to next Inherited block" in run {
+    "Nested block body is in a local block; names do not leak forward to next Inherited block" in {
         val b1 = makeBlock("val shared = 1", Block.Visibility.Inherited, lineStart = 1)
         val b2 = makeBlock("val hidden = 99", Block.Visibility.Nested, lineStart = 10)
         val b3 = makeBlock("val visible = shared", Block.Visibility.Inherited, lineStart = 20)
@@ -96,10 +93,9 @@ class CompileUnitTest extends Test:
         val unit3 = units(2).syntheticSource.content
         assert(unit3.contains("val shared = 1"), s"unit 3 should include val shared from b1:\n$unit3")
         assert(!unit3.contains("val hidden = 99"), s"unit 3 must NOT include val hidden from nested block:\n$unit3")
-        succeed
     }
 
-    "setup block (Env(\"__doc__\")) injects prelude into Isolated blocks" in run {
+    "setup block (Env(\"__doc__\")) injects prelude into Isolated blocks" in {
         val setup    = makeBlock("val setupVal = 42", Block.Visibility.Env("__doc__"), lineStart = 1)
         val isolated = makeBlock("val use = setupVal", Block.Visibility.Isolated, lineStart = 10)
 
@@ -117,11 +113,11 @@ class CompileUnitTest extends Test:
             isolatedContent.contains("val use = setupVal"),
             s"isolated unit should contain block body:\n$isolatedContent"
         )
-        succeed
+        ()
     }
 
     // Additional: setup-only file produces one compile unit.
-    "setup-only file (only Env(\"__doc__\") blocks) produces one compile unit" in run {
+    "setup-only file (only Env(\"__doc__\") blocks) produces one compile unit" in {
         val s1 = makeBlock("val a = 1", Block.Visibility.Env("__doc__"), lineStart = 1)
         val s2 = makeBlock("val b = 2", Block.Visibility.Env("__doc__"), lineStart = 10)
 
@@ -130,20 +126,18 @@ class CompileUnitTest extends Test:
         val content = units(0).syntheticSource.content
         assert(content.contains("val a = 1"))
         assert(content.contains("val b = 2"))
-        succeed
     }
 
     // Additional: empty block list produces empty Chunk.
-    "empty block list produces empty Chunk of compile units" in run {
+    "empty block list produces empty Chunk of compile units" in {
         val units = CompileUnit.group(Chunk.empty)
         assert(units.isEmpty, s"expected empty Chunk but got ${units.size} units")
-        succeed
     }
 
     // Additional: Env("tutorial") blocks in a file with a setup block carry the setup block in WrappedBlock.setupBlocks.
     // groupEnvBlocks threads the file's setup-block list into every WrappedBlock
     // even though the env synthetic content does not inject the setup bodies.
-    "Env(\"tutorial\") blocks in file with setup block carry setupBlocks metadata" in run {
+    "Env(\"tutorial\") blocks in file with setup block carry setupBlocks metadata" in {
         val setup     = makeBlock("val setupVal = 42", Block.Visibility.Env("__doc__"), lineStart = 1)
         val envBlock  = makeBlock("val x = 1", Block.Visibility.Env("tutorial"), lineStart = 10)
         val envBlock2 = makeBlock("val y = x + 1", Block.Visibility.Env("tutorial"), lineStart = 20)
@@ -165,11 +159,11 @@ class CompileUnitTest extends Test:
                 s"expected setup block (Env(__doc__)) in setupBlocks, got ${wb.setupBlocks}"
             )
         end for
-        succeed
+        ()
     }
 
     // Additional: two different env names produce two compile units.
-    "two different Env names produce separate compile units" in run {
+    "two different Env names produce separate compile units" in {
         val b1 = makeBlock("val a = 1", Block.Visibility.Env("group1"), lineStart = 1)
         val b2 = makeBlock("val b = 2", Block.Visibility.Env("group2"), lineStart = 10)
         val b3 = makeBlock("val c = 3", Block.Visibility.Env("group1"), lineStart = 20)
@@ -183,7 +177,6 @@ class CompileUnitTest extends Test:
         assert(group2.size == 1, s"expected 1 unit for group2")
         assert(group1(0).blocks.size == 2, s"group1 unit should have 2 blocks")
         assert(group2(0).blocks.size == 1, s"group2 unit should have 1 block")
-        succeed
     }
 
 end CompileUnitTest

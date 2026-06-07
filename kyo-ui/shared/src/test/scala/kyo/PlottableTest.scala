@@ -5,7 +5,7 @@ import kyo.UI.*
 import kyo.internal.Domain
 import kyo.internal.Scale
 
-class PlottableTest extends Test:
+class PlottableTest extends kyo.test.Test[Any]:
 
     // ---- test enum for derivation tests ----
     enum Region derives Plottable:

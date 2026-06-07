@@ -8,10 +8,10 @@ import scala.language.implicitConversions
 /** Tests for the SVG renderer branch: tag name dispatch, attribute serialization, text-bearing elements,
   * typed-value encoders, deterministic ids, and dispatch exhaustiveness for svgTagName and rebuildSvgElement.
   */
-class SvgRendererTest extends Test:
+class SvgRendererTest extends kyo.test.Test[Any]:
 
     // rect renders geometry and presentation
-    "rect renders geometry and presentation attrs" in run {
+    "rect renders geometry and presentation attrs" in {
         val r = Svg.rect.x(0).y(0).width(640).height(400).fill(Svg.Paint.Color(Style.Color.Hex("#3b82f6")))
         for html <- HtmlRenderer.render(r, Seq.empty)
         yield
@@ -25,7 +25,7 @@ class SvgRendererTest extends Test:
     }
 
     // circle tag + cx/cy/r
-    "circle tag renders cx cy r" in run {
+    "circle tag renders cx cy r" in {
         val c = Svg.circle.cx(32).cy(32).r(28)
         for html <- HtmlRenderer.render(c, Seq.empty)
         yield
@@ -37,7 +37,7 @@ class SvgRendererTest extends Test:
     }
 
     // path d encodes letters
-    "path d encodes SVG path commands" in run {
+    "path d encodes SVG path commands" in {
         val d = Svg.PathData.from(50, 50).lineTo(90, 50).arcTo(40, 40, 0, false, true, 50, 90).close
         val p = Svg.path.d(d)
         for html <- HtmlRenderer.render(p, Seq.empty)
@@ -45,21 +45,21 @@ class SvgRendererTest extends Test:
     }
 
     // transform list joins
-    "transform list renders as space-separated functions" in run {
+    "transform list renders as space-separated functions" in {
         val g = Svg.g.transform(Svg.Transform.Translate(10, 20), Svg.Transform.Scale(2))
         for html <- HtmlRenderer.render(g, Seq.empty)
         yield assert(html.contains("""transform="translate(10 20) scale(2)""""))
     }
 
     // points encoding
-    "polyline points encode as x,y pairs" in run {
+    "polyline points encode as x,y pairs" in {
         val pl = Svg.polyline.points(Svg.Points((0, 0), (10, 8), (20, 3)))
         for html <- HtmlRenderer.render(pl, Seq.empty)
         yield assert(html.contains("""points="0,0 10,8 20,3""""))
     }
 
     // SvgLength units suffix
-    "SvgLength renders with correct units suffix" in run {
+    "SvgLength renders with correct units suffix" in {
         val r = Svg.rect.width(Svg.SvgLength.pct(50)).strokeWidth(Svg.SvgLength.px(2))
         for html <- HtmlRenderer.render(r, Seq.empty)
         yield
@@ -69,7 +69,7 @@ class SvgRendererTest extends Test:
     }
 
     // viewBox + preserveAspectRatio
-    "viewBox and preserveAspectRatio render correctly" in run {
+    "viewBox and preserveAspectRatio render correctly" in {
         val root = Svg.svg.viewBox(Svg.ViewBox(0, 0, 640, 400))
             .preserveAspectRatio(Svg.PreserveAspectRatio(Svg.Align.XMidYMid, Svg.MeetOrSlice.Meet))
         for html <- HtmlRenderer.render(root, Seq.empty)
@@ -80,7 +80,7 @@ class SvgRendererTest extends Test:
     }
 
     // enums render to SVG tokens
-    "enums render to lowercase SVG tokens" in run {
+    "enums render to lowercase SVG tokens" in {
         val r = Svg.rect.fillRule(Svg.FillRule.EvenOdd).strokeLinecap(Svg.StrokeLinecap.Round)
         for html <- HtmlRenderer.render(r, Seq.empty)
         yield
@@ -90,7 +90,7 @@ class SvgRendererTest extends Test:
     }
 
     // title renders as child text
-    "title element renders as child text node" in run {
+    "title element renders as child text node" in {
         val r = Svg.rect.x(0).y(0).width(10).height(10)(Svg.title("hover label"))
         for html <- HtmlRenderer.render(r, Seq.empty)
         yield
@@ -101,7 +101,7 @@ class SvgRendererTest extends Test:
     }
 
     // paint Ref encodes url(#id)
-    "paint Ref encodes url(#id) with deterministic id" in run {
+    "paint Ref encodes url(#id) with deterministic id" in {
         val lg       = Svg.linearGradient.x1(0).y1(0).x2(1).y2(0)
         val paintRef = lg.paint
         val gradId   = paintRef.server.asInstanceOf[Svg.LinearGradient].svgAttrs.defId.getOrElse("")
@@ -116,7 +116,7 @@ class SvgRendererTest extends Test:
     }
 
     // clip/mask/marker refs url(#id)
-    "clip-path and marker refs encode as url(#id)" in run {
+    "clip-path and marker refs encode as url(#id)" in {
         val clip    = Svg.clipPath
         val clipId  = clip.id
         val g       = Svg.g.clipPath(clip.clipRef)
@@ -137,7 +137,7 @@ class SvgRendererTest extends Test:
     // svgTagName is a compile error rather than a silent fallthrough. The checks below are runtime
     // coverage: SvgElement is sealed (so the compiler can check exhaustiveness) and svgTagName covers
     // all 47 concrete types without MatchError.
-    "exhaustiveness: SvgElement is sealed and svgTagName covers all 47 types" in run {
+    "exhaustiveness: SvgElement is sealed and svgTagName covers all 47 types" in {
         // Compile-fail: extending sealed SvgElement outside the package is a compile error.
         typeCheckFailure("""
             import kyo.*
@@ -209,7 +209,7 @@ class SvgRendererTest extends Test:
     // rebuildSvgElement dispatch is total via the same scoped warning-to-error escalation (see above).
     // The check below is runtime coverage: rebuildSvgElement covers all 47 concrete SvgElement types
     // without MatchError.
-    "exhaustiveness: rebuildSvgElement covers all 47 types without MatchError" in run {
+    "exhaustiveness: rebuildSvgElement covers all 47 types without MatchError" in {
         val sym = Svg.symbol.id("s2")
         val elements: Seq[Svg.SvgElement] = Seq(
             Svg.svg,
@@ -270,7 +270,7 @@ class SvgRendererTest extends Test:
     }
 
     // no xmlns and no createElementNS in rendered SVG
-    "no xmlns and no createElementNS in rendered SVG" in run {
+    "no xmlns and no createElementNS in rendered SVG" in {
         val root = Svg.svg(Svg.circle.cx(10).cy(10).r(5))
         for html <- HtmlRenderer.render(root, Seq.empty)
         yield
@@ -280,7 +280,7 @@ class SvgRendererTest extends Test:
     }
 
     // three-target byte-identical
-    "three-target markup is byte-identical across renders" in run {
+    "three-target markup is byte-identical across renders" in {
         val root = Svg.svg.viewBox(Svg.ViewBox(0, 0, 100, 100))(
             Svg.rect.x(0).y(0).width(100).height(100).fill(Svg.Paint.Color(Style.Color.Hex("#ff0000")))
         )
@@ -292,7 +292,7 @@ class SvgRendererTest extends Test:
     }
 
     // id stable across two renders
-    "deterministic id is stable across two renders of the same gradient" in run {
+    "deterministic id is stable across two renders of the same gradient" in {
         val lg       = Svg.linearGradient
         val paintRef = lg.paint
         val root1    = Svg.svg(Svg.rect.fill(paintRef))
@@ -309,7 +309,7 @@ class SvgRendererTest extends Test:
     }
 
     // nested Foreach inside svg resolves at runtime
-    "nested Foreach inside svg resolves at runtime" in run {
+    "nested Foreach inside svg resolves at runtime" in {
         val chunkSig = Signal.initConst(Chunk(1, 2, 3))
         val ui       = Svg.svg(chunkSig.foreach(i => Svg.circle.cx(i.toDouble).cy(0).r(1)))
         for html <- HtmlRenderer.render(ui, Seq.empty)
@@ -319,7 +319,7 @@ class SvgRendererTest extends Test:
     // ---- filter + SMIL rendering ----
 
     // filter renders its id and its feGaussianBlur child
-    "filter renders id and feGaussianBlur child" in run {
+    "filter renders id and feGaussianBlur child" in {
         val fe = Svg.feGaussianBlur.stdDeviation(2.0)
         val f  = Svg.filter(fe)
         val id = f.filterRef.id
@@ -333,7 +333,7 @@ class SvgRendererTest extends Test:
     }
 
     // a filter ref is consumed by a graphics element as filter="url(#id)"
-    "filter ref renders as url(#id) on consuming element" in run {
+    "filter ref renders as url(#id) on consuming element" in {
         val f   = Svg.filter(Svg.feGaussianBlur.stdDeviation(3.0))
         val ref = f.filterRef
         val g   = Svg.g.filter(ref)(Svg.circle.cx(50).cy(50).r(40))
@@ -349,7 +349,7 @@ class SvgRendererTest extends Test:
     }
 
     // animate renders its SMIL attributes
-    "animate renders attributeName/from/to/dur/repeatCount" in run {
+    "animate renders attributeName/from/to/dur/repeatCount" in {
         val anim = Svg.animate
             .attributeName("r").from(20.0).to(30.0).dur("1s").repeatCount("indefinite")
         for html <- HtmlRenderer.render(Svg.circle.cx(50).cy(50).r(20)(anim), Seq.empty)
@@ -366,7 +366,7 @@ class SvgRendererTest extends Test:
     // kyo-ui build escalates the non-exhaustive-match warning to an error for HtmlRenderer/ReactiveUI,
     // removing the FeFlood arm from svgTagName or rebuildSvgElement fails to compile. This test asserts
     // the sealed contract that makes that check possible, plus that FeFlood serializes its flood-color.
-    "FeFlood is a sealed FilterPrimitive and renders flood-color" in run {
+    "FeFlood is a sealed FilterPrimitive and renders flood-color" in {
         val fe: Svg.FilterPrimitive = Svg.feFlood.floodColor(Style.Color.Hex("#ff0000")).floodOpacity(0.5)
         assert(fe.isInstanceOf[Svg.FeFlood])
         typeCheckFailure("""
@@ -382,7 +382,7 @@ class SvgRendererTest extends Test:
     }
 
     // Each closed-enum case serializes to its exact SVG token (hyphenated and camelCase included).
-    "closed-enum filter/SMIL attributes serialize to exact SVG tokens" in run {
+    "closed-enum filter/SMIL attributes serialize to exact SVG tokens" in {
         for
             // feBlend mode: hyphenated tokens must render with the hyphen, not the Scala case name.
             normal     <- HtmlRenderer.render(Svg.feBlend.mode(Svg.BlendMode.Normal), Seq.empty)
@@ -422,7 +422,7 @@ class SvgRendererTest extends Test:
 
     // A raw (no explicit id) clipPath/mask/marker referenced via its *Ref must emit BOTH the consumer's
     // url(#id) attribute AND a matching id on the definition element itself (not a dangling ref).
-    "raw clipPath/mask/marker refs emit matching id on the definition element" in run {
+    "raw clipPath/mask/marker refs emit matching id on the definition element" in {
         val clip   = Svg.clipPath
         val clipId = clip.id
         val msk    = Svg.mask

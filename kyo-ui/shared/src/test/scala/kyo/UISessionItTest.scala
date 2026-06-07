@@ -11,7 +11,7 @@ class UISessionItTest extends UITest:
 
     // ---- LongRunningSession ----
 
-    "100 signal updates no unbounded growth" in run {
+    "100 signal updates no unbounded growth" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -22,11 +22,11 @@ class UISessionItTest extends UITest:
             for
                 _ <- Kyo.foreachDiscard(0 until 100)(_ => Browser.click(Selector.id("inc")))
                 _ <- Browser.assertText(Selector.id("v"), "100")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach add remove 50 times clean state" in run {
+    "foreach add remove 50 times clean state" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.empty[Int])
             yield UI.div(
@@ -40,11 +40,11 @@ class UISessionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "size:50")
                 _ <- Kyo.foreachDiscard(0 until 50)(_ => Browser.click(Selector.id("rm")))
                 _ <- Browser.assertText(Selector.id("v"), "size:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "conditional toggle 50 times consistent" in run {
+    "conditional toggle 50 times consistent" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
@@ -56,11 +56,11 @@ class UISessionItTest extends UITest:
             for
                 _ <- Kyo.foreachDiscard(0 until 50)(_ => Browser.click(Selector.id("tog")))
                 _ <- Browser.assertText(Selector.id("v"), "show:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "100 fill operations on same input last wins" in run {
+    "100 fill operations on same input last wins" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -71,11 +71,11 @@ class UISessionItTest extends UITest:
             for
                 _ <- Kyo.foreachDiscard(0 until 100)(i => Browser.fill(Selector.id("i"), s"val$i"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:val99")
-            yield succeed
+            yield ()
         }
     }
 
-    "100 click operations on same button counter correct" in run {
+    "100 click operations on same button counter correct" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -86,11 +86,11 @@ class UISessionItTest extends UITest:
             for
                 _ <- Kyo.foreachDiscard(0 until 100)(_ => Browser.click(Selector.id("b")))
                 _ <- Browser.assertText(Selector.id("v"), "100")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal subscription fibers for removed items dont accumulate" in run {
+    "signal subscription fibers for removed items dont accumulate" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.empty[Int])
@@ -115,13 +115,13 @@ class UISessionItTest extends UITest:
                 _ <- Kyo.foreachDiscard(0 until 10)(_ => Browser.click(Selector.id("add")))
                 _ <- Browser.click(Selector.id("sum"))
                 _ <- Browser.assertText(Selector.id("v"), "sum:10")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- StatePollution ----
 
-    "fill input hide via conditional show again signal preserves" in run {
+    "fill input hide via conditional show again signal preserves" in {
         val app: UI < Async =
             for
                 show  <- Signal.initRef(true)
@@ -139,11 +139,11 @@ class UISessionItTest extends UITest:
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertText(Selector.id("v"), "val:hello")
                 _ <- Browser.assertAttribute(Selector.id("i"), "value", "hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "two inputs same ID different conditional branches no leak" in run {
+    "two inputs same ID different conditional branches no leak" in {
         val app: UI < Async =
             for
                 mode <- Signal.initRef("a")
@@ -166,11 +166,11 @@ class UISessionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("field"), "data-b")
                 _ <- Browser.assertText(Selector.id("vb"), "b:data-b")
                 _ <- Browser.assertText(Selector.id("va"), "a:data-a")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal shared between two components updates both" in run {
+    "signal shared between two components updates both" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -183,11 +183,11 @@ class UISessionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "shared")
                 _ <- Browser.assertText(Selector.id("e1"), "echo1:shared")
                 _ <- Browser.assertText(Selector.id("e2"), "echo2:shared")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach keyed items swap order values follow keys" in run {
+    "foreach keyed items swap order values follow keys" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("a", "b", "c")))
@@ -206,11 +206,11 @@ class UISessionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "clicked:c")
                 _ <- Browser.click(Selector.id("btn-a"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach focused item reorder focus follows" in run {
+    "foreach focused item reorder focus follows" in {
         // Reversal is triggered by pressing Escape while input is focused.
         // Keyboard events do not move focus, so document.activeElement stays on the input
         // when the SSE Replace fires; this is the scenario our focus-restoration fix targets.
@@ -231,11 +231,11 @@ class UISessionItTest extends UITest:
                 // Confirm the SSE Replace happened (list reversed: "c" is now first)
                 _ <- Browser.assertText(Selector.id("head"), "c")
                 _ <- Browser.assertFocused(Selector.id("i-b"))
-            yield succeed
+            yield ()
         }
     }
 
-    "input buffer isolated per test run" in run {
+    "input buffer isolated per test run" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -246,7 +246,7 @@ class UISessionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "fresh")
                 _ <- Browser.assertText(Selector.id("v"), "sig:fresh")
-            yield succeed
+            yield ()
         }
     }
 

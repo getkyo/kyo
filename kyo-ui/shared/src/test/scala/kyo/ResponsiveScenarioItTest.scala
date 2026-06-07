@@ -8,18 +8,18 @@ import scala.language.implicitConversions
   */
 class ResponsiveScenarioItTest extends UITest:
 
-    "form renders at default viewport" in run {
+    "form renders at default viewport" in {
         val ui = UI.div(UI.input.id("a"), UI.input.id("b"), UI.button("Go").id("btn"))
         withUI(ui) {
             for
                 _ <- Browser.assertVisible(Selector.id("a"))
                 _ <- Browser.assertVisible(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("btn"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "form remains interactive at narrow viewport" in run {
+    "form remains interactive at narrow viewport" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -31,7 +31,7 @@ class ResponsiveScenarioItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.assertText(Selector.id("v"), "abc")
-            yield succeed
+            yield ()
         }
     }
 

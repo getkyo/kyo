@@ -10,7 +10,7 @@ import scala.language.implicitConversions
   * Asserts the resolved color lists and that selecting a palette via `_.theme(_.palette(p))`
   * actually changes the per-mark fill color emitted in the lowered SVG.
   */
-class PaletteTest extends Test:
+class PaletteTest extends kyo.test.Test[Any]:
 
     private def circlesIn(root: Svg.Root): Chunk[Svg.Circle] =
         root.children.flatMap:
@@ -21,7 +21,7 @@ class PaletteTest extends Test:
             case c: Svg.Circle => Chunk(c)
             case _             => Chunk.empty
 
-    private def firstFill(root: Svg.Root): Style.Color =
+    private def firstFill(root: Svg.Root)(using Frame, kyo.test.AssertScope): Style.Color =
         val cs = circlesIn(root)
         assert(cs.nonEmpty, "Expected at least one circle")
         cs(0).svgAttrs.fill match

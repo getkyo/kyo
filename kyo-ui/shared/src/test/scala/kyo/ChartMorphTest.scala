@@ -52,7 +52,7 @@ import scala.language.implicitConversions
   *   7. No animate on the FIRST emission (no previous path stored yet).
   *   8-14. INV-036 / INV-002 leaves (markIdx keying stability, CatKey dedup, area parity, gate check).
   */
-class ChartMorphTest extends Test:
+class ChartMorphTest extends kyo.test.Test[Any]:
 
     // ---- shared domain types ----
 
@@ -95,7 +95,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 1: LINE same-structure update emits a SMIL d-animate ----
 
-    "LINE same-structure update emits exactly one animate attributeName=d with correct from/to" in run {
+    "LINE same-structure update emits exactly one animate attributeName=d with correct from/to" in {
         // Jan and Feb are present in both emissions: command count is 2 (M + L) before and after.
         // from = initial path d string, to = updated path d string.
         //
@@ -152,7 +152,7 @@ class ChartMorphTest extends Test:
 
     // ---- Runtime wiring: the page client script must START inserted SMIL animations ----
 
-    "renderPage client script calls beginElement so begin=indefinite transitions actually play" in run {
+    "renderPage client script calls beginElement so begin=indefinite transitions actually play" in {
         // The chart transition <animate> elements use begin="indefinite" (so a post-load update does not
         // snap against the shared document timeline). They only tween if the reactive runtime calls
         // beginElement() on each freshly-inserted animate after a mount/patch. This asserts the server
@@ -166,7 +166,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 2: LINE structural change (category added) snaps, no animate ----
 
-    "LINE structural change (category added) snaps: zero animate elements" in run {
+    "LINE structural change (category added) snaps: zero animate elements" in {
         // Initial: 2 categories (M + L = 2 commands). Updated: 3 categories (M + L + L = 3 commands).
         // Command counts differ -> structural morph -> path snaps, no <animate> emitted.
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -195,7 +195,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 3: .animate(_.none) emits no d-animate ----
 
-    "animate(_.none): no animate element even for same-structure update" in run {
+    "animate(_.none): no animate element even for same-structure update" in {
         // Same categories before and after, but animation disabled.
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val updated = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
@@ -216,7 +216,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 4: AREA same-structure update emits a SMIL d-animate ----
 
-    "AREA same-structure update emits animate attributeName=d with correct from/to" in run {
+    "AREA same-structure update emits animate attributeName=d with correct from/to" in {
         // Area mark with stable categories. The area path is a closed polygon:
         // top forward (2 pts), then baseline back (2 pts), then close = M+L+L+L+Z = 5 commands.
         //
@@ -257,7 +257,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 5: Double-pull idempotency (line) ----
 
-    "LINE double-pull idempotency: repeat render of same emission reproduces the same from/to d" in run {
+    "LINE double-pull idempotency: repeat render of same emission reproduces the same from/to d" in {
         // Simulates the reactive engine pulling the render projection twice per emission.
         // Both pulls must produce the same from and to path strings, not a dead animation.
         //
@@ -316,7 +316,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 6: Double-pull idempotency (area) ----
 
-    "AREA double-pull idempotency: repeat render of same emission reproduces the same from/to d" in run {
+    "AREA double-pull idempotency: repeat render of same emission reproduces the same from/to d" in {
         // Same idempotency discipline as the line test, applied to area paths.
         val r1 = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
         val r2 = Chunk(Sale("Jan", Rev(3000.0)), Sale("Feb", Rev(500.0)))
@@ -351,7 +351,7 @@ class ChartMorphTest extends Test:
 
     // ---- Test 7: No animate on the first emission (no previous path stored) ----
 
-    "first emission with animation enabled emits no animate (no previous path exists yet)" in run {
+    "first emission with animation enabled emits no animate (no previous path exists yet)" in {
         // The very first render of a live chart has no previous PathData in the TransState.
         // No animate child should be emitted.
         val initial = Chunk(Sale("Jan", Rev(1000.0)), Sale("Feb", Rev(2000.0)))
@@ -370,7 +370,7 @@ class ChartMorphTest extends Test:
 
     // ---- INV-036 Leaf 1: multi-mark pathKey stable when preceding bar's geom count changes ----
 
-    "multi-mark: line pathKey is stable when a preceding bar's geom count changes" in run {
+    "multi-mark: line pathKey is stable when a preceding bar's geom count changes" in {
         // mark-0: ungrouped bar (uses rowKey, content-based, not pathKey).
         //   Emission 1: 2 bars (Jan, Feb). Emission 2: 3 bars (Jan, Feb, Mar).
         //   Bar geom entries go from 2 to 3; under the old keyOffset scheme this shifted
@@ -423,7 +423,7 @@ class ChartMorphTest extends Test:
 
     // ---- INV-036 Leaf 3: new series added in second emission snaps in ----
 
-    "new series added in second emission snaps in (no false morph from prior slot)" in run {
+    "new series added in second emission snaps in (no false morph from prior slot)" in {
         // Emission 1: one series ("Red" only), key "line-0-Red", stroke #3b82f6 (blue, idx=0).
         //   Jan and Feb are present -> 2-point path stored in fromGeom under "line-0-Red".
         // Emission 2: two series ("Red" + "Blue"), keys "line-0-Red" (existing) and "line-0-Blue" (new).
@@ -490,7 +490,7 @@ class ChartMorphTest extends Test:
 
     // ---- INV-036 Leaf 4: removed series key absent in second emission ----
 
-    "removed series key absent in second emission, no stale morph" in run {
+    "removed series key absent in second emission, no stale morph" in {
         // Emission 1: line with no color encoding, key "line-0-0".
         // Emission 2: different data set (structural change: Jan+Feb -> Jan only).
         // After the category count drops from 2 to 1 the command count changes (2 -> 1),
@@ -518,7 +518,7 @@ class ChartMorphTest extends Test:
 
     // ---- INV-036 + INV-002 Leaf 5: toString collision stays as distinct pathKeys ----
 
-    "two series with colliding toString stay as distinct pathKeys per CatKey seriesIdx" in run {
+    "two series with colliding toString stay as distinct pathKeys per CatKey seriesIdx" in {
         // Col.Red and Col.Blue both override toString to "color".
         // Under the old toString-keyed dedup they collapse to one bucket,
         // and only one <path> appears. Under the CatKey fix (distinctKeyed),
@@ -549,7 +549,7 @@ class ChartMorphTest extends Test:
 
     // ---- INV-036 Leaf 6: area pathKey stable when preceding bar's geom count changes ----
 
-    "area pathKey is stable when a preceding bar's geom count changes" in run {
+    "area pathKey is stable when a preceding bar's geom count changes" in {
         // Mirror of leaf 1 but mark-1 is an area mark.
         // mark-0: bar (2 bars -> 3 bars). mark-1: area with stable 2 points (Mar has v2=Absent).
         // v2=Absent makes the area treat Mar as a gap row, so the area stays 2-point.
@@ -586,7 +586,7 @@ class ChartMorphTest extends Test:
 
     // ---- INV-036 Leaf 7: structural gate preserved after markIdx fix ----
 
-    "line with changed point count snaps (structural gate unchanged after markIdx fix)" in run {
+    "line with changed point count snaps (structural gate unchanged after markIdx fix)" in {
         // INV-036 states the prevCount==newCount gate is unchanged.
         // 2 points -> 3 points = structural change -> no <animate>.
         // This mirrors test 2 but explicitly guards the gate under the new markIdx keying.
@@ -613,7 +613,7 @@ class ChartMorphTest extends Test:
 
     // ---- Bug A: same command COUNT but different command TYPES must snap, not morph ----
 
-    "BUG A (gap type-signature): gap change producing same command count but different types must snap" in run {
+    "BUG A (gap type-signature): gap change producing same command count but different types must snap" in {
         // Emission 1: 3 defined points -> one segment -> M L L (3 commands, types: MoveTo LineTo LineTo).
         // Emission 2: row 1 defined, row 2 absent (gap), rows 3+4 defined -> two segments ->
         //   segment1=(Jan only)->M, segment2=(Mar,Apr)->M L => total M M L (3 commands, types differ!).
@@ -662,7 +662,7 @@ class ChartMorphTest extends Test:
 
     // ---- Bug A area: type-signature gate applied to area (regression guard: normal morph still fires) ----
 
-    "BUG A area (type-sig fix regression): area stable-structure morph still fires after type-sig fix" in run {
+    "BUG A area (type-sig fix regression): area stable-structure morph still fires after type-sig fix" in {
         // Area paths use buildSimpleAreaPath which skips gap rows (Absent y -> skip, not MoveTo gap).
         // So area gap rows reduce the point count rather than inserting extra MoveTo commands.
         // The type-signature fix for area is therefore equivalent to the count gate for linear area
@@ -707,7 +707,7 @@ class ChartMorphTest extends Test:
 
     // ---- Bug B: surviving series must morph from its OWN prior geometry, not a removed series' path ----
 
-    "BUG B line (series-identity keying): Blue series morphs from Blue's own prior path, not Red's old path" in run {
+    "BUG B line (series-identity keying): Blue series morphs from Blue's own prior path, not Red's old path" in {
         // Emission 1: two series [Red, Blue].
         //   Red: Jan=1000 (py=340), Feb=2000 (py=240)  -> d = "M200 340 L480 240"
         //   Blue: Jan=3000 (py=140), Feb=1000 (py=340)  -> d = "M200 140 L480 340"
@@ -770,7 +770,7 @@ class ChartMorphTest extends Test:
 
     // ---- Bug B area: same discipline for area paths ----
 
-    "BUG B area (series-identity keying): Blue area morphs from Blue's own prior path, not Red's old path" in run {
+    "BUG B area (series-identity keying): Blue area morphs from Blue's own prior path, not Red's old path" in {
         // Same scenario as Bug B line, but with area marks.
         // Area path adds baseline returns (L..Z) commands after the top-edge path.
         // Emission 1:
@@ -841,7 +841,7 @@ class ChartMorphTest extends Test:
     //     1000 -> 340, 2000 -> 240, 3000 -> 140
     //     500  -> 390, 1500 -> 290, 800 -> 360, 1200 -> 320
 
-    "colliding-toString LINE: Red morphs from Red's own prior path, Blue from Blue's own prior path" in run {
+    "colliding-toString LINE: Red morphs from Red's own prior path, Blue from Blue's own prior path" in {
         // Emission 1:
         //   Red: Jan=1000 (py=340), Feb=2000 (py=240) -> "M200 340 L480 240"
         //   Blue: Jan=500 (py=390), Feb=1500 (py=290)  -> "M200 390 L480 290"
@@ -917,7 +917,7 @@ class ChartMorphTest extends Test:
         end for
     }
 
-    "colliding-toString AREA: Red morphs from Red's own prior area path, Blue from Blue's own prior area path" in run {
+    "colliding-toString AREA: Red morphs from Red's own prior area path, Blue from Blue's own prior area path" in {
         // Same scenario as the colliding-toString LINE test but with area marks.
         // Area path = top edge forward + baseline return + close (baseline=440).
         // Emission 1:

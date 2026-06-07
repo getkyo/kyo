@@ -5,19 +5,19 @@ import kyo.UI.Ast.*
 import kyo.internal.HtmlRenderer
 import scala.language.implicitConversions
 
-class AriaTest extends Test:
+class AriaTest extends kyo.test.Test[Any]:
 
     private def renderHtml(ui: UI)(using Frame): String < Sync =
         HtmlRenderer.render(ui, Seq.empty)
 
-    "aria(name, value) renders aria-label attribute on div" in run {
+    "aria(name, value) renders aria-label attribute on div" in {
         val html = renderHtml(UI.div.aria("label", "Save"))
         html.map { s =>
             assert(s.contains("""aria-label="Save""""))
         }
     }
 
-    "aria(pairs*) with three pairs renders all aria-* attributes sorted alphabetically" in run {
+    "aria(pairs*) with three pairs renders all aria-* attributes sorted alphabetically" in {
         val html = renderHtml(
             UI.div.aria(
                 "label" -> "Main",
@@ -36,7 +36,7 @@ class AriaTest extends Test:
         }
     }
 
-    "setting the same aria name twice keeps only the last value" in run {
+    "setting the same aria name twice keeps only the last value" in {
         val html = renderHtml(
             UI.div.aria("label", "First").aria("label", "Second")
         )
@@ -46,7 +46,7 @@ class AriaTest extends Test:
         }
     }
 
-    "element with ariaAttrs emits aria-* before data-* before data-kyo-prop-* in deterministic order" in run {
+    "element with ariaAttrs emits aria-* before data-* before data-kyo-prop-* in deterministic order" in {
         val element = UI.checkbox
             .aria("role", "button")
             .aria("label", "Go")
@@ -70,33 +70,7 @@ class AriaTest extends Test:
         end for
     }
 
-    // ---- role (Q-008): the bare `role` HTML attribute, distinct from aria-role ----
-
-    "role(v) renders the bare role attribute on div" in run {
-        val html = renderHtml(UI.div.role("button"))
-        html.map { s =>
-            assert(s.contains("""role="button""""))
-            // It must be the bare `role`, not `aria-role`.
-            assert(!s.contains("""aria-role="button""""))
-        }
-    }
-
-    "no role set emits no role attribute" in run {
-        val html = renderHtml(UI.div("x"))
-        html.map { s =>
-            assert(!s.contains("role="), s"Expected no role attribute but got: $s")
-        }
-    }
-
-    "role and aria-role are distinct attributes and both render" in run {
-        val html = renderHtml(UI.div.role("img").aria("role", "button"))
-        html.map { s =>
-            assert(s.contains("""role="img""""), s"missing bare role: $s")
-            assert(s.contains("""aria-role="button""""), s"missing aria-role: $s")
-        }
-    }
-
-    "aria and data attributes both render sorted by name (structural attribute check)" in run {
+    "aria and data attributes both render sorted by name (structural attribute check)" in {
         val html = renderHtml(
             UI.div
                 .aria("z-attr", "z")
@@ -111,6 +85,32 @@ class AriaTest extends Test:
             assert(s.contains("aria-z-attr"))
             assert(s.contains("data-a-data"))
             assert(s.contains("data-z-data"))
+        }
+    }
+
+    // ---- role (Q-008): the bare `role` HTML attribute, distinct from aria-role ----
+
+    "role(v) renders the bare role attribute on div" in {
+        val html = renderHtml(UI.div.role("button"))
+        html.map { s =>
+            assert(s.contains("""role="button""""))
+            // It must be the bare `role`, not `aria-role`.
+            assert(!s.contains("""aria-role="button""""))
+        }
+    }
+
+    "no role set emits no role attribute" in {
+        val html = renderHtml(UI.div("x"))
+        html.map { s =>
+            assert(!s.contains("role="), s"Expected no role attribute but got: $s")
+        }
+    }
+
+    "role and aria-role are distinct attributes and both render" in {
+        val html = renderHtml(UI.div.role("img").aria("role", "button"))
+        html.map { s =>
+            assert(s.contains("""role="img""""), s"missing bare role: $s")
+            assert(s.contains("""aria-role="button""""), s"missing aria-role: $s")
         }
     }
 

@@ -3,17 +3,17 @@ package kyo.internal
 import java.util.concurrent.*
 import kyo.*
 
-class AsyncPlatformSpecificTest extends Test:
+class AsyncPlatformSpecificTest extends kyo.test.Test[Any]:
 
     "success" - {
-        "stage" in run {
+        "stage" in {
             val cf = new CompletableFuture[Int]()
             cf.completeOnTimeout(42, 1, TimeUnit.MICROSECONDS)
             val res = Async.fromCompletionStage(cf)
             res.map(v => assert(v == 42))
         }
 
-        "future" in run {
+        "future" in {
             val cf = new CompletableFuture[Int]()
             cf.completeOnTimeout(42, 1, TimeUnit.MICROSECONDS)
             val res = Async.fromFuture(cf)
@@ -22,7 +22,7 @@ class AsyncPlatformSpecificTest extends Test:
     }
 
     "exception" - {
-        "stage" in run {
+        "stage" in {
             val cf            = new CompletableFuture[Int]()
             val testException = new RuntimeException("Test exception")
             cf.completeExceptionally(testException)
@@ -33,7 +33,7 @@ class AsyncPlatformSpecificTest extends Test:
             }
         }
 
-        "future" in run {
+        "future" in {
             val cf            = new CompletableFuture[Int]()
             val testException = new RuntimeException("Test exception")
             cf.completeExceptionally(testException)

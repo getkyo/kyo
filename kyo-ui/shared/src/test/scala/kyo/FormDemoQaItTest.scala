@@ -64,7 +64,7 @@ class FormDemoQaItTest extends UITest:
 
     // ===== A. Single Field: Complete Lifecycle =====
 
-    "A1: unfocused empty input shows placeholder" in run {
+    "A1: unfocused empty input shows placeholder" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -76,11 +76,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertAttribute(Selector.id("inp"), "placeholder", "Full name")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "A2: focus on input" in run {
+    "A2: focus on input" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(UI.input.id("inp").value(ref).placeholder("Full name"))
@@ -89,11 +89,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("inp"))
                 // In browser, the focused state is the cursor; verify activeElement
                 _ <- Browser.assertFocused(Selector.id("inp"))
-            yield succeed
+            yield ()
         }
     }
 
-    "A3: typing replaces placeholder with value" in run {
+    "A3: typing replaces placeholder with value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -105,11 +105,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "Alice")
                 _ <- Browser.assertText(Selector.id("v"), "val:[Alice]")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "A4: tab away preserves value, no placeholder shown" in run {
+    "A4: tab away preserves value, no placeholder shown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -123,11 +123,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertText(Selector.id("v"), "val:[Alice]")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "A5: tab back shows value with focus" in run {
+    "A5: tab back shows value with focus" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -143,11 +143,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertFocused(Selector.id("inp"))
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "Alice")
                 _ <- Browser.assertText(Selector.id("v"), "val:[Alice]")
-            yield succeed
+            yield ()
         }
     }
 
-    "A6: typing more replaces" in run {
+    "A6: typing more replaces" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -160,11 +160,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:[AB]")
                 _ <- Browser.fill(Selector.id("inp"), "ABC")
                 _ <- Browser.assertText(Selector.id("v"), "val:[ABC]")
-            yield succeed
+            yield ()
         }
     }
 
-    "A7: backspace to empty" in run {
+    "A7: backspace to empty" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -178,11 +178,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:[A]")
                 _ <- Browser.press(Selector.id("inp"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "val:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "single fill + single backspace clears last char" in run {
+    "single fill + single backspace clears last char" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(UI.input.id("inp").value(ref).onInput(v => ref.set(v)))
@@ -191,11 +191,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "A")
                 _ <- Browser.press(Selector.id("inp"), Key.Backspace)
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "A8: blur when empty placeholder still present" in run {
+    "A8: blur when empty placeholder still present" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -209,13 +209,13 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertAttribute(Selector.id("inp"), "placeholder", "Full name")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "")
-            yield succeed
+            yield ()
         }
     }
 
     // ===== B. Multi-Field: Focus Preservation =====
 
-    "B1-B4: type in two fields, click between, values preserved" in run {
+    "B1-B4: type in two fields, click between, values preserved" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -235,11 +235,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "alice@co")
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "Alice")
-            yield succeed
+            yield ()
         }
     }
 
-    "B5: click button preserves all field values" in run {
+    "B5: click button preserves all field values" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -259,13 +259,13 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "Alice")
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "Bob")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: requires native Tab focus traversal verification
     /*
-    "B6: tab through all fields preserves values" in run {
+    "B6: tab through all fields preserves values" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -284,23 +284,23 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.press(Selector.id("b"), Key.Tab)
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "X")
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "Y")
-            yield succeed
+            yield ()
         }
     }
      */
 
     // ===== C. Select/Dropdown =====
 
-    "C1: select shows current value" in run {
+    "C1: select shows current value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("developer")
             yield UI.div(UI.select(UI.option.value("developer")("Developer")).id("sel").value(ref))
         withUI(app) {
-            Browser.assertAttribute(Selector.id("sel"), "value", "developer").andThen(succeed)
+            Browser.assertAttribute(Selector.id("sel"), "value", "developer").unit
         }
     }
 
-    "C3-C5: select navigates and changes value" in run {
+    "C3-C5: select navigates and changes value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -317,11 +317,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:c")
                 _ <- Browser.select(Selector.id("sel"), "a")
                 _ <- Browser.assertText(Selector.id("v"), "val:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "C6: select selects via Browser.select" in run {
+    "C6: select selects via Browser.select" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -335,11 +335,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:b")
                 _ <- Browser.select(Selector.id("sel"), "a")
                 _ <- Browser.assertText(Selector.id("v"), "val:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "C9-C10: tab away and back preserves select value" in run {
+    "C9-C10: tab away and back preserves select value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -356,13 +356,13 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:b")
                 _ <- Browser.click(Selector.id("sel"))
                 _ <- Browser.assertText(Selector.id("v"), "val:b")
-            yield succeed
+            yield ()
         }
     }
 
     // ===== D. Checkbox =====
 
-    "D1-D3: click toggles checkbox" in run {
+    "D1-D3: click toggles checkbox" in {
         val app: UI < Async =
             for ref <- Signal.initRef(true)
             yield UI.div(
@@ -376,11 +376,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:false")
                 _ <- Browser.click(Selector.id("chk"))
                 _ <- Browser.assertText(Selector.id("v"), "val:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "D4: click toggles checkbox" in run {
+    "D4: click toggles checkbox" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -393,11 +393,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:true")
                 _ <- Browser.click(Selector.id("chk"))
                 _ <- Browser.assertText(Selector.id("v"), "val:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "D5-D6: checkbox state preserved across focus changes" in run {
+    "D5-D6: checkbox state preserved across focus changes" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -413,13 +413,13 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:true")
                 _ <- Browser.click(Selector.id("chk"))
                 _ <- Browser.assertText(Selector.id("v"), "val:false")
-            yield succeed
+            yield ()
         }
     }
 
     // ===== E. Form Submit: Full Cycle =====
 
-    "E1: fill all fields and submit" in run {
+    "E1: fill all fields and submit" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -428,12 +428,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertText(Selector.id("status"), "Added Alice")
                     _ <- Browser.assertText(Selector.id("entries"), "Alice|alice@co.com|developer|true")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "E2-E3: after submit, name and email cleared, role and active preserved" in run {
+    "E2-E3: after submit, name and email cleared, role and active preserved" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -444,12 +444,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.assertAttribute(Selector.id("email"), "value", "")
                     _ <- Browser.assertAttribute(Selector.id("role"), "value", "developer")
                     _ <- Browser.assertChecked(Selector.id("active"))
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "E4-E5: second entry is fresh, not concatenated" in run {
+    "E4-E5: second entry is fresh, not concatenated" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -463,12 +463,12 @@ class FormDemoQaItTest extends UITest:
                         Selector.id("entries"),
                         "Alice|alice@co.com|developer|true; Bob|bob@co.com|developer|true"
                     )
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "E6: submit with empty name shows error" in run {
+    "E6: submit with empty name shows error" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -476,12 +476,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertText(Selector.id("status"), "Name and email required")
                     _ <- Browser.assertText(Selector.id("entries"), "No entries yet")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "E7: submit with empty email shows error" in run {
+    "E7: submit with empty email shows error" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -489,12 +489,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertText(Selector.id("status"), "Name and email required")
                     _ <- Browser.assertText(Selector.id("entries"), "No entries yet")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "E8: three sequential submits all correct" in run {
+    "E8: three sequential submits all correct" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -511,14 +511,14 @@ class FormDemoQaItTest extends UITest:
                         Selector.id("entries"),
                         "Alice|a@co|developer|true; Bob|b@co|developer|true; Carol|c@co|developer|true"
                     )
-                yield succeed
+                yield ()
             }
         }
     }
 
     // ===== F. Table Rendering =====
 
-    "F1-F2: table grows with entries, clean borders" in run {
+    "F1-F2: table grows with entries, clean borders" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -530,61 +530,61 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertTextSatisfies(Selector.id("entries"), "contains 'Al'")(_.contains("Al"))
                     _ <- Browser.assertTextSatisfies(Selector.id("entries"), "contains 'Bob'")(_.contains("Bob"))
-                yield succeed
+                yield ()
             }
         }
     }
 
     // ===== G. Scrolling =====
 
-    "G1: content that fits viewport is fully visible" in run {
+    "G1: content that fits viewport is fully visible" in {
         withUI(UI.div(UI.span("top").id("t"), UI.span("bottom").id("b"))) {
             for
                 _ <- Browser.assertText(Selector.id("t"), "top")
                 _ <- Browser.assertText(Selector.id("b"), "bottom")
-            yield succeed
+            yield ()
         }
     }
 
-    "G2: content exceeding viewport is in DOM" in run {
+    "G2: content exceeding viewport is in DOM" in {
         // In a browser, all DOM nodes exist regardless of viewport; visibility ≠ existence.
         val rows = (1 to 60).map(i => UI.span(s"r$i").id(s"r$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.assertText(Selector.id("r1"), "r1")
                 _ <- Browser.assertText(Selector.id("r60"), "r60")
-            yield succeed
+            yield ()
         }
     }
 
-    "G3-G5: scroll down reveals bottom content" in run {
+    "G3-G5: scroll down reveals bottom content" in {
         val rows = (1 to 60).map(i => UI.span(s"r$i").id(s"r$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollTo(Selector.id("r60"))
                 _ <- Browser.assertText(Selector.id("r60"), "r60")
-            yield succeed
+            yield ()
         }
     }
 
-    "G6: scrollToBottom reaches end" in run {
+    "G6: scrollToBottom reaches end" in {
         val rows = (1 to 10).map(i => UI.span(s"r$i").id(s"r$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollToBottom
                 _ <- Browser.assertText(Selector.id("r10"), "r10")
-            yield succeed
+            yield ()
         }
     }
 
-    "G7: scrollToTop reaches start" in run {
+    "G7: scrollToTop reaches start" in {
         val rows = (1 to 10).map(i => UI.span(s"r$i").id(s"r$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollToBottom
                 _ <- Browser.scrollToTop
                 _ <- Browser.assertText(Selector.id("r1"), "r1")
-            yield succeed
+            yield ()
         }
     }
 
@@ -592,7 +592,7 @@ class FormDemoQaItTest extends UITest:
     // Browser viewport resize is a window-level operation; tests just verify content survives
     // a CDP setDeviceMetricsOverride if needed. Here we just verify content remains.
 
-    "H1-H3: resize smaller then larger, no corruption" in run {
+    "H1-H3: resize smaller then larger, no corruption" in {
         withUI(UI.div(
             UI.h1("Title").id("h"),
             UI.input.id("inp").placeholder("Type"),
@@ -601,11 +601,11 @@ class FormDemoQaItTest extends UITest:
             for
                 _ <- Browser.assertText(Selector.id("h"), "Title")
                 _ <- Browser.assertText(Selector.id("btn"), "Go")
-            yield succeed
+            yield ()
         }
     }
 
-    "H4: input value preserved" in run {
+    "H4: input value preserved" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -617,25 +617,25 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "Hello")
                 _ <- Browser.assertText(Selector.id("v"), "val:[Hello]")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "Hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "H5: focus preserved" in run {
+    "H5: focus preserved" in {
         withUI(UI.div(UI.input.id("inp"), UI.button("Go").id("btn"))) {
             for
                 _ <- Browser.click(Selector.id("inp"))
                 _ <- Browser.assertFocused(Selector.id("inp"))
-            yield succeed
+            yield ()
         }
     }
 
-    "H7: page survives many interactions no crash" in run {
+    "H7: page survives many interactions no crash" in {
         withUI(UI.div(UI.span("content").id("s"))) {
             for
                 _ <- Kyo.foreachDiscard(0 until 10)(_ => Browser.assertVisible(Selector.id("s")))
                 _ <- Browser.assertVisible(Selector.id("s"))
-            yield succeed
+            yield ()
         }
     }
 
@@ -643,20 +643,20 @@ class FormDemoQaItTest extends UITest:
 
     // PENDING: Tab navigation requires verifying CDP Tab actually advances focus
     /*
-    "J1: tab order Name → Email → Role → Active → Add" in run {
+    "J1: tab order Name → Email → Role → Active → Add" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.click(Selector.id("name"))
                     _ <- Browser.press(Selector.id("name"), Key.Tab)
                     _ <- Browser.assertFocused(Selector.id("email"))
-                yield succeed
+                yield ()
             }
         }
     }
      */
 
-    "J4: Enter on input in form submits" in run {
+    "J4: Enter on input in form submits" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -664,12 +664,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.fill(Selector.id("email"), "a@b")
                     _ <- Browser.press(Selector.id("name"), Key.Enter)
                     _ <- Browser.assertText(Selector.id("status"), "Added Alice")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "J5: Enter on select does NOT submit form" in run {
+    "J5: Enter on select does NOT submit form" in {
         val app: UI < Async =
             for
                 ref     <- Signal.initRef("a")
@@ -686,13 +686,13 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("sel"))
                 _ <- Browser.press(Selector.id("sel"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "submits:0")
-            yield succeed
+            yield ()
         }
     }
 
     // ===== K. Visual Rendering =====
 
-    "K1: placeholder visible when empty, hidden when has value" in run {
+    "K1: placeholder visible when empty, hidden when has value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -710,11 +710,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("inp"), "placeholder", "Hint")
                 _ <- Browser.fill(Selector.id("inp"), "")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "K4-K5: no stale state after signal change" in run {
+    "K4-K5: no stale state after signal change" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -734,7 +734,7 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("out"), "count:2")
                 _ <- Browser.click(Selector.id("clear"))
                 _ <- Browser.assertText(Selector.id("out"), "empty")
-            yield succeed
+            yield ()
         }
     }
 
@@ -744,7 +744,7 @@ class FormDemoQaItTest extends UITest:
     // bugs cannot occur. The equivalent browser invariant (placeholder/value attributes
     // remain correct) is verified.
 
-    "T1: focused empty input placeholder attribute intact" in run {
+    "T1: focused empty input placeholder attribute intact" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -755,11 +755,11 @@ class FormDemoQaItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("inp"))
                 _ <- Browser.assertAttribute(Selector.id("inp"), "placeholder", "Full name")
-            yield succeed
+            yield ()
         }
     }
 
-    "T2: backspace to empty restores placeholder" in run {
+    "T2: backspace to empty restores placeholder" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -773,11 +773,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertAttribute(Selector.id("inp"), "placeholder", "Full name")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill + backspace + blur shows empty value" in run {
+    "fill + backspace + blur shows empty value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -790,11 +790,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.press(Selector.id("inp"), Key.Backspace)
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "")
-            yield succeed
+            yield ()
         }
     }
 
-    "T3: label stays visible after select interaction" in run {
+    "T3: label stays visible after select interaction" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -803,12 +803,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.assertVisible(Selector.css("label[for=role]"))
                     _ <- Browser.select(Selector.id("role"), "manager")
                     _ <- Browser.assertVisible(Selector.css("label[for=role]"))
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "T4: email value intact after select navigation" in run {
+    "T4: email value intact after select navigation" in {
         val app: UI < Async =
             for
                 email <- Signal.initRef("")
@@ -826,11 +826,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.select(Selector.id("role"), "c")
                 _ <- Browser.assertAttribute(Selector.id("email"), "value", "alice@co.com")
                 _ <- Browser.assertText(Selector.id("ev"), "e:alice@co.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "T5: table renders multiple entries with different widths" in run {
+    "T5: table renders multiple entries with different widths" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -849,12 +849,12 @@ class FormDemoQaItTest extends UITest:
                         "contains 'Alexander Hamilton'"
                     )(_.contains("Alexander Hamilton"))
                     _ <- Browser.assertTextSatisfies(Selector.id("entries"), "contains 'Bo|'")(_.contains("Bo|"))
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "T6: focused input has activeElement equal to input" in run {
+    "T6: focused input has activeElement equal to input" in {
         // In browser, the cursor IS the focused element; we verify document.activeElement
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -868,11 +868,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertFocused(Selector.id("inp"))
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertNotFocused(Selector.id("inp"))
-            yield succeed
+            yield ()
         }
     }
 
-    "T7: typing replaces empty value cleanly" in run {
+    "T7: typing replaces empty value cleanly" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -886,11 +886,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "hello")
                 _ <- Browser.assertText(Selector.id("v"), "val:[hello]")
                 _ <- Browser.assertAttribute(Selector.id("inp"), "value", "hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "T8: button text intact after form state changes" in run {
+    "T8: button text intact after form state changes" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -903,12 +903,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.fill(Selector.id("email"), "test2@test.com")
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertText(Selector.id("add"), "Add Employee")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "T9: adding entries preserves table" in run {
+    "T9: adding entries preserves table" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -921,12 +921,12 @@ class FormDemoQaItTest extends UITest:
                     _ <- Browser.click(Selector.id("add"))
                     _ <- Browser.assertTextSatisfies(Selector.id("entries"), "contains 'Alice' after second add")(_.contains("Alice"))
                     _ <- Browser.assertTextSatisfies(Selector.id("entries"), "contains 'Bob' after second add")(_.contains("Bob"))
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "T10: select shows current selected option text" in run {
+    "T10: select shows current selected option text" in {
         val app: UI < Async =
             for ref <- Signal.initRef("developer")
             yield UI.div(
@@ -947,21 +947,21 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("rv"), "role:manager")
                 _ <- Browser.select(Selector.id("sel"), "qa")
                 _ <- Browser.assertText(Selector.id("rv"), "role:qa")
-            yield succeed
+            yield ()
         }
     }
 
-    "T11: scroll reveals content below viewport" in run {
+    "T11: scroll reveals content below viewport" in {
         val rows = (1 to 60).map(i => UI.span(s"line$i").id(s"l$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
                 _ <- Browser.scrollTo(Selector.id("l60"))
                 _ <- Browser.assertText(Selector.id("l60"), "line60")
-            yield succeed
+            yield ()
         }
     }
 
-    "T12: full workflow: type, submit, type again, submit again" in run {
+    "T12: full workflow: type, submit, type again, submit again" in {
         formApp.flatMap { ui =>
             withUI(ui) {
                 for
@@ -980,12 +980,12 @@ class FormDemoQaItTest extends UITest:
                         Selector.id("entries"),
                         "Alice|alice@co.com|designer|true; Bob|bob@co.com|designer|true"
                     )
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "T13: click on input preserves buffer, fill replaces" in run {
+    "T13: click on input preserves buffer, fill replaces" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -1004,11 +1004,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "Hi")
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "X")
-            yield succeed
+            yield ()
         }
     }
 
-    "T14: click between inputs multiple times preserves all values" in run {
+    "T14: click between inputs multiple times preserves all values" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -1026,11 +1026,11 @@ class FormDemoQaItTest extends UITest:
                 _ <- Browser.fill(Selector.id("b"), "B2")
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "A1")
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "B2")
-            yield succeed
+            yield ()
         }
     }
 
-    "T15: focused input has document.activeElement set" in run {
+    "T15: focused input has document.activeElement set" in {
         // The browser's caret IS the cursor; we verify focus state via activeElement.
         val app: UI < Async =
             for ref <- Signal.initRef("Hello")
@@ -1045,7 +1045,7 @@ class FormDemoQaItTest extends UITest:
                 // Verify selection is set (caret position)
                 selectionStart <- Browser.eval("String(document.getElementById('inp')?.selectionStart || -1)")
                 _ = assert(selectionStart != "-1", s"Expected valid selectionStart, got '$selectionStart'")
-            yield succeed
+            yield ()
         }
     }
 

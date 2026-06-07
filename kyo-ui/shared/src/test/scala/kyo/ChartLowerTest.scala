@@ -13,7 +13,7 @@ import kyo.internal.NumberFormat
 import kyo.internal.Scale
 import scala.language.implicitConversions
 
-class ChartLowerTest extends Test:
+class ChartLowerTest extends kyo.test.Test[Any]:
 
     // ---- shared domain types ----
 
@@ -65,7 +65,7 @@ class ChartLowerTest extends Test:
             case _ => Chunk.empty
 
     // The marks region is the last top-level Svg.G child appended by lowerStatic (chrome groups precede it).
-    private def marksGroup(root: Svg.Root): Svg.G =
+    private def marksGroup(root: Svg.Root)(using Frame, kyo.test.AssertScope): Svg.G =
         root.children.collect { case g: Svg.G => g }.lastOption.getOrElse(fail("no marks Svg.G found"))
 
     // Layout constants (must match ChartLower defaults).
@@ -77,10 +77,10 @@ class ChartLowerTest extends Test:
 
     private val Tol = 1e-6
 
-    private def assertClose(actual: Double, expected: Double, msg: String): Assertion =
+    private def assertClose(actual: Double, expected: Double, msg: String)(using Frame, kyo.test.AssertScope): Unit =
         assert(math.abs(actual - expected) < Tol, s"$msg: expected $expected but got $actual")
 
-    private def numOf(c: Maybe[Coord]): Double = c match
+    private def numOf(c: Maybe[Coord])(using Frame, kyo.test.AssertScope): Double = c match
         case Present(Coord.Num(v)) => v
         case other                 => fail(s"Expected Coord.Num but got $other")
 
@@ -250,7 +250,7 @@ class ChartLowerTest extends Test:
         val root    = summon[Conversion[Chart.Spec[Row], Svg.Root]](spec)
         val circles = circlesIn(root)
         assert(circles.nonEmpty, s"Expected at least one circle but got ${circles.size}")
-        circles.foldLeft(succeed): (_, c) =>
+        circles.foldLeft(()): (_, c) =>
             // fill is the per-mark palette color: a single point mark is mark 0 -> palette(0) = blue.
             c.svgAttrs.fill match
                 case Present(Svg.Paint.Color(col)) =>
@@ -683,7 +683,7 @@ class ChartLowerTest extends Test:
         assert(texts.nonEmpty, "Expected axis text elements on the dark theme")
 
         // No axis text may be black on the dark theme.
-        texts.foldLeft(succeed): (_, t) =>
+        texts.foldLeft(()): (_, t) =>
             t.svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) => assert(c != Style.Color.black, "Dark-theme axis text must not be black")
                 case other                       => fail(s"Expected a fill color on dark-theme axis text but got $other")
@@ -695,7 +695,7 @@ class ChartLowerTest extends Test:
                 t.children.exists { case UI.Ast.Text("Month") => true; case _ => false }
         )
         assert(xTexts.nonEmpty, "Expected x-axis tick labels and/or the Month label")
-        xTexts.foldLeft(succeed): (_, t) =>
+        xTexts.foldLeft(()): (_, t) =>
             t.svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) => assert(c == lightText, s"X-axis text should stay neutral $lightText but got $c")
                 case other                       => fail(s"Expected an x-axis text fill but got $other")
@@ -703,7 +703,7 @@ class ChartLowerTest extends Test:
         // Left y-axis tick labels (TextAnchor.End) are color-coded to the single bound mark: palette(0) = blue.
         val leftTicks = texts.filter(t => t.svgAttrs.textAnchor.contains(Svg.TextAnchor.End))
         assert(leftTicks.nonEmpty, "Expected left y-axis tick labels")
-        leftTicks.foldLeft(succeed): (_, t) =>
+        leftTicks.foldLeft(()): (_, t) =>
             t.svgAttrs.fill match
                 case Present(Svg.Paint.Color(c)) =>
                     assert(c == Style.Color.blue, s"Single-mark y-axis tick should be palette(0) (blue) but got $c")
@@ -1257,7 +1257,7 @@ class ChartLowerTest extends Test:
     }
 
     // Test 32 (plan leaf 6): errorBar emits no url(# / marker (INV-022)
-    "errorBar emits no url(# or <marker in the HTML output (INV-022)" in run {
+    "errorBar emits no url(# or <marker in the HTML output (INV-022)" in {
         case class EbRow(x: String, mean: Double, lo: Double, hi: Double)
         val rows = Chunk(EbRow("a", 6.0, 4.0, 8.0))
         val spec = Chart(rows)(errorBar(x = _.x, y = _.mean, low = _.lo, high = _.hi))
@@ -1415,7 +1415,7 @@ class ChartLowerTest extends Test:
         root.children.collect:
             case t: Svg.Text if t.svgAttrs.dominantBaseline.contains(Svg.DominantBaseline.Middle) => t
 
-    private def fillColorOf(fill: Maybe[Svg.Paint]): Style.Color = fill match
+    private def fillColorOf(fill: Maybe[Svg.Paint])(using Frame, kyo.test.AssertScope): Style.Color = fill match
         case Present(Svg.Paint.Color(c)) => c
         case other                       => fail(s"Expected Svg.Paint.Color but got $other")
 
@@ -1564,7 +1564,7 @@ class ChartLowerTest extends Test:
 
     // ---- Leaf 15 (INV-028): sequential MARK fills are concrete colors, not url(#...) ----
 
-    "sequential mark fills are concrete colors, never url(#...) references (INV-028)" in run {
+    "sequential mark fills are concrete colors, never url(#...) references (INV-028)" in {
         val rows = Chunk(VRow(0.1), VRow(0.5), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.hidden.colorScaleSequential(blueHi, redHi))
@@ -1575,7 +1575,7 @@ class ChartLowerTest extends Test:
 
     // ---- Leaf 16 (INV-028, INV-003): sequential legend emits exactly one gradient under a per-chart id ----
 
-    "sequential legend emits exactly one linearGradient def with a kyo-chart- id (INV-028, INV-003)" in run {
+    "sequential legend emits exactly one linearGradient def with a kyo-chart- id (INV-028, INV-003)" in {
         val rows = Chunk(VRow(0.1), VRow(0.9))
         val spec = Chart(rows)(point(x = _ => 0.0, y = _.v, color = _.v))
             .legend(_.colorScaleSequential(blueHi, redHi))
@@ -1595,7 +1595,7 @@ class ChartLowerTest extends Test:
 
     // ---- Leaf 17 / WARN-1 same-hash: two STRUCTURALLY-IDENTICAL charts get distinct gradient ids ----
 
-    "two structurally-identical sequential charts in one fragment get distinct gradient ids (INV-028, INV-003, WARN-1)" in run {
+    "two structurally-identical sequential charts in one fragment get distinct gradient ids (INV-028, INV-003, WARN-1)" in {
         // The two charts are lowered from the SAME spec, so spec1.## == spec2.## by construction (it is the
         // identical spec value): the structural-hash collision is forced, not dodged. The per-instance counter
         // must still give each lowered chart a distinct gradient def id, and within each chart the swatch fill
@@ -1669,7 +1669,7 @@ class ChartLowerTest extends Test:
 
     // ---- Leaf 23 (INV-003, INV-028): a plain bar chart emits no defs / linearGradient ----
 
-    "a plain bar chart with no sequential color scale emits no defs or linearGradient (INV-003, INV-028)" in run {
+    "a plain bar chart with no sequential color scale emits no defs or linearGradient (INV-003, INV-028)" in {
         val rows = Chunk(CatRow("p", 1.0, "a"), CatRow("q", 2.0, "b"))
         val spec = Chart(rows)(bar(x = _.x, y = _.y))
         val root = summon[Conversion[Chart.Spec[CatRow], Svg.Root]](spec)
@@ -1726,7 +1726,7 @@ class ChartLowerTest extends Test:
         // Axis lines / tick marks are frame lines WITHOUT a strokeOpacity (gridlines carry one).
         val axisLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isEmpty)
         assert(axisLines.nonEmpty, "Expected axis/tick lines")
-        axisLines.foldLeft(succeed): (_, l) =>
+        axisLines.foldLeft(()): (_, l) =>
             l.svgAttrs.stroke match
                 case Present(Svg.Paint.Color(c)) => assert(c == custom, s"Expected axis stroke $custom but got $c")
                 case other                       => fail(s"Expected an axis stroke color but got $other")
@@ -1739,14 +1739,14 @@ class ChartLowerTest extends Test:
         val root      = summon[Conversion[Chart.Spec[Sale], Svg.Root]](spec)
         val gridLines = frameLines(root).filter(_.svgAttrs.strokeOpacity.isDefined)
         assert(gridLines.nonEmpty, "Expected gridlines")
-        gridLines.foldLeft(succeed): (_, l) =>
+        gridLines.foldLeft(()): (_, l) =>
             l.svgAttrs.stroke match
                 case Present(Svg.Paint.Color(c)) => assert(c == custom, s"Expected gridline stroke $custom but got $c")
                 case other                       => fail(s"Expected a gridline stroke color but got $other")
     }
 
     // Leaf 13
-    "an unset theme produces output identical to the explicit default theme (no regression)" in run {
+    "an unset theme produces output identical to the explicit default theme (no regression)" in {
         val rows      = themeRows
         val unset     = Chart(rows)(bar(x = _.month, y = _.revenue)).yAxis(_.grid)
         val explicit  = Chart(rows)(bar(x = _.month, y = _.revenue)).theme(_.light).yAxis(_.grid)
@@ -1762,7 +1762,7 @@ class ChartLowerTest extends Test:
     // ---- Phase-8 theme-palette consistency tests ----
 
     // Leaf 15: grouped bar under a custom theme.palette uses theme colors, not DefaultPalette
-    "grouped bar uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+    "grouped bar uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc (purple-ish), second color #00cccc (teal).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
@@ -1798,7 +1798,7 @@ class ChartLowerTest extends Test:
     }
 
     // Leaf 16: grouped bar with default theme uses DefaultPalette colors (byte-identical gate)
-    "grouped bar with default theme uses DefaultPalette blue and orange (default-theme unchanged)" in run {
+    "grouped bar with default theme uses DefaultPalette blue and orange (default-theme unchanged)" in {
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Jan", Usd(2000), Region.EU)
@@ -1820,7 +1820,7 @@ class ChartLowerTest extends Test:
     }
 
     // Leaf 17: text mark under a custom theme.palette uses theme colors, not DefaultPalette
-    "text mark uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+    "text mark uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc, second color #00cccc.
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
@@ -1856,7 +1856,7 @@ class ChartLowerTest extends Test:
     }
 
     // Leaf 18: errorBar mark under a custom theme.palette uses theme colors, not DefaultPalette
-    "errorBar mark uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+    "errorBar mark uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc, second color #00cccc.
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
@@ -1893,7 +1893,7 @@ class ChartLowerTest extends Test:
     }
 
     // Leaf 14 (WARN-2): static colored line respects theme.palette
-    "static multi-series line uses theme.palette colors, not DefaultPalette, under a custom theme" in run {
+    "static multi-series line uses theme.palette colors, not DefaultPalette, under a custom theme" in {
         // Two series via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color magenta (#ff00ff), second color cyan (#00ffff).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
@@ -1975,7 +1975,7 @@ class ChartLowerTest extends Test:
     // Leaf 19 (fill fix): stacked-area bands carry a per-group palette fill, not colorless paths.
     // Each group's band must be filled with its palette color (custom theme.palette here),
     // mirroring the non-stacked area's color fill. Before the fix the band paths had no fill.
-    "stacked area bands carry per-group theme.palette fills (custom theme)" in run {
+    "stacked area bands carry per-group theme.palette fills (custom theme)" in {
         // Two color groups via region encoding: NA (idx=0) and EU (idx=1).
         // Custom palette: first color #cc00cc (purple), second color #00cccc (teal).
         // DefaultPalette would give blue (#3b82f6) and orange (#f97316).
@@ -2013,7 +2013,7 @@ class ChartLowerTest extends Test:
     }
 
     // Leaf 20 (fill fix): under the default theme, stacked-area bands use DefaultPalette colors.
-    "stacked area bands use DefaultPalette fills (default theme)" in run {
+    "stacked area bands use DefaultPalette fills (default theme)" in {
         val rows = Chunk(
             Sale("Jan", Usd(1000), Region.NA),
             Sale("Feb", Usd(1500), Region.NA),
@@ -2545,7 +2545,7 @@ class ChartLowerTest extends Test:
     // explicit colorScale. The fix forwards Present(spec) into both lowerArea calls inside
     // lowerAreaWithTransitions, mirroring the lowerLineWithTransitions FIX B pattern.
 
-    "animated non-stacked area with categorical colorScale honors the scale colors (FIX 1, P9b)" in run {
+    "animated non-stacked area with categorical colorScale honors the scale colors (FIX 1, P9b)" in {
         case class ARow(x: Double, y: Double, series: String) derives CanEqual
         val cyan  = Style.Color.rgb(6, 182, 212)
         val amber = Style.Color.rgb(245, 158, 11)
@@ -2616,7 +2616,7 @@ class ChartLowerTest extends Test:
     //
     // Test A: custom theme.palette (no colorScale). The animated stacked area must produce the same
     // per-group fills as the static twin (leaf 19 above).
-    "animated stacked area honors custom theme.palette colors, matching the static twin (FIX 1b, P9c)" in run {
+    "animated stacked area honors custom theme.palette colors, matching the static twin (FIX 1b, P9c)" in {
         val purple = Style.Color.hex("#cc00cc").getOrElse(fail("bad hex"))
         val teal   = Style.Color.hex("#00cccc").getOrElse(fail("bad hex"))
         val rows = Chunk(
@@ -2656,7 +2656,7 @@ class ChartLowerTest extends Test:
     }
 
     // Test B: categorical colorScale. resolvePalette honors it; resolvePaletteFromCfg ignores it.
-    "animated stacked area honors a categorical colorScale, not DefaultPalette (FIX 1b, P9c)" in run {
+    "animated stacked area honors a categorical colorScale, not DefaultPalette (FIX 1b, P9c)" in {
         val crimson   = Style.Color.rgb(220, 38, 38)
         val indigo    = Style.Color.rgb(99, 102, 241)
         val blueCss   = "#3b82f6"

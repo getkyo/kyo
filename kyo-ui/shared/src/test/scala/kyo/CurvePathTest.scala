@@ -12,7 +12,7 @@ import kyo.internal.CurvePath
   * PathData inspection uses `Svg.PathData.commands` (private[kyo], accessible here
   * because this file is in `package kyo`; AF2/AF3 from prep.md).
   */
-class CurvePathTest extends Test:
+class CurvePathTest extends kyo.test.Test[Any]:
 
     private def hasCubic(pd: PathData): Boolean =
         Svg.PathData.commands(pd).toSeq.exists:

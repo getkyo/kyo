@@ -1,6 +1,6 @@
 package kyo
 
-class AbortTest extends Test:
+class AbortTest extends kyo.test.Test[Any]:
 
     case class Ex1() extends RuntimeException derives CanEqual
     case class Ex2() derives CanEqual
@@ -216,7 +216,7 @@ class AbortTest extends Test:
                     Abort.run[Int](v).eval
                 val _: Result[Int, Int] =
                     t3(42)
-                succeed
+                succeed("type-resolution compile check: Abort.run inference is a compile-time property")
             }
             "super" in {
                 val ex                        = new Exception
@@ -259,7 +259,7 @@ class AbortTest extends Test:
                     Result.succeed(Result.succeed(Result.succeed(Result.succeed(Result.succeed(Result.succeed(18))))))
                 assert(res == expected)
             }
-            "doesn't produce Fail if E isn't Throwable" in run {
+            "doesn't produce Fail if E isn't Throwable" in {
                 val ex = new Exception
                 Abort.run[Any](throw ex).map(result => assert(result == Result.panic(ex)))
             }
@@ -342,7 +342,7 @@ class AbortTest extends Test:
                     Abort.runPartial[Int](v)
                 val _: Result.Partial[Int, Int] < Abort[Nothing] =
                     t3(42)
-                succeed
+                succeed("type-resolution compile check: Abort.runPartial inference is a compile-time property")
             }
             "super" in {
                 val ex                                                 = new Exception
@@ -695,7 +695,7 @@ class AbortTest extends Test:
                     val r = Abort.run(Abort.catching(throw new RuntimeException)).eval
                     assert(r.isPanic)
                 }
-                "Panic" in pendingUntilFixed {
+                "Panic".pendingUntilFixed("Abort.catching does not yet recover a panic of the caught error type") in {
                     class Distinct1 extends Throwable derives CanEqual
 
                     val d1: Distinct1                 = new Distinct1
@@ -703,7 +703,6 @@ class AbortTest extends Test:
                     val r: Result[Distinct1, Boolean] = Abort.run(a).eval
 
                     assert(r == Result.fail(d1))
-                    ()
                 }
             }
             "with other effect" - {
@@ -923,7 +922,7 @@ class AbortTest extends Test:
         }
         val finalResult: Result[String, Int] < (Env[Int] & Var[Int]) = result
         val _                                                        = finalResult
-        succeed
+        succeed("type-resolution compile check: multi-effect type inference is a compile-time property")
     }
 
     "handling of Abort[Nothing]" - {
@@ -963,7 +962,7 @@ class AbortTest extends Test:
         }
     }
 
-    "Abort.run with parametrized type" in pendingUntilFixed {
+    "Abort.run with parametrized type".pendingUntilFixed("Abort.run type inference does not yet work for a parametrized error type") in {
         class Test[A]
         discard(typeCheck("Abort.run(Abort.fail(new Test[Int]))"))
     }
@@ -1419,7 +1418,7 @@ class AbortTest extends Test:
             )(computation)
 
             val _: String < Any = folded
-            succeed
+            succeed("type-resolution compile check: foldError removes Abort from the effect row")
         }
     }
 
@@ -1441,7 +1440,7 @@ class AbortTest extends Test:
             val result = Abort.run[Ex2](Abort.ignore[Ex1](Abort.fail[Ex1 | Ex2](ex2))).eval
             assert(result == Result.fail(ex2))
         }
-        "side effects run" in run {
+        "side effects run" in {
             Var.run(0) {
                 Abort.ignore[Ex1](Var.update[Int](_ + 1).andThen(Abort.fail(ex1))).andThen(
                     Var.get[Int].map(v => assert(v == 1))
@@ -1458,7 +1457,7 @@ class AbortTest extends Test:
     "loopUntil" - {
         case class Done() derives CanEqual
 
-        "loops until abort" in run {
+        "loops until abort" in {
             Var.run(0) {
                 Abort.loopUntil[Done] {
                     Var.update[Int](_ + 1).map { v =>
@@ -1468,7 +1467,7 @@ class AbortTest extends Test:
                 }.andThen(Var.get[Int].map(v => assert(v == 5)))
             }
         }
-        "first iteration aborts" in run {
+        "first iteration aborts" in {
             Var.run(0) {
                 Abort.loopUntil[String] {
                     Var.update[Int](_ + 1).andThen(Abort.fail("stop"))
@@ -1480,7 +1479,7 @@ class AbortTest extends Test:
             val result = Abort.run[Nothing](Abort.loopUntil[String](throw ex)).eval
             assert(result.isPanic)
         }
-        "works with generic error type" in run {
+        "works with generic error type" in {
             Var.run(0) {
                 Abort.loopUntil[Int] {
                     Var.update[Int](_ + 1).map { v =>
@@ -1490,7 +1489,7 @@ class AbortTest extends Test:
                 }.andThen(Var.get[Int].map(v => assert(v == 3)))
             }
         }
-        "interacts with other effects" in run {
+        "interacts with other effects" in {
             Var.run(0) {
                 Env.run(10) {
                     Abort.loopUntil[String] {

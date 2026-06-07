@@ -8,7 +8,7 @@ import kyo.internal.transport.*
   * WritePump drains an outbound channel and writes bytes via the driver. We use a mock IoDriver that captures the promises passed to
   * awaitWritable so we can complete them synchronously and drive the pump state machine in tests.
   */
-class WritePumpTest extends kyo.Test:
+class WritePumpTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -125,7 +125,6 @@ class WritePumpTest extends kyo.Test:
             // No teardown — channel still open
             assert(!channel.closed())
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "partial write triggers awaitWritable registration" in {
@@ -139,7 +138,6 @@ class WritePumpTest extends kyo.Test:
             // After partial write, driver.awaitWritable should have been called
             assert(driver.writablePromise.isDefined)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "writable notification retries remaining bytes and completes" in {
@@ -162,7 +160,6 @@ class WritePumpTest extends kyo.Test:
             assert(driver.writtenData(1).toArray sameElements remaining.toArray)
             assert(driver.writablePromise.isEmpty)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "first use of writablePromise does not reset — promise used flag starts false" in {
@@ -186,7 +183,6 @@ class WritePumpTest extends kyo.Test:
             driver.signalWritable()
             assert(driver.writtenData.length == 3)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "subsequent writable notifications reuse promise (reset called)" in {
@@ -212,7 +208,6 @@ class WritePumpTest extends kyo.Test:
             driver.signalWritable()
             assert(driver.writtenData.length == 3)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "write error closes pump" in {
@@ -225,7 +220,6 @@ class WritePumpTest extends kyo.Test:
             assert(driver.writtenData.length == 1)
             // Error → teardown → closeFn called
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "writablePromise error closes pump" in {
@@ -243,7 +237,6 @@ class WritePumpTest extends kyo.Test:
 
             // teardown should have been called
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "channel closure during take — Failure(Closed) causes teardown" in {
@@ -256,7 +249,6 @@ class WritePumpTest extends kyo.Test:
 
             // Teardown should have been triggered
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "absent result during channel take causes teardown" in {
@@ -268,7 +260,6 @@ class WritePumpTest extends kyo.Test:
             pump.start()
             discard(channel.close())
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "becomeAvailable fails after write causes teardown" in {
@@ -290,7 +281,6 @@ class WritePumpTest extends kyo.Test:
 
             assert(driver.writtenData.length == 2)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "empty span write is treated as Done immediately" in {
@@ -304,7 +294,6 @@ class WritePumpTest extends kyo.Test:
             assert(driver.writtenData.length == 1)
             assert(driver.writtenData.head.isEmpty)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "onComplete skips write when awaitingWritable is true" in {
@@ -327,7 +316,6 @@ class WritePumpTest extends kyo.Test:
 
             // No additional writes happened because pump is in awaitingWritable mode
             assert(driver.writtenData.length == writeCountBefore)
-            succeed
         }
 
         "multiple sequential writes proceed correctly" in {
@@ -347,7 +335,6 @@ class WritePumpTest extends kyo.Test:
             assert(driver.writtenData.length == 3)
 
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "batch write coalesces queued spans" in {
@@ -366,7 +353,6 @@ class WritePumpTest extends kyo.Test:
             // We know at least the first write happened
             assert(driver.writtenData.nonEmpty)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "write error after retry also triggers teardown" in {
@@ -383,7 +369,6 @@ class WritePumpTest extends kyo.Test:
             // Signal writable → second write → Error → teardown
             driver.signalWritable()
             assert(closeFn().nonEmpty)
-            succeed
         }
     }
 

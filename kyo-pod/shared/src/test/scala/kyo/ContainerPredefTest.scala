@@ -4,7 +4,7 @@ import kyo.ContainerPredef.MongoDB
 import kyo.ContainerPredef.MySQL
 import kyo.ContainerPredef.Postgres
 
-class ContainerPredefTest extends Test:
+class ContainerPredefTest extends BasePodTest:
 
     "Postgres" - {
         "Config" - {
