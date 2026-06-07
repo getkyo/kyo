@@ -271,9 +271,9 @@ end ResilienceTest
 
 When a `Passed` or `Failed` result reports `attempts > 1`, a retry decorator rescued (or exhausted on) that leaf; `attempts == 1` means it settled on the first try.
 
-### Platform: `jvm`/`js`/`native`, `notX`, `onlyX`
+### Platform: `jvm`/`js`/`native`/`wasm`, `notX`, `onlyX`
 
-Three families select platforms. `.jvm` / `.js` / `.native` add a platform to the include set (additive). `.notJvm` / `.notJs` / `.notNative` remove one. `.onlyJvm` / `.onlyJs` / `.onlyNative` restrict to exactly one. On a non-matching platform the leaf is compile-excluded: the body is never emitted, no code for the leaf reaches the platform's output, and the leaf is absent entirely. It produces no `TestResult` and is never reported.
+Three families select platforms. `.jvm` / `.js` / `.native` / `.wasm` add a platform to the include set (additive). `.notJvm` / `.notJs` / `.notNative` / `.notWasm` remove one. `.onlyJvm` / `.onlyJs` / `.onlyNative` / `.onlyWasm` restrict to exactly one. On a non-matching platform the leaf is compile-excluded: the body is never emitted, no code for the leaf reaches the platform's output, and the leaf is absent entirely. It produces no `TestResult` and is never reported. Filters compose: a second filter intersects with the first, so `.notNative.notWasm` excludes the leaf on both Native and WebAssembly while leaving it on the JVM and Scala.js.
 
 ```scala
 class PlatformTest extends Test[Any]:
@@ -281,6 +281,9 @@ class PlatformTest extends Test[Any]:
         assert(true)
     }
     "not on Scala Native".notNative in {
+        assert(true)
+    }
+    "stack-unsafe on AOT targets".notNative.notWasm in {
         assert(true)
     }
 end PlatformTest

@@ -138,9 +138,11 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def jvm: PlatformTestBuilder[PlatformSet.OnlyJvm]         = PlatformTestBuilder(TestBuilder(name))
         def js: PlatformTestBuilder[PlatformSet.OnlyJs]           = PlatformTestBuilder(TestBuilder(name))
         def native: PlatformTestBuilder[PlatformSet.OnlyNative]   = PlatformTestBuilder(TestBuilder(name))
+        def wasm: PlatformTestBuilder[PlatformSet.OnlyWasm]       = PlatformTestBuilder(TestBuilder(name))
         def notJvm: PlatformTestBuilder[PlatformSet.NotJvm]       = PlatformTestBuilder(TestBuilder(name))
         def notJs: PlatformTestBuilder[PlatformSet.NotJs]         = PlatformTestBuilder(TestBuilder(name))
         def notNative: PlatformTestBuilder[PlatformSet.NotNative] = PlatformTestBuilder(TestBuilder(name))
+        def notWasm: PlatformTestBuilder[PlatformSet.NotWasm]     = PlatformTestBuilder(TestBuilder(name))
 
         /** Restrict this leaf to exactly JVM; the body is compile-excluded on JS and Native (absent, not skipped). */
         def onlyJvm: PlatformTestBuilder[PlatformSet.OnlyJvm] = PlatformTestBuilder(TestBuilder(name))
@@ -150,6 +152,9 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         /** Restrict this leaf to exactly Native; the body is compile-excluded on JVM and JS (absent, not skipped). */
         def onlyNative: PlatformTestBuilder[PlatformSet.OnlyNative] = PlatformTestBuilder(TestBuilder(name))
+
+        /** Restrict this leaf to exactly WebAssembly; the body is compile-excluded on JVM, JS, and Native (absent, not skipped). */
+        def onlyWasm: PlatformTestBuilder[PlatformSet.OnlyWasm] = PlatformTestBuilder(TestBuilder(name))
 
     end extension
 
@@ -230,9 +235,11 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def jvm: PlatformTestBuilder[PlatformSet.OnlyJvm]         = PlatformTestBuilder(b)
         def js: PlatformTestBuilder[PlatformSet.OnlyJs]           = PlatformTestBuilder(b)
         def native: PlatformTestBuilder[PlatformSet.OnlyNative]   = PlatformTestBuilder(b)
+        def wasm: PlatformTestBuilder[PlatformSet.OnlyWasm]       = PlatformTestBuilder(b)
         def notJvm: PlatformTestBuilder[PlatformSet.NotJvm]       = PlatformTestBuilder(b)
         def notJs: PlatformTestBuilder[PlatformSet.NotJs]         = PlatformTestBuilder(b)
         def notNative: PlatformTestBuilder[PlatformSet.NotNative] = PlatformTestBuilder(b)
+        def notWasm: PlatformTestBuilder[PlatformSet.NotWasm]     = PlatformTestBuilder(b)
 
         /** Restrict this leaf to exactly JVM; the body is compile-excluded on JS and Native (absent, not skipped). */
         def onlyJvm: PlatformTestBuilder[PlatformSet.OnlyJvm] = PlatformTestBuilder(b)
@@ -242,6 +249,9 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
         /** Restrict this leaf to exactly Native; the body is compile-excluded on JVM and JS (absent, not skipped). */
         def onlyNative: PlatformTestBuilder[PlatformSet.OnlyNative] = PlatformTestBuilder(b)
+
+        /** Restrict this leaf to exactly WebAssembly; the body is compile-excluded on JVM, JS, and Native (absent, not skipped). */
+        def onlyWasm: PlatformTestBuilder[PlatformSet.OnlyWasm] = PlatformTestBuilder(b)
 
     end extension
 
@@ -311,6 +321,22 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         def times(n: Int): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(repeat = n))
 
         def only(cond: => Boolean): PlatformTestBuilder[P] = PlatformTestBuilder(pb.builder.copy(onlyIf = Maybe(() => cond)))
+
+        // A second platform filter combines with P via PlatformSet.Both rather than replacing it (gateOf reduces Both to an &&),
+        // so `.notNative.notWasm` is enabled only where both hold. Single-platform filters keep the `.jvm` == `.onlyJvm` identity.
+
+        def jvm: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyJvm]]           = PlatformTestBuilder(pb.builder)
+        def js: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyJs]]             = PlatformTestBuilder(pb.builder)
+        def native: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyNative]]     = PlatformTestBuilder(pb.builder)
+        def wasm: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyWasm]]         = PlatformTestBuilder(pb.builder)
+        def notJvm: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.NotJvm]]         = PlatformTestBuilder(pb.builder)
+        def notJs: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.NotJs]]           = PlatformTestBuilder(pb.builder)
+        def notNative: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.NotNative]]   = PlatformTestBuilder(pb.builder)
+        def notWasm: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.NotWasm]]       = PlatformTestBuilder(pb.builder)
+        def onlyJvm: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyJvm]]       = PlatformTestBuilder(pb.builder)
+        def onlyJs: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyJs]]         = PlatformTestBuilder(pb.builder)
+        def onlyNative: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyNative]] = PlatformTestBuilder(pb.builder)
+        def onlyWasm: PlatformTestBuilder[PlatformSet.Both[P, PlatformSet.OnlyWasm]]     = PlatformTestBuilder(pb.builder)
 
     end extension
 

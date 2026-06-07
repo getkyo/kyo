@@ -171,12 +171,28 @@ private[compat] object CompatLibrary {
             val process: Project => Project = (proj: Project) => {
                 val withPlugin = enablePlatformPlugin(proj)
                 val withDeps = withPlugin.settings(
-                    moduleName    := name.value + backend.directorySuffix,
-                    baseDirectory := backendBase,
-                    Compile / unmanagedSourceDirectories ++= Seq(sharedMain, perBackendMain, backendMain),
-                    Test / unmanagedSourceDirectories ++= Seq(sharedTest, perBackendTest, backendTest),
-                    Compile / unmanagedResourceDirectories ++= Seq(sharedMainR, perBackendMainR, backendMainR),
-                    Test / unmanagedResourceDirectories ++= Seq(sharedTestR, perBackendTestR, backendTestR),
+                    moduleName := name.value + backend.directorySuffix,
+                    baseDirectory := {
+                        val dir = IO.resolve((LocalRootProject / baseDirectory).value, backendBase)
+                        IO.createDirectory(dir)
+                        dir
+                    },
+                    Compile / unmanagedSourceDirectories ++= {
+                        val root = (LocalRootProject / baseDirectory).value
+                        Seq(sharedMain, perBackendMain, backendMain).map(IO.resolve(root, _))
+                    },
+                    Test / unmanagedSourceDirectories ++= {
+                        val root = (LocalRootProject / baseDirectory).value
+                        Seq(sharedTest, perBackendTest, backendTest).map(IO.resolve(root, _))
+                    },
+                    Compile / unmanagedResourceDirectories ++= {
+                        val root = (LocalRootProject / baseDirectory).value
+                        Seq(sharedMainR, perBackendMainR, backendMainR).map(IO.resolve(root, _))
+                    },
+                    Test / unmanagedResourceDirectories ++= {
+                        val root = (LocalRootProject / baseDirectory).value
+                        Seq(sharedTestR, perBackendTestR, backendTestR).map(IO.resolve(root, _))
+                    },
                     libraryDependencies ++= {
                         val isBound = metaOf(matrixId).exists(_.bindings.contains(backend.name))
                         if (isBound) Seq.empty

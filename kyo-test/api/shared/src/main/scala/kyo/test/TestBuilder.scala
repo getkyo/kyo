@@ -99,26 +99,45 @@ object PlatformSet:
 
     /** Enabled on every platform except Scala Native. */
     sealed trait NotNative
+
+    /** Enabled only on WebAssembly (Scala.js-wasm). */
+    sealed trait OnlyWasm
+
+    /** Enabled on every platform except WebAssembly. */
+    sealed trait NotWasm
+
+    /** Enabled where BOTH `A` and `B` are enabled: the marker produced by chaining two platform filters (`.notNative.notWasm`). A distinct
+      * nominal type (not a structural intersection) so [[gateOf]] can match it without spuriously decomposing a single marker. [[gateOf]]
+      * reduces it to `gateOf[A] && gateOf[B]`.
+      */
+    sealed trait Both[A, B]
 end PlatformSet
 
 /** Reduce a [[PlatformSet]] marker `P` to the compile-time-constant Boolean saying whether the current platform is in `P`'s enabled set.
   *
   * `transparent inline` plus the `inline erasedValue[P] match` makes the result a literal `true`/`false` at each platform compile, because
-  * `kyo.internal.Platform.isJVM`/`isJS`/`isNative` are themselves inline constants per platform. That constant is what makes
+  * `kyo.internal.Platform.isJVM`/`isJS`/`isNative`/`isWasm` are themselves inline constants per platform. That constant is what makes
   * `inline if gateOf[P]` a legal compile-time branch whose dead arm is never emitted.
+  *
+  * Platform filters compose: chaining (`.notNative.notWasm`) wraps the markers in [[PlatformSet.Both]], so `P` becomes
+  * `Both[NotNative, NotWasm]`. The `Both` case reduces `gateOf[Both[a, b]]` to `gateOf[a] && gateOf[b]`, both inline constants, so the leaf
+  * is enabled only where every marker in the chain is.
   */
 transparent inline def gateOf[P]: Boolean =
     inline erasedValue[P] match
+        case _: PlatformSet.Both[a, b] => gateOf[a] && gateOf[b]
         case _: PlatformSet.All        => true
         case _: PlatformSet.OnlyJvm    => kyo.internal.Platform.isJVM
         case _: PlatformSet.OnlyJs     => kyo.internal.Platform.isJS
         case _: PlatformSet.OnlyNative => kyo.internal.Platform.isNative
+        case _: PlatformSet.OnlyWasm   => kyo.internal.Platform.isWasm
         case _: PlatformSet.NotJvm     => !kyo.internal.Platform.isJVM
         case _: PlatformSet.NotJs      => !kyo.internal.Platform.isJS
         case _: PlatformSet.NotNative  => !kyo.internal.Platform.isNative
+        case _: PlatformSet.NotWasm    => !kyo.internal.Platform.isWasm
 
-/** Phantom-typed carrier produced by a platform filter (`.jvm`, `.js`, `.native`, `.onlyJvm`, `.onlyJs`, `.onlyNative`, `.notJvm`, `.notJs`,
-  * `.notNative`).
+/** Phantom-typed carrier produced by a platform filter (`.jvm`, `.js`, `.native`, `.wasm`, `.onlyJvm`, `.onlyJs`, `.onlyNative`, `.onlyWasm`,
+  * `.notJvm`, `.notJs`, `.notNative`, `.notWasm`).
   *
   * It wraps the runtime [[TestBuilder]] metadata and adds a phantom type parameter `P` naming the enabled-platform set (a [[PlatformSet]]
   * marker). The terminal `in`/`-` (defined as extensions on this type inside [[kyo.test.internal.TestBase]]) branch on `inline if
@@ -126,7 +145,8 @@ transparent inline def gateOf[P]: Boolean =
   * UNAPPLIED via `discardScoped`/`discardGroup`, so its code is never emitted.
   *
   * Decorators chained after a platform filter (`.pending`, `.pendingUntilFixed`, `.focus`, `.retry`, `.timeout`, ...) preserve `P`, so a
-  * chain like `"x".notNative.pending("...") in { ... }` stays compile-excluded on Native.
+  * chain like `"x".notNative.pending("...") in { ... }` stays compile-excluded on Native. A second platform filter combines with `P` via
+  * [[PlatformSet.Both]] instead of replacing it, so `"x".notNative.notWasm in { ... }` is compile-excluded on both Native and WebAssembly.
   *
   * @tparam P
   *   the [[PlatformSet]] marker naming the enabled-platform set

@@ -156,7 +156,9 @@ class KyoTest extends kyo.test.Test[Any]:
                 assert(incr(0, n).eval == n)
             }
 
-            "suspension at the start".notNative.pendingUntilFixed("deep effect suspension is not yet stack-safe (StackOverflowError)") in {
+            "suspension at the start".notNative.notWasm.pendingUntilFixed(
+                "deep effect suspension is not yet stack-safe (StackOverflowError)"
+            ) in {
                 try
                     assert(TestEffect1.run(incr(TestEffect1(n), n)).eval == 0)
                 catch
@@ -169,7 +171,7 @@ class KyoTest extends kyo.test.Test[Any]:
                 assert(TestEffect1.run(incr(n, n).map(n => TestEffect1(n + n))).eval == n * 4 + 1)
             }
 
-            "multiple effects".notNative.pendingUntilFixed("deep effect suspension is not yet stack-safe (StackOverflowError)") in {
+            "multiple effects".notNative.notWasm.pendingUntilFixed("deep effect suspension is not yet stack-safe (StackOverflowError)") in {
                 @tailrec def incr(v: Int < TestEffect1, n: Int): Int < TestEffect1 =
                     n match
                         case 0 => v
