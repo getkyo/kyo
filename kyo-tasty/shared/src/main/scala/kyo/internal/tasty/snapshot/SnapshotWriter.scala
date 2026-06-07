@@ -272,6 +272,10 @@ object SnapshotWriter:
         // Serialize so warm loads can answer cp.companion(sym) without fqnIndex rescan.
         val compIdxBytes = serializeCompanionIndex(cp.indices.companionIndex, symIdToIdxForIdx)
 
+        // PLISTS__ section: per-method paramListIds (sparse two-level Int32-LE encoding).
+        // Written unconditionally even when no method has a non-empty paramListIds (count=0).
+        val paramListsBytes = serializeParamLists(symbolList)
+
         // NAMES section: length-prefixed UTF-8 strings.
         // Built AFTER all internName calls (symNames, symFqns, annotsBytes, fqnIdxBytes, fqnMapBytes) so
         // the pool is complete before serialization. Earlier placement caused FQNIDX__ name IDs to
@@ -287,6 +291,9 @@ object SnapshotWriter:
             (SnapshotFormat.sectionPARENTS, parentsBytes),
             (SnapshotFormat.sectionMEMBERS, membersBytes),
             (SnapshotFormat.sectionTPARAMS, tparamsBytes),
+            // PLISTS__ joins the per-symbol relational sections (PARENTS / MEMBERS / TPARAMS_) and
+            // sits before FILES per Q-007 placement rule. Sparse two-level Int32-LE layout.
+            (SnapshotFormat.sectionPLISTS, paramListsBytes),
             (SnapshotFormat.sectionFILES, filesBytes),
             (SnapshotFormat.sectionBODYBYTES, bodyBytes),
             (SnapshotFormat.sectionERRORS, errorsBytes),
@@ -869,6 +876,50 @@ object SnapshotWriter:
         end for
         baos.toByteArray
     end serializeCompanionIndex
+
+    /** Serialize per-method paramListIds into the PLISTS__ section payload.
+      *
+      * Sparse two-level Int32-LE encoding. Mirrors serializeSymbolRelLists at :603-627 and
+      * serializeSubclassIndex at :815-841 for shape symmetry. Methods whose paramListIds field
+      * is Chunk.empty are omitted; methods with Chunk(Chunk.empty) emit listCount=1, innerCount=0
+      * to preserve the no-arg-empty-clause distinction.
+      *
+      * Written unconditionally even when no method has a non-empty paramListIds (count=0).
+      *
+      * Layout:
+      *   [Int32-LE entryCount]
+      *   entryCount x:
+      *     [Int32-LE symIdx][Int32-LE listCount]
+      *     listCount x:
+      *       [Int32-LE innerCount]
+      *       innerCount x [Int32-LE symbolId.value]
+      */
+    private def serializeParamLists(symbols: Seq[Tasty.Symbol]): Array[Byte] =
+        val baos = new java.io.ByteArrayOutputStream(4 * 1024)
+        val tmp  = new Array[Byte](4)
+        val entries = symbols.zipWithIndex.flatMap:
+            case (m: Tasty.Symbol.Method, idx) if m.paramListIds.nonEmpty =>
+                Some((idx, m.paramListIds))
+            case _ =>
+                None
+        SnapshotFormat.writeInt32LE(tmp, 0, entries.size)
+        baos.write(tmp)
+        for (symIdx, lists) <- entries do
+            SnapshotFormat.writeInt32LE(tmp, 0, symIdx)
+            baos.write(tmp)
+            SnapshotFormat.writeInt32LE(tmp, 0, lists.size)
+            baos.write(tmp)
+            for inner <- lists do
+                SnapshotFormat.writeInt32LE(tmp, 0, inner.size)
+                baos.write(tmp)
+                for id <- inner do
+                    SnapshotFormat.writeInt32LE(tmp, 0, id.value)
+                    baos.write(tmp)
+                end for
+            end for
+        end for
+        baos.toByteArray
+    end serializeParamLists
 
     /** Convert a Name (opaque String alias) to a String. */
     private def nameToStr(n: Tasty.Name): String =

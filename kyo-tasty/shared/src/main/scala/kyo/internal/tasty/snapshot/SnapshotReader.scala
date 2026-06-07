@@ -100,6 +100,9 @@ object SnapshotReader:
             // minor=10 is a breaking bump (ERRORS string-tag format): reject to force cold re-decode.
             // minor=11 is a breaking bump: four new TastyError variants gained full wire-format encoding.
             //   A minor=10 snapshot has stub (zero-payload) entries for these; reject to force cold re-decode.
+            // minor=12 is a breaking bump: PLISTS__ section persists Symbol.Method.paramListIds.
+            //   A minor=11 snapshot lacks the section; warm-loading would always return Chunk.empty
+            //   paramListIds, a fidelity regression. Reject to force cold re-decode.
             throw new VersionMismatchException(
                 Tasty.Version(fileMajor, fileMinor, 0),
                 Tasty.Version(SnapshotFormat.majorVersion, SnapshotFormat.minorVersion, 0)
@@ -171,6 +174,9 @@ object SnapshotReader:
                     // A minor=10 snapshot written by the old writer has stub (zero-payload) entries for these
                     // variants; reading them with the new reader would interpret the next error's tag varint
                     // as a field, producing garbage. Reject to force cold re-decode.
+                    // minor=12 is a breaking bump: PLISTS__ section persists Symbol.Method.paramListIds.
+                    // A minor=11 snapshot lacks the section; warm-loading would always return Chunk.empty
+                    // paramListIds, a fidelity regression. Reject to force cold re-decode.
                     Abort.fail(
                         TastyError.SnapshotVersionMismatch(
                             Tasty.Version(fileMajor, fileMinor, 0),
@@ -398,6 +404,19 @@ object SnapshotReader:
             case _ => ()
         end match
 
+        // Collect paramListIds per symbol index (PLISTS__ section, added in minor=12).
+        // Absent section (pre-minor-12 snapshot, which is rejected above) defaults all entries to Chunk.empty.
+        val paramListsByIdx = new Array[Chunk[Chunk[Int]]](symCount)
+        java.util.Arrays.fill(
+            paramListsByIdx.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
+        sectionMap.get(SnapshotFormat.sectionPLISTS) match
+            case Some((off, len)) if len > 0 =>
+                readParamListsByIdx(bytes, off, len, symCount, paramListsByIdx)
+            case _ => ()
+        end match
+
         // Rebuild final immutable Symbols with all 14 fields populated.
         val finalSymbols = new Array[Tasty.Symbol](symCount)
         var si           = 0
@@ -444,6 +463,7 @@ object SnapshotReader:
                 parentTypes = parentsByIdx(si),
                 typeParamIds = Chunk.from(tpIds.toSeq.map(_.value)),
                 declarationIds = Chunk.from(declIds.toSeq.map(_.value)),
+                paramListIds = paramListsByIdx(si),
                 permittedSubclassIds = permittedByIdx(si) match
                     case kyo.Maybe.Present(ids) => kyo.Maybe(ids)
                     case kyo.Maybe.Absent =>
@@ -863,6 +883,19 @@ object SnapshotReader:
             case _ => ()
         end match
 
+        // PLISTS__ section: paramListIds per method symbol (added in minor=12).
+        val paramListsByIdxM = new Array[Chunk[Chunk[Int]]](symCount)
+        java.util.Arrays.fill(
+            paramListsByIdxM.asInstanceOf[Array[Object]],
+            Chunk.empty
+        ) // flow-allow: asInstanceOf -- java.util.Arrays.fill requires Array[Object]
+        sectionMap.get(SnapshotFormat.sectionPLISTS) match
+            case Some((off, len)) if len > 0 =>
+                val secBytes = copyViewRange(view, off, off + len)
+                readParamListsByIdx(secBytes, 0, len, symCount, paramListsByIdxM)
+            case _ => ()
+        end match
+
         val finalSymbols = new Array[Tasty.Symbol](symCount)
         var j            = 0
         while j < symCount do
@@ -908,6 +941,7 @@ object SnapshotReader:
                 parentTypes = parentsByIdx(j),
                 typeParamIds = Chunk.from(tpIds.toSeq.map(_.value)),
                 declarationIds = Chunk.from(declIds.toSeq.map(_.value)),
+                paramListIds = paramListsByIdxM(j),
                 permittedSubclassIds = permittedByIdxM(j) match
                     case kyo.Maybe.Present(ids) => kyo.Maybe(ids)
                     case kyo.Maybe.Absent =>
@@ -1653,6 +1687,49 @@ object SnapshotReader:
             Chunk.from(buf.toSeq)
         end if
     end readErrors
+
+    /** Read the PLISTS__ section into an Array[Chunk[Chunk[Int]]] indexed by symbol position.
+      *
+      * Sparse two-level Int32-LE decoding symmetric with serializeParamLists in SnapshotWriter.
+      * Bounds-safety: every inner read guards pos + 4 <= end mirroring deserializeRefListsByIdx.
+      * Entries with out-of-range symIdx are silently skipped. Methods absent from the section
+      * default to Chunk.empty (identical to the pre-minor-12 behaviour, but only reached for
+      * minor-12 snapshots where all method symbols were emitted by the writer).
+      */
+    private def readParamListsByIdx(
+        bytes: Array[Byte],
+        offset: Int,
+        length: Int,
+        symCount: Int,
+        out: Array[Chunk[Chunk[Int]]]
+    ): Unit =
+        val end = offset + length
+        if length < 4 then return
+        val entryCount = SnapshotFormat.readInt32LE(bytes, offset)
+        var pos        = offset + 4
+        var ei         = 0
+        while ei < entryCount && pos + 8 <= end do
+            val symIdx    = SnapshotFormat.readInt32LE(bytes, pos); pos += 4
+            val listCount = SnapshotFormat.readInt32LE(bytes, pos); pos += 4
+            val outer     = new Array[Chunk[Int]](listCount)
+            var li        = 0
+            while li < listCount && pos + 4 <= end do
+                val innerCount = SnapshotFormat.readInt32LE(bytes, pos); pos += 4
+                val inner      = new Array[Int](innerCount)
+                var ii         = 0
+                while ii < innerCount && pos + 4 <= end do
+                    inner(ii) = SnapshotFormat.readInt32LE(bytes, pos); pos += 4
+                    ii += 1
+                end while
+                outer(li) = Chunk.from(inner.take(ii).toSeq)
+                li += 1
+            end while
+            if symIdx >= 0 && symIdx < symCount then
+                out(symIdx) = Chunk.from(outer.take(li).toSeq)
+            end if
+            ei += 1
+        end while
+    end readParamListsByIdx
 
     /** Convert SymbolKind ordinal integer to enum case. */
     private def kindFromOrd(ord: Int): SymbolKind =

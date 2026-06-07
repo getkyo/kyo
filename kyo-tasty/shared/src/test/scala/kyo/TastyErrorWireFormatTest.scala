@@ -208,20 +208,21 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
         )
     }
 
-    // minor version bumped (originally to 10 for string-tag format; now 11).
+    // minor version bumped (originally to 10 for string-tag format; 11 for new TastyError variants;
+    // now 12 for PLISTS__ section).
     // Given: a freshly written snapshot.
     // When: read the format header bytes.
-    // Then: minorVersion == 11 (bumped for four new TastyError variants).
-    "minor version is 11 in freshly written snapshot" in {
+    // Then: minorVersion == 12 (bumped for PLISTS__ section, handoff-fixes campaign).
+    "minor version is 12 in freshly written snapshot" in {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
         assert(
-            minor == 11,
-            s"Expected snapshot minor version 11, got $minor"
+            minor == 12,
+            s"Expected snapshot minor version 12, got $minor"
         )
         assert(
-            SnapshotFormat.minorVersion == 11,
-            s"SnapshotFormat.minorVersion must be 11, got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 12,
+            s"SnapshotFormat.minorVersion must be 12, got ${SnapshotFormat.minorVersion}"
         )
     }
 
@@ -331,7 +332,7 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
     // old fixture snapshots at minor=9 fail with TastyError.SnapshotVersionMismatch.
     // Given: a snapshot byte array whose header byte at offset 5 is patched to 9.
     // When: loaded via SnapshotReader.read.
-    // Then: raises TastyError.SnapshotVersionMismatch with found=(1,9,0), supported=(1,11,0).
+    // Then: raises TastyError.SnapshotVersionMismatch with found=(1,9,0), supported=(1,12,0).
     "snapshot with minorVersion=9 is rejected with SnapshotVersionMismatch" in {
         val freshBytes   = snapshotBytesWithErrors(Chunk.empty)
         val patchedBytes = freshBytes.clone()
@@ -354,8 +355,8 @@ class TastyErrorWireFormatTest extends kyo.test.Test[Any]:
                             s"Expected found version (1,9,0), got ${vm.found}"
                         )
                         assert(
-                            vm.supported.major == 1 && vm.supported.minor == 11,
-                            s"Expected supported version (1,11,0), got ${vm.supported}"
+                            vm.supported.major == 1 && vm.supported.minor == 12,
+                            s"Expected supported version (1,12,0), got ${vm.supported}"
                         )
                     case other =>
                         fail(s"Expected TastyError.SnapshotVersionMismatch, got: $other")

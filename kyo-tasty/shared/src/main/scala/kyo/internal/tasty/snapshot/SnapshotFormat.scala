@@ -55,6 +55,9 @@ package kyo.internal.tasty.snapshot
   *   - `ERRORS` format change (minor=10): each error tag is now a varint-length-prefixed UTF-8 string (the case `productPrefix`) instead of a
   *     single-byte ordinal. This makes the format stable against future enum variant additions (no ordinal-shift breakage). Old snapshots at
   *     minor=9 and below are rejected; the reader emits `TastyError.SnapshotVersionMismatch` to force cold re-decode.
+  *   - `PLISTS__` section (minor=12, breaking bump): persists `Symbol.Method.paramListIds` per method symbol.
+  *     A minor=11 snapshot lacks the section; warm-loading would always return `Chunk.empty` paramListIds,
+  *     a fidelity regression. Reject to force cold re-decode.
   *
   * Versioning policy:
   *   - Major bump: invalidates all old snapshots (full re-decode + fresh write). Reader emits `TastyError.SnapshotVersionMismatch`.
@@ -77,7 +80,7 @@ object SnapshotFormat:
     /** Current format version. Major bumps invalidate old snapshots. */
     val majorVersion: Int = 1
     val minorVersion: Int =
-        11 // bumped from 10 (four new TastyError variants: UnhandledSubtypingCase, UnresolvedReference, UnknownType, MissingDeclaredType)
+        12 // bumped from 11 (handoff-fixes campaign: PLISTS__ section persists Symbol.Method.paramListIds)
 
     /** Maximum number of sections allowed in a snapshot header.
       *
@@ -117,7 +120,8 @@ object SnapshotFormat:
             "FQNIDX__",
             "FQNMAP__",
             "SUBCIDX_",
-            "COMPIDX_"
+            "COMPIDX_",
+            "PLISTS__"
         )
 
     /** Validate that every entry in `sectionNames` is at most 8 bytes and contains no NUL character.
@@ -197,6 +201,20 @@ object SnapshotFormat:
       * All indices are positions in the symbols array (snapshot order).
       */
     val sectionCOMPIDX: String = "COMPIDX_"
+
+    /** Method parameter-list partition section (added in minor=12, handoff-fixes campaign).
+      *
+      * Persists `Symbol.Method.paramListIds: Chunk[Chunk[SymbolId]]` so warm-loaded classpaths
+      * return the per-list-group grouping without re-decoding TASTy. Sparse keying by symbol
+      * index; Methods with `paramListIds == Chunk.empty` are omitted (reader defaults to empty).
+      * Distinguishes `Chunk.empty` (omitted) from `Chunk(Chunk.empty)` (encoded as
+      * `listCount=1, innerCount=0`).
+      *
+      * Layout: [Int32-LE entryCount] then per entry:
+      *   [Int32-LE symIdx][Int32-LE listCount]
+      *   listCount x [Int32-LE innerCount][innerCount x Int32-LE symbolId.value]
+      */
+    val sectionPLISTS: String = "PLISTS__"
 
     /** minor=7 (breaking bump): ERRORS section re-encoded as typed tagged format instead of flat strings.
       *

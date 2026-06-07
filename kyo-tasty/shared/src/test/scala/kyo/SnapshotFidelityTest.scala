@@ -161,13 +161,13 @@ class SnapshotFidelityTest extends kyo.test.Test[Any]:
     // Wire-format leaf 5: format-version-bumped
     // Given: a snapshot file written with the code
     // When: reading the format version constant
-    // Then: version is 11 (bumped for four new TastyError variants)
-    // History: set 6,b set 7, set 8, set 9, prior set 10, this set 11.
+    // Then: version is 12 (bumped for PLISTS__ section, handoff-fixes campaign)
+    // History: set 6,b set 7, set 8, set 9, prior set 10, set 11, this set 12.
     // Cross-platform: SnapshotFormat.minorVersion is a compile-time constant, no filesystem needed.
     "SnapshotFormat.FORMAT_VERSION reflects current minor version" in {
         assert(
-            SnapshotFormat.minorVersion == 11,
-            s"Expected SnapshotFormat.minorVersion == 11 but got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 12,
+            s"Expected SnapshotFormat.minorVersion == 12 but got ${SnapshotFormat.minorVersion}"
         )
     }
 

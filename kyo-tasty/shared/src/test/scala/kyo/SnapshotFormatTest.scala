@@ -11,13 +11,14 @@ import kyo.internal.tasty.snapshot.SnapshotFormat
   */
 class SnapshotFormatTest extends kyo.test.Test[Any]:
 
-    // Test 1 (, updated): minorVersion reflects the four-new-variants bump.
+    // Test 1 (, updated): minorVersion reflects the current bump.
     // b set minorVersion to 7 for ERRORS typed-format; set it to 8 for index sections;
     // sets it to 9 for ClasspathClosed/ClasspathBuilding context field.
     // (prior) set it to 10 for ERRORS string-tag format (stable productPrefix wire encoding, item 14).
-    // (this) sets it to 11 for UnhandledSubtypingCase / UnresolvedReference / UnknownType / MissingDeclaredType.
-    "SnapshotFormat.minorVersion is 11 (added UnhandledSubtypingCase, UnresolvedReference, UnknownType, MissingDeclaredType)" in {
-        assert(SnapshotFormat.minorVersion == 11)
+    // set it to 11 for UnhandledSubtypingCase / UnresolvedReference / UnknownType / MissingDeclaredType.
+    // (this) sets it to 12 for PLISTS__ section (handoff-fixes campaign: Symbol.Method.paramListIds).
+    "SnapshotFormat.minorVersion is 12 (added PLISTS__ section for Symbol.Method.paramListIds)" in {
+        assert(SnapshotFormat.minorVersion == 12)
         succeed
     }
 

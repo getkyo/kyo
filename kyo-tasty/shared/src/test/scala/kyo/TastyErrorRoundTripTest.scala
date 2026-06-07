@@ -12,7 +12,7 @@ import scala.collection.mutable
   * Coverage:
   *   1. Round-trip TastyError.UnhandledSubtypingCase with Type.Any and Type.Nothing.
   *   2. Round-trip TastyError.UnresolvedReference, TastyError.UnknownType, TastyError.MissingDeclaredType.
-  *   3. Minor version is 11 in freshly written snapshot.
+  *   3. Minor version is 12 in freshly written snapshot.
   *   4. Old minor=10 snapshot is rejected with TastyError.SnapshotVersionMismatch.
   */
 class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
@@ -135,24 +135,24 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
             case Result.Panic(t)   => throw t
     }
 
-    // minor version bumped to 11.
+    // minor version bumped to 12 (handoff-fixes campaign: PLISTS__ section).
     // Given: a freshly written snapshot.
     // When: the minor version byte at offset 5 is read.
-    // Then: value is 11; SnapshotFormat.minorVersion is 11.
-    "minor version is 11 in freshly written snapshot" in {
+    // Then: value is 12; SnapshotFormat.minorVersion is 12.
+    "minor version is 12 in freshly written snapshot" in {
         val snapshotBytes = snapshotBytesWithErrors(Chunk.empty)
         val minor         = snapshotBytes(5) & 0xff
-        assert(minor == 11, s"Expected snapshot minor version 11, got $minor")
+        assert(minor == 12, s"Expected snapshot minor version 12, got $minor")
         assert(
-            SnapshotFormat.minorVersion == 11,
-            s"SnapshotFormat.minorVersion must be 11, got ${SnapshotFormat.minorVersion}"
+            SnapshotFormat.minorVersion == 12,
+            s"SnapshotFormat.minorVersion must be 12, got ${SnapshotFormat.minorVersion}"
         )
     }
 
     // old minor=10 snapshot is rejected with SnapshotVersionMismatch.
-    // Given: a valid minor=11 snapshot with byte at offset 5 patched to 10.
+    // Given: a valid minor=12 snapshot with byte at offset 5 patched to 10.
     // When: loaded via SnapshotReader.read.
-    // Then: raises TastyError.SnapshotVersionMismatch with found=(1,10,0) and supported=(1,11,0).
+    // Then: raises TastyError.SnapshotVersionMismatch with found=(1,10,0) and supported=(1,12,0).
     "snapshot with minorVersion=10 is rejected with SnapshotVersionMismatch" in {
         val freshBytes   = snapshotBytesWithErrors(Chunk.empty)
         val patchedBytes = freshBytes.clone()
@@ -175,8 +175,8 @@ class TastyErrorRoundTripTest extends kyo.test.Test[Any]:
                             s"Expected found version (1,10,0), got ${vm.found}"
                         )
                         assert(
-                            vm.supported.major == 1 && vm.supported.minor == 11,
-                            s"Expected supported version (1,11,0), got ${vm.supported}"
+                            vm.supported.major == 1 && vm.supported.minor == 12,
+                            s"Expected supported version (1,12,0), got ${vm.supported}"
                         )
                     case other =>
                         fail(s"Expected TastyError.SnapshotVersionMismatch, got: $other")
