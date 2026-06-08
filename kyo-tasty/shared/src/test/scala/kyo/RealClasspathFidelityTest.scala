@@ -27,7 +27,7 @@ class RealClasspathFidelityTest extends kyo.test.Test[Any]:
             // additionally indexes the real JVM stdlib on JVM. On any platform a clean load must
             // produce at least one symbol per fixture file (>= 70); a value < 70 indicates fixtures
             // were not picked up. We deliberately do not use exact equality because the JVM build
-            // additionally indexes the stdlib (measured 81569 symbols on the JVM standard classpath 2026-06-04).
+            // additionally indexes the stdlib (around 81k symbols on the JVM standard classpath).
             assert(
                 classpath.symbols.size >= 70,
                 s"Expected classpath.symbols.size >= 70 after clean load but got ${classpath.symbols.size}"

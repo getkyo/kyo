@@ -98,7 +98,7 @@ class SealedFidelityTest extends kyo.test.Test[Any]:
             val pct = withPermits.toDouble / total.toDouble * 100.0
             assert(
                 pct >= 85.0,
-                s"Only ${withPermits}/${total} (${pct.toInt}%) of sealed classes have permittedSubclasses populated; expected >= 85% (measured 96.64% on JVM 2026-06-04)"
+                s"Only ${withPermits}/${total} (${pct.toInt}%) of sealed classes have permittedSubclasses populated; expected >= 85%"
             )
             succeed
     }

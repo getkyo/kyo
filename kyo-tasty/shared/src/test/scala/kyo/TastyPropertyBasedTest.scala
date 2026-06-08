@@ -6,8 +6,6 @@ import scala.collection.mutable
 
 /** ScalaCheck-style property tests that verify kyo-tasty decoder stability under adversarial input.
   *
-  * of the validation-infrastructure (2026-06-02).
-  *
   * Properties:
   *   PROP-PB-001: decoder never panics on random bytes (NullPointerException, AIOOBE, IllegalStateException)
   *   PROP-PB-002: decoder never panics on truncated real fixture bytes

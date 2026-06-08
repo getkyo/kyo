@@ -99,7 +99,6 @@ class ClassfileReaderTest extends kyo.test.Test[Any]:
             assert(hasNamed, s"Expected at least one Named parent in ${parents.size} parents")
     }
 
-    // Test 4: ArrayList.class has at least one TypeParam via class Signature attribute
     "reading ArrayList.class: typeParams contains at least one TypeParam with non-empty name" in {
         readClass("java/util/ArrayList.class").map: result =>
             val sym = result.classSymbol
