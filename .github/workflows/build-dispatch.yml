@@ -1,18 +1,19 @@
 name: build-dispatch
 # Manually-triggered build/test for a single sbt command. Lets a maintainer run CI on a
-# branch on demand (without opening a PR) and scope to one module for fast feedback, e.g.
-# `kyo-ui/test` or `kyo-uiJS/test`. The full cross-platform matrix still runs via build-pr.yml
-# on the PR; this is a focused, on-demand complement.
+# branch on demand (without opening a PR) and scope to one module/platform for fast feedback,
+# e.g. `kyo-ui/test` (JVM), `kyo-uiJS/test`, `kyo-uiNative/test`, `kyo-uiWasm/test`. The full
+# cross-platform matrix still runs via build-pr.yml on the PR; this is a focused, on-demand
+# complement.
 #
-# Provisions JDK + sbt + Node + the kyo-browser Chrome cache, so JVM and JS module tests
-# (including the Chrome-driven kyo-ui / kyo-browser suites) run here. Scala Native and kyo-pod
-# tests need extra system packages (libcurl/libidn/h2o, podman) that this workflow does not
-# install; run those through the full build-pr.yml matrix.
+# Provisions JDK + sbt + Node + the kyo-browser Chrome cache + the Linux native libraries
+# (libcurl/libidn/h2o) Scala Native links against, so JVM, JS, Native, and Wasm suites all run.
+# kyo-pod tests additionally need a running podman daemon, which this workflow does not start;
+# run those through the full build-pr.yml matrix.
 on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'sbt command to run, e.g. "kyo-ui/test", "kyo-uiJS/test", "testKyo --all JVM", or "testKyo JVM" (diff vs origin/main).'
+        description: 'sbt command to run, e.g. "kyo-ui/test", "kyo-uiJS/test", "kyo-uiNative/test", "kyo-uiWasm/test", or "testKyo JVM" (diff vs origin/main).'
         type: string
         required: true
         default: 'testKyo JVM'
@@ -30,7 +31,7 @@ on:
         default: ubuntu-latest
 
 concurrency:
-  group: build-dispatch-${{ github.ref }}-${{ inputs.ref }}
+  group: build-dispatch-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.command }}
   cancel-in-progress: true
 
 jobs:
@@ -69,6 +70,18 @@ jobs:
           key: kyo-browser-dispatch-${{ inputs.runner-image }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
           restore-keys: kyo-browser-dispatch-${{ inputs.runner-image }}-
 
+      # Scala Native links against these system libraries. Mirrors build.yml's native dependency
+      # install; retried because apt mirror reachability is a recurring transient CI failure.
+      - name: Install native dependencies (Linux)
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 5
+          retry_wait_seconds: 15
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+
       - uses: coursier/setup-action@v3.0.0
         with:
           jvm: temurin:25
@@ -77,6 +90,12 @@ jobs:
       - name: Run sbt command
         shell: bash
         # Pass the input through the environment (never interpolated into the shell) to avoid command injection.
+        # Native tests run under scripts/native-test.sh for libunwind crash-retry tolerance, matching build.yml.
         env:
           SBT_COMMAND: ${{ inputs.command }}
-        run: sbt "$SBT_COMMAND"
+        run: |
+          if [[ "$SBT_COMMAND" == *Native/* ]]; then
+            ./scripts/native-test.sh "$SBT_COMMAND"
+          else
+            sbt "$SBT_COMMAND"
+          fi
