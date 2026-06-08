@@ -5,7 +5,7 @@ import kyo.UI.foreach
 import kyo.UI.foreachKeyed
 import scala.language.implicitConversions
 
-class UISessionItTest extends UITest:
+class ReactiveScenarioItTest extends UITest:
 
     override def timeout = 120.seconds
 
@@ -250,4 +250,4 @@ class UISessionItTest extends UITest:
         }
     }
 
-end UISessionItTest
+end ReactiveScenarioItTest

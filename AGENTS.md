@@ -143,6 +143,13 @@ kyo-<module>/
   native/src/main/scala/kyo/       # Native-specific source
 ```
 
+### Test File Naming (no orphan test classes)
+
+Every test file MUST share a name prefix with a source file. The goal is 1:1: `Foo.scala` is tested by `FooTest.scala`. When one source genuinely needs more than one test file, split by aspect keeping the source as the prefix: `FooParsingTest.scala`, `FooEncodingTest.scala`. Default to the 1:1 file and add tests there; only create an aspect file when the 1:1 file would grow unwieldy.
+
+- **Never commit a test class with no corresponding source.** `ReactiveLoopExperimentTest.scala` with no `ReactiveLoop.scala` is an orphan and is not allowed in a finished change. Before adding a test, find the source it covers and use that prefix.
+- **Scratch / experiment / reproduction test files are dev artifacts.** It is fine to create an ad-hoc test (with any name) while reproducing a bug or probing a hypothesis, but it MUST be removed before the change is done: fold the validated assertions into the matching `*Test.scala` for the source under test, then delete the scratch file. A finished change leaves no orphan or experiment test behind.
+
 ## Writing Module READMEs
 
 To create or rewrite a module's README, invoke the `/readme <module-path>` skill (defined at `.claude/skills/readme/SKILL.md`). The skill carries the conventions and runs the full source-analysis, draft, critique, and doctest-verification pipeline. `sbt <module>/doctest` validates every fenced Scala block.

@@ -30,8 +30,18 @@ private[kyo] object DomBackend:
             _    <- applyJsProps(container)
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
-            _        <- setupEventDelegation(dispatch.handle)
-            _        <- Async.never
+            // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
+            // Fiber.init consumer (interrupted on page teardown). The single consumer preserves event ordering
+            // and is scoped, so page teardown interrupt propagates to the drain via the ambient Scope.
+            events <- Channel.init[Unit < Async](256)
+            // runPartial captures only the Closed failure (the channel closed on page teardown -> stop draining); a
+            // Panic propagates rather than being silently swallowed as a clean drain end.
+            _ <- Fiber.init(Loop.foreach(Abort.runPartial[Closed](events.take).map {
+                case Result.Success(eff) => eff.andThen(Loop.continue)
+                case Result.Failure(_)   => Loop.done
+            }))
+            _ <- setupEventDelegation(dispatch.handle, events)
+            _ <- Async.never
         yield ()
         end for
     end mountInto
@@ -63,14 +73,15 @@ private[kyo] object DomBackend:
             }
     end LocalExchange
 
-    /** Bridge a Kyo Async computation from a JS callback boundary.
-      *
-      * JS event callbacks have no Kyo context. This is the single controlled crossing point where AllowUnsafe is permitted in this module.
-      * All other code remains in safe Kyo style.
-      */
-    private def fireFromJs(eff: Unit < Async)(using Frame): Unit =
+    // Bridge a Kyo Async computation from a JS callback boundary by offering it to the page-scoped drain
+    // channel. The single AllowUnsafe site narrows to the offer crossing (the JS callback has no Kyo
+    // context); a drop on a closed channel is fine (the page is being torn down anyway).
+    private def fireFromJs(events: Channel[Unit < Async], eff: Unit < Async)(using Frame): Unit =
+        // Unsafe: JS event callbacks run outside any Kyo context; this is the one controlled crossing point.
         import AllowUnsafe.embrace.danger
-        discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(eff).unit))
+        // runPartial drops only a Closed (offer on a torn-down channel); a Panic propagates to evalOrThrow and
+        // surfaces (thrown at the boundary) rather than being swallowed by the discard.
+        discard(Sync.Unsafe.evalOrThrow(Abort.runPartial[Closed](events.offer(eff)).unit))
     end fireFromJs
 
     /** Scan `root` and all descendants for `data-kyo-prop-*` attributes, apply each as a direct
@@ -103,7 +114,9 @@ private[kyo] object DomBackend:
         (0 until el.attributes.length).exists(i => el.attributes(i).name.startsWith("data-kyo-prop-"))
 
     /** Set up capture-phase event delegation on document.body. */
-    private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async)(using Frame): Unit < Sync = Sync.defer {
+    private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
+        Frame
+    ): Unit < Sync = Sync.defer {
         val handler: scalajs.js.Function1[dom.Event, Unit] = (e: dom.Event) =>
             findPathElement(e.target.asInstanceOf[dom.Element]).foreach { target =>
                 val path    = parsePath(target.getAttribute("data-kyo-path"))
@@ -138,7 +151,7 @@ private[kyo] object DomBackend:
                                 reader.onload = (_: dom.Event) =>
                                     val content = reader.result.asInstanceOf[String]
                                     val ev      = UIEvent.Change(path, content)
-                                    fireFromJs(dispatch(path, ev).unit)
+                                    fireFromJs(events, dispatch(path, ev).unit)
                                 reader.readAsText(files(0))
                             end if
                             Absent
@@ -219,7 +232,7 @@ private[kyo] object DomBackend:
                         Absent
 
                 event.foreach { ev =>
-                    fireFromJs(dispatch(path, ev).unit)
+                    fireFromJs(events, dispatch(path, ev).unit)
                 }
             }
         end handler
