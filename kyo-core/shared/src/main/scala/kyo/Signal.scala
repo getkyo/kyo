@@ -530,19 +530,7 @@ object Signal:
 
         def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(unsafe.next().safe.use(f))
 
-        // Exact, register-before-read (capture the next-change promise before reading `current`), so a write racing the
-        // read still wakes us; `repairInterval` is unused. `f(value)` runs in a fresh per-value `Scope.run`, held open by
-        // awaiting the captured promise INSIDE the scope, so it closes (releasing what `f` forked) only on a real change
-        // or interrupt, never an idle timer. The await goes through `Async.race`, not `waiter.safe.use` directly: the
-        // next-promise is masked, and a fiber parked directly on a masked promise is not resumed by its own interrupt
-        // (its `Scope.run` finalizers would not fire); racing behind a fresh result promise restores interruptibility.
-        override def observe[S](repairInterval: Duration)(f: A => Unit < (S & Async & Scope))(using Frame): Unit < (S & Async) =
-            def loop: Unit < (S & Async) =
-                Sync.Unsafe.defer((unsafe.next(), unsafe.get())).map { (waiter, value) =>
-                    Scope.run(f(value).andThen(Async.race(Seq(waiter.safe.use(_ => ()))))).andThen(loop)
-                }
-            loop
-        end observe
+        // [bisect] leaf observe override removed; SignalRef inherits the trait default observe.
 
         /** Retrieves the current value of the reference.
           *
