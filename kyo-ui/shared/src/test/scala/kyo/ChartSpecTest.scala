@@ -65,16 +65,16 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     // ---- grouping carrier: by(_.region) and normalize ----
 
-    "by(_.region) yields Grouping with Present group and normalize false" in {
-        val g = by[Sale](_.region)
-        assert(g.group.isDefined)
-        assert(g.normalize == false)
+    "by(_.region) yields a Stack accepted by bar's stack parameter" in {
+        val stack: Stack[Sale] = by((s: Sale) => s.region)
+        val spec               = Chart(sales)(bar(x = _.month, y = _.revenue, stack = stack))
+        assert(spec.marks.length == 1)
     }
 
-    "by(_.region, normalize = true) yields Grouping with normalize true" in {
-        val g = by[Sale](_.region, normalize = true)
-        assert(g.group.isDefined)
-        assert(g.normalize == true)
+    "by(_.region, normalize = true) yields a Stack with normalize=true accepted by bar" in {
+        val stack: Stack[Sale] = by((s: Sale) => s.region, normalize = true)
+        val spec               = Chart(sales)(bar(x = _.month, y = _.revenue, stack = stack))
+        assert(spec.marks.length == 1)
     }
 
     // ---- config threading ----
@@ -220,7 +220,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
             enum Region derives CanEqual:
                 case NA, EU
             case class Row(x: String, y: Int, region: Region)
-            by[Row](_.region).normalized
+            by((r: Row) => r.region).normalized
         """)("value normalized is not a member")
     }
 
@@ -354,7 +354,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     // text factory builds Mark.Text with correct fields
     "text factory builds Mark.Text with label and anchor" in {
-        val m = text[Sale, String, Usd](x = _.month, y = _.revenue, label = _.month, anchor = TextAnchor.End)
+        val m = text[Sale, String, Usd, Nothing](x = _.month, y = _.revenue, label = _.month, anchor = TextAnchor.End)
         m match
             case Mark.Text(_, _, lbl, color, anchor, _, Axis.Left) =>
                 assert(color == Absent, "color must be Absent when not supplied")
@@ -369,7 +369,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
     "errorBar factory builds Mark.ErrorBar with correct encodings" in {
         case class Eb(x: String, mean: Usd, lo: Usd, hi: Usd)
         val eb = Eb("a", Usd(6.0), Usd(4.0), Usd(8.0))
-        val m  = errorBar[Eb, String, Usd](x = _.x, y = _.mean, low = _.lo, high = _.hi, capWidth = 10.0)
+        val m  = errorBar[Eb, String, Usd, Nothing](x = _.x, y = _.mean, low = _.lo, high = _.hi, capWidth = 10.0)
         m match
             case Mark.ErrorBar(xCh, yCh, lowCh, highCh, color, cap, Axis.Left) =>
                 assert(cap == 10.0, s"capWidth must be 10.0, got $cap")

@@ -826,16 +826,19 @@ class ChartLowerTest extends kyo.test.Test[Any]:
         }
     }
 
-    // --- CatKey identity (Int vs String) ---
-    "point color uses CatKey identity: Int 1 vs String '1' are distinct groups" in {
-        case class RawRow(x: String, y: Double, grp: Any)
+    // --- CatKey identity: two enum cases with colliding toString produce distinct color groups ---
+    "point color uses CatKey identity: colliding-toString enum cases produce distinct fills" in {
+        enum Collision derives CanEqual:
+            case X, Y
+            override def toString: String = "same"
+        case class RawRow(x: String, y: Double, grp: Collision)
         given CanEqual[RawRow, RawRow] = CanEqual.derived
-        val rows                       = Chunk(RawRow("a", 10.0, 1: Int), RawRow("b", 20.0, "1"))
+        val rows                       = Chunk(RawRow("a", 10.0, Collision.X), RawRow("b", 20.0, Collision.Y))
         val spec                       = Chart(rows)(point(x = _.x, y = _.y, color = _.grp))
-        (spec).lower.map { root =>
+        spec.lower.map { root =>
             val cs    = deepCirclesIn(root)
             val fills = cs.map(fillColorOf).toSeq.distinct
-            assert(fills.size == 2, s"Int 1 and String '1' must be distinct color groups, got $fills")
+            assert(fills.size == 2, s"Two colliding-toString enum cases must produce two distinct fills, got $fills")
         }
     }
 
@@ -944,7 +947,7 @@ class ChartLowerTest extends kyo.test.Test[Any]:
     "size wins over sizePx when both supplied: Mark.Point.size is Present, sizePx is Absent" in {
         case class Bubble(x: Double, y: Double, mag: Double)
         given CanEqual[Bubble, Bubble] = CanEqual.derived
-        val m                          = point[Bubble, Double, Double](x = _.x, y = _.y, size = _.mag, sizePx = _ => 8.0)
+        val m                          = point[Bubble, Double, Double, Nothing](x = _.x, y = _.y, size = _.mag, sizePx = _ => 8.0)
         val pm                         = m.asInstanceOf[Mark.Point[Bubble, Double, Double]]
         assert(pm.size.isDefined, "size encoding must be Present when both size and sizePx supplied")
         assert(!pm.sizePx.isDefined, "sizePx must be Absent when size wins")

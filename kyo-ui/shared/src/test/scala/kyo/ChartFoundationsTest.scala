@@ -83,11 +83,10 @@ class ChartFoundationsTest extends kyo.test.Test[Any]:
 
     "chartIdPrefix is deterministic for the same spec object and distinct for different specs" in {
         case class Row(x: Int, y: Double)
-        given CanEqual[Row, Row]               = CanEqual.derived
-        given CanEqual[Chunk[Row], Chunk[Row]] = CanEqual.derived
-        val rows                               = Chunk(Row(1, 2.0))
-        val spec1                              = Chart(rows)(bar(x = _.x, y = _.y))
-        val spec3                              = Chart(rows)(bar(x = _.x, y = _.y), point(x = _.x, y = _.y))
+        given CanEqual[Row, Row] = CanEqual.derived
+        val rows                 = Chunk(Row(1, 2.0))
+        val spec1                = Chart(rows)(bar(x = _.x, y = _.y))
+        val spec3                = Chart(rows)(bar(x = _.x, y = _.y), point(x = _.x, y = _.y))
         // Same spec object called twice: must produce the same prefix (deterministic hashing)
         val p1a = ChartFoundations.chartIdPrefix(spec1)
         val p1b = ChartFoundations.chartIdPrefix(spec1)

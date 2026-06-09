@@ -227,25 +227,22 @@ object Chart:
       * `bar` has no `size` parameter: a bar's magnitude is its `y`, so a size encoding would be
       * meaningless. The missing parameter makes `Chart.bar(size = ...)` a compile error.
       */
-    def bar[A, X: Plottable, Y: Plottable](
+    def bar[A, X: Plottable, Y: Plottable, C](
         x: A => X,
         y: A => Y,
-        color: A => Any = Unset.of[A, Any],
-        stack: Grouping[A] = Grouping.none[A],
+        color: A => C = Unset.of[A, C],
+        stack: Stack[A] = Stack.none[A],
         opacity: A => Double = Unset.of[A, Double],
         label: A => String = Unset.of[A, String],
         tooltip: A => String = Unset.of[A, String],
         axis: Axis = Axis.Left
-    )(using Frame): Mark[A] =
-        val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
-        val yCh = Encoding[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
-        val colorMaybe: Maybe[Encoding[A, ?]] =
-            if Unset.supplied(color) then
-                Present(colorEncoding[A](color))
-            else Absent
-        val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
-        val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
-        val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    )(using ColorKey[C], Frame): Mark[A] =
+        val xCh                               = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+        val yCh                               = Encoding[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+        val colorMaybe: Maybe[Encoding[A, ?]] = Maybe.when(Unset.supplied(color))(colorEncoding[A, C](color))
+        val opacityMaybe: Maybe[A => Double]  = Maybe.when(Unset.supplied(opacity))(opacity)
+        val labelMaybe: Maybe[A => String]    = Maybe.when(Unset.supplied(label))(label)
+        val tooltipMaybe: Maybe[A => String]  = Maybe.when(Unset.supplied(tooltip))(tooltip)
         Mark.Bar(xCh, yCh, colorMaybe, stack, opacityMaybe, labelMaybe, tooltipMaybe, axis)
     end bar
 
@@ -257,28 +254,24 @@ object Chart:
       * line); `axis` selects the y-axis. A `y` accessor that returns `Maybe[Y]`
       * type-checks because `Plottable[Maybe[Y]]` is derived from `Plottable[Y]`.
       */
-    def line[A, X: Plottable, Y: Plottable](
+    def line[A, X: Plottable, Y: Plottable, C](
         x: A => X,
         y: A => Y,
-        color: A => Any = Unset.of[A, Any],
+        color: A => C = Unset.of[A, C],
         curve: Curve = Curve.linear,
         defined: A => Boolean = Unset.of[A, Boolean],
         opacity: A => Double = Unset.of[A, Double],
         label: A => String = Unset.of[A, String],
         tooltip: A => String = Unset.of[A, String],
         axis: Axis = Axis.Left
-    )(using Frame): Mark[A] =
-        val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
-        val yCh = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
-        val colorMaybe: Maybe[Encoding[A, ?]] =
-            if Unset.supplied(color) then
-                Present(colorEncoding[A](color))
-            else Absent
-        val definedMaybe: Maybe[A => Boolean] =
-            if Unset.supplied(defined) then Present(defined) else Absent
-        val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
-        val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
-        val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    )(using ColorKey[C], Frame): Mark[A] =
+        val xCh                               = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+        val yCh                               = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+        val colorMaybe: Maybe[Encoding[A, ?]] = Maybe.when(Unset.supplied(color))(colorEncoding[A, C](color))
+        val definedMaybe: Maybe[A => Boolean] = Maybe.when(Unset.supplied(defined))(defined)
+        val opacityMaybe: Maybe[A => Double]  = Maybe.when(Unset.supplied(opacity))(opacity)
+        val labelMaybe: Maybe[A => String]    = Maybe.when(Unset.supplied(label))(label)
+        val tooltipMaybe: Maybe[A => String]  = Maybe.when(Unset.supplied(tooltip))(tooltip)
         Mark.Line(xCh, yCh, colorMaybe, curve, definedMaybe, opacityMaybe, labelMaybe, tooltipMaybe, axis)
     end line
 
@@ -290,32 +283,29 @@ object Chart:
       * misconfiguration renders an empty frame rather than crashing. `color`, `stack`,
       * `curve`, and `axis` follow the same rules as `bar` and `line`.
       */
-    def area[A, X: Plottable, Y: Plottable](
+    def area[A, X: Plottable, Y: Plottable, C](
         x: A => X,
         y: A => Y = Unset.of[A, Y],
         y0: A => Y = Unset.of[A, Y],
         y1: A => Y = Unset.of[A, Y],
-        color: A => Any = Unset.of[A, Any],
-        stack: Grouping[A] = Grouping.none[A],
+        color: A => C = Unset.of[A, C],
+        stack: Stack[A] = Stack.none[A],
         curve: Curve = Curve.linear,
         opacity: A => Double = Unset.of[A, Double],
         label: A => String = Unset.of[A, String],
         tooltip: A => String = Unset.of[A, String],
         axis: Axis = Axis.Left
-    )(using Frame): Mark[A] =
-        val xCh                            = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
-        val plY                            = summon[Plottable[Y]]
-        val tagY                           = positionalTag[Y]
-        val yMaybe                         = if Unset.supplied(y) then Present(EncodingMaybe.fromTotal[A, Y](y, plY, tagY)) else Absent
-        val y0Maybe: Maybe[Encoding[A, Y]] = if Unset.supplied(y0) then Present(Encoding[A, Y](y0, plY, tagY)) else Absent
-        val y1Maybe: Maybe[Encoding[A, Y]] = if Unset.supplied(y1) then Present(Encoding[A, Y](y1, plY, tagY)) else Absent
-        val colorMaybe: Maybe[Encoding[A, ?]] =
-            if Unset.supplied(color) then
-                Present(colorEncoding[A](color))
-            else Absent
-        val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
-        val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
-        val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+    )(using ColorKey[C], Frame): Mark[A] =
+        val xCh                               = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+        val plY                               = summon[Plottable[Y]]
+        val tagY                              = positionalTag[Y]
+        val yMaybe                            = Maybe.when(Unset.supplied(y))(EncodingMaybe.fromTotal[A, Y](y, plY, tagY))
+        val y0Maybe: Maybe[Encoding[A, Y]]    = Maybe.when(Unset.supplied(y0))(Encoding[A, Y](y0, plY, tagY))
+        val y1Maybe: Maybe[Encoding[A, Y]]    = Maybe.when(Unset.supplied(y1))(Encoding[A, Y](y1, plY, tagY))
+        val colorMaybe: Maybe[Encoding[A, ?]] = Maybe.when(Unset.supplied(color))(colorEncoding[A, C](color))
+        val opacityMaybe: Maybe[A => Double]  = Maybe.when(Unset.supplied(opacity))(opacity)
+        val labelMaybe: Maybe[A => String]    = Maybe.when(Unset.supplied(label))(label)
+        val tooltipMaybe: Maybe[A => String]  = Maybe.when(Unset.supplied(tooltip))(tooltip)
         Mark.Area(xCh, yMaybe, y0Maybe, y1Maybe, colorMaybe, stack, curve, opacityMaybe, labelMaybe, tooltipMaybe, axis)
     end area
 
@@ -326,10 +316,10 @@ object Chart:
       * which scales the dot radius by magnitude. A `y` accessor returning `Maybe[Y]`
       * renders a gap (no dot) at `Absent` rows.
       */
-    def point[A, X: Plottable, Y: Plottable](
+    def point[A, X: Plottable, Y: Plottable, C](
         x: A => X,
         y: A => Y,
-        color: A => Any = Unset.of[A, Any],
+        color: A => C = Unset.of[A, C],
         size: A => Double = Unset.of[A, Double],   // sqrt-area scaled magnitude
         sizePx: A => Double = Unset.of[A, Double], // raw pixel radius
         symbol: A => Symbol = Unset.of[A, Symbol],
@@ -337,22 +327,19 @@ object Chart:
         label: A => String = Unset.of[A, String],
         tooltip: A => String = Unset.of[A, String],
         axis: Axis = Axis.Left
-    )(using Frame): Mark[A] =
-        val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
-        val yCh = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
-        val colorMaybe: Maybe[Encoding[A, ?]] =
-            if Unset.supplied(color) then
-                Present(colorEncoding[A](color))
-            else Absent
-        val sizeSup   = Unset.supplied(size)
-        val sizePxSup = Unset.supplied(sizePx)
+    )(using ColorKey[C], Frame): Mark[A] =
+        val xCh                               = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+        val yCh                               = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+        val colorMaybe: Maybe[Encoding[A, ?]] = Maybe.when(Unset.supplied(color))(colorEncoding[A, C](color))
+        val sizeSup                           = Unset.supplied(size)
+        val sizePxSup                         = Unset.supplied(sizePx)
         // When both size and sizePx are supplied, size wins and sizePx is dropped.
         val sizeMaybe: Maybe[A => Double]    = if sizeSup then Present(size) else Absent
         val sizePxMaybe: Maybe[A => Double]  = if sizePxSup && !sizeSup then Present(sizePx) else Absent
-        val symbolMaybe: Maybe[A => Symbol]  = if Unset.supplied(symbol) then Present(symbol) else Absent
-        val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
-        val labelMaybe: Maybe[A => String]   = if Unset.supplied(label) then Present(label) else Absent
-        val tooltipMaybe: Maybe[A => String] = if Unset.supplied(tooltip) then Present(tooltip) else Absent
+        val symbolMaybe: Maybe[A => Symbol]  = Maybe.when(Unset.supplied(symbol))(symbol)
+        val opacityMaybe: Maybe[A => Double] = Maybe.when(Unset.supplied(opacity))(opacity)
+        val labelMaybe: Maybe[A => String]   = Maybe.when(Unset.supplied(label))(label)
+        val tooltipMaybe: Maybe[A => String] = Maybe.when(Unset.supplied(tooltip))(tooltip)
         Mark.Point(xCh, yCh, colorMaybe, sizeMaybe, sizePxMaybe, symbolMaybe, opacityMaybe, labelMaybe, tooltipMaybe, axis)
     end point
 
@@ -385,22 +372,19 @@ object Chart:
       * the text element. `anchor` controls horizontal alignment. `color` optionally groups rows
       * by category so each group can carry a distinct fill color.
       */
-    def text[A, X: Plottable, Y: Plottable](
+    def text[A, X: Plottable, Y: Plottable, C](
         x: A => X,
         y: A => Y,
         label: A => String,
-        color: A => Any = Unset.of[A, Any],
+        color: A => C = Unset.of[A, C],
         anchor: TextAnchor = TextAnchor.Middle,
         opacity: A => Double = Unset.of[A, Double],
         axis: Axis = Axis.Left
-    )(using Frame): Mark[A] =
-        val xCh = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
-        val yCh = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
-        val colorMaybe: Maybe[Encoding[A, ?]] =
-            if Unset.supplied(color) then
-                Present(colorEncoding[A](color))
-            else Absent
-        val opacityMaybe: Maybe[A => Double] = if Unset.supplied(opacity) then Present(opacity) else Absent
+    )(using ColorKey[C], Frame): Mark[A] =
+        val xCh                               = Encoding[A, X](x, summon[Plottable[X]], positionalTag[X])
+        val yCh                               = EncodingMaybe.fromTotal[A, Y](y, summon[Plottable[Y]], positionalTag[Y])
+        val colorMaybe: Maybe[Encoding[A, ?]] = Maybe.when(Unset.supplied(color))(colorEncoding[A, C](color))
+        val opacityMaybe: Maybe[A => Double]  = Maybe.when(Unset.supplied(opacity))(opacity)
         Mark.Text(xCh, yCh, label, colorMaybe, anchor, opacityMaybe, axis)
     end text
 
@@ -413,21 +397,18 @@ object Chart:
       * The rendered elements are plain `Svg.line` and `Svg.circle` with no `url(#id)` or `<marker>`
       * references.
       */
-    def errorBar[A, X: Plottable, Y: Plottable](
+    def errorBar[A, X: Plottable, Y: Plottable, C](
         x: A => X,
         y: A => Y,
         low: A => Y,
         high: A => Y,
-        color: A => Any = Unset.of[A, Any],
+        color: A => C = Unset.of[A, C],
         capWidth: Double = 6.0,
         axis: Axis = Axis.Left
-    )(using Frame): Mark[A] =
-        val plY  = summon[Plottable[Y]]
-        val tagY = positionalTag[Y]
-        val colorMaybe: Maybe[Encoding[A, ?]] =
-            if Unset.supplied(color) then
-                Present(colorEncoding[A](color))
-            else Absent
+    )(using ColorKey[C], Frame): Mark[A] =
+        val plY                               = summon[Plottable[Y]]
+        val tagY                              = positionalTag[Y]
+        val colorMaybe: Maybe[Encoding[A, ?]] = Maybe.when(Unset.supplied(color))(colorEncoding[A, C](color))
         Mark.ErrorBar(
             Encoding(x, summon[Plottable[X]], positionalTag[X]),
             Encoding(y, plY, tagY),
@@ -439,9 +420,9 @@ object Chart:
         )
     end errorBar
 
-    /** Builds a `Grouping[A]` that groups by `group` and optionally normalizes to 100%.
+    /** Builds a `Stack[A]` that groups rows by `group` and optionally normalizes to 100%.
       *
-      * This is the only public constructor for `Grouping`. Pass the result to a mark's
+      * This is the only public constructor for `Stack`. Pass the result to a mark's
       * `stack` parameter:
       *
       * ```scala
@@ -449,11 +430,18 @@ object Chart:
       * Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true))
       * ```
       *
+      * `G` must satisfy `ColorKey[G]`: a stable cross-platform identity key (`ConcreteTag[G]`)
+      * and `CanEqual[G, G]`. Under `-language:strictEquality`, an enum `G` must `derives CanEqual`.
+      *
       * `normalize = true` produces a 100%-stacked bar; `false` (the default) stacks
       * absolute values.
       */
-    def by[A](group: A => Any, normalize: Boolean = false): Grouping[A] =
-        Grouping(Present(group), normalize)
+    def by[A, G](group: A => G, normalize: Boolean = false)(using ColorKey[G]): Stack[A] =
+        // Unsafe: the group accessor is stored erased to A => Any in the Grouping carrier and keyed
+        // downstream ONLY by CatKey (ConcreteTag identity + label), never reconstructed back to G;
+        // widening A => G to A => Any is sound because no consumer reads the stored value at a
+        // G-typed position. Mirrors the colorEncoding bridge.
+        Grouping(Present(group.asInstanceOf[A => Any]), normalize)
 
     // ---- Public config types ----
 
@@ -1372,12 +1360,67 @@ object Chart:
         // values feed numeric/ordinal scales only), so widening `ConcreteTag[Any]` to `ConcreteTag[C]` is sound.
         summon[ConcreteTag[Any]].asInstanceOf[ConcreteTag[C]]
 
-    /** Builds the `Encoding[A, Any]` for a mark's optional `color`/group accessor.
+    private def colorEncoding[A, C](color: A => C)(using c: ColorKey[C]): Encoding[A, Any] =
+        // Unsafe: the color value is stored erased to Any and keyed downstream ONLY by CatKey
+        // (ConcreteTag identity + label string), never reconstructed back to C. Capturing the real
+        // ConcreteTag[C] from `c.identity` (not ConcreteTag[Any]) preserves full cross-platform
+        // category discrimination; widening the accessor's element type to Any is sound because no
+        // consumer reads the stored value at a C-typed position.
+        Encoding[A, Any](color.asInstanceOf[A => Any], Plottable.any, c.identity.asInstanceOf[ConcreteTag[Any]])
+
+    /** Evidence that a value type `C` can drive a chart's `color` (or stack `group`) encoding.
       *
-      * Color/group values are keyed categorically by their label string, so the shared `Plottable.any`
-      * instance is the correct evidence regardless of the accessor's declared return type.
+      * A color/group value is keyed categorically by identity and compared for equality, never
+      * scaled, so the evidence a chart needs from `C` is exactly: a stable cross-platform identity
+      * key (so two enum cases that share a `toString` label stay distinct on JVM, JS, and Native)
+      * and `CanEqual[C, C]` (so a typed legend `colorScale` can match keys by `==`). `ColorKey`
+      * bundles both. Instances exist for every concrete non-generic type the chart can color by:
+      * `Int`, `Long`, `Double`, `String`, `Instant`, and any enum that `derives CanEqual`. Under
+      * the build's `-language:strictEquality`, an enum color/group type MUST `derives CanEqual`
+      * (the built-in `Int`/`Long`/`Double`/`String`/`Instant` already satisfy it); omitting the
+      * derive yields a compile error at the factory call site, by design. `C` infers from the
+      * `color` accessor's return type, so call sites never write a type argument. When `color` is
+      * omitted entirely, the `ColorKey[Nothing]` instance from `ColorKey.nothing` resolves
+      * directly, covering the no-color case without any encoding being produced at runtime.
       */
-    private def colorEncoding[A](color: A => Any): Encoding[A, Any] =
-        Encoding[A, Any](color, Plottable.any, summon[ConcreteTag[Any]])
+    sealed abstract class ColorKey[C]:
+        private[kyo] def equality: CanEqual[C, C]
+        private[kyo] def identity: ConcreteTag[C]
+
+    /** Companion for the `ColorKey` evidence.
+      *
+      * Two givens cover the full call-site surface. `derived` summons `ColorKey[C]` whenever both
+      * `CanEqual[C, C]` and `ConcreteTag[C]` resolve for the concrete type `C` inferred from the
+      * accessor. `nothing` covers the omitted-`color` case: when no `color` argument is supplied
+      * the default `Unset.of[A, C]` leaves `C` unconstrained, and `ColorKey[Nothing]` is the most
+      * specific match so the compiler resolves immediately without exploring other `CanEqual`
+      * instances in scope. Generic `C` (e.g. `Maybe[Region]`) does not summon because `ConcreteTag`
+      * rejects generics; this is the documented narrowing.
+      */
+    object ColorKey:
+        given nothing: ColorKey[Nothing] =
+            new ColorKey[Nothing]:
+                private[kyo] def equality: CanEqual[Nothing, Nothing] = CanEqual.derived
+                private[kyo] def identity: ConcreteTag[Nothing]       = summon[ConcreteTag[Nothing]]
+        given derived[C](using ceq: CanEqual[C, C], tag: ConcreteTag[C]): ColorKey[C] =
+            new ColorKey[C]:
+                private[kyo] def equality: CanEqual[C, C] = ceq
+                private[kyo] def identity: ConcreteTag[C] = tag
+    end ColorKey
+
+    /** A grouping directive for a stacked mark's `stack` parameter.
+      *
+      * Produced exclusively by `Chart.by(...)`; there is no other public constructor, so a stack
+      * always carries a grouping accessor. Holds the type-erased group key accessor and the
+      * normalize flag internally. Opaque so the erased internal carrier never appears on the
+      * readable surface; the only public operations are constructing one with `Chart.by` and
+      * passing it to a mark's `stack` parameter. `Stack.none` is the library-internal default for
+      * an unstacked mark.
+      */
+    opaque type Stack[A] = Grouping[A]
+
+    object Stack:
+        private[kyo] def none[A]: Stack[A] = Grouping.none[A]
+    end Stack
 
 end Chart
