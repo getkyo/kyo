@@ -841,7 +841,7 @@ That is the whole pipeline: `Chart(data)(marks*)`, optional configuration, `.low
 
 ### Marks are the visual vocabulary
 
-There is one `Chart` type and a list of marks. The mark you choose, and the channels you map onto it, decide the chart kind. The seven factories are `bar`, `line`, `area`, `point`, `text`, `errorBar`, and `rule`:
+There is one `Chart` type and a list of marks. The mark you choose, and the encodings you map onto it, decide the chart kind. The seven factories are `bar`, `line`, `area`, `point`, `text`, `errorBar`, and `rule`:
 
 ```scala
 val barChart: Svg.Root < Sync  = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
@@ -860,7 +860,7 @@ val combo: Svg.Root < Sync =
     ).lower
 ```
 
-Every mark maps its data through named parameters, never chained method calls. The named form is what keeps the accessor lambdas inferring: a hypothetical chained `.color(_.region)` would collapse the row type to `Any`. Beyond `x` and `y`, channels are optional named parameters. `color` groups rows and derives a legend; `stack` (built with `Chart.by`) stacks grouped series:
+Every mark maps its data through named parameters, never chained method calls. The named form is what keeps the accessor lambdas inferring: a hypothetical chained `.color(_.region)` would collapse the row type to `Any`. Beyond `x` and `y`, encodings are optional named parameters. `color` groups rows and derives a legend; `stack` (built with `Chart.by`) stacks grouped series:
 
 ```scala
 val grouped: Svg.Root < Sync =
@@ -873,7 +873,7 @@ val normalized: Svg.Root < Sync =
     Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true))).lower
 ```
 
-Each factory exposes only the channels that make sense for it, and the rest do not compile. A `bar`'s magnitude is its `y`, so `bar` has no `size`. A `point` carries `size` (a magnitude scaled by square-root area, so the eye reads area, not radius) and `sizePx` (a raw-pixel-radius escape hatch); if you pass both, `size` wins. The `symbol` parameter picks the glyph from `Chart.Symbol` (`circle`, `square`, `triangle`, `diamond`, `cross`):
+Each factory exposes only the encodings that make sense for it, and the rest do not compile. A `bar`'s magnitude is its `y`, so `bar` has no `size`. A `point` carries `size` (a magnitude scaled by square-root area, so the eye reads area, not radius) and `sizePx` (a raw-pixel-radius escape hatch); if you pass both, `size` wins. The `symbol` parameter picks the glyph from `Chart.Symbol` (`circle`, `square`, `triangle`, `diamond`, `cross`):
 
 ```scala
 val bubbles: Svg.Root < Sync =
@@ -883,7 +883,7 @@ val diamonds: Svg.Root < Sync =
     Chart(sales)(Chart.point(x = _.lo, y = _.hi, symbol = _ => Chart.Symbol.diamond)).lower
 ```
 
-`line` and `area` take a `curve` channel that selects the interpolation between vertices, drawn from `Curve` (`linear`, `monotone`, `stepBefore`, `stepAfter`, `basis`, `catmullRom`):
+`line` and `area` take a `curve` encoding that selects the interpolation between vertices, drawn from `Curve` (`linear`, `monotone`, `stepBefore`, `stepAfter`, `basis`, `catmullRom`):
 
 ```scala
 val smooth: Svg.Root < Sync =
@@ -892,7 +892,7 @@ val smooth: Svg.Root < Sync =
 
 ### Reference lines with `rule`
 
-A `rule` is the one mark that reads no row. It draws a reference line at a fixed position, such as a target or threshold, so it has no `color` or `size` channel. Its `y` (or `x`) takes a plain constant, and an implicit conversion lets you pass the bare value with no wrapper:
+A `rule` is the one mark that reads no row. It draws a reference line at a fixed position, such as a target or threshold, so it has no `color` or `size` encoding. Its `y` (or `x`) takes a plain constant, and an implicit conversion lets you pass the bare value with no wrapper:
 
 ```scala
 val withTarget: Svg.Root < Sync =
@@ -906,7 +906,7 @@ The same `y` also accepts a `Signal[Double]` for a threshold that tracks live st
 
 ### Typed values pick the scale
 
-Each channel's scale is chosen from the static type of its accessor, so you rarely declare a scale at all. `Int`/`Double` select a linear scale, `String` and enums select a band (categorical) scale, and `Instant` selects a time scale. In the running domain, `month: String` gives a band x-scale and `revenue: Double` a linear y-scale, with nothing to annotate:
+Each encoding's scale is chosen from the static type of its accessor, so you rarely declare a scale at all. `Int`/`Double` select a linear scale, `String` and enums select a band (categorical) scale, and `Instant` selects a time scale. In the running domain, `month: String` gives a band x-scale and `revenue: Double` a linear y-scale, with nothing to annotate:
 
 ```scala
 val typedChart: Svg.Root < Sync =
@@ -915,7 +915,7 @@ val typedChart: Svg.Root < Sync =
 
 A `Maybe[Y]` accessor type-checks too and means gaps: a line breaks and a point or bar drops at the `Absent` rows.
 
-The rule that makes this work is that an accessor's value type must have a `Plottable` instance, the evidence that also selects the scale family. A channel over a type with no instance, such as a `Boolean` or an arbitrary class, does not compile. You rarely name `Plottable` directly: instances exist for `Int`, `Long`, `Double`, `String`, and `Instant`, enums derive one automatically, and an opaque numeric type can supply one with `Plottable.numeric`:
+The rule that makes this work is that an accessor's value type must have a `Plottable` instance, the evidence that also selects the scale family. A encoding over a type with no instance, such as a `Boolean` or an arbitrary class, does not compile. You rarely name `Plottable` directly: instances exist for `Int`, `Long`, `Double`, `String`, and `Instant`, enums derive one automatically, and an opaque numeric type can supply one with `Plottable.numeric`:
 
 <!-- doctest:setup
 ```scala
@@ -959,7 +959,7 @@ val logOverTime: Svg.Root < Sync =
 
 #### Color scales
 
-The legend's color scale decides how the `color` channel maps to swatch and mark fills, and it applies to every mark that carries `color`. A categorical scale takes value-equality pairs over a typed key; a category with no pair falls back to `Style.Color.blue`. A `colorScale` overload instead takes a function from each category's label to a color:
+The legend's color scale decides how the `color` encoding maps to swatch and mark fills, and it applies to every mark that carries `color`. A categorical scale takes value-equality pairs over a typed key; a category with no pair falls back to `Style.Color.blue`. A `colorScale` overload instead takes a function from each category's label to a color:
 
 ```scala
 val categorical: Svg.Root < Sync =
@@ -1050,7 +1050,7 @@ val a11yChart: Svg.Root < Sync =
 
 ### Reactivity
 
-A chart goes live by swapping its data source: pass a `Signal[Seq[A]]` instead of a `Seq[A]`. The marks region redraws on each emission while the frame, axes, and legend stay put. The marks and channels are identical to the static form. `.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed:
+A chart goes live by swapping its data source: pass a `Signal[Seq[A]]` instead of a `Seq[A]`. The marks region redraws on each emission while the frame, axes, and legend stay put. The marks and encodings are identical to the static form. `.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed:
 
 ```scala
 val livePage: UI < Async =

@@ -224,7 +224,7 @@ object Chart:
       * derives a legend; `stack` stacks or normalizes the bars (carrying its own
       * grouping via `Chart.by(...)`); `axis` selects the y-axis (default `Axis.Left`).
       *
-      * `bar` has no `size` parameter: a bar's magnitude is its `y`, so a size channel would be
+      * `bar` has no `size` parameter: a bar's magnitude is its `y`, so a size encoding would be
       * meaningless. The missing parameter makes `Chart.bar(size = ...)` a compile error.
       */
     def bar[A, X: Plottable, Y: Plottable](
@@ -322,7 +322,7 @@ object Chart:
     /** Creates a point (scatter/bubble) mark.
       *
       * `x` and `y` are required; `color`, `size`, and `symbol` are optional
-      * non-positional parameters. Unlike `bar`, `point` carries a `size` channel,
+      * non-positional parameters. Unlike `bar`, `point` carries a `size` encoding,
       * which scales the dot radius by magnitude. A `y` accessor returning `Maybe[Y]`
       * renders a gap (no dot) at `Absent` rows.
       */
@@ -361,7 +361,7 @@ object Chart:
       * A `rule` draws a horizontal (`y`) or vertical (`x`) line spanning the plot at
       * a constant value or at a `Signal`-tracked value. At least one of `x` or `y`
       * must be supplied. `rule` has no `color` or `size` parameter: a reference line
-      * reads no row, so per-datum channels do not apply.
+      * reads no row, so per-datum encodings do not apply.
       *
       * Constant form: `rule(y = Usd(1000))`. Signal form: `rule(y = threshold)`
       * where `threshold: Signal[Usd]`.
