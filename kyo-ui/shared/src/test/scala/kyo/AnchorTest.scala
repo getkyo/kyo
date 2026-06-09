@@ -4,7 +4,6 @@ import kyo.Browser.*
 import kyo.Length.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import scala.language.implicitConversions
 
 class AnchorTest extends UITest:
 

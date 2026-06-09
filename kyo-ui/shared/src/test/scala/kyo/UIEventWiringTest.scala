@@ -5,7 +5,6 @@ import kyo.internal.MouseEventData
 import kyo.internal.ReactiveUI
 import kyo.internal.UIEvent
 import kyo.internal.UIExchange
-import scala.language.implicitConversions
 
 /** End-to-end wiring of the onHover/onUnhover/onScroll events.
   *

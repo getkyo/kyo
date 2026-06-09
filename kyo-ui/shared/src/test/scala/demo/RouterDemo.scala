@@ -19,7 +19,7 @@ import kyo.UI.Ast.HtmlContent
   * Demonstrates: `route.render` view switching, a parameterized route, nav driven by writing a `SignalRef`, and active-link styling derived
   * from the route signal.
   */
-object Router extends KyoApp:
+object RouterDemo extends KyoApp:
 
     private val users = Seq("1" -> "Ada Lovelace", "2" -> "Alan Turing", "3" -> "Grace Hopper")
 
@@ -86,4 +86,4 @@ object Router extends KyoApp:
         yield ()
         end for
     }
-end Router
+end RouterDemo

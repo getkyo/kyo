@@ -4,7 +4,6 @@ import kyo.Browser.*
 import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.UI.foreach
-import scala.language.implicitConversions
 
 class HtmlRendererTest extends UITest:
 
@@ -781,6 +780,43 @@ class HtmlRendererTest extends UITest:
                 "ignore"
             )(v => v.contains("data:image/png;base64,iVBORw0KGgo")).unit
         }
+    }
+
+    // ---- renderPage JS-string-literal escaping (pure unit tests, no browser) ----
+
+    "renderPage: trailing backslash in basePath produces valid JS string literal" in {
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/app\\")
+        // The script block must contain the backslash doubled so JS parses correctly.
+        // Broken form: var base="/app\"; the \" escapes the closing quote, corrupting the literal.
+        // Expected: var base="/app\\"; properly escaped.
+        assert(html.contains("""var base="/app\\";"""))
+        assert(!html.contains("""var base="/app\";"""))
+    }
+
+    "renderPage: double-quote in basePath is backslash-escaped in JS, not HTML-entity" in {
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/app\"path")
+        // Broken form: var base="/app&quot;path"; &quot; appears literally in the runtime string.
+        // Expected: var base="/app\"path"; JS-escaped double-quote.
+        assert(html.contains("""var base="/app\"path";"""))
+        assert(!html.contains("""var base="/app&quot;path";"""))
+    }
+
+    "renderPage: closing script tag sequence in basePath is neutralized" in {
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/app</script>x")
+        // A raw </script> inside a <script> element closes the element prematurely.
+        // Expected: </ is encoded as <\/ so </script> cannot close the element.
+        assert(!html.contains("</script>var base="))
+        assert(html.contains("""var base="/app<\/script>x";"""))
+    }
+
+    "renderPage: normal basePath slash unchanged" in {
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/")
+        assert(html.contains("""var base="/";"""))
+    }
+
+    "renderPage: normal basePath with subdirectory unchanged" in {
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/myapp")
+        assert(html.contains("""var base="/myapp";"""))
     }
 
 end HtmlRendererTest

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 // UIMount.scala lives in the JS source tree; it is exercised end-to-end when the JVM
 // UIServer serves the bootstrap HTML and the JS runtime calls DomBackend.mount on page

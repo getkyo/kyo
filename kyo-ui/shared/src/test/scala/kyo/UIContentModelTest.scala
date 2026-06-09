@@ -4,7 +4,6 @@ import kyo.UI.Ast.*
 import kyo.UI.foreach
 import kyo.UI.render
 import kyo.internal.HtmlRenderer
-import scala.language.implicitConversions
 
 /** Tests for the content-model boundary: the `HtmlContent` marker trait and the `AsHtmlChild` typeclass.
   *
@@ -52,7 +51,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
     "Svg.svg rejects a bare HTML div child (compile-fail)" in {
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           Svg.svg(UI.div("x"))
         """)("Required: kyo.Svg.SvgChild")
     }
@@ -107,7 +105,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
         // bare HTML div is NOT directly accepted in Svg.g
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           Svg.g(UI.div("x"))
         """)("Required: kyo.Svg.SvgChild")
     }
@@ -119,7 +116,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
     "reactive SVG rejected under div (compile-fail)" in {
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           UI.div(UI.when(Signal.initConst(true))(Svg.circle.cx(1).cy(1).r(1)))
         """)("does not conform to upper bound kyo.UI.Ast.HtmlContent")
     }
@@ -134,7 +130,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
         assert(svgNode.isInstanceOf[Svg.Root])
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           val chunkSig = Signal.initConst(Chunk(1, 2, 3))
           UI.div(chunkSig.foreach(i => Svg.circle.cx(i.toDouble).cy(0).r(1)))
         """)("does not conform to upper bound kyo.UI.Ast.HtmlContent")
@@ -150,7 +145,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
     "bare SVG rejected under div (compile-fail)" in {
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           UI.div(Svg.circle.cx(1).cy(1).r(1))
         """)("Required: kyo.UI.Ast.HtmlChildVal")
     }
@@ -159,7 +153,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
     "mixed HTML+SVG rejected under div (compile-fail)" in {
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           UI.div(UI.div("a"), Svg.circle.cx(1).cy(1).r(1))
         """)("Required: kyo.UI.Ast.HtmlChildVal")
     }
@@ -205,7 +198,6 @@ class UIContentModelTest extends kyo.test.Test[Any]:
     "if/else UI.empty with an SVG element branch is rejected under div (compile-fail)" in {
         typeCheckFailure("""
           import kyo.*
-          import scala.language.implicitConversions
           def c: Boolean = util.Random.nextBoolean()
           UI.div(if c then Svg.circle.cx(1).cy(1).r(1) else UI.empty)
         """)("Required: kyo.UI.Ast.HtmlChildVal")

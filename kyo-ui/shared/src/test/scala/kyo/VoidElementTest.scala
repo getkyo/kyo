@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Browser.*
 import kyo.Length.*
-import scala.language.implicitConversions
 
 class VoidElementTest extends UITest:
 

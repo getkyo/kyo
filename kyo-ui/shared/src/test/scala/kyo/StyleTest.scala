@@ -3,7 +3,6 @@ package kyo
 import kyo.Length.*
 import kyo.Style.*
 import kyo.internal.CssStyleRenderer
-import scala.language.implicitConversions
 
 class StyleTest extends kyo.test.Test[Any]:
 

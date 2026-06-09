@@ -15,7 +15,7 @@ import kyo.UI.*
   * Demonstrates: a single source-of-truth `SignalRef`, derived `Signal`s via `.map` (cart lines and total), keyed list rendering with
   * `foreachKeyed`, per-row +/- steppers, `when` empty-state, and equal-column layout via `flexGrow(1).flexBasis(0.px)`.
   */
-object Cart extends KyoApp:
+object CartDemo extends KyoApp:
 
     case class Product(id: String, name: String, cents: Int) derives CanEqual
 
@@ -101,4 +101,4 @@ object Cart extends KyoApp:
         yield ()
         end for
     }
-end Cart
+end CartDemo

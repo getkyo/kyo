@@ -2,7 +2,6 @@ package kyo
 
 import UI.*
 import UI.Ast.*
-import scala.language.implicitConversions
 
 class UIModelTest extends kyo.test.Test[Any]:
 
