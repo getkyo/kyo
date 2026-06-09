@@ -1475,6 +1475,19 @@ private[kyo] object ChartMarks:
                                         case Present(fn) => Present(math.max(0.0, math.min(1.0, fn(row))))
                                         case Absent      => Absent
 
+                                    def pathGlyph(pd: Svg.PathData): Chunk[Svg.SvgElement] =
+                                        val base = Svg.path.d(pd)
+                                            .fill(Svg.Paint.Color(fillColor))
+                                            .stroke(Svg.Paint.Color(separator))
+                                            .strokeWidth(PointStrokeWidth)
+                                            .withAttrs(iAttrs)
+                                        val withOp = opacity.fold(base)(op => base.fillOpacity(op))
+                                        val withTip = mark.tooltip match
+                                            case Present(fn) => withOp(Svg.title(fn(row)))
+                                            case Absent      => withOp
+                                        Chunk(withTip)
+                                    end pathGlyph
+
                                     // Build glyph elements (circle or path-based).
                                     val glyphElems: Chunk[Svg.SvgElement] = sym match
                                         case Symbol.circle =>
@@ -1497,21 +1510,9 @@ private[kyo] object ChartMarks:
                                             val v = Svg.line.x1(cx).y1(cy - r).x2(cx).y2(cy + r)
                                                 .stroke(Svg.Paint.Color(fillColor)).strokeWidth(PointStrokeWidth + 0.5)
                                             Chunk(h, v)
-                                        case Symbol.square | Symbol.triangle | Symbol.diamond =>
-                                            val pd = sym match
-                                                case Symbol.square   => squarePath(cx, cy, r)
-                                                case Symbol.triangle => trianglePath(cx, cy, r)
-                                                case Symbol.diamond  => diamondPath(cx, cy, r)
-                                            val base = Svg.path.d(pd)
-                                                .fill(Svg.Paint.Color(fillColor))
-                                                .stroke(Svg.Paint.Color(separator))
-                                                .strokeWidth(PointStrokeWidth)
-                                                .withAttrs(iAttrs)
-                                            val withOp = opacity.fold(base)(op => base.fillOpacity(op))
-                                            val withTip = mark.tooltip match
-                                                case Present(fn) => withOp(Svg.title(fn(row)))
-                                                case Absent      => withOp
-                                            Chunk(withTip)
+                                        case Symbol.square   => pathGlyph(squarePath(cx, cy, r))
+                                        case Symbol.triangle => pathGlyph(trianglePath(cx, cy, r))
+                                        case Symbol.diamond  => pathGlyph(diamondPath(cx, cy, r))
 
                                     // Label encoding: emit Svg.text above the glyph.
                                     val labelElems: Chunk[Svg.SvgElement] = mark.label match

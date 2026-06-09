@@ -96,29 +96,31 @@ private[kyo] object ChartLayout:
                 val cfg = spec.yAxisCfg
                 // Resolve the left y-domain exactly as resolveAllScales does (the pixel range is provisional:
                 // tick VALUES/labels are pixel-range-independent, only Tick.pixel changes).
-                val yExt  = ChartScales.yLeftExtent(rows, spec.marks).getOrElse(Extent.Continuous(0.0, 1.0))
-                val yNice = spec.yScaleOverride.map(_.nice).getOrElse(true)
-                val yKind = spec.yScaleOverride.flatMap(_.kind) match
-                    case Present(ScaleKind.Band)         => Scale.Kind.Band
-                    case Present(ScaleKind.Log)          => Scale.Kind.Log
-                    case Present(ScaleKind.Linear(_, _)) => Scale.Kind.Linear
-                    case Present(ScaleKind.Time)         => Scale.Kind.Time
-                    case Present(ScaleKind.Point)        => Scale.Kind.Point
-                    case Present(ScaleKind.Symlog)       => Scale.Kind.Symlog
-                    case Absent                          => Scale.Kind.Linear
-                val extFinal: Extent = spec.yScaleOverride.flatMap(_.kind) match
-                    case Present(ScaleKind.Linear(domLo, domHi)) => Extent.Continuous(domLo, domHi)
-                    case Present(ScaleKind.Log) =>
-                        ChartScales.yLeftExtentNoZero(rows, spec.marks).getOrElse(Extent.Continuous(1.0, 10.0))
-                    case Absent | Present(ScaleKind.Band) | Present(ScaleKind.Time) |
-                        Present(ScaleKind.Point) | Present(ScaleKind.Symlog) =>
-                        yExt
-                val useNice = spec.yScaleOverride.flatMap(_.kind) match
-                    case Present(ScaleKind.Linear(_, _)) => false
-                    case Present(ScaleKind.Log)          => false
-                    case Absent | Present(ScaleKind.Band) | Present(ScaleKind.Time) |
-                        Present(ScaleKind.Point) | Present(ScaleKind.Symlog) =>
-                        yNice
+                val yExt         = ChartScales.yLeftExtent(rows, spec.marks).getOrElse(Extent.Continuous(0.0, 1.0))
+                val yNice        = spec.yScaleOverride.map(_.nice).getOrElse(true)
+                val kindOverride = spec.yScaleOverride.flatMap(_.kind)
+                val yKind = kindOverride match
+                    case Absent => Scale.Kind.Linear
+                    case Present(kind) => kind match
+                            case ScaleKind.Band         => Scale.Kind.Band
+                            case ScaleKind.Log          => Scale.Kind.Log
+                            case ScaleKind.Linear(_, _) => Scale.Kind.Linear
+                            case ScaleKind.Time         => Scale.Kind.Time
+                            case ScaleKind.Point        => Scale.Kind.Point
+                            case ScaleKind.Symlog       => Scale.Kind.Symlog
+                val extFinal: Extent = kindOverride match
+                    case Absent => yExt
+                    case Present(kind) => kind match
+                            case ScaleKind.Linear(domLo, domHi) => Extent.Continuous(domLo, domHi)
+                            case ScaleKind.Log =>
+                                ChartScales.yLeftExtentNoZero(rows, spec.marks).getOrElse(Extent.Continuous(1.0, 10.0))
+                            case ScaleKind.Band | ScaleKind.Time | ScaleKind.Point | ScaleKind.Symlog => yExt
+                val useNice = kindOverride match
+                    case Absent => yNice
+                    case Present(kind) => kind match
+                            case ScaleKind.Linear(_, _)                                               => false
+                            case ScaleKind.Log                                                        => false
+                            case ScaleKind.Band | ScaleKind.Time | ScaleKind.Point | ScaleKind.Symlog => yNice
                 val scale = Scale.fit(yKind, extFinal, 100.0, 0.0, nice = useNice, clamp = false)
                 val labels = scale.ticks(cfg.tickCount).map: t =>
                     cfg.tickFormat match
