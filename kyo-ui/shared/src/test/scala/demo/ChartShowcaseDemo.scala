@@ -26,7 +26,7 @@ import kyo.UI.*
   * to its end dataset (the `.animate` charts tween) and selects a real Beta row (the line chart highlights
   * it). `ChartShowcase.app` builds the page.
   */
-object ChartShowcase extends KyoApp:
+object ChartShowcaseDemo extends KyoApp:
 
     // ---- domain: panel 1 - dual-axis animated combo ----
 
@@ -291,4 +291,4 @@ object ChartShowcase extends KyoApp:
         yield ()
         end for
     }
-end ChartShowcase
+end ChartShowcaseDemo

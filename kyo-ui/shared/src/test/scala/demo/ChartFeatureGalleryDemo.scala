@@ -24,7 +24,7 @@ import kyo.UI.*
   *
   * `ChartFeatureGallery.app` is the page value.
   */
-object ChartFeatureGallery extends KyoApp:
+object ChartFeatureGalleryDemo extends KyoApp:
 
     // ---- domain ----
 
@@ -322,4 +322,4 @@ object ChartFeatureGallery extends KyoApp:
         yield ()
         end for
     }
-end ChartFeatureGallery
+end ChartFeatureGalleryDemo

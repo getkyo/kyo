@@ -1482,7 +1482,7 @@ val interactiveCell: UI < Async =
 
 ### A worked example: a small grid
 
-Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/Snake.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
+Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/SnakeDemo.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
 
 ```scala
 import UI.*
@@ -1618,20 +1618,20 @@ This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_
 
 ## Demos
 
-Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
+Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<NameDemo>'`; the server-push demos print a `localhost` URL to open.
 
-- [**Kanban**](shared/src/test/scala/demo/Kanban.scala): Trello-style board over server-push: add, move, and delete cards across columns.
-- [**Signup**](shared/src/test/scala/demo/Signup.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
-- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over SSE from a background fiber, with no client code.
-- [**Search**](shared/src/test/scala/demo/Search.scala): live Wikipedia search via `HttpClient`, with loading and error states.
-- [**Cart**](shared/src/test/scala/demo/Cart.scala): shopping cart with quantity steppers and a derived running total.
-- [**Playground**](shared/src/test/scala/demo/Playground.scala): HTML playground: a textarea feeds a live `iframe` preview.
-- [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
-- [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
-- [**ChartFeatureGallery**](shared/src/test/scala/demo/ChartFeatureGallery.scala): static gallery of the [Charts](#charts) layer, one cell per feature: sequential color scale, error bars, text annotations, stacked area, themes and named palettes, grouped bars, and an accessible titled chart.
-- [**ChartShowcase**](shared/src/test/scala/demo/ChartShowcase.scala): animated and interactive [Charts](#charts): a dual-axis bar-plus-line combo, a multi-series line with select-to-highlight, and animated multi-series areas that tween between datasets via `.animate`.
-- [**ChartReactiveScales**](shared/src/test/scala/demo/ChartReactiveScales.scala): reactive [Charts](#charts) and scales: a line bound to a `Signal` that morphs on update, a bar with a clamped fixed y-domain, and a `lowerWithScales` readback that pins an `Svg.line` to an exact data pixel.
-- [**LinkedSelection**](shared/src/test/scala/demo/LinkedSelection.scala): two linked [Charts](#charts) wired by a single shared `SignalRef`: clicking a bar in the category chart drives a detail line, with no event bus or callbacks.
-- [**LiveDashboard**](shared/src/test/scala/demo/LiveDashboard.scala): a live service-metrics dashboard on the reactive [Charts](#charts) layer: KPI tiles, fixed-domain throughput bars, a rolling-window latency line split by series, and stacked status codes, all random-walked by one background fiber on a fixed cadence.
-- [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
-- [**Snake**](shared/src/test/scala/demo/Snake.scala): the classic game on the raw [SVG](#svg) API: a grid of `Svg.rect`s driven by a background game-loop fiber and arrow-key / WASD input, with all state in one `SignalRef`.
+- [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: add, move, and delete cards across columns.
+- [**Signup**](shared/src/test/scala/demo/SignupDemo.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
+- [**Dashboard**](shared/src/test/scala/demo/DashboardDemo.scala): live metrics pushed over SSE from a background fiber, with no client code.
+- [**Search**](shared/src/test/scala/demo/SearchDemo.scala): live Wikipedia search via `HttpClient`, with loading and error states.
+- [**Cart**](shared/src/test/scala/demo/CartDemo.scala): shopping cart with quantity steppers and a derived running total.
+- [**Playground**](shared/src/test/scala/demo/PlaygroundDemo.scala): HTML playground: a textarea feeds a live `iframe` preview.
+- [**Router**](shared/src/test/scala/demo/RouterDemo.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
+- [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshotDemo.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
+- [**ChartFeatureGallery**](shared/src/test/scala/demo/ChartFeatureGalleryDemo.scala): static gallery of the [Charts](#charts) layer, one cell per feature: sequential color scale, error bars, text annotations, stacked area, themes and named palettes, grouped bars, and an accessible titled chart.
+- [**ChartShowcase**](shared/src/test/scala/demo/ChartShowcaseDemo.scala): animated and interactive [Charts](#charts): a dual-axis bar-plus-line combo, a multi-series line with select-to-highlight, and animated multi-series areas that tween between datasets via `.animate`.
+- [**ChartReactiveScales**](shared/src/test/scala/demo/ChartReactiveScalesDemo.scala): reactive [Charts](#charts) and scales: a line bound to a `Signal` that morphs on update, a bar with a clamped fixed y-domain, and a `lowerWithScales` readback that pins an `Svg.line` to an exact data pixel.
+- [**LinkedSelection**](shared/src/test/scala/demo/LinkedSelectionDemo.scala): two linked [Charts](#charts) wired by a single shared `SignalRef`: clicking a bar in the category chart drives a detail line, with no event bus or callbacks.
+- [**LiveDashboard**](shared/src/test/scala/demo/LiveDashboardDemo.scala): a live service-metrics dashboard on the reactive [Charts](#charts) layer: KPI tiles, fixed-domain throughput bars, a rolling-window latency line split by series, and stacked status codes, all random-walked by one background fiber on a fixed cadence.
+- [**Flamegraph**](shared/src/test/scala/demo/FlamegraphDemo.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
+- [**Snake**](shared/src/test/scala/demo/SnakeDemo.scala): the classic game on the raw [SVG](#svg) API: a grid of `Svg.rect`s driven by a background game-loop fiber and arrow-key / WASD input, with all state in one `SignalRef`.

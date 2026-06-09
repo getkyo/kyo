@@ -19,7 +19,7 @@ import kyo.UI.*
   *
   * Run via `sbt 'kyo-ui/Test/runMain demo.Flamegraph'` (optional port as the first argument).
   */
-object Flamegraph extends KyoApp:
+object FlamegraphDemo extends KyoApp:
 
     // ---- data ----
 
@@ -362,4 +362,4 @@ object Flamegraph extends KyoApp:
         yield ()
         end for
     }
-end Flamegraph
+end FlamegraphDemo

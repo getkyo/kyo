@@ -20,7 +20,7 @@ import kyo.UI.*
   *
   * `ChartReactiveScales.app` builds the page (allocating the signal and starting the fiber).
   */
-object ChartReactiveScales extends KyoApp:
+object ChartReactiveScalesDemo extends KyoApp:
 
     // ---- domain ----
 
@@ -194,4 +194,4 @@ object ChartReactiveScales extends KyoApp:
         yield ()
         end for
     }
-end ChartReactiveScales
+end ChartReactiveScalesDemo

@@ -14,7 +14,7 @@ import kyo.UI.*
   *
   * Run via `sbt 'kyo-ui/Test/runMain demo.LinkedSelection'` (optional port as the first argument).
   */
-object LinkedSelection extends KyoApp:
+object LinkedSelectionDemo extends KyoApp:
 
     // ---- domain ----
 
@@ -104,4 +104,4 @@ object LinkedSelection extends KyoApp:
         yield ()
         end for
     }
-end LinkedSelection
+end LinkedSelectionDemo

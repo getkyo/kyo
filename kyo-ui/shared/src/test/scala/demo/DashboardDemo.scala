@@ -17,7 +17,7 @@ import kyo.UI.Ast.HtmlContent
   * Demonstrates: shared server-side state, a `Fiber` background updater, fine-grained reactive text via `signal.render`, a reactive list
   * via `signal.foreach`, and equal-width cards via `flexGrow(1).flexBasis(0.px)`.
   */
-object Dashboard extends KyoApp:
+object DashboardDemo extends KyoApp:
 
     private val pageStyle     = Style.padding(24.px).fontFamily(FontFamily.SansSerif).gap(16.px)
     private val subtitleStyle = Style.color(Color.gray).fontSize(14.px)
@@ -93,4 +93,4 @@ object Dashboard extends KyoApp:
         yield ()
         end for
     }
-end Dashboard
+end DashboardDemo

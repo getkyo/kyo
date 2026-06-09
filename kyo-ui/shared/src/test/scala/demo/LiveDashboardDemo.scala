@@ -30,7 +30,7 @@ import kyo.UI.*
   *
   * Run via `sbt 'kyo-ui/Test/runMain demo.LiveDashboard'` (optional port as the first argument).
   */
-object LiveDashboard extends KyoApp:
+object LiveDashboardDemo extends KyoApp:
 
     // ---- domain types ----
 
@@ -383,4 +383,4 @@ object LiveDashboard extends KyoApp:
         yield ()
         end for
     }
-end LiveDashboard
+end LiveDashboardDemo

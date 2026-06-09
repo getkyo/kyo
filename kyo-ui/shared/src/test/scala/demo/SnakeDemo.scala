@@ -19,7 +19,7 @@ import scala.annotation.tailrec
   * Click the board once to focus it, then steer with the arrow keys (the snake waits for the first key before it
   * starts moving). Run via `sbt 'kyo-ui/Test/runMain demo.Snake'` (optional port as the first argument).
   */
-object Snake extends KyoApp:
+object SnakeDemo extends KyoApp:
 
     // ---- grid / domain ----
 
@@ -219,4 +219,4 @@ object Snake extends KyoApp:
         yield ()
         end for
     }
-end Snake
+end SnakeDemo
