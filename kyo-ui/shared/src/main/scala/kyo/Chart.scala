@@ -358,10 +358,10 @@ object Chart:
         y: RuleValue[C] = RuleValue.unset[C],
         axis: Axis = Axis.Left
     )(using Frame): Mark[A] =
-        // RuleValue.Unset has element type Nothing, so a typed pattern match against RuleValue[C] does not
-        // reach it; an erased isInstanceOf check on the singleton is the only way to detect the unset arm.
-        val xMaybe: Maybe[RuleValue[?]] = if x.isInstanceOf[RuleValue.Unset.type] then Absent else Present(x)
-        val yMaybe: Maybe[RuleValue[?]] = if y.isInstanceOf[RuleValue.Unset.type] then Absent else Present(y)
+        // RuleValue.Unset has element type Nothing, so a typed pattern match against RuleValue[C] cannot
+        // reach it; a reference-identity check against the shared singleton detects the unset arm.
+        val xMaybe: Maybe[RuleValue[?]] = if x eq RuleValue.Unset then Absent else Present(x)
+        val yMaybe: Maybe[RuleValue[?]] = if y eq RuleValue.Unset then Absent else Present(y)
         Mark.Rule(xMaybe, yMaybe, axis)
     end rule
 
@@ -590,7 +590,7 @@ object Chart:
           * `domain` override when present) and interpolated between `low` and `high`.
           */
         enum ColorScale:
-            case Categorical(fn: Any => Style.Color)
+            private[kyo] case Categorical(fn: Any => Style.Color)
             case Sequential(low: Style.Color, high: Style.Color, domain: Maybe[(Double, Double)])
         end ColorScale
     end LegendConfig
@@ -928,7 +928,7 @@ object Chart:
           * and `tooltip` are optional per-datum accessors, `Absent` when the factory
           * caller omits them.
           */
-        final case class Bar[A, X, Y](
+        final private[kyo] case class Bar[A, X, Y](
             x: Encoding[A, X],
             y: Encoding[A, Y],
             color: Maybe[Encoding[A, ?]],
@@ -946,7 +946,7 @@ object Chart:
           * `opacity`, `label`, and `tooltip` are optional per-datum accessors,
           * `Absent` when the factory caller omits them.
           */
-        final case class Line[A, X, Y](
+        final private[kyo] case class Line[A, X, Y](
             x: Encoding[A, X],
             y: EncodingMaybe[A, Y],
             color: Maybe[Encoding[A, ?]],
@@ -965,7 +965,7 @@ object Chart:
           * `opacity`, `label`, and `tooltip` are optional per-datum accessors,
           * `Absent` when the factory caller omits them.
           */
-        final case class Area[A, X, Y](
+        final private[kyo] case class Area[A, X, Y](
             x: Encoding[A, X],
             y: Maybe[EncodingMaybe[A, Y]],
             y0: Maybe[Encoding[A, Y]],
@@ -987,7 +987,7 @@ object Chart:
           * and `tooltip` are optional per-datum accessors, `Absent` when the factory
           * caller omits them.
           */
-        final case class Point[A, X, Y](
+        final private[kyo] case class Point[A, X, Y](
             x: Encoding[A, X],
             y: EncodingMaybe[A, Y],
             color: Maybe[Encoding[A, ?]],
@@ -1006,7 +1006,7 @@ object Chart:
           * signal (`Reactive`). At least one of `x`/`y` should be `Present`. `rule`
           * has no `color` or `size` parameter.
           */
-        final case class Rule[A](
+        final private[kyo] case class Rule[A](
             x: Maybe[RuleValue[?]],
             y: Maybe[RuleValue[?]],
             axis: Axis
@@ -1019,7 +1019,7 @@ object Chart:
           * optionally groups by category; `anchor` controls horizontal alignment;
           * `opacity` controls per-datum transparency.
           */
-        final case class Text[A, X, Y](
+        final private[kyo] case class Text[A, X, Y](
             x: Encoding[A, X],
             y: EncodingMaybe[A, Y],
             label: A => String,
@@ -1035,7 +1035,7 @@ object Chart:
           * caps of `capWidth` pixels, and a center marker at `y`. All three y parameters (`y`, `low`, `high`)
           * fold into the y-extent. `color` optionally groups by category.
           */
-        final case class ErrorBar[A, X, Y](
+        final private[kyo] case class ErrorBar[A, X, Y](
             x: Encoding[A, X],
             y: Encoding[A, Y],
             low: Encoding[A, Y],
@@ -1332,7 +1332,7 @@ object Chart:
       * `A` is the row type; `C` is the encoding value type. Both positional and
       * non-positional parameters use this carrier.
       */
-    final case class Encoding[A, C](accessor: A => C, plottable: Plottable[C], tag: ConcreteTag[C])
+    final private[kyo] case class Encoding[A, C](accessor: A => C, plottable: Plottable[C], tag: ConcreteTag[C])
 
     /** An encoding whose accessor may return `Maybe[C]`, supporting gap semantics.
       *
@@ -1346,7 +1346,7 @@ object Chart:
       * `ConcreteTag` of the inner type `C`, captured from the static type at
       * construction for cross-platform category keying.
       */
-    final case class EncodingMaybe[A, C](accessor: A => Maybe[C], plottable: Plottable[C], tag: ConcreteTag[C])
+    final private[kyo] case class EncodingMaybe[A, C](accessor: A => Maybe[C], plottable: Plottable[C], tag: ConcreteTag[C])
 
     object EncodingMaybe:
         def fromTotal[A, C](f: A => C, pl: Plottable[C], tag: ConcreteTag[C]): EncodingMaybe[A, C] =
@@ -1371,7 +1371,7 @@ object Chart:
       * `Grouping.none[A]` is the library-internal default for the `stack` parameter;
       * callers never construct it directly.
       */
-    final case class Grouping[A](group: Maybe[A => Any], normalize: Boolean)
+    final private[kyo] case class Grouping[A](group: Maybe[A => Any], normalize: Boolean)
 
     object Grouping:
         private[kyo] def none[A]: Grouping[A] = Grouping(Absent, false)

@@ -316,4 +316,78 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         assert(summon[Plottable[Color2]].label(Color2.Blue) == "Blue", "derived enum label for Blue")
     }
 
+    // rule with only y supplied renders y at the correct position and leaves x absent.
+
+    "rule with only y supplied renders y at the correct position" in {
+        val rows = Chunk(Sale("Jan", 55000.0))
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue),
+            rule(y = 55000.0)
+        )
+        spec.lower.map { root =>
+            val lines = root.children.flatMap:
+                case g: Svg.G =>
+                    g.children.flatMap:
+                        case l: Svg.Line => Chunk(l)
+                        case _           => Chunk.empty
+                case _ => Chunk.empty
+            assert(lines.nonEmpty, s"Expected a rule line but found none")
+        }
+    }
+
+    // rule with neither x nor y supplied produces no rendered line.
+
+    "rule with neither x nor y supplied produces no rendered line" in {
+        val rows = Chunk(Sale("Jan", 1000.0))
+        val spec = Chart(rows)(rule[Sale, Double]())
+        spec.lower.map { root =>
+            val lines = root.children.flatMap:
+                case g: Svg.G =>
+                    g.children.flatMap:
+                        case l: Svg.Line => Chunk(l)
+                        case _           => Chunk.empty
+                case _ => Chunk.empty
+            assert(lines.isEmpty, s"Rule with no values must produce no line, found ${lines.size}")
+        }
+    }
+
+    // colorScale typed pairs map matched categories and fall back to blue for unmapped.
+
+    "colorScale typed pairs map matched categories and fall back for unmatched" in {
+        val naColor = Style.Color.hex("#AA0000").getOrElse(fail("bad hex naColor"))
+        val euColor = Style.Color.hex("#00AA00").getOrElse(fail("bad hex euColor"))
+        val rows = Chunk(
+            Sale("Jan", 1000.0, region = Region.NA),
+            Sale("Feb", 2000.0, region = Region.EU),
+            Sale("Mar", 3000.0, region = Region.APAC)
+        )
+        val spec = Chart(rows)(
+            bar(x = _.month, y = _.revenue, color = _.region)
+        ).legend(_.colorScale[Region](
+            Region.NA -> naColor,
+            Region.EU -> euColor
+        ))
+        spec.lower.map { root =>
+            val rects = marksRects(root)
+            assert(rects.size == 3, s"Expected 3 bar rects but got ${rects.size}")
+            val fills = rects.map(r => fillOf(r.svgAttrs.fill)).toSeq
+            assert(fills.contains(naColor), s"NA fill must be #AA0000, got $fills")
+            assert(fills.contains(euColor), s"EU fill must be #00AA00, got $fills")
+            assert(fills.contains(Style.Color.blue), s"APAC must fall back to blue, got $fills")
+        }
+    }
+
+    // A Mark value can be held as Chart.Mark[Sale], passed to Chart, and then lowered.
+
+    "a Mark value can be held and passed as Chart.Mark[Sale] and then lowered" in {
+        val rows                = Chunk(Sale("Jan", 1000.0), Sale("Feb", 2000.0))
+        val m: Chart.Mark[Sale] = Chart.bar(x = _.month, y = _.revenue)
+        val spec: Chart[Sale]   = Chart(rows)(m)
+        assert(spec.marks.length == 1, s"Expected 1 mark, got ${spec.marks.length}")
+        spec.lower.map { root =>
+            val rects = marksRects(root)
+            assert(rects.size == 2, s"Expected 2 bar rects but got ${rects.size}")
+        }
+    }
+
 end ChartTypeSafetyTest
