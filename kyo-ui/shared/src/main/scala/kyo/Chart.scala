@@ -157,6 +157,9 @@ final case class Chart[A] private[kyo] (
       * reactive state (animation and hover refs) and samples live data sources.
       */
     def lower(using Frame): Svg.Root < Sync =
+        // Unsafe: `Sync.Unsafe.defer` brackets the synchronous lowering. `ChartLower.lower` allocates the
+        // chart's reactive state and samples any live data source once, all completing synchronously inside
+        // the defer, so nothing escapes the bracket; the safe boundary is the `Svg.Root < Sync` return type.
         Sync.Unsafe.defer(kyo.internal.ChartLower.lower(this))
 
     /** Lowers this chart to an `Svg.Root` together with its resolved [[Scales]].
@@ -168,6 +171,9 @@ final case class Chart[A] private[kyo] (
       * `lowerWithScales` is called again.
       */
     def lowerWithScales(using Frame): (Svg.Root, Scales) < Sync =
+        // Unsafe: as in `lower`, `Sync.Unsafe.defer` brackets the synchronous lowering and scale resolution;
+        // the work runs to completion inside the defer and the `(Svg.Root, Scales) < Sync` return is the
+        // safe boundary.
         Sync.Unsafe.defer(kyo.internal.ChartLower.lowerWithScales(this))
 end Chart
 
