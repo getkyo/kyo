@@ -7,8 +7,8 @@ import java.time.format.DateTimeFormatter
 /** Cross-platform temporal tick-label formatter.
   *
   * Formats epoch millis to a calendar label whose granularity is derived from the tick step: sub-day step uses
-  * HH:mm, day-to-month step uses yyyy-MM-dd, year-scale step uses yyyy. Uses java.time directly in shared
-  * source; scala-java-time 2.6.0 supplies the JS/Native shim (build.sbt:1403,1412), matching kyo-http usage.
+  * HH:mm, day-to-month step uses yyyy-MM-dd, year-scale step uses yyyy. java.time works in shared source because
+  * scala-java-time supplies the JS/Native shim.
   */
 private[kyo] object TimeFormat:
 

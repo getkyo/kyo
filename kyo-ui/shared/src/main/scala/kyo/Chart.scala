@@ -86,9 +86,9 @@ final case class Chart[A] private[kyo] (
       * The builder receives a fresh `ScaleOverride.default` and returns the configured
       * override: `.yScaleRight(_.log)`, `.yScaleRight(_.linear(0, 1).withClamp(true))`. An
       * unset right override (the default) leaves the right scale inferred from the right-bound
-      * marks' data extent, exactly as today.
+      * marks' data extent.
       *
-      * Note: a right axis only exists when the chart has right-bound marks or `.yAxisRight(f)`
+      * A right axis only exists when the chart has right-bound marks or `.yAxisRight(f)`
       * was called; on a single-axis chart this override is a no-op.
       */
     def yScaleRight(f: ScaleOverride => ScaleOverride): Chart[A] =
@@ -218,8 +218,8 @@ object Chart:
       * derives a legend; `stack` stacks or normalizes the bars (carrying its own
       * grouping via `Chart.by(...)`); `axis` selects the y-axis (default `Axis.Left`).
       *
-      * `bar` has no `size` parameter. `rule` has no `color` parameter. These
-      * omissions are intentional capability gates: the compiler enforces them.
+      * `bar` has no `size` parameter: a bar's magnitude is its `y`, so a size channel would be
+      * meaningless. The missing parameter makes `Chart.bar(size = ...)` a compile error.
       */
     def bar[A, X: Plottable, Y: Plottable](
         x: A => X,
@@ -281,9 +281,8 @@ object Chart:
       * Two forms are accepted: (1) a single `y` accessor fills the area between the
       * y value and the baseline; (2) `y0` and `y1` fill the band between two values.
       * At lowering time exactly one of {`y`} or {`y0`,`y1`} must be present; a
-      * misconfiguration renders an empty frame (never a crash, per contract section
-      * 10). `color`, `stack`, `curve`, and `axis` follow the same rules as `bar` and
-      * `line`.
+      * misconfiguration renders an empty frame rather than crashing. `color`, `stack`,
+      * `curve`, and `axis` follow the same rules as `bar` and `line`.
       */
     def area[A, X: Plottable, Y: Plottable](
         x: A => X,
@@ -317,9 +316,9 @@ object Chart:
     /** Creates a point (scatter/bubble) mark.
       *
       * `x` and `y` are required; `color`, `size`, and `symbol` are optional
-      * non-positional parameters. `bar` has no `size` parameter; `point` does. This
-      * asymmetry is the capability gate enforced by the named-parameter design.
-      * A `y` accessor returning `Maybe[Y]` renders a gap (no dot) at `Absent` rows.
+      * non-positional parameters. Unlike `bar`, `point` carries a `size` channel,
+      * which scales the dot radius by magnitude. A `y` accessor returning `Maybe[Y]`
+      * renders a gap (no dot) at `Absent` rows.
       */
     def point[A, X: Plottable, Y: Plottable](
         x: A => X,
@@ -355,8 +354,8 @@ object Chart:
       *
       * A `rule` draws a horizontal (`y`) or vertical (`x`) line spanning the plot at
       * a constant value or at a `Signal`-tracked value. At least one of `x` or `y`
-      * must be supplied. `rule` has no `color` or `size` parameter; these are
-      * intentional omissions gating capability at the call site.
+      * must be supplied. `rule` has no `color` or `size` parameter: a reference line
+      * reads no row, so per-datum channels do not apply.
       *
       * Constant form: `rule(y = Usd(1000))`. Signal form: `rule(y = threshold)`
       * where `threshold: Signal[Usd]`.
@@ -366,8 +365,8 @@ object Chart:
         y: RuleValue[C] = RuleValue.unset[C],
         axis: Axis = Axis.Left
     )(using Frame): Mark[A] =
-        // Pattern matching on RuleValue.Unset across type parameters requires an erased check.
-        // isInstanceOf[RuleValue.Unset.type] detects the singleton; the value arm carries the concrete case.
+        // RuleValue.Unset has element type Nothing, so a typed pattern match against RuleValue[C] does not
+        // reach it; an erased isInstanceOf check on the singleton is the only way to detect the unset arm.
         val xMaybe: Maybe[RuleValue[?]] = if x.isInstanceOf[RuleValue.Unset.type] then Absent else Present(x)
         val yMaybe: Maybe[RuleValue[?]] = if y.isInstanceOf[RuleValue.Unset.type] then Absent else Present(y)
         Mark.Rule(xMaybe, yMaybe, axis)
@@ -555,10 +554,8 @@ object Chart:
             val chunk = Chunk.from(pairs)
             copy(colorScale =
                 Present(LegendConfig.ColorScale.Categorical(v =>
-                    // Match the raw category value against each pair by value equality. The closure scans a small
-                    // pairs collection (typically 2-10 entries) once per category, not a hot membership scan.
-                    // Style.Color.blue is the unmatched fallback (the first default-palette color); never null.
-                    // Maybe.fromOption at the stdlib collectFirst boundary; getOrElse on Kyo Maybe.
+                    // Categories arrive type-erased as Any, so the typed keys are matched by `equals` rather than
+                    // ==. An unmatched category falls back to Style.Color.blue (the first default-palette color).
                     Maybe.fromOption(chunk.collectFirst { case (k, c) if k.equals(v) => c }).getOrElse(Style.Color.blue)
                 ))
             )
@@ -650,11 +647,10 @@ object Chart:
 
     /** Configures animation for live charts.
       *
-      * `ease(d)` enables one-shot SMIL transitions with duration `d`. `none` disables all transitions. The easing
-      * function is fixed to ease-in-out-cubic; named easing variants are additive extensions. The current lowering
-      * animates same-structure path morphs (equal command count) with a declarative SMIL `animate` on `d` and
-      * snaps structural changes (different command count, i.e. a category added or removed); snapping is a
-      * documented limitation.
+      * `ease(d)` enables one-shot SMIL transitions with duration `d`; `none` disables all transitions. The easing
+      * function is fixed to ease-in-out-cubic. Lowering animates same-structure path morphs (equal command count)
+      * with a declarative SMIL `animate` on `d` but snaps structural changes (different command count, i.e. a
+      * category added or removed), since SMIL cannot interpolate paths of differing command count.
       * Used as the argument to `.animate(f)`: write `_.ease(300.millis)` or `_.none`.
       */
     final case class AnimateConfig(
@@ -676,7 +672,7 @@ object Chart:
       * write `_.band`, `_.linear(0, 5000)`, or `_.log`. An unset override (the default) leaves the scale inferred
       * from the accessor's `Plottable` kind and the data extent.
       *
-      * `nice`, `clamp`, and `pad` are additive knobs that refine the fitted domain. `nice=true` (default) snaps
+      * `nice`, `clamp`, and `pad` refine the fitted domain independently of `kind`. `nice=true` (default) snaps
       * domain bounds to round values; `clamp=false` (default) allows extrapolation beyond the domain. `pad` widens
       * the domain symmetrically by the given fraction before fitting.
       */
@@ -705,9 +701,9 @@ object Chart:
     /** Plot margins in pixels around the inner plot rectangle.
       *
       * `top`, `right`, `bottom`, and `left` reserve space for axis chrome and labels.
-      * The defaults (`20/20/40/60`) match the historical built-in constants; the larger
-      * bottom and left make room for the x-axis tick labels and the y-axis numbers. Set
-      * them with `.margins(t, r, b, l)` or `.margins(_.left(80))`.
+      * The defaults (`20/20/40/60`) give the larger bottom and left room for the x-axis
+      * tick labels and the y-axis numbers. Set them with `.margins(t, r, b, l)` or
+      * `.margins(_.left(80))`.
       */
     final case class Margins(
         top: Double,
@@ -722,7 +718,7 @@ object Chart:
     end Margins
 
     object Margins:
-        /** The default margins matching the historical built-in layout constants. */
+        /** The default margins (top 20, right 20, bottom 40, left 60). */
         val default: Margins = Margins(20.0, 20.0, 40.0, 60.0)
     end Margins
 
@@ -782,11 +778,10 @@ object Chart:
     /** Named color palettes for categorical charts.
       *
       * Pass to `_.theme(_.palette(Palette.Okabe))` to select a categorical color set.
-      * `Default` is the built-in palette (unchanged for backward compatibility; not optimized
-      * for color-vision deficiency). `Okabe` is the Okabe-Ito 8-color set, the recommended
-      * accessible choice for categorical data. `Viridis` is an 8-category perceptually-derived
-      * set. `Tableau10` is the Tableau 10 categorical palette. Resolve a palette to its colors
-      * with `Palette.colors(p)`.
+      * `Default` is the built-in palette (not optimized for color-vision deficiency). `Okabe`
+      * is the Okabe-Ito 8-color set, the recommended accessible choice for categorical data.
+      * `Viridis` is an 8-category perceptually-derived set. `Tableau10` is the Tableau 10
+      * categorical palette. Resolve a palette to its colors with `Palette.colors(p)`.
       */
     enum Palette derives CanEqual:
         case Default
@@ -853,9 +848,7 @@ object Chart:
       *
       * `linear` draws straight segments; `monotone` uses a Hermite spline that
       * preserves monotonicity; `stepBefore` and `stepAfter` produce staircase lines;
-      * `basis` uses a B-spline; `catmullRom` uses a Catmull-Rom spline. The two
-      * cases explicitly named in the public-API contract are `stepAfter` and
-      * `monotone`; the rest are additive.
+      * `basis` uses a B-spline; `catmullRom` uses a Catmull-Rom spline.
       */
     enum Curve derives CanEqual:
         case linear, monotone, stepBefore, stepAfter, basis, catmullRom
@@ -864,8 +857,7 @@ object Chart:
       *
       * Selects the shape rendered at each point in a `point` mark. `circle` is the
       * default and renders as an `Svg.circle`; the others render as `Svg.path`
-      * glyphs of equal visual weight. All five cases are additive beyond the two the
-      * contract names.
+      * glyphs of equal visual weight.
       */
     enum Symbol derives CanEqual:
         case circle, square, triangle, diamond, cross
@@ -898,7 +890,7 @@ object Chart:
     enum RuleValue[C]:
         case Const(value: C, plottable: Plottable[C])
         case Reactive(signal: Signal[C], plottable: Plottable[C])
-        case Unset extends RuleValue[Nothing] // total absence sentinel replacing null
+        case Unset extends RuleValue[Nothing] // total absence sentinel for an unsupplied x or y
     end RuleValue
 
     /** Implicit conversions from plain values and signals to `RuleValue`.
@@ -909,8 +901,8 @@ object Chart:
       * to this file, so callers apply the conversions without importing the feature.
       */
     object RuleValue:
-        // Unsafe: widening Nothing to C is safe because Unset is a total sentinel that is never invoked;
-        // the cast is the canonical idiom for a covariant singleton sentinel in a non-covariant enum.
+        // Unsafe: Unset carries no C-typed value (its element type is Nothing), so widening the shared
+        // singleton from RuleValue[Nothing] to RuleValue[C] can never expose a value of the wrong type.
         private[kyo] def unset[C]: RuleValue[C] = RuleValue.Unset.asInstanceOf[RuleValue[C]]
         implicit def constConversion[C: Plottable](c: C): RuleValue[C] =
             RuleValue.Const(c, summon[Plottable[C]])
@@ -938,9 +930,9 @@ object Chart:
         /** A bar or column mark.
           *
           * Carries required positional parameters `x` and `y`, and optional grouping
-          * parameters `color` and `stack`. `axis` selects the y-axis. The additive
-          * fields `opacity`, `label`, and `tooltip` are optional per-datum accessors
-          * that default to `Absent` when not supplied by the factory.
+          * parameters `color` and `stack`. `axis` selects the y-axis. `opacity`, `label`,
+          * and `tooltip` are optional per-datum accessors, `Absent` when the factory
+          * caller omits them.
           */
         final case class Bar[A, X, Y](
             x: Encoding[A, X],
@@ -956,9 +948,9 @@ object Chart:
         /** A line mark with optional gap support.
           *
           * `y` is a `EncodingMaybe` to support `Maybe[Y]` accessors (gaps). `color`
-          * splits into one line per series. `defined` overrides gap detection. The
-          * additive fields `opacity`, `label`, and `tooltip` are optional per-datum
-          * accessors that default to `Absent` when not supplied by the factory.
+          * splits into one line per series. `defined` overrides gap detection.
+          * `opacity`, `label`, and `tooltip` are optional per-datum accessors,
+          * `Absent` when the factory caller omits them.
           */
         final case class Line[A, X, Y](
             x: Encoding[A, X],
@@ -975,9 +967,9 @@ object Chart:
         /** An area mark.
           *
           * Either `y` (fill to baseline) or the `y0`/`y1` band form must be supplied.
-          * Exactly one of the two forms is valid; a lowering-time check selects it. The
-          * additive fields `opacity`, `label`, and `tooltip` are optional per-datum
-          * accessors that default to `Absent` when not supplied by the factory.
+          * Exactly one of the two forms is valid; a lowering-time check selects it.
+          * `opacity`, `label`, and `tooltip` are optional per-datum accessors,
+          * `Absent` when the factory caller omits them.
           */
         final case class Area[A, X, Y](
             x: Encoding[A, X],
@@ -997,9 +989,9 @@ object Chart:
           *
           * `y` is a `EncodingMaybe` so `Maybe[Y]` accessors render gaps as absent dots.
           * `size` controls the dot radius as a sqrt-area magnitude; `sizePx` is the
-          * raw-pixel-radius escape hatch; `symbol` selects the glyph. The additive
-          * fields `opacity`, `label`, and `tooltip` are optional per-datum accessors
-          * that default to `Absent` when not supplied by the factory.
+          * raw-pixel-radius escape hatch; `symbol` selects the glyph. `opacity`, `label`,
+          * and `tooltip` are optional per-datum accessors, `Absent` when the factory
+          * caller omits them.
           */
         final case class Point[A, X, Y](
             x: Encoding[A, X],
@@ -1207,8 +1199,6 @@ object Chart:
           *
           * The underlying `double` instance is reused directly; the cast is sound because the `<: Double` bound
           * guarantees that `A` is a `Double` at runtime (the opaque alias is erased).
-          *
-          * This is one of the few intentional casts in the charting layer, sound because `A <: Double`.
           */
         def numeric[A <: Double]: Plottable[A] =
             // Unsafe: sound only because A <: Double guarantees the erased runtime type is Double.
@@ -1319,7 +1309,7 @@ object Chart:
       * ```
       *
       * The `normalize` flag is a named parameter, not a chained method, which
-      * preserves row-type inference (the appendix-validated design constraint).
+      * preserves row-type inference at the `by(...)` call site.
       *
       * `Grouping.none[A]` is the library-internal default for the `stack` parameter;
       * callers never construct it directly.
@@ -1345,10 +1335,8 @@ object Chart:
       * that was not supplied by the caller is equal to `Unset.accessor` (same object);
       * a supplied parameter is any other function value. The factory body calls
       * `Unset.supplied` to distinguish the two cases and builds `Present` or `Absent`
-      * accordingly.
-      *
-      * This is one of the few intentional casts in the chart layer; it is sound because
-      * the sentinel is never invoked, only compared by reference.
+      * accordingly. The `of` cast is sound because the sentinel is never invoked, only compared
+      * by reference identity.
       */
     private[kyo] object Unset:
         val accessor: Any => Nothing           = _ => throw new NoSuchElementException("Unset sentinel invoked")

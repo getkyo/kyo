@@ -1,12 +1,10 @@
 package kyo.internal
 
-/** sqrt-area size scale: circle AREA is proportional to the
-  * data magnitude, so `radius = rMin + (rMax - rMin) * sqrt(t)` where
-  * `t = clamp01((mag - magMin) / (magMax - magMin))`.
+/** sqrt-area size scale: circle AREA (not radius) is proportional to the data magnitude, so
+  * `radius = rMin + (rMax - rMin) * sqrt(t)` where `t = clamp01((mag - magMin) / (magMax - magMin))`.
   *
-  * When `magMax <= magMin` (degenerate extent: all magnitudes equal, or a
-  * single row), `radius` returns `rMin` for any input without dividing by zero.
-  * The caller builds this once from the full row set before mapping per-row.
+  * When `magMax <= magMin` (degenerate extent: all magnitudes equal, or a single row), `radius` returns `rMin`
+  * for any input, avoiding a divide by zero. Build once from the full row set, then map per row.
   */
 final private[kyo] case class SizeScale(magMin: Double, magMax: Double, rMin: Double, rMax: Double):
 

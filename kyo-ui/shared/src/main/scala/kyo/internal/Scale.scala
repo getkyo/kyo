@@ -25,9 +25,7 @@ end Scale
 /** The data domain before a scale is fitted: either a continuous numeric range or an ordered set of category keys.
   *
   * `Continuous(min, max)` is produced by folding numeric domain values. `Categories(keys)` is produced by folding
-  * categorical domain values in encounter order (deduplication preserving order).
-  *
-  * Defined above `object Scale` because it appears in `Scale.fit` and other companion signatures.
+  * categorical domain values in encounter order, deduplicated with order preserved.
   */
 private[kyo] enum Extent derives CanEqual:
     case Continuous(min: Double, max: Double)
@@ -47,8 +45,6 @@ end Extent
   * Three variants cover all scale families: `Continuous` for linear/log/time numeric axes, `Category` for band and
   * ordinal axes, and `Temporal` for time axes (epoch milliseconds). Scales consume this union; the kind selects
   * which variant is valid.
-  *
-  * Defined above `object Scale` because `Scale.apply`/`Scale.invert` reference it.
   */
 private[kyo] enum Domain derives CanEqual:
     case Continuous(value: Double)
@@ -111,10 +107,9 @@ private[kyo] object Scale:
       * the range, following D3's nice-tick algorithm.
       */
     def niceTicks(min: Double, max: Double, maxTicks: Int = 5): Chunk[Double] =
-        // Sort bounds so that an inverted domain (min > max) does not produce a negative rawStep,
-        // which would make log10(rawStep) return NaN and corrupt all tick values.
-        // The tick VALUES are always ascending (lo..hi); axis orientation is handled by the range
-        // mapping in Linear.apply, not by the tick direction.
+        // Sort bounds so an inverted domain (min > max) cannot produce a negative rawStep, whose log10 would be
+        // NaN and corrupt every tick value. Ticks are always ascending (lo..hi); axis orientation is handled by
+        // the range mapping in Linear.apply, not by tick direction.
         val lo = math.min(min, max)
         val hi = math.max(min, max)
         if maxTicks <= 1 || lo == hi then Chunk(lo)
@@ -171,10 +166,9 @@ private[kyo] object Scale:
                 Domain.Continuous(domainMin + t * (domainMax - domainMin))
 
         def ticks(maxTicks: Int): Chunk[Tick] =
-            // Emit ticks at exactly `step` from domainMin by multiply-by-index (not accumulation,
-            // to avoid float drift), so the TOP tick is exactly domainMax. The step is chosen to
-            // honor the caller's maxTicks while guaranteeing it divides the domain evenly (top tick
-            // lands on domainMax with no overshoot, no recomputed-step disagreement, no crash).
+            // Position ticks at domainMin + i*step (multiply by index, not accumulate) to avoid float drift, so
+            // the top tick lands exactly on domainMax when step divides the span. Callers pass a step chosen to
+            // divide the span evenly.
             def emit(step: Double): Chunk[Tick] =
                 val count = math.max(0, math.round((domainMax - domainMin) / step).toInt)
                 Chunk.tabulate(count + 1): i =>
@@ -183,14 +177,11 @@ private[kyo] object Scale:
             end emit
             niceStep match
                 case Present(fitStep) if fitStep > 0 =>
-                    // niceTicks honors maxTicks but may pick a step that does NOT land on
-                    // domainMax over the widened snapped range (e.g. [0,250] -> step 100 -> top
-                    // tick 200 != 250). fitStep divides the snapped range exactly by construction
-                    // (snappedHi = fitStep*ceil(hi/fitStep)). When the maxTicks-honoring step
-                    // already lands on domainMax, use it directly (it matches the plain
-                    // niceTicks output for every non-overshooting domain). Otherwise fall back to
-                    // the fitStep multiple closest to that step, which is guaranteed to land on
-                    // domainMax.
+                    // niceTicks honors maxTicks but may pick a step that does NOT land on domainMax over the
+                    // widened snapped range (e.g. [0,250] -> step 100 -> top tick 200 != 250). fitStep divides
+                    // the snapped range exactly (snappedHi = fitStep*ceil(hi/fitStep)). So when the
+                    // maxTicks-honoring step already lands on domainMax, use it; otherwise fall back to the
+                    // closest fitStep multiple, which is guaranteed to land on domainMax.
                     val req     = niceTicks(domainMin, domainMax, maxTicks)
                     val reqStep = if req.size >= 2 then req(1) - req(0) else fitStep
                     val span    = domainMax - domainMin
@@ -199,10 +190,9 @@ private[kyo] object Scale:
                         reqStep > 0 && math.abs(math.round(span / reqStep) * reqStep - span) <= eps
                     if reqLandsOnMax then emit(reqStep)
                     else
-                        // k = number of fitStep intervals in the snapped span (integer). Choose the
-                        // multiplier m (>= 1) of fitStep whose interval count k/m is nearest the
-                        // requested count, restricted to divisors of k so the top tick stays on
-                        // domainMax. Ties prefer the smaller step (more ticks).
+                        // k = number of fitStep intervals in the snapped span. Choose the multiplier m (>= 1) of
+                        // fitStep whose interval count k/m is nearest the requested count, restricted to divisors
+                        // of k so the top tick stays on domainMax. Ties prefer the smaller step (more ticks).
                         val k       = math.max(1, math.round(span / fitStep).toInt)
                         val wantInt = math.max(1, maxTicks - 1)
                         @scala.annotation.tailrec
@@ -305,16 +295,15 @@ private[kyo] object Scale:
                         val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
                         rangeLo + xOffset
             case Domain.Continuous(v) =>
-                // First try the numeric value as a category key (handles overridden Band scales
-                // where the data is a numeric type but the scale was forced to Band via xScale(_.band)).
-                // This converts e.g. Continuous(2020.0) to "2020" before trying integer index lookup.
+                // Handle a numeric column forced to a Band scale via xScale(_.band): try the formatted value as a
+                // category key first (e.g. Continuous(2020.0) -> "2020") before treating v as an index.
                 val keyStr = NumberFormat.double(v)
                 Maybe.fromOption(keyIndex.get(keyStr)) match
                     case Present(i) =>
                         val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
                         rangeLo + xOffset
                     case Absent =>
-                        // Fall back to treating v as a 0-based index (original behavior)
+                        // Fall back to treating v as a 0-based band index.
                         val i = v.toInt
                         if i >= 0 && i < n then
                             val xOffset = i.toDouble * slot + (slot - bandW) / 2.0
@@ -325,13 +314,11 @@ private[kyo] object Scale:
             case Domain.Temporal(_) => rangeLo
 
         def invert(px: Double): Domain =
-            // Guard against empty scale or degenerate (zero-width) range.
-            // A reversed range (rangeLo > rangeHi) has slot < 0, which is valid and
-            // the formula ((px - rangeLo) / slot).toInt handles correctly: both numerator
-            // and denominator are negative for a px strictly inside the reversed range,
-            // yielding a positive index. totalW <= 0 was the original guard but it
-            // incorrectly caught reversed ranges (totalW < 0) and short-circuited to
-            // the first key. Use slot == 0 instead.
+            // Guard only empty scale or zero-width range, NOT a reversed range (rangeLo > rangeHi). A reversed
+            // range has slot < 0, which ((px - rangeLo) / slot).toInt handles correctly: numerator and
+            // denominator are both negative for a px inside the range, yielding a positive index. Guarding on
+            // totalW <= 0 would wrongly catch reversed ranges and short-circuit to the first key, so test
+            // slot == 0 instead.
             if n <= 0 || slot == 0.0 then Domain.Category(if keys.isEmpty then "" else keys(0))
             else
                 val i = math.min(n - 1, math.max(0, ((px - rangeLo) / slot).toInt))
@@ -339,7 +326,8 @@ private[kyo] object Scale:
 
         def ticks(maxTicks: Int): Chunk[Tick] =
             val n = keys.size
-            // Use original key indices so pixel positions reflect actual band positions.
+            // Carry each key's original index through the stride filter so pixel positions stay at the actual
+            // band centers, not at the filtered positions.
             val visible: Chunk[(String, Int)] =
                 if maxTicks >= n then keys.zipWithIndex
                 else
@@ -391,15 +379,11 @@ private[kyo] object Scale:
         if nice then
             val tks  = niceTicks(lo, hi, 5)
             val step = if tks.size >= 2 then tks(1) - tks(0) else 0.0
-            // Snap the domain to step-aligned bounds (d3 scale.nice() semantics): floor lo and
-            // ceil hi to the nearest multiple of the nice step so the endpoints ARE ticks. The
-            // chosen step is STORED on the scale (niceStep) and reused by Linear.ticks to emit
-            // ticks at exactly that step from domainMin to domainMax. This makes the top tick
-            // equal domainMax for ANY snapped domain. Sharing the step (rather than re-deriving
-            // it from niceTicks over the widened range) guarantees the top tick lands on
-            // domainMax without overshoot (e.g. [10,210] snaps to [0,250]; a re-derived
-            // niceTicks(0,250) would step by 100 and overshoot).
-            // An already-aligned domain stays unchanged (floor/ceil are no-ops).
+            // Snap the domain to step-aligned bounds (d3 scale.nice() semantics): floor lo and ceil hi to the
+            // nearest multiple of the nice step so the endpoints ARE ticks. Store that step on the scale
+            // (niceStep) for Linear.ticks to reuse: re-deriving niceTicks over the widened range could pick a
+            // different step that overshoots domainMax (e.g. [10,210] snaps to [0,250]; niceTicks(0,250) would
+            // step by 100 and overshoot). An already-aligned domain is unchanged (floor/ceil are no-ops).
             if step > 0 then
                 val snappedLo = step * math.floor(lo / step)
                 val snappedHi = step * math.ceil(hi / step)
@@ -414,8 +398,8 @@ private[kyo] object Scale:
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
             case Extent.Categories(keys)   => (1.0, keys.size.toDouble)
-        // Non-positive values are filtered upstream in yLeftExtentNoZero; lo is positive by construction.
-        // math.max(hi, lo) guards a degenerate empty domain after filtering.
+        // lo is positive: non-positive values are filtered upstream in yLeftExtentNoZero. math.max(hi, lo) guards
+        // an empty domain after filtering, where hi can fall below lo.
         Log(lo, math.max(hi, lo), rangeLo, rangeHi, clamp)
     end fitLog
 
@@ -436,8 +420,8 @@ private[kyo] object Scale:
         Time(lo, hi, rangeLo, rangeHi)
     end fitTime
 
-    // Point scale: like Band but each band has zero inner width (marks placed at band centers).
-    // Reuses Band internally with padding = 0.5 so each slot's band collapses to zero width.
+    // Point scale: marks placed at band centers with zero inner band width. Reuses Band with padding = 0.5 so
+    // each slot's band collapses to a point.
     private def fitPoint(extent: Extent, rangeLo: Double, rangeHi: Double): Scale =
         val keys = extent match
             case Extent.Categories(ks) => ks
