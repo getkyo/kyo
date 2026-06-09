@@ -18,13 +18,6 @@ import Chart.*
 import UI.*
 import kyo.*
 case class Todo(id: String, text: String, done: Boolean)
-enum Region derives CanEqual, Plottable:
-    case NA, EU, APAC
-case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
-val sales: Seq[Sale] = Seq(
-    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
-    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
-)
 ```
 -->
 
@@ -815,7 +808,21 @@ The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`
 
 A `Chart` is a pure immutable spec, not a `UI` node. You describe what to plot from your data and a list of marks, and nothing renders until you call `.lower`, which yields an `Svg.Root`. `Svg.Root` is the one SVG type that is also `HtmlContent` (the typed [SVG](#svg) layer, covered later), so a lowered chart drops into any `UI` container exactly where an `<svg>` root fits. Lowering suspends in `Sync` because it allocates the chart's reactive state and samples live data once, so you thread it like any other effect.
 
-The running fixtures (`Region`, `Sale`, `sales`) are defined once at the top of this README. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later. `Region` derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site.
+The examples below all chart the same small dataset. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later:
+
+```scala doctest:setup
+enum Region derives CanEqual, Plottable:
+    case NA, EU, APAC
+
+case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
+
+val sales: Seq[Sale] = Seq(
+    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
+    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
+)
+```
+
+`Region` derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site.
 
 ### One chart, end to end
 
