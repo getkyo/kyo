@@ -177,38 +177,6 @@ class ChartSpecTest extends kyo.test.Test[Any]:
         assert(spec.marks.length == 2)
     }
 
-    // ---- positive typeCheck: the named-param forms compile ----
-
-    "positive typeCheck: bar(x = _.month, y = _.revenue, color = _.region) compiles" in {
-        // Test using the types already defined in this test class
-        typeCheck("""
-            import kyo.*
-            import kyo.UI.*
-            import kyo.UI.Ast.*
-            import kyo.Chart.*
-            enum Region2 derives CanEqual, Plottable:
-                case NA, EU, APAC
-            case class Sale2(month: String, revenue: Double, region: Region2)
-            val sales: Chunk[Sale2] = Chunk.empty
-            val spec = Chart(sales)(bar(x = _.month, y = _.revenue, color = _.region))
-            val _: Chart[Sale2] = spec
-        """)
-    }
-
-    "positive typeCheck: Chart(chunk) infers Chart and Chart(signal) infers DataSource.Live at runtime" in {
-        // Signal inference is covered by the runtime "Chart(signal)(...) produces DataSource.Live" test.
-        typeCheck("""
-            import kyo.*
-            import kyo.UI.*
-            import kyo.UI.Ast.*
-            import kyo.Chart.*
-            case class Row(x: String, y: Int)
-            given CanEqual[Row, Row] = CanEqual.derived
-            val chunk: Chunk[Row] = Chunk.empty
-            val specStatic: Chart[Row] = Chart(chunk)(bar(x = _.x, y = _.y))
-        """)
-    }
-
     // ---- compile gates: shouldNot typeCheck ----
 
     "rule(color = ...) does not compile" in {

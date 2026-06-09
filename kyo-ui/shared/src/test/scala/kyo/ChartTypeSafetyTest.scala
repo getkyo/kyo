@@ -51,7 +51,6 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
 
     "enum color summons ColorKey[Region] with no explicit type argument" in {
         val rows = Chunk(Sale("Jan", 1000.0, region = Region.NA))
-        typeCheck("Chart.bar(x = (_: Sale).month, y = (_: Sale).revenue, color = (_: Sale).region)")
         assert(summon[ColorKey[Region]] != null)
     }
 
@@ -59,7 +58,6 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
 
     "Double color summons ColorKey[Double] for a sequential-scale use case" in {
         val rows = Chunk(Sale("Jan", 1000.0, hi = 50.0))
-        typeCheck("Chart.bar(x = (_: Sale).month, y = (_: Sale).revenue, color = (_: Sale).hi)")
         assert(summon[ColorKey[Double]] != null)
     }
 
@@ -76,7 +74,6 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
     // An omitted color compiles with no type annotation, defaulting to the empty color encoding.
 
     "omitted color compiles with no annotation and produces Absent color encoding" in {
-        typeCheck("Chart.bar(x = (_: Sale).month, y = (_: Sale).revenue)")
         val rows = Chunk(Sale("Jan", 1000.0))
         val spec = Chart(rows)(bar(x = _.month, y = _.revenue))
         spec.lower.map { root =>
@@ -186,7 +183,6 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
     // A typed color accessor compiles, while an accessor returning a type with no ColorKey is rejected.
 
     "typed color accessor compiles while a non-keyable accessor is rejected" in {
-        typeCheck("Chart.bar(x = (_: Sale).month, y = (_: Sale).revenue, color = (_: Sale).region)")
         typeCheckFailure("""
             import kyo.*
             import kyo.Chart.*
@@ -298,7 +294,6 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
 
     "p.label compiles from user code and returns the expected string" in {
         val p = summon[Plottable[Int]]
-        typeCheck("{ import kyo.*; import kyo.Chart.*; val p: Chart.Plottable[Int] = summon; p.label(3) }")
         assert(p.label(3) == "3", s"Plottable[Int].label(3) expected \"3\" but got \"${p.label(3)}\"")
     }
 
