@@ -1,0 +1,4655 @@
+package kyo.internal
+
+import kyo.*
+import kyo.Chart.*
+// Explicit named import so the bare `Encoding` resolves to the chart data-encoding carrier
+// (kyo.Chart.Encoding). This is distinct from kyo-core's concurrency type `kyo.Channel`.
+import kyo.Chart.Encoding
+import kyo.UI.*
+import kyo.UI.Ast.*
+
+/** Lowers a `Chart[A]` to an `Svg.Root` for static or live (reactive) data.
+  *
+  * Multiple `private[kyo]` entry points cover the static path (`lowerStatic`), the live path
+  * (`lowerLive`), and the transition-aware animated path (`marksRegionWithTransitions`). Layout is
+  * computed from `size` and margin constants; scales are resolved from the marks' encodings via
+  * `Plottable` and `Scale.fit`; each mark is lowered to its corresponding SVG primitive. The
+  * static frame (axes, gridlines, tick marks, tick labels, legend) is built by `buildFrame`.
+  */
+private[kyo] object ChartLower:
+
+    /** Standard margins used when computing the plot rectangle from the chart size. */
+    private val MarginLeft         = 60.0
+    private val MarginRightDefault = 20.0
+    private val MarginRightAxis    = 60.0
+    private val MarginTop          = 20.0
+    private val MarginBottom       = 40.0
+
+    /** Default point radius when no `size` encoding is supplied. */
+    private val DefaultRadius = 4.0
+
+    /** Stroke width (pixels) of the separating outline drawn around each `point` circle so that overlapping
+      * or adjacent bubbles read as distinct discs rather than merging into one blob.
+      */
+    private val PointStrokeWidth = 1.5
+
+    /** Swatch size (pixels) for legend color boxes. */
+    private val SwatchSize = 12.0
+
+    /** Vertical gap between legend rows. */
+    private val LegendRowH = 18.0
+
+    /** Horizontal gap between swatch and label text in the legend. */
+    private val SwatchLabelGap = 6.0
+
+    /** Tick mark half-length (pixels extending past the axis line). */
+    private val TickLen = 5.0
+
+    /** Inset (pixels) from the SVG edge at which a rotated y-axis label is centred.
+      *
+      * The label is placed at the outer edge of its margin column (left label near `AxisLabelInset`, right
+      * label near `svgW - AxisLabelInset`) so it clears the tick numbers that sit adjacent to the axis line.
+      */
+    private val AxisLabelInset = 14.0
+
+    /** Default chart colors used when no `colorScale` override is set. */
+    private[kyo] val DefaultPalette: Chunk[Style.Color] = Chunk(
+        Style.Color.blue,
+        Style.Color.orange,
+        Style.Color.green,
+        Style.Color.red,
+        Style.Color.purple,
+        Style.Color.pink,
+        Style.Color.yellow,
+        Style.Color.gray
+    )
+
+    /** Dark-theme background color. */
+    private val DarkBg: Style.Color = Style.Color.hex("#1f2937").getOrElse(Style.Color.black)
+
+    /** Light-theme background color. */
+    private val LightBg: Style.Color = Style.Color.white
+
+    /** Axis chrome color (tick lines, tick labels, axis labels) on the light theme: a dark gray readable on white. */
+    private val LightThemeTextColor: Style.Color = Style.Color.hex("#374151").getOrElse(Style.Color.black)
+
+    /** Axis chrome color (tick lines, tick labels, axis labels) on the dark theme: a light gray readable on dark. */
+    private val DarkThemeTextColor: Style.Color = Style.Color.hex("#e5e7eb").getOrElse(Style.Color.white)
+
+    /** Resolve the axis chrome color (tick lines, tick labels, axis labels) for the given theme. */
+    private def axisChromeColor(theme: Theme): Style.Color =
+        theme.axisColor.getOrElse(if theme.isDark then DarkThemeTextColor else LightThemeTextColor)
+
+    /** The y-axis a data-series mark binds to. Rule marks are reference annotations, not series, and are
+      * excluded from axis-to-mark binding by the caller.
+      */
+    private def markAxisOf[A](mark: Mark[A]): Axis = mark match
+        case m: Mark.Bar[A, ?, ?]      => m.axis
+        case m: Mark.Line[A, ?, ?]     => m.axis
+        case m: Mark.Area[A, ?, ?]     => m.axis
+        case m: Mark.Point[A, ?, ?]    => m.axis
+        case m: Mark.Rule[A]           => m.axis
+        case m: Mark.Text[A, ?, ?]     => m.axis
+        case m: Mark.ErrorBar[A, ?, ?] => m.axis
+
+    /** Whether a mark renders as ONE solid color, i.e. it has no `color` encoding and is not stack-grouped.
+      *
+      * A grouped or stacked mark (a `color` encoding present, or a `stack` grouping present) renders in
+      * multiple category colors, so its y-axis must not be color-coded to a single palette color. Rule marks
+      * are reference annotations and never count as a solid-color series here. Line and Point marks have no
+      * stacking, so only their `color` encoding matters.
+      */
+    private def isSolidColorMark[A](mark: Mark[A]): Boolean = mark match
+        case m: Mark.Bar[A, ?, ?]      => m.color.isEmpty && m.stack.group.isEmpty
+        case m: Mark.Area[A, ?, ?]     => m.color.isEmpty && m.stack.group.isEmpty
+        case m: Mark.Line[A, ?, ?]     => m.color.isEmpty
+        case m: Mark.Point[A, ?, ?]    => m.color.isEmpty
+        case _: Mark.Rule[A]           => false
+        case _: Mark.Text[A, ?, ?]     => false
+        case _: Mark.ErrorBar[A, ?, ?] => false
+
+    /** Resolve the chrome color for one y-axis so a reader can tell which axis a series uses.
+      *
+      * When exactly ONE data-series mark (Bar/Line/Area/Point, not Rule) binds to `axis` AND that mark renders
+      * as one solid color (no `color` encoding, not stack-grouped), the axis chrome (tick labels, tick marks,
+      * axis line, rotated axis label) takes that mark's palette color via its per-mark palette index
+      * (mark 0 -> palette(0), mark 1 -> palette(1), ...). When zero or multiple marks bind to the axis, or the
+      * single bound mark is grouped/stacked (multi-color), the neutral theme chrome color is used so a single
+      * palette color does not misrepresent a multi-color series and the chart stays legible.
+      */
+    private def axisChromeColorFor[A](theme: Theme, marks: Chunk[Mark[A]], axis: Axis): Style.Color =
+        // An explicit theme axis color is a deliberate override and wins over per-mark color-coding.
+        theme.axisColor match
+            case Present(c) => c
+            case Absent =>
+                val bound: Chunk[(Mark[A], Int)] = marks.zipWithIndex.collect:
+                    case (m, i) if !m.isInstanceOf[Mark.Rule[?]] && markAxisOf(m) == axis => (m, i)
+                bound match
+                    case Chunk((mark, idx)) if isSolidColorMark(mark) => markDefaultColor(theme, idx)
+                    case _                                            => axisChromeColor(theme)
+    end axisChromeColorFor
+
+    /** Gridline color: ALWAYS the neutral theme chrome color, regardless of whether the axis chrome is
+      * color-coded to a bound mark. Gridlines are a background reference, not axis identity, so they read as a
+      * neutral light gray on the light theme and a subtle light line on the dark theme (the strokeOpacity is
+      * applied at the draw site).
+      */
+    private def gridlineColor(theme: Theme): Style.Color =
+        theme.gridColor.getOrElse(axisChromeColor(theme))
+
+    /** Separating outline color for `point` circles: the theme background color (white on light, the dark
+      * background on dark) so each filled bubble is bordered by a thin contrasting ring and adjacent bubbles
+      * read as distinct discs instead of merging.
+      */
+    private def pointSeparatorColor(theme: Theme): Style.Color =
+        if theme.isDark then DarkBg else LightBg
+
+    /** Resolve the palette used for per-mark default colors: the theme palette when set, else `DefaultPalette`. */
+    private def themePalette(theme: Theme): Chunk[Style.Color] =
+        theme.palette.getOrElse(DefaultPalette)
+
+    /** Resolve the default color for the mark at `markIndex` (cycling the theme palette).
+      *
+      * Used when a mark has no explicit `color` encoding so that a multi-mark chart (e.g. a bar plus a line)
+      * gives each mark a distinct palette color: mark 0 uses palette(0), mark 1 uses palette(1), and so on.
+      */
+    private def markDefaultColor(theme: Theme, markIndex: Int): Style.Color =
+        val p = themePalette(theme)
+        if p.isEmpty then DefaultPalette(0) else p(markIndex % p.size)
+    end markDefaultColor
+
+    /** Reserved space at the top of the plot for the legend (pixels).
+      *
+      * When a legend is present the plot area is shifted down by this amount so that legend items fit above
+      * the bars without overlapping the data.
+      */
+    private val LegendReservedH = 20.0
+
+    /** Reserved width (pixels) for a left- or right-positioned legend column.
+      *
+      * When the legend sits beside the plot (`LegendPosition.Left` / `Right`), the plot rectangle narrows by
+      * this amount so the vertically-stacked swatches and labels do not overlap the data.
+      */
+    private val LegendColumnW = 80.0
+
+    /** Immutable layout: the outer SVG dimensions and the inner plot rectangle. */
+    final private[kyo] case class Layout(
+        svgW: Double,
+        svgH: Double,
+        plotX: Double,
+        plotY: Double,
+        plotW: Double,
+        plotH: Double,
+        // Extra pixels of headroom reserved INSIDE the plot top for point glyphs whose centre sits at the data
+        // max: the y-scale's top range is pushed down by this much so the topmost point's edge (cy - r) clears
+        // plotY. Zero for charts without a reserved top legend band (so legend-free charts get no headroom offset).
+        topHeadroom: Double = 0.0
+    ):
+        def plotBaseline: Double = plotY + plotH
+    end Layout
+
+    /** Approximate rendered pixel width of one tick-label glyph at the default font size.
+      *
+      * Matches the 7.0px-per-char estimate already used by the tooltip overlay so the auto-margin
+      * math is consistent with the rest of the lowering. The labels are short numeric strings, so a
+      * single average advance is accurate enough to keep the widest label inside the SVG.
+      */
+    private val TickLabelCharW = 7.0
+
+    /** Pixel column reserved for a rotated (vertical) y-axis title, measured from the SVG edge.
+      *
+      * The title is centred at `AxisLabelInset` and rotated -90 degrees, so it occupies a thin vertical
+      * strip about one cap-height wide plus the inset. Reserving this much keeps the title clear of the
+      * tick numbers that sit just inside it.
+      */
+    private val RotatedAxisTitleW = AxisLabelInset + 12.0
+
+    /** Compute the left margin needed so the widest left y-axis tick label (and the rotated axis title,
+      * when present) fits without clipping at the SVG's left edge.
+      *
+      * The tick label STRINGS depend only on the resolved left y-domain and tick count, not on the plot
+      * height, so they can be computed before the final plot rectangle is known: a provisional unit pixel
+      * range yields the same tick VALUES (only `Tick.pixel` differs, which is unused here). The required
+      * margin is `TickLen + gap + widestLabel`, plus the rotated-title column when a left axis label is set.
+      * Returns the configured margin unchanged when it is already wide enough, so a chart with narrow
+      * labels keeps its configured margin.
+      */
+    private def leftAxisMargin[A](spec: Chart[A], configuredLeft: Double)(using Frame, AllowUnsafe): Double =
+        val rowsMaybe: Maybe[Chunk[A]] = spec.data match
+            case DataSource.Static(rs)   => Present(rs)
+            case DataSource.Live(signal) =>
+                // Unsafe: a point-in-time sample of the live signal's current rows, used only to size the
+                // left margin to the labels currently on screen. Pure synchronous read, no suspension.
+                // Cannot throw: signal.current returns A < Sync (no Abort in scope), so Abort.run yields
+                // Result.Ok and getOrThrow never executes the throw branch.
+                Present(Sync.Unsafe.evalOrThrow(signal.current))
+        rowsMaybe match
+            case Absent => configuredLeft
+            case Present(rows) =>
+                val cfg = spec.yAxisCfg
+                // Resolve the left y-domain exactly as resolveAllScales does (the pixel range is provisional:
+                // tick VALUES/labels are pixel-range-independent, only Tick.pixel changes).
+                val yExt  = yLeftExtent(rows, spec.marks).getOrElse(Extent.Continuous(0.0, 1.0))
+                val yNice = spec.yScaleOverride.map(_.nice).getOrElse(true)
+                val yKind = spec.yScaleOverride.flatMap(_.kind) match
+                    case Present(ScaleKind.Band)         => Scale.Kind.Band
+                    case Present(ScaleKind.Log)          => Scale.Kind.Log
+                    case Present(ScaleKind.Linear(_, _)) => Scale.Kind.Linear
+                    case Present(ScaleKind.Time)         => Scale.Kind.Time
+                    case Present(ScaleKind.Point)        => Scale.Kind.Point
+                    case Present(ScaleKind.Symlog)       => Scale.Kind.Symlog
+                    case _                               => Scale.Kind.Linear
+                val extFinal: Extent = spec.yScaleOverride.flatMap(_.kind) match
+                    case Present(ScaleKind.Linear(domLo, domHi)) => Extent.Continuous(domLo, domHi)
+                    case Present(ScaleKind.Log) =>
+                        yLeftExtentNoZero(rows, spec.marks).getOrElse(Extent.Continuous(1.0, 10.0))
+                    case _ => yExt
+                val useNice = spec.yScaleOverride.flatMap(_.kind) match
+                    case Present(ScaleKind.Linear(_, _)) => false
+                    case Present(ScaleKind.Log)          => false
+                    case _                               => yNice
+                val scale = Scale.fit(yKind, extFinal, 100.0, 0.0, nice = useNice, clamp = false)
+                val labels = scale.ticks(cfg.tickCount).map: t =>
+                    cfg.tickFormat match
+                        case Present(f) => f(t.value)
+                        case Absent     => t.label
+                val widestLabel = labels.foldLeft(0.0)((mx, s) => math.max(mx, s.length.toDouble * TickLabelCharW))
+                val titleCol    = if cfg.axisLabel.isDefined then RotatedAxisTitleW else 0.0
+                val needed      = TickLen + 4.0 + widestLabel + titleCol
+                math.max(configuredLeft, needed)
+        end match
+    end leftAxisMargin
+
+    /** Compute the `Layout` from a chart spec's `size` field.
+      *
+      * Widens the right margin when a right y-axis is configured so tick labels on the right margin do not overlap
+      * the plot area. Widens the LEFT margin so wide left y-tick labels (e.g. 5-digit values) and a rotated left
+      * axis title fit without clipping at the SVG edge. Shifts the plot down by `LegendReservedH` when the legend
+      * will actually render (not hidden AND at least one mark carries a `color` encoding) so legend rows sit in
+      * reserved space above the plot without overlapping the bars.
+      */
+    private def buildLayout(spec: Chart[?])(using Frame, AllowUnsafe): Layout =
+        val (w, h) = spec.chartSize
+        val m      = spec.marginsCfg
+        // The right-axis layout still needs the extra fixed reserve for dual-axis charts; otherwise use the
+        // configured right margin.
+        val marginRight = if spec.yAxisRightCfg.isDefined then MarginRightAxis else m.right
+        val hasLegend = !spec.legendCfg.isHidden && spec.marks.exists:
+            case m: Mark.Bar[?, ?, ?]      => m.color.isDefined || m.stack.group.isDefined
+            case m: Mark.Line[?, ?, ?]     => m.color.isDefined
+            case m: Mark.Area[?, ?, ?]     => m.color.isDefined || m.stack.group.isDefined
+            case m: Mark.Point[?, ?, ?]    => m.color.isDefined
+            case _: Mark.Rule[?]           => false
+            case m: Mark.Text[?, ?, ?]     => m.color.isDefined
+            case m: Mark.ErrorBar[?, ?, ?] => m.color.isDefined
+        // A point mark with a `size` encoding emits a size legend (representative sample bubbles). That legend
+        // always sits in the TOP reserved strip, so the plot must be shifted down to make room even when there
+        // is no color legend; otherwise the sample bubbles render over the plotted data (the scatter case).
+        val hasSizeLegend = !spec.legendCfg.isHidden && spec.marks.exists:
+            case m: Mark.Point[?, ?, ?] => m.size.isDefined
+            case _                      => false
+        // Reserve margin for the legend on the side it is positioned: Top shifts the plot down (default),
+        // Bottom shrinks plot height, Left/Right reserve a column beside the plot.
+        val pos        = if hasLegend then spec.legendCfg.position.getOrElse(LegendPosition.Top) else LegendPosition.Top
+        val reserveTop = (hasLegend && pos == LegendPosition.Top) || hasSizeLegend
+        val topPad     = if reserveTop then LegendReservedH else 0.0
+        val bottomPad  = if hasLegend && pos == LegendPosition.Bottom then LegendReservedH else 0.0
+        val leftPad    = if hasLegend && pos == LegendPosition.Left then LegendColumnW else 0.0
+        val rightPad   = if hasLegend && pos == LegendPosition.Right then LegendColumnW else 0.0
+        // Point glyphs are centred on their data value, so the topmost (max-value) point's top edge (cy - r)
+        // would cross into the reserved top band and be clipped. Reserve the max point radius as in-plot top
+        // headroom (consumed by the y-scale range in resolveAllScales). Only when a top band is reserved, so
+        // legend-free point charts reserve no top headroom. A size encoding scales up to DefaultRMax.
+        val topHeadroom =
+            if !reserveTop then 0.0
+            else
+                spec.marks.foldLeft(0.0): (mx, mark) =>
+                    mark match
+                        case m: Mark.Point[?, ?, ?] =>
+                            val r = if m.size.isDefined then SizeScale.DefaultRMax else DefaultRadius
+                            math.max(mx, r)
+                        case _ => mx
+        // Grow the configured left margin so wide left y-tick labels + a rotated left axis title clear the SVG edge.
+        val marginLeft = leftAxisMargin(spec, m.left)
+        Layout(
+            svgW = w.toDouble,
+            svgH = h.toDouble,
+            plotX = marginLeft + leftPad,
+            plotY = m.top + topPad,
+            plotW = w.toDouble - marginLeft - marginRight - leftPad - rightPad,
+            plotH = h.toDouble - m.top - topPad - bottomPad - m.bottom,
+            topHeadroom = topHeadroom
+        )
+    end buildLayout
+
+    // ---- extent collection helpers ----
+
+    /** Fold domain values from a sequence of rows through an encoding into an `Extent`.
+      *
+      * `Absent` returns from `toDomain` (gap values) are skipped and contribute nothing to the extent.
+      */
+    private def foldExtent(rows: Chunk[?], domainFn: Any => Maybe[Domain]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= rows.size then acc
+            else
+                domainFn(rows(i)) match
+                    case Absent => loop(i + 1, acc)
+                    case Present(d) =>
+                        val newAcc = d match
+                            case Domain.Continuous(v) =>
+                                // drop NaN/Inf to avoid poisoning min/max
+                                if !ChartFoundations.isFiniteDouble(v) then acc
+                                else
+                                    acc match
+                                        case Absent => Present(Extent.Continuous(v, v))
+                                        case Present(Extent.Continuous(lo, hi)) =>
+                                            Present(Extent.Continuous(math.min(lo, v), math.max(hi, v)))
+                                        case Present(Extent.Categories(_)) => Present(Extent.Continuous(v, v))
+                            case Domain.Category(key) =>
+                                acc match
+                                    case Absent                           => Present(Extent.Categories(Chunk(key)))
+                                    case Present(Extent.Categories(keys)) =>
+                                        // Chunk-native exists, no toSeq round-trip
+                                        if keys.exists(_ == key) then Present(Extent.Categories(keys))
+                                        else Present(Extent.Categories(keys.append(key)))
+                                    case Present(Extent.Continuous(_, _)) => Present(Extent.Categories(Chunk(key)))
+                            case Domain.Temporal(ms) =>
+                                // drop non-finite timestamps (e.g. Long overflow to Infinity)
+                                if !ChartFoundations.isFiniteDouble(ms.toDouble) then acc
+                                else
+                                    acc match
+                                        case Absent => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
+                                        case Present(Extent.Continuous(lo, hi)) =>
+                                            Present(Extent.Continuous(math.min(lo, ms.toDouble), math.max(hi, ms.toDouble)))
+                                        case Present(Extent.Categories(_)) => Present(Extent.Continuous(ms.toDouble, ms.toDouble))
+                        loop(i + 1, newAcc)
+        loop(0, Absent)
+    end foldExtent
+
+    // Unsafe (row/encoding erasure invariant, covers all ~50 asInstanceOf[A] and Encoding[A, Any] casts
+    // in this file): `DataSource[A]` and each `Mark.*[A, ...]` are constructed from the same concrete
+    // row type `A` as `rows: Chunk[A]`.  The GADT match arms (e.g. `m: Mark.Bar[A, ?, ?]`) prove
+    // the mark carries the same `A`, so `r.asInstanceOf[A]` simply re-narrows a type that was erased
+    // to `Any` at the typed-mark boundary and is `A` by construction; it cannot fail at runtime.
+    // Likewise, `colorEnc.asInstanceOf[Encoding[A, Any]]` recovers the concrete element type from a
+    // `Encoding[?, ?]` that was widened during pattern-match erasure; the cast is total.
+    //
+    // This note also covers two further families that share the same erasure invariant:
+    //   - `Plottable.string.asInstanceOf[Plottable[Any]]` (the group/color encoding builders): the group
+    //     accessor produces label strings keyed categorically, so the shared `string` instance is the
+    //     correct evidence and the widening to `Plottable[Any]` is erasure-safe.
+    //   - `mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])` and `colorEnc.tag.asInstanceOf[ConcreteTag[Any]]`
+    //     (the color-tag widenings): the tag is used only as a structural CatKey identity component, never to
+    //     reconstruct or constrain the element type, so widening to `ConcreteTag[Any]` cannot fail.
+
+    /** Collect x-extent across all marks' x encodings for the given rows. */
+    private def xExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= marks.size then acc
+            else
+                val markExtent = marks(i) match
+                    case m: Mark.Bar[A, ?, ?]      => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Line[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Area[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Point[A, ?, ?]    => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case _: Mark.Rule[A]           => Absent
+                    case m: Mark.Text[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.ErrorBar[A, ?, ?] => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                val merged = mergeExtents(acc, markExtent)
+                loop(i + 1, merged)
+        loop(0, Absent)
+    end xExtent
+
+    /** Collect y-extent across all marks on `Axis.Left` for the given rows.
+      *
+      * When the mark has a `stack` grouping, the extent uses the STACKED maxima: for each x value the
+      * contributions of all stack groups are summed, and the maximum sum is used. For `normalize = true` the
+      * extent is fixed to `[0, 1]`.
+      */
+    private def yLeftExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= marks.size then acc
+            else
+                val markExtent: Maybe[Extent] = marks(i) match
+                    case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Left =>
+                        val base = m.stack.group match
+                            case Absent =>
+                                foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
+                            case Present(_) =>
+                                if m.stack.normalize then Present(Extent.Continuous(0.0, 1.0))
+                                else stackedYExtent(rows, m)
+                        ensureZero(base)
+                    case m: Mark.Line[A, ?, ?] if m.axis == Axis.Left =>
+                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                    case m: Mark.Area[A, ?, ?] if m.axis == Axis.Left =>
+                        val base = m.y match
+                            case Present(ch) =>
+                                m.stack.group match
+                                    case Present(_) =>
+                                        if m.stack.normalize then Present(Extent.Continuous(0.0, 1.0))
+                                        else stackedAreaYExtent(rows, m, ch)
+                                    case Absent =>
+                                        foldExtent(rows, r => ch.accessor(r.asInstanceOf[A]).flatMap(v => ch.plottable.toDomain(v)))
+                            case Absent =>
+                                val e0 = m.y0 match
+                                    case Present(ch) => foldExtent(rows, r => ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])))
+                                    case Absent      => Absent
+                                val e1 = m.y1 match
+                                    case Present(ch) => foldExtent(rows, r => ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])))
+                                    case Absent      => Absent
+                                mergeExtents(e0, e1)
+                        ensureZero(base)
+                    case m: Mark.Point[A, ?, ?] if m.axis == Axis.Left =>
+                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                    case m: Mark.Rule[A] if m.axis == Axis.Left =>
+                        m.y match
+                            case Present(RuleValue.Const(v, pl)) => pl.asInstanceOf[Plottable[Any]].toDomain(v.asInstanceOf[Any]) match
+                                    case Present(d) => Present(extentFromDomain(d))
+                                    case Absent     => Absent
+                            case _ => Absent
+                    case m: Mark.Text[A, ?, ?] if m.axis == Axis.Left =>
+                        // Text y encoding contributes to y-extent; gap rows (Absent) are skipped.
+                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                    case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Left =>
+                        // All three y encodings (low, high, y) fold into the y-extent.
+                        val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
+                        val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r.asInstanceOf[A])))
+                        val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r.asInstanceOf[A])))
+                        ensureZero(mergeExtents(mergeExtents(eY, eLow), eHigh))
+                    case _ => Absent
+                val merged = mergeExtents(acc, markExtent)
+                loop(i + 1, merged)
+        loop(0, Absent)
+    end yLeftExtent
+
+    /** Collect y-extent across all marks on `Axis.Left` WITHOUT applying `ensureZero`.
+      *
+      * Used for logarithmic scale resolution, where the domain must not include zero (log(0) is undefined).
+      */
+    private def yLeftExtentNoZero[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= marks.size then acc
+            else
+                val markExtent: Maybe[Extent] = marks(i) match
+                    case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Left =>
+                        // Filter non-positive values so the log scale domain starts at the smallest positive value.
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Line[A, ?, ?] if m.axis == Axis.Left =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Point[A, ?, ?] if m.axis == Axis.Left =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Text[A, ?, ?] if m.axis == Axis.Left =>
+                        // Text y contributes to the log-scale no-zero extent; positive values only.
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Left =>
+                        // Low/high/y for log scale; drop non-positive.
+                        def posExtent(ch: Encoding[A, ?]) = foldExtent(
+                            rows,
+                            r =>
+                                ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                        mergeExtents(
+                            mergeExtents(posExtent(m.y.asInstanceOf[Encoding[A, ?]]), posExtent(m.low.asInstanceOf[Encoding[A, ?]])),
+                            posExtent(m.high.asInstanceOf[Encoding[A, ?]])
+                        )
+                    case _ => Absent
+                val merged = mergeExtents(acc, markExtent)
+                loop(i + 1, merged)
+        loop(0, Absent)
+    end yLeftExtentNoZero
+
+    /** Collect y-extent for marks on `Axis.Right`. */
+    private def yRightExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= marks.size then acc
+            else
+                val markExtent: Maybe[Extent] = marks(i) match
+                    case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Right =>
+                        ensureZero(foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A]))))
+                    case m: Mark.Line[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                    case m: Mark.Area[A, ?, ?] if m.axis == Axis.Right =>
+                        val base = m.y match
+                            case Present(ch) => foldExtent(rows, r => ch.accessor(r.asInstanceOf[A]).flatMap(v => ch.plottable.toDomain(v)))
+                            case Absent      => Absent
+                        ensureZero(base)
+                    case m: Mark.Point[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                    case m: Mark.Text[A, ?, ?] if m.axis == Axis.Right =>
+                        // Text y contributes to right-axis extent when on the right axis.
+                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                    case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Right =>
+                        // Low/high/y contribute to right-axis extent.
+                        val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
+                        val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r.asInstanceOf[A])))
+                        val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r.asInstanceOf[A])))
+                        ensureZero(mergeExtents(mergeExtents(eY, eLow), eHigh))
+                    case _ => Absent
+                val merged = mergeExtents(acc, markExtent)
+                loop(i + 1, merged)
+        loop(0, Absent)
+    end yRightExtent
+
+    /** Collect the no-zero y-extent for marks on `Axis.Right` (mirrors `yLeftExtentNoZero`).
+      *
+      * Used by the Log scale arm in `resolveYScale` for the right axis. Filters out non-positive
+      * values so the log domain starts at the smallest positive value.
+      */
+    private def yRightExtentNoZero[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
+            if i >= marks.size then acc
+            else
+                val markExtent: Maybe[Extent] = marks(i) match
+                    case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Line[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Point[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.Text[A, ?, ?] if m.axis == Axis.Right =>
+                        foldExtent(
+                            rows,
+                            r =>
+                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                    case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Right =>
+                        def posExtent(ch: Encoding[A, ?]) = foldExtent(
+                            rows,
+                            r =>
+                                ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])).flatMap:
+                                    case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
+                                    case _                             => Absent
+                        )
+                        mergeExtents(
+                            mergeExtents(posExtent(m.y.asInstanceOf[Encoding[A, ?]]), posExtent(m.low.asInstanceOf[Encoding[A, ?]])),
+                            posExtent(m.high.asInstanceOf[Encoding[A, ?]])
+                        )
+                    case _ => Absent
+                val merged = mergeExtents(acc, markExtent)
+                loop(i + 1, merged)
+        loop(0, Absent)
+    end yRightExtentNoZero
+
+    /** Compute the stacked y-extent for a Bar mark with a stack grouping.
+      *
+      * For each distinct x value, separately tracks the sum of positive contributions
+      * (posSum) and the sum of negative contributions (negSum). Returns
+      * `Extent.Continuous(minNegSum, maxPosSum)` so that negative stacks extend the
+      * axis below zero. `ensureZero` in `yLeftExtent` ensures zero is always in-domain.
+      */
+    private def stackedYExtent[A, X, Y](rows: Chunk[A], mark: Mark.Bar[A, X, Y]): Maybe[Extent] =
+        // Build xKey -> (posSum, negSum) across all groups at that x slot.
+        @scala.annotation.tailrec
+        def loop(i: Int, sums: Map[String, (Double, Double)]): Map[String, (Double, Double)] =
+            if i >= rows.size then sums
+            else
+                val row = rows(i)
+                val xKey = mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                    case Present(d) => domainKey(d)
+                    case Absent     => ""
+                val yVal = mark.y.plottable.toDomain(mark.y.accessor(row)) match
+                    case Present(Domain.Continuous(v)) => v
+                    case _                             => 0.0
+                val (pos, neg) = sums.getOrElse(xKey, (0.0, 0.0))
+                val newPair    = if yVal >= 0.0 then (pos + yVal, neg) else (pos, neg + yVal)
+                loop(i + 1, sums.updated(xKey, newPair))
+        val sums = loop(0, Map.empty)
+        if sums.isEmpty then Absent
+        else
+            val maxPosSum = sums.values.map(_._1).fold(0.0)(math.max)
+            val minNegSum = sums.values.map(_._2).fold(0.0)(math.min)
+            Present(Extent.Continuous(minNegSum, maxPosSum))
+        end if
+    end stackedYExtent
+
+    /** Compute the stacked y-extent for an Area mark with a stack grouping.
+      *
+      * For each distinct x value, sums the y contributions of all stack groups and returns the maximum sum as
+      * the extent upper bound (lower bound is zero after `ensureZero`). Mirrors `stackedYExtent` for bars.
+      */
+    private def stackedAreaYExtent[A, X, Y](rows: Chunk[A], mark: Mark.Area[A, X, Y], yEnc: EncodingMaybe[A, Y]): Maybe[Extent] =
+        @scala.annotation.tailrec
+        def loop(i: Int, totals: Map[String, Double]): Map[String, Double] =
+            if i >= rows.size then totals
+            else
+                val row = rows(i)
+                val xKey = mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                    case Present(d) => domainKey(d)
+                    case Absent     => ""
+                val yVal = yEnc.accessor(row) match
+                    case Present(yv) => yEnc.plottable.toDomain(yv) match
+                            case Present(Domain.Continuous(v)) => v
+                            case _                             => 0.0
+                    case Absent => 0.0
+                loop(i + 1, totals.updated(xKey, totals.getOrElse(xKey, 0.0) + yVal))
+        val totals = loop(0, Map.empty)
+        if totals.isEmpty then Absent
+        else
+            val maxTotal = totals.values.fold(0.0)(math.max)
+            Present(Extent.Continuous(0.0, maxTotal))
+        end if
+    end stackedAreaYExtent
+
+    private def domainKey(d: Domain): String = d match
+        case Domain.Continuous(v) => NumberFormat.double(v)
+        case Domain.Category(key) => key
+        case Domain.Temporal(ms)  => ms.toString
+
+    private def extentFromDomain(d: Domain): Extent = d match
+        case Domain.Continuous(v) => Extent.Continuous(v, v)
+        case Domain.Category(key) => Extent.Categories(Chunk(key))
+        case Domain.Temporal(ms)  => Extent.Continuous(ms.toDouble, ms.toDouble)
+
+    private def ensureZero(e: Maybe[Extent]): Maybe[Extent] = e match
+        case Present(Extent.Continuous(lo, hi)) => Present(Extent.Continuous(math.min(lo, 0.0), hi))
+        case other                              => other
+
+    private def mergeExtents(a: Maybe[Extent], b: Maybe[Extent]): Maybe[Extent] = (a, b) match
+        case (Absent, x) => x
+        case (x, Absent) => x
+        case (Present(ea), Present(eb)) =>
+            (ea, eb) match
+                case (Extent.Continuous(lo1, hi1), Extent.Continuous(lo2, hi2)) =>
+                    Present(Extent.Continuous(math.min(lo1, lo2), math.max(hi1, hi2)))
+                case (Extent.Categories(k1), Extent.Categories(k2)) =>
+                    // Chunk-native exists, no toSeq round-trip
+                    val merged = k2.foldLeft(k1)((acc, k) => if acc.exists(_ == k) then acc else acc.append(k))
+                    Present(Extent.Categories(merged))
+                case (Extent.Continuous(lo, hi), Extent.Categories(_)) => Present(Extent.Continuous(lo, hi))
+                case (Extent.Categories(_), Extent.Continuous(lo, hi)) => Present(Extent.Continuous(lo, hi))
+        case _ => Absent
+
+    // ---- scale resolution ----
+
+    /** Holds all three resolved scales from a single combined pass. */
+    private case class ResolvedScales(xs: Scale, ysL: Scale, ysR: Maybe[Scale])
+
+    /** Resolves all three scales in one combined pass.
+      *
+      * Preserves every per-mark/per-axis branch exactly (stacked vs simple, ensureZero,
+      * log-no-zero path, right-axis vs left-axis).
+      *
+      * `computeRight`: when `false` the right scale is `Absent` without computing `yRightExtent`.
+      */
+    private def resolveAllScales[A](
+        rows: Chunk[A],
+        marks: Chunk[Mark[A]],
+        layout: Layout,
+        xOverride: Maybe[ScaleOverride],
+        yOverride: Maybe[ScaleOverride],
+        computeRight: Boolean,
+        xAxisCfg: AxisConfig = AxisConfig.default,
+        yAxisCfg: AxisConfig = AxisConfig.default,
+        yRightOverride: Maybe[ScaleOverride] = Absent,
+        yAxisRightCfg: AxisConfig = AxisConfig.default
+    ): ResolvedScales =
+
+        // Compute effective pad: ScaleOverride wins over AxisConfig.
+        def effectivePad(ov: Maybe[ScaleOverride], axisCfg: AxisConfig): Double =
+            ov.flatMap(o => if o.pad != 0.0 then Present(o.pad) else Absent).getOrElse(axisCfg.padding)
+
+        // Apply symmetric fractional padding to a continuous extent.
+        def padExtent(ext: Extent, pad: Double): Extent = ext match
+            case Extent.Continuous(lo, hi) if pad != 0.0 =>
+                val delta = pad * (hi - lo)
+                Extent.Continuous(lo - delta, hi + delta)
+            case other => other
+
+        // Resolve a y-axis scale from its data extent, no-zero extent (for log), scale override, axis config,
+        // and pixel range bounds. The rangeLo/rangeHi are caller-supplied to capture the left-vs-right
+        // range difference (left uses plotY+topHeadroom as hi; right uses plotY directly).
+        // When override=Absent and axisCfg=default this reproduces Scale.fit(Linear, ext, rangeLo, rangeHi, nice=true)
+        // byte-identically (default Linear getOrElse, nice=true getOrElse, no reverse, no clamp, pad=0).
+        def resolveYScale(
+            ext: Extent,
+            extNoZero: Extent,
+            ov: Maybe[ScaleOverride],
+            axisCfg: AxisConfig,
+            rangeLo: Double,
+            rangeHi: Double
+        ): Scale =
+            val pad     = effectivePad(ov, axisCfg)
+            val nice    = ov.map(_.nice).getOrElse(true)
+            val reverse = axisCfg.reversed
+            val kindOpt: Maybe[Scale.Kind] = ov.flatMap(_.kind) match
+                case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
+                case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
+                case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
+                case Present(ScaleKind.Time)         => Present(Scale.Kind.Time)
+                case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
+                case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
+                case _                               => Absent
+            val kind = kindOpt.getOrElse(Scale.Kind.Linear)
+            // Swap range bounds when reverse=true.
+            val (rLoBase, rHiBase) = if reverse then (rangeHi, rangeLo) else (rangeLo, rangeHi)
+            val (extFinal, rLo, rHi, useNice) = ov.flatMap(_.kind) match
+                // Pad applies to an explicit linear domain too; withPad must win.
+                case Present(ScaleKind.Linear(domLo, domHi)) =>
+                    (padExtent(Extent.Continuous(domLo, domHi), pad), rLoBase, rHiBase, false)
+                // Log scale uses the no-zero extent computation.
+                // Apply pad to the log extent too (every other arm pads).
+                case Present(ScaleKind.Log) =>
+                    (padExtent(extNoZero, pad), rLoBase, rHiBase, false)
+                case _ => (padExtent(ext, pad), rLoBase, rHiBase, nice)
+            val clamp = ov.map(_.clamp).getOrElse(false)
+            Scale.fit(kind, extFinal, rLo, rHi, nice = useNice, clamp = clamp)
+        end resolveYScale
+
+        // X scale
+        val xExt     = xExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val xPad     = effectivePad(xOverride, xAxisCfg)
+        val xNice    = xOverride.map(_.nice).getOrElse(true)
+        val xReverse = xAxisCfg.reversed
+
+        val xKindOpt: Maybe[Scale.Kind] = xOverride.flatMap(_.kind) match
+            case Present(ScaleKind.Band)         => Present(Scale.Kind.Band)
+            case Present(ScaleKind.Log)          => Present(Scale.Kind.Log)
+            case Present(ScaleKind.Linear(_, _)) => Present(Scale.Kind.Linear)
+            case Present(ScaleKind.Time)         => Present(Scale.Kind.Time)
+            case Present(ScaleKind.Point)        => Present(Scale.Kind.Point)
+            case Present(ScaleKind.Symlog)       => Present(Scale.Kind.Symlog)
+            case _                               => Absent
+        val xKind = xKindOpt.getOrElse(inferKind(xExt, marks, isX = true))
+        val (xExtFinal, xLoRaw, xHiRaw, useXNice) = xOverride.flatMap(_.kind) match
+            // Pad applies to an explicit linear domain too (every other arm pads); withPad must win.
+            // An explicit linear x-domain is honored exactly (nice=false), mirroring the y path below.
+            case Present(ScaleKind.Linear(domLo, domHi)) =>
+                (padExtent(Extent.Continuous(domLo, domHi), xPad), layout.plotX, layout.plotX + layout.plotW, false)
+            case _ => (padExtent(xExt, xPad), layout.plotX, layout.plotX + layout.plotW, xNice)
+        // Swap range bounds when reverse=true so the first datum appears at the far end.
+        val (xLo, xHi) = if xReverse then (xHiRaw, xLoRaw) else (xLoRaw, xHiRaw)
+        val xClamp     = xOverride.map(_.clamp).getOrElse(false)
+        val xs         = Scale.fit(xKind, xExtFinal, xLo, xHi, nice = useXNice, clamp = xClamp)
+
+        // Y left scale: push the top of the y range down by topHeadroom so the max-value point's
+        // centre sits topHeadroom px below plotY, keeping its top edge (cy - r) at or below plotY.
+        val yExt     = yLeftExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+        val yNoZero  = yLeftExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
+        val baseline = layout.plotBaseline
+        val top      = layout.plotY + layout.topHeadroom
+        val ysL      = resolveYScale(yExt, yNoZero, yOverride, yAxisCfg, baseline, top)
+
+        // Y right scale (optional): uses plotY directly, with no topHeadroom offset.
+        val ysR: Maybe[Scale] =
+            if computeRight then
+                val rExt    = yRightExtent(rows, marks).getOrElse(Extent.Continuous(0.0, 1.0))
+                val rNoZero = yRightExtentNoZero(rows, marks).getOrElse(Extent.Continuous(1.0, 10.0))
+                Present(resolveYScale(rExt, rNoZero, yRightOverride, yAxisRightCfg, layout.plotBaseline, layout.plotY))
+            else Absent
+
+        ResolvedScales(xs, ysL, ysR)
+    end resolveAllScales
+
+    private def inferKind[A](ext: Extent, marks: Chunk[Mark[A]], isX: Boolean): Scale.Kind =
+        ext match
+            case Extent.Categories(_)    => Scale.Kind.Band
+            case Extent.Continuous(_, _) => Scale.Kind.Linear
+
+    // ---- static frame chrome ----
+
+    /** Build the static frame elements: background rect, axis lines, gridlines, tick marks, tick labels,
+      * axis labels, and the color legend.
+      *
+      * Returns a flat `Chunk` of `Svg.SvgElement`s that are prepended to the root before the marks group.
+      * All shapes are plain rects/lines/text; no `url(#id)` references are emitted.
+      */
+    private[kyo] def buildFrame[A](
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale],
+        spec: Chart[A],
+        rows: Chunk[A],
+        gradPrefix: String
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // Per-axis chrome color: when exactly one mark binds to an axis, its chrome matches that mark's
+        // palette color so a reader can tell which axis a series uses; otherwise the neutral theme color.
+        val leftChrome  = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+        val rightChrome = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+        val gridColor   = gridlineColor(spec.theme)
+        // Left-wins tie-break: when BOTH axes set showGrid, only left emits gridlines (prevents doubles).
+        val leftDrawGrid  = spec.yAxisCfg.showGrid
+        val rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+        val background    = buildBackground(layout, spec.theme)
+        val axisLines     = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
+        val leftAxis      = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
+        val rightAxis = ysR match
+            case Present(ysR_) =>
+                buildYAxis(
+                    layout,
+                    ysR_,
+                    spec.yAxisRightCfg.getOrElse(AxisConfig.default),
+                    isRight = true,
+                    spec.theme,
+                    rightChrome,
+                    gridColor,
+                    rightDrawGrid
+                )
+            case Absent => Chunk.empty
+        val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
+        val legendElems = buildLegend(layout, spec, rows, gradPrefix)
+        background ++ axisLines ++ leftAxis ++ rightAxis ++ xAxisElems ++ legendElems
+    end buildFrame
+
+    /** Background rectangle filled with the theme color.
+      *
+      * Covers the WHOLE SVG canvas (not only the plot rectangle) so that on the dark theme the entire chart,
+      * including the axis margins where tick numbers and axis labels live, reads as dark. The light theme uses
+      * white, matching the page background.
+      */
+    private def buildBackground(layout: Layout, theme: Theme)(using Frame): Chunk[Svg.SvgElement] =
+        val color = theme.background.getOrElse(if theme.isDark then DarkBg else LightBg)
+        Chunk(
+            Svg.rect
+                .x(0.0)
+                .y(0.0)
+                .width(layout.svgW)
+                .height(layout.svgH)
+                .fill(Svg.Paint.Color(color))
+        )
+    end buildBackground
+
+    /** Axis lines bordering the plot area (left + bottom + optional right).
+      *
+      * The left axis line takes `leftChrome` and the right axis line `rightChrome` so each vertical axis
+      * line matches its bound series. The bottom (shared x) axis line keeps the neutral theme chrome.
+      */
+    private def buildAxisLines(
+        layout: Layout,
+        ysR: Maybe[Scale],
+        theme: Theme,
+        leftChrome: Style.Color,
+        rightChrome: Style.Color
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val chrome = axisChromeColor(theme)
+        val leftLine = Svg.line
+            .x1(layout.plotX).y1(layout.plotY)
+            .x2(layout.plotX).y2(layout.plotBaseline)
+            .stroke(Svg.Paint.Color(leftChrome))
+        val bottomLine = Svg.line
+            .x1(layout.plotX).y1(layout.plotBaseline)
+            .x2(layout.plotX + layout.plotW).y2(layout.plotBaseline)
+            .stroke(Svg.Paint.Color(chrome))
+        val rightLine: Maybe[Svg.SvgElement] = ysR match
+            case Present(_) =>
+                val rx = layout.plotX + layout.plotW
+                Present(
+                    Svg.line
+                        .x1(rx).y1(layout.plotY)
+                        .x2(rx).y2(layout.plotBaseline)
+                        .stroke(Svg.Paint.Color(rightChrome))
+                )
+            case Absent => Absent
+        val base = Chunk[Svg.SvgElement](leftLine, bottomLine)
+        rightLine match
+            case Present(l) => base.append(l)
+            case Absent     => base
+    end buildAxisLines
+
+    /** Build the left or right y-axis: gridlines (if enabled), tick marks, and tick labels.
+      *
+      * `chrome` colors this axis's IDENTITY chrome (tick marks, tick labels, rotated axis label). It matches
+      * the bound series when exactly one solid-color mark binds to this axis, else the neutral theme color.
+      * `gridColor` colors the gridlines and is ALWAYS the neutral theme color: gridlines are a background
+      * reference, not axis identity, so they never take a color-coded chrome.
+      */
+    private def buildYAxis(
+        layout: Layout,
+        ys: Scale,
+        cfg: AxisConfig,
+        isRight: Boolean,
+        theme: Theme,
+        chrome: Style.Color,
+        gridColor: Style.Color,
+        drawGrid: Boolean = false
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val ticks  = ys.ticks(cfg.tickCount)
+        val axisX  = if isRight then layout.plotX + layout.plotW else layout.plotX
+        val labelX = if isRight then axisX + TickLen + 4.0 else axisX - TickLen - 4.0
+        val anchor = if isRight then Svg.TextAnchor.Start else Svg.TextAnchor.End
+
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+            if i >= ticks.size then acc
+            else
+                val tick = ticks(i)
+                val py   = tick.pixel
+                // gridline: always the neutral grid color, never the (possibly color-coded) axis chrome.
+                // drawGrid is pre-computed by the caller using the left-wins tie-break:
+                //   leftDrawGrid  = spec.yAxisCfg.showGrid
+                //   rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+                val grid: Maybe[Svg.SvgElement] =
+                    if drawGrid then
+                        Present(
+                            Svg.line
+                                .x1(layout.plotX).y1(py)
+                                .x2(layout.plotX + layout.plotW).y2(py)
+                                .stroke(Svg.Paint.Color(gridColor))
+                                .strokeOpacity(0.3)
+                        )
+                    else Absent
+                // tick mark
+                val tickMark: Svg.SvgElement =
+                    if isRight then
+                        Svg.line
+                            .x1(axisX).y1(py)
+                            .x2(axisX + TickLen).y2(py)
+                            .stroke(Svg.Paint.Color(chrome))
+                    else
+                        Svg.line
+                            .x1(axisX - TickLen).y1(py)
+                            .x2(axisX).y2(py)
+                            .stroke(Svg.Paint.Color(chrome))
+                // tick label: apply the formatter to the domain value, not the pixel position
+                val labelStr = cfg.tickFormat match
+                    case Present(f) => f(tick.value)
+                    case Absent     => tick.label
+                // Resolve the effective anchor. When the user has not set cfg.tickAnchor
+                // (the default TextAnchor.Middle), keep the side-default (End for left, Start for
+                // right). Only switch to the configured anchor when the user explicitly called
+                // .anchor(...) with a non-default value.
+                val effAnchor: Svg.TextAnchor =
+                    if cfg.tickAnchor != TextAnchor.Middle then toSvgAnchor(cfg.tickAnchor)
+                    else anchor // side-default: End for left, Start for right
+                val tickLabelElem: Svg.SvgElement =
+                    tickLabel(labelX, py, labelStr, chrome, Svg.DominantBaseline.Middle, effAnchor, cfg, theme)
+                val elements = grid match
+                    case Present(g) => Chunk[Svg.SvgElement](g, tickMark, tickLabelElem)
+                    case Absent     => Chunk[Svg.SvgElement](tickMark, tickLabelElem)
+                loop(i + 1, acc ++ elements)
+        val base = loop(0, Chunk.empty)
+        // axis label: rotate vertically so the full string fits in the margin column without clipping.
+        // The label sits at the OUTER edge of its margin so it never overlaps the tick numbers, which sit
+        // adjacent to the axis line (left numbers extend left from the axis, right numbers extend right).
+        //   Left axis: rotate -90 degrees, centred near the left edge of the SVG (x = AxisLabelInset).
+        //   Right axis: rotate +90 degrees, centred near the right edge of the SVG (x = svgW - AxisLabelInset).
+        cfg.axisLabel match
+            case Present(lbl) =>
+                val midY = layout.plotY + layout.plotH / 2.0
+                val labelElem: Svg.SvgElement =
+                    if isRight then
+                        val cx = layout.svgW - AxisLabelInset
+                        withFont(
+                            theme,
+                            Svg.text
+                                .x(cx)
+                                .y(midY)
+                                .textAnchor(Svg.TextAnchor.Middle)
+                                .dominantBaseline(Svg.DominantBaseline.Auto)
+                                .fill(Svg.Paint.Color(chrome))
+                                .transform(Svg.Transform.Rotate(90.0, Present(cx), Present(midY)))
+                        ).apply(lbl)
+                    else
+                        val cx = AxisLabelInset
+                        withFont(
+                            theme,
+                            Svg.text
+                                .x(cx)
+                                .y(midY)
+                                .textAnchor(Svg.TextAnchor.Middle)
+                                .dominantBaseline(Svg.DominantBaseline.Auto)
+                                .fill(Svg.Paint.Color(chrome))
+                                .transform(Svg.Transform.Rotate(-90.0, Present(cx), Present(midY)))
+                        ).apply(lbl)
+                base.append(labelElem)
+            case Absent => base
+        end match
+    end buildYAxis
+
+    /** Map a configured `TextAnchor` to the SVG text-anchor token.
+      *
+      * Used by `tickLabel` and by `buildXAxis` when setting the anchor on x tick labels.
+      * Callers that need a side-default anchor (e.g. `buildYAxis`) resolve it before calling
+      * `tickLabel`, passing the already-resolved `Svg.TextAnchor` directly.
+      */
+    private def toSvgAnchor(a: TextAnchor): Svg.TextAnchor =
+        a match
+            case TextAnchor.Start  => Svg.TextAnchor.Start
+            case TextAnchor.Middle => Svg.TextAnchor.Middle
+            case TextAnchor.End    => Svg.TextAnchor.End
+
+    /** Apply theme font family and font size to an Svg.Text element when the theme sets them.
+      *
+      * A no-op when both `theme.fontFamily` and `theme.fontSize` are `Absent`; the element is
+      * returned unchanged in that case. Called from `tickLabel` and directly from axis-title
+      * and legend-text sites (which are not rotated and are not passed through `tickLabel`).
+      */
+    private def withFont(theme: Theme, t: Svg.Text): Svg.Text =
+        val t1 = theme.fontFamily.fold(t)(f => t.fontFamily(f))
+        theme.fontSize.fold(t1)(px => t1.fontSize(Svg.SvgLength.Px(px)))
+
+    /** Apply theme font, configured anchor, and configured rotation to a tick-label text element.
+      *
+      * Builds an `Svg.text` at `(x, y)` for `labelStr`, fills it with `chrome`, sets
+      * `dominantBaseline`, applies `theme.fontFamily`/`theme.fontSize` when set (via `withFont`),
+      * sets `anchor` as the SVG text-anchor, and rotates about `(x, y)` when `cfg.tickRotation !=
+      * 0.0`. This is the single tick-label chrome path shared by `buildXAxis` and `buildYAxis`
+      * so the two axes cannot drift.
+      *
+      * `anchor` is CALLER-RESOLVED: `buildXAxis` passes `toSvgAnchor(cfg.tickAnchor)`; `buildYAxis`
+      * passes its side-default (`Svg.TextAnchor.End` for left, `Svg.TextAnchor.Start` for right)
+      * unless the user set `cfg.tickAnchor` explicitly (the anchor override logic). This design keeps the
+      * helper anchor-agnostic and avoids the helper reading `cfg` for a side-dependent default it
+      * cannot know.
+      *
+      * `baseline` is also caller-supplied: x-axis uses `Svg.DominantBaseline.Hanging` (label below
+      * the tick mark); y-axis uses `Svg.DominantBaseline.Middle` (label beside the tick mark).
+      */
+    private def tickLabel(
+        x: Double,
+        y: Double,
+        labelStr: String,
+        chrome: Style.Color,
+        baseline: Svg.DominantBaseline,
+        anchor: Svg.TextAnchor,
+        cfg: AxisConfig,
+        theme: Theme
+    )(using Frame): Svg.SvgElement =
+        val base: Svg.Text =
+            withFont(
+                theme,
+                Svg.text
+                    .x(x)
+                    .y(y)
+                    .textAnchor(anchor)
+                    .dominantBaseline(baseline)
+                    .fill(Svg.Paint.Color(chrome))
+            ).apply(labelStr)
+        if cfg.tickRotation != 0.0 then
+            base.transform(Svg.Transform.Rotate(cfg.tickRotation, Present(x), Present(y)))
+        else base
+    end tickLabel
+
+    /** Build the x-axis: tick marks and tick labels along the bottom. */
+    private def buildXAxis(
+        layout: Layout,
+        xs: Scale,
+        cfg: AxisConfig,
+        theme: Theme
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val ticks   = xs.ticks(cfg.tickCount)
+        val axisY   = layout.plotBaseline
+        val chrome  = axisChromeColor(theme)
+        val gridCol = gridlineColor(theme)
+        val labelY  = axisY + TickLen + 4.0
+
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+            if i >= ticks.size then acc
+            else
+                val tick = ticks(i)
+                val px   = tick.pixel
+                // Vertical gridline at this tick when showGrid is enabled.
+                val withGrid =
+                    if cfg.showGrid then
+                        acc.append(
+                            Svg.line
+                                .x1(px).y1(layout.plotY)
+                                .x2(px).y2(layout.plotBaseline)
+                                .stroke(Svg.Paint.Color(gridCol))
+                                .strokeOpacity(0.5)
+                        )
+                    else acc
+                val tickMark: Svg.SvgElement =
+                    Svg.line
+                        .x1(px).y1(axisY)
+                        .x2(px).y2(axisY + TickLen)
+                        .stroke(Svg.Paint.Color(chrome))
+                // tick label: apply the formatter to the domain value when present
+                val xLabelStr = cfg.tickFormat match
+                    case Present(f) => f(tick.value)
+                    case Absent     => tick.label
+                // Map cfg.tickAnchor to the SVG token and build the tick label element with
+                // font, anchor, and optional rotation applied via the shared tickLabel helper.
+                val tickLabelElem: Svg.SvgElement =
+                    tickLabel(
+                        px,
+                        labelY,
+                        xLabelStr,
+                        chrome,
+                        Svg.DominantBaseline.Hanging,
+                        toSvgAnchor(cfg.tickAnchor),
+                        cfg,
+                        theme
+                    )
+                loop(i + 1, withGrid.append(tickMark).append(tickLabelElem))
+        val base = loop(0, Chunk.empty)
+        // axis label
+        cfg.axisLabel match
+            case Present(lbl) =>
+                val labelElem: Svg.SvgElement =
+                    withFont(
+                        theme,
+                        Svg.text
+                            .x(layout.plotX + layout.plotW / 2.0)
+                            .y(layout.svgH - 4.0)
+                            .textAnchor(Svg.TextAnchor.Middle)
+                            .fill(Svg.Paint.Color(chrome))
+                    ).apply(lbl)
+                base.append(labelElem)
+            case Absent => base
+        end match
+    end buildXAxis
+
+    /** Build the legend `Svg.g` elements for any `color` encoding present in the marks.
+      *
+      * Categories are collected in enum-ordinal order when the color values are enums (real `Plottable`
+      * ordering, not encounter order). The palette comes from `legendCfg.colorScale`
+      * when set; otherwise from `theme.palette` or the `DefaultPalette`.
+      *
+      * When no mark has a `color` encoding but a Bar or Area mark carries a `stack` grouping, the legend is
+      * derived from the STACK groups instead: one swatch+label per stack category, in the same colors the
+      * stacked segments use. This is the same derivation as for a `color` encoding, applied to the grouping
+      * accessor that colors the stacked segments.
+      */
+    private def buildLegend[A](
+        layout: Layout,
+        spec: Chart[A],
+        rows: Chunk[A],
+        gradPrefix: String
+    )(using Frame): Chunk[Svg.SvgElement] =
+        if spec.legendCfg.isHidden then Chunk.empty
+        else
+            // Prefer a color encoding; fall back to the stack grouping that colors the stacked segments.
+            val colorItems: Chunk[Svg.SvgElement] = legendEncoding(spec.marks) match
+                case Absent            => Chunk.empty
+                case Present(colorEnc) =>
+                    // categories: Chunk[(label, rawValue)] sorted by enum ordinal when applicable
+                    val categories = collectColorCategoriesWithRaw(rows, colorEnc)
+                    if categories.isEmpty then Chunk.empty
+                    else
+                        spec.legendCfg.colorScale match
+                            case Present(LegendConfig.ColorScale.Sequential(lo, hi, domOv)) =>
+                                // Sequential legend: a continuous gradient swatch under a doc-unique def id, plus
+                                // the numeric value extent (min/mid/max) so the gradient is quantitatively readable.
+                                buildSequentialLegend(layout, spec, lo, hi, categories, domOv, gradPrefix)
+                            case _ =>
+                                val palette = resolvePalette(spec, categories)
+                                buildLegendItems(
+                                    layout,
+                                    categories,
+                                    palette,
+                                    spec.legendCfg,
+                                    spec.marks,
+                                    axisChromeColor(spec.theme),
+                                    spec.theme
+                                )
+                    end if
+
+            // Size legend: emitted when any Point mark has a size encoding.
+            val sizeItems: Chunk[Svg.SvgElement] = spec.marks.flatMap:
+                case m: Mark.Point[A, ?, ?] =>
+                    m.size match
+                        case Present(fn) =>
+                            buildSizeLegend(layout, rows, m, axisChromeColor(spec.theme), colorItems.size, spec.theme)
+                        case Absent => Chunk.empty
+                case _ => Chunk.empty
+
+            colorItems ++ sizeItems
+        end if
+    end buildLegend
+
+    /** Build a continuous gradient swatch for a sequential color scale.
+      *
+      * Emits an `Svg.defs` carrying one `linearGradient` (low at offset 0, high at offset 1) under a
+      * document-unique def id, plus a swatch `Svg.rect` filled with that gradient via `url(#id)`. The id comes
+      * from `gradPrefix` (allocated once per chart instance), so two charts on one page never alias the same
+      * gradient even when their specs are structurally identical: the def id and the swatch's `url(#id)` always
+      * match within one chart, and differ across charts.
+      */
+    private def buildSequentialLegend[A](
+        layout: Layout,
+        spec: Chart[A],
+        lo: Style.Color,
+        hi: Style.Color,
+        categories: Chunk[(String, Any)],
+        domainOv: Maybe[(Double, Double)],
+        gradPrefix: String
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val gradId = s"$gradPrefix-grad-0"
+        val gradient = Svg.linearGradient
+            .withSvg(Svg.linearGradient.svgAttrs.copy(defId = Present(gradId)))
+            .x1(0).y1(0).x2(1).y2(0)
+            .apply(
+                Svg.stop.offset(0.0).stopColor(lo),
+                Svg.stop.offset(1.0).stopColor(hi)
+            )
+        val (legendX, legendY) = spec.legendCfg.position.getOrElse(LegendPosition.Top) match
+            case LegendPosition.Top    => (layout.plotX, MarginTop + (LegendReservedH - SwatchSize) / 2.0)
+            case LegendPosition.Bottom => (layout.plotX, layout.plotBaseline + (LegendReservedH - SwatchSize) / 2.0)
+            case LegendPosition.Left   => (MarginLeft / 2.0 - SwatchSize, layout.plotY)
+            case LegendPosition.Right  => (layout.plotX + layout.plotW + 8.0, layout.plotY)
+        val swatchW = SwatchSize * 4.0
+        val swatch: Svg.SvgElement =
+            Svg.rect
+                .x(legendX)
+                .y(legendY)
+                .width(swatchW)
+                .height(SwatchSize)
+                .fill(gradient.paint)
+        // Numeric value extent at the two ends, so the gradient reads quantitatively. The labels sit INLINE to
+        // the left (min) and right (max) of the swatch, vertically centred on it, so they stay inside the thin
+        // reserved band (placing them below the swatch would spill into the plot area). They use the axis-tick
+        // chrome color and the same NumberFormat the tick/size legends use.
+        val (domLo, domHi) = domainExtentOf(categories, domainOv)
+        val labelColor     = axisChromeColor(spec.theme)
+        val labelY         = legendY + SwatchSize / 2.0
+        def label(value: Double, lx: Double, anchor: Svg.TextAnchor): Svg.SvgElement =
+            withFont(
+                spec.theme,
+                Svg.text
+                    .x(lx)
+                    .y(labelY)
+                    .textAnchor(anchor)
+                    .dominantBaseline(Svg.DominantBaseline.Middle)
+                    .fill(Svg.Paint.Color(labelColor))
+            ).apply(NumberFormat.double(value))
+        val minLabel = label(domLo, legendX - 6.0, Svg.TextAnchor.End)
+        val maxLabel = label(domHi, legendX + swatchW + 6.0, Svg.TextAnchor.Start)
+        Chunk(Svg.defs(gradient), swatch, minLabel, maxLabel)
+    end buildSequentialLegend
+
+    /** Build representative size-bubble legend items for a point mark with a size encoding.
+      *
+      * Emits two representative circles (min and max magnitude) with their magnitude labels,
+      * placed in the legend region to the right of any color-legend items.
+      */
+    private def buildSizeLegend[A, X, Y](
+        layout: Layout,
+        rows: Chunk[A],
+        mark: Mark.Point[A, X, Y],
+        labelColor: Style.Color,
+        colorItemCount: Int,
+        theme: Theme
+    )(using Frame): Chunk[Svg.SvgElement] =
+        mark.size match
+            case Absent      => Chunk.empty
+            case Present(fn) =>
+                // Fold magnitude extent over all rows with defined y.
+                @scala.annotation.tailrec
+                def foldMag(i: Int, mn: Double, mx: Double): (Double, Double) =
+                    if i >= rows.size then (mn, mx)
+                    else
+                        val row = rows(i)
+                        if mark.y.accessor(row).isDefined then
+                            val mag = fn(row)
+                            foldMag(i + 1, math.min(mn, mag), math.max(mx, mag))
+                        else foldMag(i + 1, mn, mx)
+                        end if
+                val (magMin, magMax) = foldMag(0, Double.MaxValue, Double.MinValue)
+                if magMin == Double.MaxValue then Chunk.empty
+                else
+                    // Representative legend glyphs are sized to FIT the top legend strip (a data point's
+                    // DefaultRMax of 20px would overflow the strip and dip into the plot). Cap the max legend
+                    // radius at half the reserved strip height so both sample bubbles sit entirely in the strip,
+                    // above the plot data area, never over the plotted points.
+                    val legendRMax = (LegendReservedH / 2.0) - 1.0
+                    val legendRMin = SizeScale.DefaultRMin
+                    val scale      = SizeScale(magMin, magMax, legendRMin, legendRMax)
+                    val rMin       = scale.radius(magMin)
+                    val rMax       = scale.radius(magMax)
+                    // Place size bubbles in the TOP legend strip, after any color swatches. legendY is the strip
+                    // centre; with rMax <= strip/2 the bubbles stay within [plotY - LegendReservedH, plotY).
+                    val startX  = layout.plotX + colorItemCount.toDouble * 80.0
+                    val legendY = MarginTop + LegendReservedH / 2.0
+                    val minCirc = Svg.circle
+                        .cx(startX + rMin)
+                        .cy(legendY)
+                        .r(rMin)
+                        .fill(Svg.Paint.Color(DefaultPalette(0)))
+                        .fillOpacity(0.5)
+                    val minLabel = withFont(
+                        theme,
+                        Svg.text
+                            .x(startX + rMin * 2.0 + 4.0)
+                            .y(legendY)
+                            .dominantBaseline(Svg.DominantBaseline.Middle)
+                            .fill(Svg.Paint.Color(labelColor))
+                    ).apply(NumberFormat.double(magMin))
+                    val maxCirc = Svg.circle
+                        .cx(startX + rMin * 2.0 + 50.0 + rMax)
+                        .cy(legendY)
+                        .r(rMax)
+                        .fill(Svg.Paint.Color(DefaultPalette(0)))
+                        .fillOpacity(0.5)
+                    val maxLabel = withFont(
+                        theme,
+                        Svg.text
+                            .x(startX + rMin * 2.0 + 50.0 + rMax * 2.0 + 4.0)
+                            .y(legendY)
+                            .dominantBaseline(Svg.DominantBaseline.Middle)
+                            .fill(Svg.Paint.Color(labelColor))
+                    ).apply(NumberFormat.double(magMax))
+                    Chunk(minCirc, minLabel, maxCirc, maxLabel)
+                end if
+    end buildSizeLegend
+
+    /** The encoding that drives the legend: the first `color` encoding, or, when none is present, the first
+      * Bar/Area `stack` grouping (which colors the stacked segments).
+      */
+    private def legendEncoding[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
+        findColorEncoding(marks).orElse(findStackGroup(marks))
+
+    /** Find the first `color` encoding across all marks. */
+    private def findColorEncoding[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
+        @scala.annotation.tailrec
+        def loop(i: Int): Maybe[Encoding[A, ?]] =
+            if i >= marks.size then Absent
+            else
+                marks(i) match
+                    case m: Mark.Bar[A, ?, ?]      => m.color.orElse(loop(i + 1))
+                    case m: Mark.Line[A, ?, ?]     => m.color.orElse(loop(i + 1))
+                    case m: Mark.Area[A, ?, ?]     => m.color.orElse(loop(i + 1))
+                    case m: Mark.Point[A, ?, ?]    => m.color.orElse(loop(i + 1))
+                    case m: Mark.Text[A, ?, ?]     => m.color.orElse(loop(i + 1))
+                    case m: Mark.ErrorBar[A, ?, ?] => m.color.orElse(loop(i + 1))
+                    case _: Mark.Rule[A]           => loop(i + 1)
+        loop(0)
+    end findColorEncoding
+
+    /** Find the first Bar/Area `stack` grouping accessor, wrapped as a string-keyed `Encoding`.
+      *
+      * The wrapped encoding mirrors how `lowerBarStacked` colors stacked segments: the grouping accessor
+      * keyed as a string category. Deriving the legend from this encoding produces one swatch per stack
+      * category in the same colors the segments use.
+      */
+    private def findStackGroup[A](marks: Chunk[Mark[A]]): Maybe[Encoding[A, ?]] =
+        @scala.annotation.tailrec
+        def loop(i: Int): Maybe[Encoding[A, ?]] =
+            if i >= marks.size then Absent
+            else
+                val groupMaybe = marks(i) match
+                    case m: Mark.Bar[A, ?, ?]  => m.stack.group
+                    case m: Mark.Area[A, ?, ?] => m.stack.group
+                    case _                     => Absent
+                groupMaybe match
+                    case Present(g) =>
+                        Present(Encoding[A, Any](g, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
+                    case Absent => loop(i + 1)
+                end match
+        loop(0)
+    end findStackGroup
+
+    /** Collect distinct color category labels in enum-ordinal order when possible, encounter order otherwise.
+      *
+      * For enum values (detected via `scala.reflect.Enum`), the first encountered value's ordinal is used as
+      * a sort key so that the legend lists cases in enum declaration order rather than encounter order. This
+      * ensures ordering via the real color accessor's `Plottable`, not the string stand-in.
+      *
+      * Returns `Chunk[(label, rawValue)]` where `rawValue` is the first encountered raw `color` encoding value
+      * for that label. The raw value is passed to `colorScale` so typed enum functions can be applied
+      * directly (no label-to-K roundtrip).
+      */
+    private def collectColorCategoriesWithRaw[A](rows: Chunk[A], colorEnc: Encoding[A, ?]): Chunk[(String, Any)] =
+        // Dedup by CatKey: delegate to ChartFoundations.distinctKeyed (O(n), Set-backed)
+        // instead of inlining a fresh HashSet. distinctKeyed returns first-seen (CatKey, row) in encounter
+        // order; derive (label, rawValue, ordinal) from each representative row.
+        val distinct = ChartFoundations.distinctKeyed(
+            rows,
+            r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
+        )
+        val triples = distinct.zipWithIndex.map: (pair, encounterIdx) =>
+            val raw   = colorEnc.accessor(pair._2)
+            val label = raw.toString
+            val ordinal = raw match
+                case e: scala.reflect.Enum => e.ordinal
+                case _                     => encounterIdx // stable encounter-order index
+            (label, raw, ordinal)
+        // Sort by ordinal so enum cases appear in declaration order. `Chunk` is a `Seq`, so `sortBy` applies
+        // directly; the result is folded straight back into a `Chunk`.
+        triples.sortBy(_._3).foldLeft(Chunk.empty[(String, Any)])((acc, t) => acc.append((t._1, t._2)))
+    end collectColorCategoriesWithRaw
+
+    /** Collect category labels (without raw values) for use in stacked-bar lowering. */
+    private def collectColorCategories[A](rows: Chunk[A], colorEnc: Encoding[A, ?]): Chunk[String] =
+        collectColorCategoriesWithRaw(rows, colorEnc).map(_._1)
+
+    /** Resolve the palette: explicit `colorScale` first (applied to raw values), then `theme.palette`,
+      * then `DefaultPalette`.
+      *
+      * A `Categorical` scale applies its total function to each category's RAW `color` encoding value (e.g. the
+      * actual enum case), not the label string, so typed pairs/functions work without a label-to-K roundtrip.
+      * A `Sequential` scale derives the numeric domain extent from the categories (or its `domain` override)
+      * and interpolates each raw value's color between `low` and `high`.
+      */
+    private def resolvePalette[A](spec: Chart[A], categories: Chunk[(String, Any)]): Chunk[Style.Color] =
+        spec.legendCfg.colorScale match
+            case Present(LegendConfig.ColorScale.Categorical(fn)) =>
+                categories.map { case (_, raw) => fn(raw) }
+            case Present(LegendConfig.ColorScale.Sequential(lo, hi, domOv)) =>
+                val (domLo, domHi) = domainExtentOf(categories, domOv)
+                categories.map { case (_, raw) => sequentialColor(raw, lo, hi, domLo, domHi) }
+            case Absent =>
+                spec.theme.palette match
+                    case Present(p) => categories.zipWithIndex.map: (_, i) =>
+                            p(i % p.size)
+                    case Absent => categories.zipWithIndex.map: (_, i) =>
+                            DefaultPalette(i % DefaultPalette.size)
+    end resolvePalette
+
+    /** Numeric extent over the raw category values, used to normalize a sequential color scale.
+      *
+      * When `domainOv` is `Present`, it is used directly. Otherwise the extent folds the numeric raw values
+      * (Double/Int/Long/Float); non-numeric values are skipped. When no value is numeric the fallback `(0, 1)`
+      * keeps the scale well-defined.
+      */
+    private def domainExtentOf(categories: Chunk[(String, Any)], domainOv: Maybe[(Double, Double)]) =
+        domainOv match
+            case Present(d) => d
+            case Absent =>
+                @scala.annotation.tailrec
+                def fold(i: Int, lo: Double, hi: Double): (Double, Double) =
+                    if i >= categories.size then (lo, hi)
+                    else
+                        val raw = categories(i)._2
+                        val v = raw match
+                            case n: Double => n
+                            case n: Int    => n.toDouble
+                            case n: Long   => n.toDouble
+                            case n: Float  => n.toDouble
+                            case _         => Double.NaN
+                        if java.lang.Double.isFinite(v) then fold(i + 1, math.min(lo, v), math.max(hi, v))
+                        else fold(i + 1, lo, hi)
+                fold(0, Double.MaxValue, Double.MinValue) match
+                    case (lo, _) if lo == Double.MaxValue => (0.0, 1.0)
+                    case result                           => result
+    end domainExtentOf
+
+    /** Interpolate `lo`..`hi` at the parameter derived from `raw`'s position in the domain `[domLo, domHi]`.
+      *
+      * The parameter is clamped to `[0, 1]`; a degenerate domain (`domHi <= domLo`) yields the `lo` color
+      * (parameter 0) with no division by zero. A non-numeric raw value maps to `domLo` (parameter 0).
+      */
+    private def sequentialColor(raw: Any, lo: Style.Color, hi: Style.Color, domLo: Double, domHi: Double) =
+        val v: Double = raw match
+            case n: Double => n
+            case n: Int    => n.toDouble
+            case n: Long   => n.toDouble
+            case n: Float  => n.toDouble
+            case _         => domLo
+        val t = if domHi <= domLo then 0.0 else math.max(0.0, math.min(1.0, (v - domLo) / (domHi - domLo)))
+        lerpColor(lo, hi, t)
+    end sequentialColor
+
+    /** Linear per-component RGB interpolation between two colors at parameter `t` in `[0, 1]`.
+      *
+      * RGB components are extracted from the color ADT directly (hex strings of 3/4/6/8 digits, rgb, rgba), so
+      * named constants and `Style.Color.hex(...)` inputs all interpolate correctly. The result is an rgb color.
+      */
+    private def lerpColor(lo: Style.Color, hi: Style.Color, t: Double) =
+        val (r0, g0, b0) = colorComponents(lo)
+        val (r1, g1, b1) = colorComponents(hi)
+        val r            = math.round(r0 + (r1 - r0) * t).toInt
+        val g            = math.round(g0 + (g1 - g0) * t).toInt
+        val b            = math.round(b0 + (b1 - b0) * t).toInt
+        Style.Color.rgb(r, g, b)
+    end lerpColor
+
+    /** Extract the 8-bit R/G/B components of a color, normalizing hex (3/4/6/8 digit) and rgb/rgba forms.
+      *
+      * Falls back to mid-gray for `transparent` or an unparseable hex; in practice every named constant and
+      * `Style.Color.hex`/`rgb` input parses, so the fallback is a safety net, not a normal path.
+      */
+    private def colorComponents(c: Style.Color) =
+        def parseHex(value: String): (Int, Int, Int) =
+            val body = if value.startsWith("#") then value.substring(1) else value
+            // Expand 3/4-digit shorthand (#rgb / #rgba) to 6 digits by doubling each nibble.
+            val rgb =
+                if body.length == 3 || body.length == 4 then
+                    val r = body.charAt(0); val g = body.charAt(1); val b = body.charAt(2)
+                    s"$r$r$g$g$b$b"
+                else body.substring(0, math.min(6, body.length))
+            if rgb.length == 6 then
+                (
+                    Integer.parseInt(rgb.substring(0, 2), 16),
+                    Integer.parseInt(rgb.substring(2, 4), 16),
+                    Integer.parseInt(rgb.substring(4, 6), 16)
+                )
+            else (128, 128, 128)
+            end if
+        end parseHex
+        c match
+            case Style.Color.Hex(value)       => parseHex(value)
+            case Style.Color.Rgb(r, g, b)     => (r, g, b)
+            case Style.Color.Rgba(r, g, b, _) => (r, g, b)
+            case Style.Color.Transparent      => (128, 128, 128)
+        end match
+    end colorComponents
+
+    /** True when the legend-driving mark (the one that carries the `color` encoding) is a line or area mark.
+      *
+      * Line and area series get a short line-stroke swatch in the legend (matching how the data reads as a
+      * stroke); bar and point series get the filled-rect swatch. When no color-bearing mark is found the
+      * default is the rect swatch.
+      */
+    private def legendUsesLineSwatch[A](marks: Chunk[Mark[A]]): Boolean =
+        @scala.annotation.tailrec
+        def loop(i: Int): Boolean =
+            if i >= marks.size then false
+            else
+                marks(i) match
+                    case m: Mark.Line[A, ?, ?] => m.color.isDefined || loop(i + 1)
+                    case m: Mark.Area[A, ?, ?] => m.color.isDefined || loop(i + 1)
+                    case _                     => loop(i + 1)
+        loop(0)
+    end legendUsesLineSwatch
+
+    /** Build the legend swatch+label elements, positioned per `cfg.position`.
+      *
+      * `categories` is `Chunk[(label, rawValue)]` in enum-ordinal order; `palette` the resolved color per
+      * category. Top and Bottom lay the entries horizontally; Left and Right stack them vertically. Line/area
+      * series get a short line-stroke swatch, bar/point series a filled rect swatch. When `cfg.isInteractive`,
+      * each swatch+label pair carries an `onClick` that toggles its label in `cfg.hiddenSeries`.
+      *
+      * `labelColor` is the theme chrome color (the same `axisChromeColor` the axis tick labels use) so labels
+      * stay readable against the panel background; the swatch fills keep the category/colorScale colors.
+      */
+    private def buildLegendItems[A](
+        layout: Layout,
+        categories: Chunk[(String, Any)],
+        palette: Chunk[Style.Color],
+        cfg: LegendConfig,
+        marks: Chunk[Mark[A]],
+        labelColor: Style.Color,
+        theme: Theme
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // Origin and flow direction per legend position. `vertical` stacks items down a column (Left/Right);
+        // otherwise items flow horizontally across the reserved band (Top/Bottom).
+        val (legendX, legendY, vertical) = cfg.position.getOrElse(LegendPosition.Top) match
+            case LegendPosition.Top    => (layout.plotX, MarginTop + (LegendReservedH - SwatchSize) / 2.0, false)
+            case LegendPosition.Bottom => (layout.plotX, layout.plotBaseline + (LegendReservedH - SwatchSize) / 2.0, false)
+            case LegendPosition.Left   => (MarginLeft / 2.0 - SwatchSize, layout.plotY, true)
+            case LegendPosition.Right  => (layout.plotX + layout.plotW + 8.0, layout.plotY, true)
+
+        val useLineSwatch = legendUsesLineSwatch(marks)
+        val itemGap       = 16.0
+
+        // Click action toggling one series index in the user's hiddenSeries ref.
+        def toggleAction(catIndex: Int): Maybe[Any < Async] =
+            if cfg.isInteractive then
+                cfg.hiddenSeries.map(ref =>
+                    ref.updateAndGet(s => if s.contains(catIndex) then s - catIndex else s + catIndex)
+                )
+            else Absent
+
+        @scala.annotation.tailrec
+        def loop(i: Int, curX: Double, curY: Double, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+            if i >= categories.size then acc
+            else
+                val (cat, _) = categories(i)
+                val color    = if i < palette.size then palette(i) else DefaultPalette(i % DefaultPalette.size)
+                val clickAttrs = toggleAction(i) match
+                    case Present(a) => UI.Ast.Attrs(onClick = Present(a))
+                    case Absent     => UI.Ast.Attrs()
+                val swatch: Svg.SvgElement =
+                    if useLineSwatch then
+                        // Short horizontal stroke at the swatch's vertical centre.
+                        Svg.line
+                            .x1(curX)
+                            .y1(curY + SwatchSize / 2.0)
+                            .x2(curX + SwatchSize)
+                            .y2(curY + SwatchSize / 2.0)
+                            .stroke(Svg.Paint.Color(color))
+                            .strokeWidth(2.0)
+                            .withAttrs(clickAttrs)
+                    else
+                        Svg.rect
+                            .x(curX)
+                            .y(curY)
+                            .width(SwatchSize)
+                            .height(SwatchSize)
+                            .fill(Svg.Paint.Color(color))
+                            .withAttrs(clickAttrs)
+                val label: Svg.SvgElement =
+                    withFont(
+                        theme,
+                        Svg.text
+                            .x(curX + SwatchSize + SwatchLabelGap)
+                            .y(curY + SwatchSize / 2.0)
+                            .dominantBaseline(Svg.DominantBaseline.Middle)
+                            .fill(Svg.Paint.Color(labelColor))
+                            .withAttrs(clickAttrs)
+                    ).apply(cat)
+                val approxLabelW = cat.length.toDouble * 7.0
+                val (nextX, nextY) =
+                    if vertical then (curX, curY + LegendRowH)
+                    else (curX + SwatchSize + SwatchLabelGap + approxLabelW + itemGap, curY)
+                loop(i + 1, nextX, nextY, acc.append(swatch).append(label))
+        loop(0, legendX, legendY, Chunk.empty)
+    end buildLegendItems
+
+    // ---- marks region ----
+
+    // ---- interaction helpers ----
+
+    /** Build `UI.Ast.Attrs` that wire hover and click handlers for a single data row.
+      *
+      * When `spec.onHover` is `Present`, the hover handler sets the ref to `Present(row)` and the unhover
+      * handler sets it to `Absent`. When `spec.onSelect` is `Present`, the click handler sets it to
+      * `Present(row)`. When an `internalHoverRef` is supplied (tooltip mode), each setter also writes that
+      * ref so the tooltip overlay tracks hover independently of the user's ref.
+      *
+      * Only attaches handlers when the corresponding ref is configured; static charts with no interaction
+      * configured receive no handler fields (keeping the attrs clean).
+      */
+    private def buildInteractionAttrs[A](
+        row: A,
+        spec: Chart[A],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
+    )(using Frame): UI.Ast.Attrs =
+        val hasHover   = spec.onHover.isDefined
+        val hasSelect  = spec.onSelect.isDefined
+        val hasTooltip = internalHoverRef.isDefined
+        if !hasHover && !hasSelect && !hasTooltip then UI.Ast.Attrs()
+        else
+            // Hover action: set user ref + internal tooltip ref (if present), combined sequentially.
+            // Each Maybe[Unit < Async] is folded directly, with no Option/Seq materialization.
+            val hoverAction: Maybe[Any < Async] =
+                if hasHover || hasTooltip then
+                    val base: Any < Async = (): Any < Async
+                    val withHover: Any < Async =
+                        spec.onHover.fold(base)(ref => base.andThen(ref.set(Present(row))))
+                    val combined: Any < Async =
+                        internalHoverRef.fold(withHover)(ref => withHover.andThen(ref.set(Present(row))))
+                    Present(combined)
+                else Absent
+            // Unhover action: clear user ref + internal tooltip ref, combined sequentially.
+            val unhoverAction: Maybe[Any < Async] =
+                if hasHover || hasTooltip then
+                    val base: Any < Async = (): Any < Async
+                    val withHover: Any < Async =
+                        spec.onHover.fold(base)(ref => base.andThen(ref.set(Absent)))
+                    val combined: Any < Async =
+                        internalHoverRef.fold(withHover)(ref => withHover.andThen(ref.set(Absent)))
+                    Present(combined)
+                else Absent
+            // Click action: set select ref.
+            val clickAction: Maybe[Any < Async] =
+                spec.onSelect.map(_.set(Present(row)))
+            UI.Ast.Attrs(
+                onHover = hoverAction,
+                onUnhover = unhoverAction,
+                onClick = clickAction
+            )
+        end if
+    end buildInteractionAttrs
+
+    /** Built-in highlight: the active mark's visual feedback driven by the user's hover/select ref.
+      *
+      * `ref` is the SAME `SignalRef[Maybe[A]]` the caller passed to `onHover`/`onSelect`; there is no internal
+      * interaction cell. `style` is the optional caller-supplied `Style`; when `Absent` the default highlight
+      * (a dark stroke outline) is applied to the active mark. The active mark is the one whose source row equals
+      * the current value the ref holds; every other mark renders unchanged.
+      */
+    final private[kyo] case class Highlight[A](ref: Signal.SignalRef[Maybe[A]], style: Maybe[Style])
+
+    /** Resolve the built-in highlight for a chart, if configured.
+      *
+      * `selectHighlight` (driven by `onSelect`) wins over `hoverHighlight` (driven by `onHover`) when both are
+      * enabled, mirroring the click-over-hover precedence of the interaction handlers. Returns `Absent` when no
+      * highlight is enabled OR the matching ref is not configured (the documented no-op).
+      */
+    private def resolveHighlight[A](spec: Maybe[Chart[A]]): Maybe[Highlight[A]] =
+        spec match
+            case Absent => Absent
+            case Present(s) =>
+                val cfg = s.interactionCfg
+                if cfg.selectHighlight then
+                    s.onSelect.map(ref => Highlight(ref, cfg.selectStyle))
+                else if cfg.hoverHighlight then
+                    s.onHover.map(ref => Highlight(ref, cfg.hoverStyle))
+                else Absent
+                end if
+    end resolveHighlight
+
+    /** Translate a highlight `Style` into the SVG attribute changes that realize it on a shape element.
+      *
+      * `Style` is the CSS-oriented prop bag (`kyo.Style`); the highlight maps the visually meaningful color /
+      * opacity props onto the shape's `fill`/`stroke`/`opacity` SVG attributes: a background color brightens the
+      * fill, a text/border color becomes a stroke outline, and an opacity prop sets the element opacity. When the
+      * style carries no recognized prop (or is `Absent`), the default highlight is a dark 2px stroke outline so
+      * the active mark reads as emphasized without depending on a caller-supplied color.
+      */
+    private def applyHighlightStyle(el: Svg.SvgElement, style: Maybe[Style]): Svg.SvgElement =
+        val base = el.svgAttrs
+        val styled: Svg.SvgAttrs = style match
+            case Absent =>
+                // Default highlight: a visible dark stroke outline (does not overwrite the fill).
+                base.copy(stroke = Present(Svg.Paint.Color(Style.Color.black)), strokeWidth = Present(Svg.SvgLength.px(2.0)))
+            case Present(s) =>
+                s.props.foldLeft(base): (attrs, prop) =>
+                    prop match
+                        case Style.Prop.BgColor(c) =>
+                            attrs.copy(fill = Present(Svg.Paint.Color(c)))
+                        case Style.Prop.TextColor(c) =>
+                            attrs.copy(
+                                stroke = Present(Svg.Paint.Color(c)),
+                                strokeWidth = if attrs.strokeWidth.isDefined then attrs.strokeWidth else Present(Svg.SvgLength.px(2.0))
+                            )
+                        case Style.Prop.BorderColorProp(top, _, _, _) =>
+                            attrs.copy(
+                                stroke = Present(Svg.Paint.Color(top)),
+                                strokeWidth = if attrs.strokeWidth.isDefined then attrs.strokeWidth else Present(Svg.SvgLength.px(2.0))
+                            )
+                        case Style.Prop.OpacityProp(v) =>
+                            attrs.copy(opacity = Present(math.max(0.0, math.min(1.0, v))))
+                        case _ => attrs
+        el.withSvg(styled)
+    end applyHighlightStyle
+
+    /** Wrap one mark's row-tagged shapes in the built-in highlight.
+      *
+      * When `highlight` is `Absent`, the shapes are returned unchanged (no-op; non-interactive and plain
+      * interactive charts emit the shapes unchanged). When `Present`, all the mark's shapes are wrapped in a
+      * single `Reactive` region driven by the user's `ref`: on each emission, the shape whose source row equals
+      * the ref's current value gets `applyHighlightStyle`, and every other shape renders unchanged. The region is
+      * driven directly by the user ref (`ref.render`), so no internal mutable interaction cell is created.
+      *
+      * The `Reactive` node is wrapped in an `Svg.G` so the result is an `Svg.SvgElement` that flows through the
+      * marks-region fold (mirroring the reactive-rule path).
+      */
+    private def withHighlight[A](
+        tagged: Chunk[(A, Svg.SvgElement)],
+        highlight: Maybe[Highlight[A]]
+    )(using Frame): Chunk[Svg.SvgElement] =
+        highlight match
+            case Absent                       => tagged.map(_._2)
+            case Present(_) if tagged.isEmpty => Chunk.empty
+            case Present(h) =>
+                given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
+                val reactive: UI.Ast.Reactive[Svg.G] =
+                    h.ref.render: active =>
+                        val children: Chunk[Svg.SvgElement] = tagged.map: (row, el) =>
+                            if active == Present(row) then applyHighlightStyle(el, h.style) else el
+                        children.foldLeft(Svg.g)((g, c) => g(c))
+                Chunk(Svg.g(reactive))
+    end withHighlight
+
+    /** Build the SVG `<g>` containing all lowered marks for static data.
+      *
+      * When `spec` is `Present`, interaction handlers are attached to each shape-per-row element
+      * (bars, circles) so `spec.onHover`/`spec.onSelect` refs receive the hovered/selected datum.
+      * Reactive rule values are lowered inside a `Svg.G` wrapper whose child is a `Reactive[Svg.Line]`.
+      */
+    private[kyo] def marksRegion[A](
+        rows: Chunk[A],
+        marks: Chunk[Mark[A]],
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale] = Absent,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+    )(using Frame): Svg.G =
+        // Each mark with no explicit color encoding uses a DISTINCT palette color by its index so that a
+        // multi-mark chart (e.g. a bar plus a line) shows e.g. blue bars and an orange line. A single-mark
+        // chart uses palette(0). Grouped/stacked color encoding marks keep mapping color categories to the
+        // palette (handled inside the per-mark lowerers).
+        val theme = spec.map(_.theme).getOrElse(Theme.default)
+        // Unsafe (per-mark lowerer result widening, covers every `.asInstanceOf[Chunk[UI]]` in this dispatcher):
+        // each `lower*` returns a `Chunk[<Svg subtype>]` (e.g. `Chunk[Svg.Rect]`). `Svg` subtypes are `UI`, and
+        // `Chunk` is covariant in its element, so widening `Chunk[<Svg subtype>]` to `Chunk[UI]` is sound; the
+        // cast only restates a subtype relation the type system already permits at the element level.
+        val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
+            val markColor = markDefaultColor(theme, markIdx)
+            val ys        = if markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
+            mark match
+                case m: Mark.Bar[A, ?, ?] =>
+                    spec match
+                        case Present(s) =>
+                            lowerBar(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerBar(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                case m: Mark.Line[A, ?, ?] =>
+                    // Pass resolveHighlight(spec) so the active series path gets the highlight stroke.
+                    spec match
+                        case Present(s) =>
+                            lowerLine(
+                                rows,
+                                m,
+                                xs,
+                                ys,
+                                markColor,
+                                Present(s),
+                                internalHoverRef,
+                                resolveHighlight(Present(s))
+                            ).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerLine(rows, m, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                case m: Mark.Area[A, ?, ?] =>
+                    // Thread spec/internalHoverRef into lowerArea so interaction fires for area marks.
+                    // Pass resolveHighlight(spec) so the active series path gets the highlight stroke.
+                    lowerArea(rows, m, layout, xs, ys, markColor, spec, internalHoverRef, resolveHighlight(spec)).asInstanceOf[Chunk[UI]]
+                case m: Mark.Point[A, ?, ?] =>
+                    spec match
+                        case Present(s) =>
+                            lowerPoint(
+                                rows,
+                                m,
+                                layout,
+                                xs,
+                                ys,
+                                markColor,
+                                Present(s),
+                                internalHoverRef,
+                                theme,
+                                resolveHighlight(Present(s))
+                            ).asInstanceOf[Chunk[UI]]
+                        case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme).asInstanceOf[Chunk[UI]]
+                case m: Mark.Rule[A]       => lowerRuleChildren(m, layout, xs, ys)
+                case m: Mark.Text[A, ?, ?] =>
+                    // Pass resolveHighlight(spec) so the active text glyph gets the highlight stroke.
+                    lowerText(m, rows, xs, ys, markColor, theme, spec, resolveHighlight(spec)).asInstanceOf[Chunk[UI]]
+                case m: Mark.ErrorBar[A, ?, ?] =>
+                    // Pass resolveHighlight(spec) so the active errorBar group gets the highlight stroke.
+                    lowerErrorBar(m, rows, xs, ys, markColor, theme, spec, resolveHighlight(spec)).asInstanceOf[Chunk[UI]]
+            end match
+        allShapes.foldLeft(Svg.g): (g, el) =>
+            el match
+                case r: Svg.Rect   => g(r)
+                case p: Svg.Path   => g(p)
+                case c: Svg.Circle => g(c)
+                case l: Svg.Line   => g(l)
+                case t: Svg.Text   => g(t)
+                case inner: Svg.G  => g(inner)
+                case _             => g
+    end marksRegion
+
+    // ---- per-mark lowerers ----
+
+    /** Lower a `Mark.Bar` to a `Chunk` of `Svg.Rect`s.
+      *
+      * When the mark has no `color` encoding each row produces one rect spanning the full band. When a `color`
+      * encoding is present the band is subdivided into sub-bands (grouped) or the rects stack vertically
+      * (stacked, when `mark.stack.group` is `Present`).
+      *
+      * When `spec` is supplied, hover and click handlers are attached to each rect so `spec.onHover` and
+      * `spec.onSelect` refs track the hovered/selected row. Stacked bars do not carry per-row interaction
+      * because each stacked segment represents a partial view of a group rather than a single row.
+      */
+    private def lowerBar[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Bar[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val highlight = resolveHighlight(spec)
+        mark.stack.group match
+            case Present(_) =>
+                lowerBarStacked(rows, mark, layout, xs, ys, spec)
+            case Absent =>
+                mark.color match
+                    case Absent =>
+                        lowerBarSimple(rows, mark, xs, ys, defaultColor, spec, internalHoverRef, highlight)
+                    case Present(colorEnc) =>
+                        lowerBarGrouped(
+                            rows,
+                            mark,
+                            colorEnc.asInstanceOf[Encoding[A, Any]],
+                            xs,
+                            ys,
+                            spec,
+                            internalHoverRef,
+                            highlight
+                        )
+        end match
+    end lowerBar
+
+    private def lowerBarSimple[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Bar[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        defaultFill: Style.Color,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // Use ys.apply(0) as the zero-line baseline. For positive-only data, ensureZero makes 0
+        // the domain minimum so ys.apply(0) == plotBaseline (byte-identical). For mixed
+        // positive/negative data the zero line is above the plot bottom; using min/abs below
+        // ensures non-negative rect heights.
+        val baseline = ys.apply(Domain.Continuous(0.0))
+        // A bar with no explicit color encoding uses the per-mark default fill (palette color by mark index),
+        // not the browser default (black), so it is visible and distinct from other marks in a combo chart.
+        // The bar rect is tagged with its source row so the built-in highlight can re-style the
+        // active row; label texts are not row-shapes and stay outside the highlight region.
+        @scala.annotation.tailrec
+        def loop(
+            i: Int,
+            bars: Chunk[(A, Svg.SvgElement)],
+            labels: Chunk[Svg.SvgElement]
+        ): (Chunk[(A, Svg.SvgElement)], Chunk[Svg.SvgElement]) =
+            if i >= rows.size then (bars, labels)
+            else
+                val row = rows(i)
+                // drop non-finite domain values; filterFinite returns Absent for NaN/Inf
+                val yDomain = ChartFoundations.filterFinite(mark.y.plottable.toDomain(mark.y.accessor(row)))
+                val (nextBars, nextLabels) = yDomain match
+                    case Absent => (bars, labels)
+                    case Present(yd) =>
+                        val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        xDomain match
+                            case Absent => (bars, labels)
+                            case Present(xd) =>
+                                val barX = xs.apply(xd)
+                                val barW = xs.bandwidth
+                                val barY = ys.apply(yd)
+                                // min/abs ensure a non-negative rect height for negative data values:
+                                // a negative datum maps barY above the baseline in SVG coordinates.
+                                val rectY  = math.min(barY, baseline)
+                                val rectH  = math.abs(baseline - barY)
+                                val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
+                                val baseRect = Svg.rect
+                                    .x(barX)
+                                    .y(rectY)
+                                    .width(barW)
+                                    .height(rectH)
+                                    .fill(Svg.Paint.Color(defaultFill))
+                                    .withAttrs(iAttrs)
+                                val (rectEl, labelElems) = applyBarEncodings(baseRect, mark, row, barX, barW, rectY, defaultFill)
+                                (bars.append((row, rectEl)), labels ++ labelElems)
+                        end match
+                loop(i + 1, nextBars, nextLabels)
+        val (bars, labels) = loop(0, Chunk.empty, Chunk.empty)
+        withHighlight(bars, highlight) ++ labels
+    end lowerBarSimple
+
+    /** Apply the opacity, tooltip, and label encodings to a bar rect for row `row`.
+      *
+      * Returns the decorated rect plus any emitted label `Svg.text` (Chunk.empty when no
+      * `label` encoding). Shared by the static (`lowerBarSimple`) and transition
+      * (`lowerBarSimpleWithTransitions`) paths so the two cannot drift: both honor `opacity`/`tooltip`/
+      * `label` identically. `barX`/`barW`/`barY` are the already-projected rect geometry; `fill` is the
+      * resolved fill color (passed in so the caller keeps control of palette resolution).
+      */
+    private def applyBarEncodings[A, X, Y](
+        rect: Svg.Rect,
+        mark: Mark.Bar[A, X, Y],
+        row: A,
+        barX: Double,
+        barW: Double,
+        barY: Double,
+        fill: Style.Color
+    )(using Frame): (Svg.SvgElement, Chunk[Svg.SvgElement]) =
+        // Opacity encoding.
+        val withOpacity = mark.opacity match
+            case Present(fn) => rect.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
+            case Absent      => rect
+        // Tooltip encoding.
+        val withTooltip = mark.tooltip match
+            case Present(fn) => withOpacity(Svg.title(fn(row)))
+            case Absent      => withOpacity
+        // Label encoding: emit Svg.text above the bar.
+        val labelElems: Chunk[Svg.SvgElement] = mark.label match
+            case Present(fn) =>
+                val lx = barX + barW / 2.0
+                val ly = barY - 2.0
+                Chunk(
+                    Svg.text
+                        .x(lx)
+                        .y(ly)
+                        .textAnchor(Svg.TextAnchor.Middle)
+                        .dominantBaseline(Svg.DominantBaseline.Auto)
+                        .fill(Svg.Paint.Color(fill))
+                        .apply(fn(row))
+                )
+            case Absent => Chunk.empty
+        (withTooltip, labelElems)
+    end applyBarEncodings
+
+    private def lowerBarGrouped[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Bar[A, X, Y],
+        colorEnc: Encoding[A, Any],
+        xs: Scale,
+        ys: Scale,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // Collect distinct color categories (label + raw value) in enum-ordinal order.
+        // The raw values feed the same Sequential-aware palette resolution lowerPoint/lowerArea use, so a
+        // numeric `color` encoding under a Sequential `colorScale` paints each bar with its gradient color.
+        val colorCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
+        val colorKeys: Chunk[String]        = colorCats.map(_._1)
+        val numColors                       = colorKeys.size
+        // Precompute colorCatKey -> index once (O(colors)); keys by CatKey (tag + raw value) so distinct
+        // color values with the same toString remain separate.
+        // Mirrors lowerPoint's colorByKey: Map[CatKey, Style.Color].
+        val colorIdxByKey: Map[ChartFoundations.CatKey, Int] =
+            colorCats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, catWithIdx) =>
+                val (cat, idx) = catWithIdx
+                val catKey     = ChartFoundations.categoryKey(colorEnc.tag, cat._2)
+                m.updated(catKey, idx)
+        val basePalette: Chunk[Style.Color] = spec match
+            case Present(s) => themePalette(s.theme)
+            case Absent     => DefaultPalette
+        // Route any Present colorScale (Categorical OR Sequential) through resolvePalette.
+        // Absent keeps the existing by-index basePalette path.
+        val palette: Chunk[Style.Color] = spec match
+            case Present(s) =>
+                s.legendCfg.colorScale match
+                    case Present(_) => resolvePalette(s, colorCats)
+                    case Absent =>
+                        colorKeys.zipWithIndex.map: (_, i) =>
+                            basePalette(i % basePalette.size)
+            case Absent =>
+                colorKeys.zipWithIndex.map: (_, i) =>
+                    basePalette(i % basePalette.size)
+        // Use ys.apply(0) as the zero-line baseline (same reason as lowerBarSimple).
+        val baseline = ys.apply(Domain.Continuous(0.0))
+
+        // Degenerate-grouping guard: a `color` encoding only DODGES (subdivides a band into sub-slots) when
+        // MULTIPLE distinct colors actually share the SAME x-band. When `color` is 1:1 with `x` (e.g.
+        // bar(x=_.label, color=_.label)), every band holds exactly one color; dodging each band's single bar
+        // into its global color sub-slot would march thin bars left-to-right, misaligned with the centered
+        // x-axis tick labels. So compute the max distinct CatKeys present within any single x-band; when
+        // that max is <= 1, render SIMPLE full-band bars (slot-centered, full bandwidth) instead of dodging.
+        // Keys by CatKey so two distinct values with the same toString are counted as two distinct colors.
+        val bandColorSets: Map[String, Set[ChartFoundations.CatKey]] =
+            rows.foldLeft(Map.empty[String, Set[ChartFoundations.CatKey]]): (m, row) =>
+                val xKeyMaybe = mark.x.plottable.toDomain(mark.x.accessor(row)).map(domainKey)
+                xKeyMaybe match
+                    case Present(xKey) =>
+                        val colorCatKey = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
+                        m.updated(xKey, m.getOrElse(xKey, Set.empty[ChartFoundations.CatKey]) + colorCatKey)
+                    case Absent => m
+                end match
+        val maxColorsPerBand: Int =
+            bandColorSets.foldLeft(0)((mx, kv) => math.max(mx, kv._2.size))
+        val dodge = maxColorsPerBand > 1
+
+        // For sparse grouped bars: per x-band, collect the global color indices present (ascending order).
+        // When the band has all numColors categories, present = Chunk(0, 1, ..., numColors-1), so
+        // groupOffset == 0 and localIdx == colorIdx: barX reduces to the simple dense formula.
+        val presentByBand: Map[String, Chunk[Int]] =
+            if dodge then
+                bandColorSets.map: (xKey, catKeySet) =>
+                    val indices = colorIdxByKey.collect:
+                        case (catKey, idx) if catKeySet.contains(catKey) => idx
+                    xKey -> Chunk.from(indices).sorted
+            else Map.empty[String, Chunk[Int]]
+
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
+            if i >= rows.size then acc
+            else
+                val row     = rows(i)
+                val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
+                val nextAcc = yDomain match
+                    case Absent => acc
+                    case Present(yd) =>
+                        val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        xDomain match
+                            case Absent => acc
+                            case Present(xd) =>
+                                val bandX       = xs.apply(xd)
+                                val bandW       = xs.bandwidth
+                                val colorCatKey = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
+                                val colorIdx    = colorIdxByKey.getOrElse(colorCatKey, -1)
+                                // Dodge only when a real grouped bar (some band holds >1 color); otherwise the
+                                // bar spans the full band, slot-centered under its x tick label.
+                                val subW = if dodge then bandW / numColors.toDouble else bandW
+                                val barX =
+                                    if dodge then
+                                        val xKey    = domainKey(xd)
+                                        val present = presentByBand.getOrElse(xKey, Chunk.empty[Int])
+                                        val k       = present.size
+                                        val localIdx =
+                                            // indexOf on Chunk is O(k); k <= numColors (small in practice).
+                                            val idx = present.toSeq.indexOf(colorIdx)
+                                            if idx < 0 then 0 else idx
+                                        end localIdx
+                                        // Center the k present bars within the full bandW.
+                                        // When k == numColors: groupOffset == 0, localIdx == colorIdx (dense case).
+                                        val groupOffset = (bandW - k.toDouble * subW) / 2.0
+                                        bandX + groupOffset + localIdx.toDouble * subW
+                                    else bandX
+                                val barY = ys.apply(yd)
+                                // min/abs ensure a non-negative rect height for negative data values.
+                                val rectY     = math.min(barY, baseline)
+                                val rectH     = math.abs(baseline - barY)
+                                val fillColor = if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else basePalette(0)
+                                val iAttrs    = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
+                                val r =
+                                    Svg.rect.x(barX).y(rectY).width(subW).height(rectH).fill(Svg.Paint.Color(fillColor)).withAttrs(iAttrs)
+                                acc.append((row, r))
+                        end match
+                loop(i + 1, nextAcc)
+        withHighlight(loop(0, Chunk.empty), highlight)
+    end lowerBarGrouped
+
+    /** Lower a stacked `Mark.Bar`: for each distinct x value, stack group rects vertically so that each
+      * group's bar sits on top of the previous group's bar.
+      *
+      * The groups are visited in the order they are first encountered in the data (which for enum `group`
+      * accessors will be enum-ordinal order after sorting). `normalize = true` scales each x slot so the
+      * total stack height equals the plot height.
+      *
+      * For each x group:
+      *   1. Compute each group's raw y value.
+      *   2. If normalizing, compute `totalY`; each group's fraction = `groupY / totalY`.
+      *   3. Accumulate pixel positions: y0 starts at the baseline; for each group, y1 = ys.apply(accumulated).
+      */
+    private def lowerBarStacked[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Bar[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        spec: Maybe[Chart[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val groupFn  = mark.stack.group.getOrElse((_: A) => "")
+        val baseline = layout.plotBaseline
+        val plotTop  = layout.plotY
+
+        // 1. Collect all distinct x keys in encounter order (O(rows), Set-backed via distinctKeyed).
+        val presentXKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
+            mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                case Present(d) => acc.append(domainKey(d))
+                case Absent     => acc
+        val xKeys: Chunk[String] =
+            ChartFoundations.distinctKeyed(presentXKeys, k => ChartFoundations.categoryKey(k)).map(_._2)
+
+        // 2. Collect all distinct group keys (with their raw values) in enum-ordinal order.
+        // The raw values feed the same palette resolution the legend uses, so each stacked segment is
+        // painted in exactly the color its legend swatch shows (honoring an explicit `colorScale`).
+        val groupEnc: Encoding[A, Any] =
+            Encoding(groupFn, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupEnc)
+        val groupKeys: Chunk[String]        = groupCats.map(_._1)
+        val groupPalette: Chunk[Style.Color] = spec match
+            case Present(s) => resolvePalette(s, groupCats)
+            case Absent     => resolvePaletteFromCfg(groupKeys)
+
+        // 3. Build, in one pass: xKey -> groupCatKey -> yValue (dataMap), xKey -> first-seen x Domain
+        // (xDomainByKey, for band positioning), and (xKey, groupCatKey) -> first-seen row (rowBySlot, for
+        // per-datum encodings). Keys by CatKey (value-equality via categoryKey) instead of toString so two
+        // distinct group values with colliding toString remain separate.
+        final case class StackMaps(
+            data: Map[String, Map[ChartFoundations.CatKey, Double]],
+            xDomainByKey: Map[String, Domain],
+            rowBySlot: Map[(String, ChartFoundations.CatKey), A]
+        )
+        @scala.annotation.tailrec
+        def buildMap(i: Int, m: StackMaps): StackMaps =
+            if i >= rows.size then m
+            else
+                val row        = rows(i)
+                val xDomainOpt = mark.x.plottable.toDomain(mark.x.accessor(row))
+                val xKeyOpt = xDomainOpt match
+                    case Present(d) => Present(domainKey(d))
+                    case Absent     => Absent
+                val yValOpt = mark.y.plottable.toDomain(mark.y.accessor(row)) match
+                    case Present(Domain.Continuous(v)) => Present(v)
+                    case _                             => Absent
+                // Key by CatKey (tag + raw value) so distinct group values with the same toString stay
+                // separate. groupEnc.tag is ConcreteTag[Any]; groupFn(row) is the raw group value.
+                val groupCatKey = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
+                val withDomain = (xKeyOpt, xDomainOpt) match
+                    case (Present(xk), Present(d)) if !m.xDomainByKey.contains(xk) =>
+                        m.copy(xDomainByKey = m.xDomainByKey.updated(xk, d))
+                    case _ => m
+                // rowBySlot records the first row per (xKey, groupCatKey) regardless of y, mirroring the
+                // original `rows.find` (which matched on x+group only). A slot's row is only consulted
+                // when its summed y is non-zero, but first-seen-by-x+group is the original semantics.
+                val withSlot = xKeyOpt.fold(withDomain) { xk =>
+                    val slotKey = (xk, groupCatKey)
+                    if withDomain.rowBySlot.contains(slotKey) then withDomain
+                    else withDomain.copy(rowBySlot = withDomain.rowBySlot.updated(slotKey, row))
+                }
+                val next = (xKeyOpt, yValOpt) match
+                    case (Present(xk), Present(yv)) =>
+                        val inner = withSlot.data.getOrElse(xk, Map.empty)
+                        withSlot.copy(data = withSlot.data.updated(xk, inner.updated(groupCatKey, yv)))
+                    case _ => withSlot
+                buildMap(i + 1, next)
+        val stackMaps    = buildMap(0, StackMaps(Map.empty, Map.empty, Map.empty))
+        val dataMap      = stackMaps.data
+        val xDomainByKey = stackMaps.xDomainByKey
+        val rowBySlot    = stackMaps.rowBySlot
+
+        // 4. For each x key, emit stacked rects.
+        // groupCatKeys: one CatKey per category in encounter/ordinal order, derived from the raw values
+        // in groupCats (mirrors how collectColorCategoriesWithRaw keyed them in step 2 above).
+        val groupCatKeys: Chunk[ChartFoundations.CatKey] =
+            groupCats.map { case (_, raw) => ChartFoundations.categoryKey(groupEnc.tag, raw) }
+
+        @scala.annotation.tailrec
+        def loopX(xi: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+            if xi >= xKeys.size then acc
+            else
+                val xKey = xKeys(xi)
+                // O(1) lookup of the first-seen x Domain for this key (precomputed in buildMap).
+                val bandX = Maybe.fromOption(xDomainByKey.get(xKey)) match
+                    case Present(d) => xs.apply(d)
+                    case Absent     => xs.apply(Domain.Category(xKey))
+                val bandW    = xs.bandwidth
+                val groupMap = dataMap.getOrElse(xKey, Map.empty)
+                val totalY   = groupCatKeys.foldLeft(0.0)((s, gck) => s + groupMap.getOrElse(gck, 0.0))
+
+                // posAcc and negAcc are threaded as loopGroup parameters, reset to 0.0 for each
+                // new x-key iteration. posAcc accumulates positive contributions upward
+                // from the baseline; negAcc accumulates negative contributions downward.
+                @scala.annotation.tailrec
+                def loopGroup(gi: Int, posAcc: Double, negAcc: Double, acc2: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+                    if gi >= groupCatKeys.size then acc2
+                    else
+                        val gck  = groupCatKeys(gi)
+                        val rawY = groupMap.getOrElse(gck, 0.0)
+                        val effectiveY =
+                            if mark.stack.normalize then
+                                if totalY > 0.0 then rawY / totalY else 0.0
+                            else rawY
+                        // Signed stack: positive values stack upward; negative values stack downward.
+                        // (segLo, segHi) bound the segment; nextPosAcc/nextNegAcc carry forward.
+                        val (segLo, segHi, nextPosAcc, nextNegAcc) =
+                            if mark.stack.normalize then
+                                // Normalize mode only handles positive values; treat as before.
+                                val hi = posAcc + effectiveY; (posAcc, hi, hi, negAcc)
+                            else if effectiveY >= 0.0 then
+                                val hi = posAcc + effectiveY; (posAcc, hi, hi, negAcc)
+                            else
+                                val lo = negAcc + effectiveY; (lo, negAcc, posAcc, lo)
+                        val topPx =
+                            if mark.stack.normalize then
+                                plotTop + (1.0 - segHi) * layout.plotH
+                            else ys.apply(Domain.Continuous(segHi))
+                        val botPx =
+                            if mark.stack.normalize then
+                                plotTop + (1.0 - segLo) * layout.plotH
+                            else if segLo == 0.0 && segHi >= 0.0 then baseline
+                            else ys.apply(Domain.Continuous(segLo))
+                        // rectY and rectH are always geometry-safe: min/abs ensure non-negative height.
+                        val rectY     = math.min(topPx, botPx)
+                        val rectH     = math.abs(topPx - botPx)
+                        val fillColor = if gi < groupPalette.size then groupPalette(gi) else DefaultPalette(gi % DefaultPalette.size)
+                        // Skip emission when the group contributes nothing at this x slot.
+                        val nextAcc2 =
+                            if rawY == 0.0 then acc2
+                            else
+                                // Apply opacity encoding if present.
+                                val baseRect = Svg.rect
+                                    .x(bandX)
+                                    .y(rectY)
+                                    .width(bandW)
+                                    .height(rectH)
+                                    .fill(Svg.Paint.Color(fillColor))
+                                // Look up the row for this x+group combination to apply per-datum encodings.
+                                // (There is at most one row per x+group; rowBySlot holds the first match.)
+                                val rowForSlot: Maybe[A] = Maybe.fromOption(rowBySlot.get((xKey, gck)))
+                                val withEncodings: Chunk[Svg.SvgElement] = rowForSlot match
+                                    case Absent => Chunk(baseRect)
+                                    case Present(r) =>
+                                        val withOpacity = mark.opacity match
+                                            case Present(fn) => baseRect.fillOpacity(math.max(0.0, math.min(1.0, fn(r))))
+                                            case Absent      => baseRect
+                                        val labelElems: Chunk[Svg.SvgElement] = mark.label match
+                                            case Present(fn) =>
+                                                val labelStr = fn(r)
+                                                val lx       = bandX + bandW / 2.0
+                                                val ly       = rectY - 2.0
+                                                Chunk(
+                                                    Svg.text
+                                                        .x(lx)
+                                                        .y(ly)
+                                                        .textAnchor(Svg.TextAnchor.Middle)
+                                                        .dominantBaseline(Svg.DominantBaseline.Auto)
+                                                        .fill(Svg.Paint.Color(fillColor))
+                                                        .apply(labelStr)
+                                                )
+                                            case Absent => Chunk.empty
+                                        val withTooltip = mark.tooltip match
+                                            case Present(fn) => withOpacity(Svg.title(fn(r)))
+                                            case Absent      => withOpacity
+                                        Chunk(withTooltip) ++ labelElems
+                                acc2 ++ withEncodings
+                        loopGroup(gi + 1, nextPosAcc, nextNegAcc, nextAcc2)
+                val rectsForX = loopGroup(0, 0.0, 0.0, Chunk.empty)
+                loopX(xi + 1, acc ++ rectsForX)
+        loopX(0, Chunk.empty)
+    end lowerBarStacked
+
+    /** Convenience: resolve a palette from DefaultPalette for the stacked-bar Absent-spec fallback. */
+    private def resolvePaletteFromCfg(categories: Chunk[String]): Chunk[Style.Color] =
+        categories.zipWithIndex.map: (_, i) =>
+            DefaultPalette(i % DefaultPalette.size)
+
+    /** Lower a `Mark.Line` to a `Chunk` of `Svg.Path`s.
+      *
+      * Each `Absent` y value (gap) closes the current sub-path and starts a new `MoveTo` segment. The result may
+      * contain multiple `MoveTo` commands in a single `PathData` (one for each contiguous run of defined points).
+      * When a `color` encoding is present each distinct color series produces its own path.
+      *
+      * When `spec` is supplied, hover and click handlers are attached to each path. A line path represents
+      * all rows in a series; the hover handler publishes `Present(firstRow)` (the series representative row,
+      * i.e. the first element of the series chunk). Per-row interaction is better suited to `point` marks
+      * layered over the line.
+      */
+    private def lowerLine[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Line[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        mark.color match
+            case Absent =>
+                // No color encoding: single series whose stroke is the per-mark default color (palette by mark index).
+                // Pass spec/internalHoverRef so click/hover handlers are attached to the path.
+                // Tag the series path with the representative row (first row) and wrap via withHighlight.
+                val path   = lowerLineSeries(rows, mark, xs, ys, defaultColor, spec, internalHoverRef)
+                val repRow = rows.headMaybe
+                val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
+                    case Present(r) => Chunk((r, path))
+                    case Absent     => Chunk.empty
+                withHighlight(tagged, highlight)
+            case Present(colorEnc) =>
+                // Resolve per-series colors via resolvePalette (the same path the legend and stacked
+                // bars use), so an explicit categorical/sequential colorScale is honored and the line agrees
+                // with the legend. resolvePalette falls back to theme.palette then DefaultPalette when no
+                // colorScale is set, so a line without a colorScale uses the theme palette.
+                // Each series path is tagged with its series-representative row for highlight.
+                val cats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, colorEnc)
+                val palette: Chunk[Style.Color] = spec match
+                    case Present(s) => resolvePalette(s, cats)
+                    case Absent     => DefaultPalette
+                // Split rows by CatKey (tag + raw value), NOT by label toString: distinct color values
+                // with a colliding toString must stay in separate series. `cats` was deduped by CatKey,
+                // so cats[idx] aligns with the catKey filter at the same index.
+                val catKeys: Chunk[ChartFoundations.CatKey] =
+                    cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEnc.tag, raw) }
+                // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                val rowsByKey = ChartFoundations.groupByKey(rows, r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r)))
+                val tagged: Chunk[(A, Svg.SvgElement)] = catKeys.zipWithIndex.flatMap: (catKey, idx) =>
+                    val seriesRows  = rowsByKey.getOrElse(catKey, Chunk.empty)
+                    val strokeColor = palette(idx % palette.size)
+                    // Thread interaction into each per-series path.
+                    val path = lowerLineSeries(seriesRows, mark, xs, ys, strokeColor, spec, internalHoverRef)
+                    // The series-representative row is the first row of the series chunk.
+                    seriesRows.headMaybe match
+                        case Present(r) => Chunk((r, path))
+                        case Absent     => Chunk.empty
+                withHighlight(tagged, highlight)
+    end lowerLine
+
+    // Collect all pixel (x, y) pairs for each contiguous defined segment in the series.
+    // A gap (undefined row, Absent y, or non-finite coordinates) ends a segment.
+    // Returns a Chunk of segments, each segment is a non-empty Chunk of pixel pairs.
+    private def collectLineSegments[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Line[A, X, Y],
+        xs: Scale,
+        ys: Scale
+    ): Chunk[Chunk[(Double, Double)]] =
+        @scala.annotation.tailrec
+        def loop(i: Int, curSeg: Chunk[(Double, Double)], segs: Chunk[Chunk[(Double, Double)]]): Chunk[Chunk[(Double, Double)]] =
+            if i >= rows.size then
+                if curSeg.isEmpty then segs else segs.append(curSeg)
+            else
+                val row = rows(i)
+                val isDefined = mark.defined match
+                    case Present(fn) => fn(row)
+                    case Absent      => true
+                if !isDefined then
+                    // Gap: flush the current segment if non-empty and start fresh.
+                    val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                    loop(i + 1, Chunk.empty, nextSegs)
+                else
+                    mark.y.accessor(row) match
+                        case Absent =>
+                            val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                            loop(i + 1, Chunk.empty, nextSegs)
+                        case Present(yv) =>
+                            val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
+                            val yd = mark.y.plottable.toDomain(yv)
+                            (xd, yd) match
+                                case (Present(x), Present(y)) =>
+                                    // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0 for
+                                    // continuous scales) so line vertices align with the centred tick labels.
+                                    val px = xs.apply(x) + xs.bandwidth / 2.0
+                                    val py = ys.apply(y)
+                                    // Skip non-finite pixel coordinates: they produce invisible or corrupt SVG paths.
+                                    if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
+                                        loop(i + 1, curSeg.append((px, py)), segs)
+                                    else
+                                        val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                                        loop(i + 1, Chunk.empty, nextSegs)
+                                    end if
+                                case _ =>
+                                    val nextSegs = if curSeg.isEmpty then segs else segs.append(curSeg)
+                                    loop(i + 1, Chunk.empty, nextSegs)
+                            end match
+                    end match
+                end if
+        loop(0, Chunk.empty, Chunk.empty)
+    end collectLineSegments
+
+    private def lowerLineSeries[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Line[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        strokeColor: Style.Color = Style.Color.blue,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+    )(using Frame): Svg.Path =
+        // Collect contiguous defined segments. Each segment is then threaded through
+        // CurvePath.append for the chosen interpolation.
+        val segments = collectLineSegments(rows, mark, xs, ys)
+        val pathData: Svg.PathData = segments.foldLeft(Svg.PathData.empty): (pd, seg) =>
+            if seg.isEmpty then pd
+            else
+                val p0 = seg(0)
+                // moveTo the first point of the segment; then append remaining points via CurvePath.
+                val startPd = if Svg.PathData.commands(pd).isEmpty then Svg.PathData.from(p0._1, p0._2) else pd.moveTo(p0._1, p0._2)
+                CurvePath.append(startPd, seg.drop(1), mark.curve)
+        // A line path must be stroked, not filled. Without explicit fill=none the browser fills the
+        // closed polygon formed by the path endpoints, producing a black bowtie artefact.
+        val basePath = Svg.path
+            .d(pathData)
+            .fill(Svg.Paint.None)
+            .stroke(Svg.Paint.Color(strokeColor))
+            .strokeWidth(2.0)
+        // Opacity encoding: for a line, apply as strokeOpacity.
+        val withOpacity = mark.opacity match
+            case Present(fn) =>
+                // Use the first row to evaluate line-level opacity (series-level encoding, not per-datum).
+                rows.headMaybe match
+                    case Present(r) => basePath.strokeOpacity(math.max(0.0, math.min(1.0, fn(r))))
+                    case Absent     => basePath
+            case Absent => basePath
+        // Tooltip encoding: attach a title child on the path element for browser tooltip.
+        val withTooltip = mark.tooltip match
+            case Present(fn) =>
+                rows.headMaybe match
+                    case Present(r) => withOpacity(Svg.title(fn(r)))
+                    case Absent     => withOpacity
+            case Absent => withOpacity
+        // Attach interaction attrs to the line path. The representative row for a line series
+        // is the first row of the series chunk (path-level, not per-datum).
+        spec match
+            case Absent => withTooltip
+            case Present(s) =>
+                rows.headMaybe match
+                    case Absent     => withTooltip
+                    case Present(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+        end match
+    end lowerLineSeries
+
+    /** Lower a `Mark.Text` to one `Svg.text` per row at `(x, y)`.
+      *
+      * Gap rows (where the `y` EncodingMaybe returns `Absent`) produce no text element. The
+      * `anchor` is mapped from `kyo.TextAnchor` to `Svg.TextAnchor`; both enums have the same
+      * case names but live in different packages and must not be cast. When `mark.color` is
+      * `Present`, each row receives its category palette color; otherwise `defaultColor` is used.
+      * `opacity` sets `fillOpacity` clamped to [0,1].
+      */
+    private def lowerText[A, X, Y](
+        mark: Mark.Text[A, X, Y],
+        rows: Chunk[A],
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        theme: Theme,
+        spec: Maybe[Chart[A]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // TextAnchor mapping: two distinct enums, explicit match required.
+        val svgAnchor = mark.anchor match
+            case TextAnchor.Start  => Svg.TextAnchor.Start
+            case TextAnchor.Middle => Svg.TextAnchor.Middle
+            case TextAnchor.End    => Svg.TextAnchor.End
+        // Resolve per-category palette when mark.color is Present.
+        val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
+            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
+            case Absent      => Chunk.empty
+        val basePaletteText: Chunk[Style.Color] = themePalette(theme)
+        val palette: Chunk[Style.Color] =
+            if colorCatsWithRaw.isEmpty then Chunk.empty
+            else
+                spec match
+                    case Present(s) => resolvePalette(s, colorCatsWithRaw)
+                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteText(i % basePaletteText.size))
+        // Precompute CatKey (tag + raw value) -> index once, so distinct color values with a colliding
+        // toString resolve to distinct palette indices (not collapsed onto one label bucket).
+        val colorTagText: Maybe[ConcreteTag[Any]] = mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])
+        val catIdxText: Map[ChartFoundations.CatKey, Int] =
+            (colorTagText, colorCatsWithRaw) match
+                case (Present(tag), cats) =>
+                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
+                        val key = ChartFoundations.categoryKey(tag, ci._1._2)
+                        if m.contains(key) then m else m.updated(key, ci._2)
+                case _ => Map.empty
+        // Accumulate row-tagged glyphs so withHighlight can re-style the active row.
+        @scala.annotation.tailrec
+        def loop(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
+            if i >= rows.size then acc
+            else
+                val row = rows(i)
+                // Gap check: skip rows where y is Absent.
+                val nextAcc = mark.y.accessor(row) match
+                    case Absent => acc
+                    case Present(yv) =>
+                        val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        val yd = mark.y.plottable.toDomain(yv)
+                        (xd, yd) match
+                            case (Present(x), Present(y)) =>
+                                // For a band/categorical x, xs.apply(x) is the band's LEFT edge (where bars start).
+                                // Centre the label on the band (the same x the bar is centred on) by adding half
+                                // the band width. For continuous scales bandwidth is 0, so this is a no-op there.
+                                val px = xs.apply(x) + xs.bandwidth / 2.0
+                                val py = ys.apply(y)
+                                val fillColor: Style.Color = mark.color match
+                                    case Absent => defaultColor
+                                    case Present(ch) =>
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
+                                        val idx    = catIdxText.getOrElse(catKey, -1)
+                                        if idx >= 0 && idx < palette.size then palette(idx) else defaultColor
+                                val baseText = Svg.text
+                                    .x(px)
+                                    .y(py)
+                                    .textAnchor(svgAnchor)
+                                    .fill(Svg.Paint.Color(fillColor))
+                                // Apply opacity if set.
+                                val withOpacity = mark.opacity match
+                                    case Present(fn) => baseText.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
+                                    case Absent      => baseText
+                                // Tag the glyph with its source row for highlight.
+                                acc.append((row, withOpacity(mark.label(row))))
+                            case _ => acc
+                        end match
+                loop(i + 1, nextAcc)
+        withHighlight(loop(0, Chunk.empty), highlight)
+    end lowerText
+
+    /** Lower a `Mark.ErrorBar` to SVG elements per row.
+      *
+      * Each row yields: one vertical `Svg.line` from `low` to `high` at `x`, two horizontal cap
+      * `Svg.line`s of `capWidth` pixels centered at `x`, and one `Svg.circle` center marker at `y`.
+      * All elements use plain `Svg.line` and `Svg.circle` with NO `url(#id)` or `<marker>` references.
+      * When `mark.color` is `Present`, each row's stroke uses its category palette color.
+      */
+    private def lowerErrorBar[A, X, Y](
+        mark: Mark.ErrorBar[A, X, Y],
+        rows: Chunk[A],
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        theme: Theme,
+        spec: Maybe[Chart[A]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
+            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
+            case Absent      => Chunk.empty
+        val basePaletteErr: Chunk[Style.Color] = themePalette(theme)
+        val palette: Chunk[Style.Color] =
+            if colorCatsWithRaw.isEmpty then Chunk.empty
+            else
+                spec match
+                    case Present(s) => resolvePalette(s, colorCatsWithRaw)
+                    case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteErr(i % basePaletteErr.size))
+        // Precompute CatKey (tag + raw value) -> index once, so distinct color values with a colliding
+        // toString resolve to distinct palette indices (not collapsed onto one label bucket).
+        val colorTagErr: Maybe[ConcreteTag[Any]] = mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])
+        val catIdxErr: Map[ChartFoundations.CatKey, Int] =
+            (colorTagErr, colorCatsWithRaw) match
+                case (Present(tag), cats) =>
+                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
+                        val key = ChartFoundations.categoryKey(tag, ci._1._2)
+                        if m.contains(key) then m else m.updated(key, ci._2)
+                case _ => Map.empty
+        val halfCap = mark.capWidth / 2.0
+        highlight match
+            case Absent =>
+                // No highlight: emit the 4 sub-shapes per row flat.
+                @scala.annotation.tailrec
+                def loopFlat(i: Int, acc: Chunk[Svg.SvgElement]): Chunk[Svg.SvgElement] =
+                    if i >= rows.size then acc
+                    else
+                        val row   = rows(i)
+                        val xd    = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        val yd    = mark.y.plottable.toDomain(mark.y.accessor(row))
+                        val lowD  = mark.low.plottable.toDomain(mark.low.accessor(row))
+                        val highD = mark.high.plottable.toDomain(mark.high.accessor(row))
+                        val nextAcc = (xd, yd, lowD, highD) match
+                            case (Present(x), Present(y), Present(lo), Present(hi)) =>
+                                val px     = xs.apply(x) + xs.bandwidth / 2.0
+                                val py     = ys.apply(y)
+                                val pyLow  = ys.apply(lo)
+                                val pyHigh = ys.apply(hi)
+                                val colorIdx = mark.color match
+                                    case Absent => -1
+                                    case Present(ch) =>
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
+                                        catIdxErr.getOrElse(catKey, -1)
+                                val color: Style.Color =
+                                    if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
+                                val stroke = Svg.Paint.Color(color)
+                                val vLine  = Svg.line.x1(px).y1(pyLow).x2(px).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
+                                val capLow = Svg.line.x1(px - halfCap).y1(pyLow).x2(px + halfCap).y2(pyLow).stroke(stroke).strokeWidth(1.5)
+                                val capHigh =
+                                    Svg.line.x1(px - halfCap).y1(pyHigh).x2(px + halfCap).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
+                                val marker = Svg.circle.cx(px).cy(py).r(3.0).fill(stroke)
+                                acc.append(vLine).append(capLow).append(capHigh).append(marker)
+                            case _ => acc
+                        loopFlat(i + 1, nextAcc)
+                loopFlat(0, Chunk.empty)
+            case Present(_) =>
+                // Highlight present: group each row's 4 sub-shapes into an Svg.g tagged with the row.
+                // Grouping ensures applyHighlightStyle fires ONCE on the group (not 4 times on sub-shapes),
+                // so exactly 1 stroke="#000000" appears per highlighted row. SVG stroke inheritance propagates
+                // the highlight stroke to all child lines and the circle.
+                @scala.annotation.tailrec
+                def loopGrouped(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
+                    if i >= rows.size then acc
+                    else
+                        val row   = rows(i)
+                        val xd    = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        val yd    = mark.y.plottable.toDomain(mark.y.accessor(row))
+                        val lowD  = mark.low.plottable.toDomain(mark.low.accessor(row))
+                        val highD = mark.high.plottable.toDomain(mark.high.accessor(row))
+                        val nextAcc = (xd, yd, lowD, highD) match
+                            case (Present(x), Present(y), Present(lo), Present(hi)) =>
+                                val px     = xs.apply(x) + xs.bandwidth / 2.0
+                                val py     = ys.apply(y)
+                                val pyLow  = ys.apply(lo)
+                                val pyHigh = ys.apply(hi)
+                                val colorIdx = mark.color match
+                                    case Absent => -1
+                                    case Present(ch) =>
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
+                                        catIdxErr.getOrElse(catKey, -1)
+                                val color: Style.Color =
+                                    if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
+                                val stroke = Svg.Paint.Color(color)
+                                val vLine  = Svg.line.x1(px).y1(pyLow).x2(px).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
+                                val capLow = Svg.line.x1(px - halfCap).y1(pyLow).x2(px + halfCap).y2(pyLow).stroke(stroke).strokeWidth(1.5)
+                                val capHigh =
+                                    Svg.line.x1(px - halfCap).y1(pyHigh).x2(px + halfCap).y2(pyHigh).stroke(stroke).strokeWidth(1.5)
+                                val marker = Svg.circle.cx(px).cy(py).r(3.0).fill(stroke)
+                                val rowG   = Svg.g(vLine)(capLow)(capHigh)(marker)
+                                acc.append((row, rowG))
+                            case _ => acc
+                        loopGrouped(i + 1, nextAcc)
+                withHighlight(loopGrouped(0, Chunk.empty), highlight)
+        end match
+    end lowerErrorBar
+
+    /** Build one closed area path for a single series from `seriesRows`.
+      *
+      * Collects finite (px, py) points from `seriesRows` using the same band-centre projection as
+      * `lowerArea` (xs.apply(x) + xs.bandwidth / 2.0). Returns Absent when no finite points exist
+      * (e.g. all rows have undefined y), so the caller can flatMap over the Maybe and silently omit
+      * empty series, consistent with `lowerArea`'s own empty-guard.
+      *
+      * The path is always CLOSED: top edge via CurvePath.append, then lineTo the last x at baseline,
+      * lineTo the first x at baseline, then close. fillOpacity defaults to 0.7.
+      * The `mark.opacity` encoding overrides fillOpacity when Present; the encoding is sampled from the
+      * first row in `seriesRows` (the series-representative row, same as the interaction anchor).
+      *
+      * `fill` is the resolved fill color (the caller handles palette resolution so this helper is
+      * color-agnostic). `spec` and `internalHoverRef` are forwarded to `buildInteractionAttrs`
+      * unchanged, attaching click/hover handlers to the path.
+      */
+    private def buildSimpleAreaPath[A, X, Y](
+        seriesRows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        fill: Style.Color,
+        spec: Maybe[Chart[A]],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]]
+    )(using Frame): Maybe[Svg.SvgElement] =
+        mark.y match
+            case Absent => Absent
+            case Present(yEnc) =>
+                val baseline = layout.plotBaseline
+                // Collect (px, py) pairs, skipping non-finite values (NaN/Infinity produce corrupt SVG paths).
+                val points: Chunk[(Double, Double)] = seriesRows.flatMap: row =>
+                    yEnc.accessor(row) match
+                        case Absent => Chunk.empty
+                        case Present(yv) =>
+                            val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
+                            val yd = yEnc.plottable.toDomain(yv)
+                            (xd, yd) match
+                                case (Present(x), Present(y)) =>
+                                    // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0
+                                    // for continuous scales) so the area aligns with the centred tick labels.
+                                    val px = xs.apply(x) + xs.bandwidth / 2.0
+                                    val py = ys.apply(y)
+                                    if java.lang.Double.isFinite(px) && java.lang.Double.isFinite(py) then
+                                        Chunk((px, py))
+                                    else Chunk.empty
+                                case _ => Chunk.empty
+                            end match
+                if points.isEmpty then Absent
+                else
+                    // Top edge forward via CurvePath.
+                    val startPd = Svg.PathData.from(points(0)._1, points(0)._2)
+                    val topPd   = CurvePath.append(startPd, points.drop(1), mark.curve)
+                    // Baseline back: from last x at baseline to first x at baseline, then close.
+                    val lastX  = points(points.size - 1)._1
+                    val firstX = points(0)._1
+                    val pd2    = topPd.lineTo(lastX, baseline).lineTo(firstX, baseline).close
+                    // Apply opacity encoding if present; default fillOpacity=0.7.
+                    val baseOpacity = 0.7
+                    val opacity = mark.opacity match
+                        case Present(fn) =>
+                            seriesRows.headMaybe.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                        case Absent => baseOpacity
+                    val basePath = Svg.path.d(pd2).fill(Svg.Paint.Color(fill)).fillOpacity(opacity)
+                    val withTooltip = mark.tooltip match
+                        case Present(fn) =>
+                            seriesRows.headMaybe match
+                                case Present(r) => basePath(Svg.title(fn(r)))
+                                case Absent     => basePath
+                        case Absent => basePath
+                    // Attach interaction attrs to the area path.
+                    // The representative row is the first defined row.
+                    val withInteraction = spec match
+                        case Absent => withTooltip
+                        case Present(s) =>
+                            seriesRows.headMaybe match
+                                case Absent     => withTooltip
+                                case Present(r) => withTooltip.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+                    Present(withInteraction)
+                end if
+        end match
+    end buildSimpleAreaPath
+
+    /** Lower a `Mark.Area` to closed `Svg.Path`(s).
+      *
+      * Three dispatch paths:
+      *   1. `mark.stack.group` is `Present` and `mark.y` is `Present`: stacked area (groups sit atop each other).
+      *   2. `mark.y` is `Present` and no stack: per-color-series area(s) fill between y values and the plot
+      *      baseline; with a `color` encoding, one path per category (mirroring `lowerLine`); without, one path.
+      *   3. `mark.y` is `Absent`: the `y0`/`y1` band form (closed ribbon between two edges).
+      */
+    private def lowerArea[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color = DefaultPalette(0),
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        mark.y match
+            case Present(yEnc) =>
+                mark.stack.group match
+                    case Present(_) =>
+                        // Thread spec/internalHoverRef into stacked area so interaction fires per group.
+                        // Stacked area has no natural per-row identity; tag with the first row of rows
+                        // as the series-representative for highlight (series-level granularity).
+                        val stacked = lowerAreaStacked(rows, mark, yEnc, layout, xs, ys, spec, internalHoverRef)
+                        val repRow  = rows.headMaybe
+                        val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
+                            case Absent     => stacked.map(el => (rows(0), el)) // unreachable when stacked is non-empty
+                            case Present(r) => stacked.map(el => (r, el))
+                        withHighlight(tagged, highlight)
+                    case Absent =>
+                        // Non-stacked: dispatch on mark.color (mirrors lowerLine).
+                        // Each series path is tagged with its series-representative row for highlight.
+                        mark.color match
+                            case Absent =>
+                                // No color encoding: single series using the per-mark default color.
+                                val pathMaybe = buildSimpleAreaPath(rows, mark, layout, xs, ys, defaultColor, spec, internalHoverRef)
+                                val tagged: Chunk[(A, Svg.SvgElement)] = pathMaybe match
+                                    case Absent => Chunk.empty
+                                    case Present(path) =>
+                                        rows.headMaybe match
+                                            case Present(r) => Chunk((r, path))
+                                            case Absent     => Chunk.empty
+                                withHighlight(tagged, highlight)
+                            case Present(colorEnc) =>
+                                // Color encoding: split rows by category, one path per series.
+                                // resolvePalette falls back to theme.palette / DefaultPalette when no colorScale is set,
+                                // so a non-stacked area without a colorScale uses the theme palette.
+                                val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
+                                val cats: Chunk[(String, Any)] =
+                                    collectColorCategoriesWithRaw(rows, colorEncAny)
+                                val palette: Chunk[Style.Color] = spec match
+                                    case Present(s) => resolvePalette(s, cats)
+                                    case Absent     => DefaultPalette
+                                // Split rows by CatKey (tag + raw value), NOT by label toString: distinct color
+                                // values with a colliding toString must stay in separate series. `cats` was deduped
+                                // by CatKey, so cats[idx] aligns with the catKey filter at the same index.
+                                val catKeys: Chunk[ChartFoundations.CatKey] =
+                                    cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
+                                // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                                val rowsByKey = ChartFoundations.groupByKey(
+                                    rows,
+                                    r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r))
+                                )
+                                val tagged: Chunk[(A, Svg.SvgElement)] = catKeys.zipWithIndex.flatMap: (catKey, idx) =>
+                                    val seriesRows = rowsByKey.getOrElse(catKey, Chunk.empty)
+                                    val fillColor  = palette(idx % palette.size)
+                                    buildSimpleAreaPath(seriesRows, mark, layout, xs, ys, fillColor, spec, internalHoverRef) match
+                                        case Absent => Chunk.empty
+                                        case Present(path) =>
+                                            seriesRows.headMaybe match
+                                                case Present(r) => Chunk((r, path))
+                                                case Absent     => Chunk.empty
+                                    end match
+                                withHighlight(tagged, highlight)
+            case Absent =>
+                // y0/y1 band form: render a closed ribbon between the two edges.
+                // Tag the ribbon with the first row as the series-representative for highlight.
+                val ribbon = buildBandRibbon(rows, mark, xs, ys, defaultColor)
+                val repRow = rows.headMaybe
+                val tagged: Chunk[(A, Svg.SvgElement)] = repRow match
+                    case Absent     => Chunk.empty
+                    case Present(r) => ribbon.map(el => (r, el))
+                withHighlight(tagged, highlight)
+        end match
+    end lowerArea
+
+    /** Build the closed ribbon path for the area band form (`y0` and `y1` supplied, `y` absent).
+      *
+      * The ribbon runs forward along the y1 edge (curve-interpolated), then backward along the
+      * y0 edge, then closes. Invalid combinations (only `y0` or only `y1`, or neither) emit
+      * `Chunk.empty` so that sibling marks still render.
+      */
+    private def buildBandRibbon[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        fillColor: Style.Color
+    )(using Frame): Chunk[Svg.SvgElement] =
+        // Both y0 and y1 must be Present for a valid band.
+        (mark.y0, mark.y1) match
+            case (Present(ch0), Present(ch1)) =>
+                // Collect (xPx, y0Px, y1Px) triples for each row, skipping non-finite values (NaN/Infinity produce corrupt SVG paths).
+                val pts: Chunk[(Double, Double, Double)] = rows.flatMap: row =>
+                    val xd  = mark.x.plottable.toDomain(mark.x.accessor(row))
+                    val y0d = ch0.plottable.toDomain(ch0.accessor(row))
+                    val y1d = ch1.plottable.toDomain(ch1.accessor(row))
+                    (xd, y0d, y1d) match
+                        case (Present(xdom), Present(y0dom), Present(y1dom)) =>
+                            // Centre ribbon vertices on the band (xs.apply gives the band LEFT edge;
+                            // bandwidth is 0 for continuous scales). Mirrors line, point, and simple-area
+                            // which all add xs.bandwidth / 2.0 so that all marks align at the band center.
+                            val xPx  = xs.apply(xdom) + xs.bandwidth / 2.0
+                            val y0Px = ys.apply(y0dom)
+                            val y1Px = ys.apply(y1dom)
+                            if java.lang.Double.isFinite(xPx) && java.lang.Double.isFinite(y0Px) && java.lang.Double.isFinite(y1Px) then
+                                Chunk((xPx, y0Px, y1Px))
+                            else Chunk.empty
+                        case _ => Chunk.empty
+                    end match
+                if pts.isEmpty then Chunk.empty
+                else
+                    // Forward along y1 edge (curved per mark.curve).
+                    val y1pts     = pts.map(t => (t._1, t._3))
+                    val startPd   = Svg.PathData.from(y1pts(0)._1, y1pts(0)._2)
+                    val forwardPd = CurvePath.append(startPd, y1pts.drop(1), mark.curve)
+                    // Backward along y0 edge, traversed in reverse order, curved per mark.curve too:
+                    // both band edges must reflect the curve, not just the forward y1 edge.
+                    // The connecting edge from the last y1 vertex down to the last y0 vertex is a single
+                    // lineTo; the remaining reversed y0 vertices feed CurvePath.append so the y0 edge curves.
+                    val y0ptsRev    = Chunk.from(pts.reverse.map(t => (t._1, t._2)))
+                    val connectedPd = forwardPd.lineTo(y0ptsRev(0)._1, y0ptsRev(0)._2)
+                    val ribbonPd    = CurvePath.append(connectedPd, y0ptsRev.drop(1), mark.curve).close
+                    val baseOpacity = 0.7
+                    val opacity = mark.opacity match
+                        case Present(fn) =>
+                            rows.headMaybe.map(r => math.max(0.0, math.min(1.0, fn(r)))).getOrElse(baseOpacity)
+                        case Absent => baseOpacity
+                    val basePath = Svg.path.d(ribbonPd).fill(Svg.Paint.Color(fillColor)).fillOpacity(opacity)
+                    val withTooltip = mark.tooltip match
+                        case Present(fn) =>
+                            rows.headMaybe match
+                                case Present(r) => basePath(Svg.title(fn(r)))
+                                case Absent     => basePath
+                        case Absent => basePath
+                    Chunk(withTooltip)
+                end if
+            case _ =>
+                // Only one edge supplied or neither: invalid combo, skip deterministically.
+                Chunk.empty
+        end match
+    end buildBandRibbon
+
+    /** Lower a stacked `Mark.Area`: for each distinct group, emit a closed area path whose baseline is the
+      * top edge of the previous group at each x position.
+      *
+      * Groups are visited in encounter order (enum-ordinal order for enum group accessors). For
+      * `normalize = true`, the y contribution of each group at each x is expressed as a fraction of the
+      * total at that x, and the path fills to the plot height.
+      *
+      * For each group:
+      *   1. Compute `y0` (bottom of this band) as the sum of all previous groups' y values at each x.
+      *   2. Compute `y1` (top of this band) as `y0 + this group's y value`.
+      *   3. Emit a closed path: top edge forward (y1 points), then bottom edge backward (y0 points), close.
+      *   4. Skip emission entirely when the group contributes zero at every x slot.
+      */
+    private def lowerAreaStacked[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        yEnc: EncodingMaybe[A, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val groupFn  = mark.stack.group.getOrElse((_: A) => "")
+        val baseline = layout.plotBaseline
+        val plotTop  = layout.plotY
+
+        // Collect all distinct x keys in encounter order (O(rows), Set-backed via distinctKeyed).
+        val presentXKeys: Chunk[String] = rows.foldLeft(Chunk.empty[String]): (acc, row) =>
+            mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                case Present(d) => acc.append(domainKey(d))
+                case Absent     => acc
+        val xKeys: Chunk[String] =
+            ChartFoundations.distinctKeyed(presentXKeys, k => ChartFoundations.categoryKey(k)).map(_._2)
+
+        // Collect all distinct group keys in encounter order
+        val groupEnc: Encoding[A, Any] =
+            Encoding(groupFn, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+        val groupKeys: Chunk[String] = collectColorCategories(rows, groupEnc)
+        // Per-group palette, resolved the SAME way the stacked-bar path does so each band gets a
+        // distinct fill color (honoring a custom theme.palette; DefaultPalette under the default theme).
+        val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupEnc)
+        val groupPalette: Chunk[Style.Color] = spec match
+            case Present(s) => resolvePalette(s, groupCats)
+            case Absent     => resolvePaletteFromCfg(groupKeys)
+
+        // groupCatKeys: one CatKey per category in encounter/ordinal order, derived from the raw values
+        // in groupCats. Keys by CatKey (tag + raw value) so distinct group values with colliding toString
+        // stay separate.
+        val groupCatKeys: Chunk[ChartFoundations.CatKey] =
+            groupCats.map { case (_, raw) => ChartFoundations.categoryKey(groupEnc.tag, raw) }
+
+        // Precompute, in single passes: xKey -> first-seen x Domain (for band positioning) and
+        // groupCatKey -> first-seen row (for per-group interaction attrs). These replace the per-(group, x)
+        // and per-group linear `rows.find` scans inside loopGroups.
+        val xDomainByKey: Map[String, Domain] = rows.foldLeft(Map.empty[String, Domain]): (m, row) =>
+            mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                case Present(d) =>
+                    val k = domainKey(d)
+                    if m.contains(k) then m else m.updated(k, d)
+                case Absent => m
+        val rowByGroup: Map[ChartFoundations.CatKey, A] = rows.foldLeft(Map.empty[ChartFoundations.CatKey, A]): (m, row) =>
+            val gck = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
+            if m.contains(gck) then m else m.updated(gck, row)
+
+        // Build xKey -> groupCatKey -> yValue map.
+        // Keys by CatKey instead of toString so distinct group values with the same toString stay separate.
+        @scala.annotation.tailrec
+        def buildMap(i: Int, m: Map[String, Map[ChartFoundations.CatKey, Double]]): Map[String, Map[ChartFoundations.CatKey, Double]] =
+            if i >= rows.size then m
+            else
+                val row = rows(i)
+                val xKeyOpt = mark.x.plottable.toDomain(mark.x.accessor(row)) match
+                    case Present(d) => Present(domainKey(d))
+                    case Absent     => Absent
+                val yValOpt = yEnc.accessor(row) match
+                    case Present(yv) => yEnc.plottable.toDomain(yv) match
+                            case Present(Domain.Continuous(v)) => Present(v)
+                            case _                             => Absent
+                    case Absent => Absent
+                val next = (xKeyOpt, yValOpt) match
+                    case (Present(xk), Present(yv)) =>
+                        val gck   = ChartFoundations.categoryKey(groupEnc.tag, groupFn(row))
+                        val inner = m.getOrElse(xk, Map.empty)
+                        m.updated(xk, inner.updated(gck, yv))
+                    case _ => m
+                buildMap(i + 1, next)
+        val dataMap = buildMap(0, Map.empty)
+
+        // Compute per-x totals for normalization
+        val xTotals: Map[String, Double] = xKeys.foldLeft(Map.empty[String, Double]): (acc, xk) =>
+            val groupMap = dataMap.getOrElse(xk, Map.empty)
+            acc.updated(xk, groupCatKeys.foldLeft(0.0)((s, gck) => s + groupMap.getOrElse(gck, 0.0)))
+
+        // For each group, compute the pixel x values and the y0/y1 pixel pairs at each x slot.
+        // `accumulatedFractions` tracks, for each xKey, how much of the stack has been consumed so far.
+        @scala.annotation.tailrec
+        def loopGroups(
+            gi: Int,
+            accByX: Map[String, Double],
+            acc: Chunk[Svg.SvgElement]
+        ): Chunk[Svg.SvgElement] =
+            if gi >= groupCatKeys.size then acc
+            else
+                val gck = groupCatKeys(gi)
+
+                // Build (px, py0, py1) for each x slot in order
+                val bands: Chunk[(Double, Double, Double)] = xKeys.flatMap: xk =>
+                    val groupMap = dataMap.getOrElse(xk, Map.empty)
+                    val rawY     = groupMap.getOrElse(gck, 0.0)
+                    val accY     = accByX.getOrElse(xk, 0.0)
+                    val total    = xTotals.getOrElse(xk, 0.0)
+                    // Centre area vertices on the band (xs.apply gives the band LEFT edge; bandwidth is 0 for
+                    // continuous scales). Tick labels sit at band centres, so left-edge vertices leave the last
+                    // band slot empty (a wedge of unfilled plot to the right of the final vertex).
+                    val px =
+                        (Maybe.fromOption(xDomainByKey.get(xk)) match
+                            case Present(d) => xs.apply(d)
+                            case Absent     => xs.apply(Domain.Category(xk))
+                        ) + xs.bandwidth / 2.0
+                    val (py0, py1) =
+                        if mark.stack.normalize then
+                            val f0 = if total > 0.0 then accY / total else 0.0
+                            val f1 = if total > 0.0 then (accY + rawY) / total else 0.0
+                            (plotTop + (1.0 - f0) * layout.plotH, plotTop + (1.0 - f1) * layout.plotH)
+                        else
+                            val bot = if accY == 0.0 then baseline else ys.apply(Domain.Continuous(accY))
+                            val top = ys.apply(Domain.Continuous(accY + rawY))
+                            (bot, top)
+                    Chunk((px, py0, py1))
+
+                // Skip groups that contribute nothing at every x (no zero-height paths)
+                val hasContribution = xKeys.exists: xk =>
+                    dataMap.getOrElse(xk, Map.empty).getOrElse(gck, 0.0) > 0.0
+
+                val newAcc =
+                    if !hasContribution then acc
+                    else
+                        // Top edge forward (y1 values), then bottom edge backward (y0 values), then close
+                        val topEdge: Svg.PathData = bands.tail.foldLeft(
+                            Svg.PathData.from(bands(0)._1, bands(0)._3)
+                        ): (pd, b) =>
+                            pd.lineTo(b._1, b._3)
+                        val fullPath = bands.reverse.foldLeft(topEdge): (pd, b) =>
+                            pd.lineTo(b._1, b._2)
+                        // Fill each band in its group's palette color (mirrors the non-stacked area
+                        // convention: a color fill at 0.7 opacity), so stacked bands are not colorless.
+                        val groupColor = if gi < groupPalette.size then groupPalette(gi) else DefaultPalette(gi % DefaultPalette.size)
+                        val basePath   = Svg.path.d(fullPath.close).fill(Svg.Paint.Color(groupColor)).fillOpacity(0.7)
+                        // Attach interaction attrs to each group path.
+                        // The representative row is the first row in this group (precomputed in rowByGroup).
+                        val withInteraction = spec match
+                            case Absent => basePath
+                            case Present(s) =>
+                                Maybe.fromOption(rowByGroup.get(gck)) match
+                                    case Absent     => basePath
+                                    case Present(r) => basePath.withAttrs(buildInteractionAttrs(r, s, internalHoverRef))
+                        acc.append(withInteraction)
+
+                // Update accumulated fractions for the next group, but ONLY when the group
+                // was rendered (hasContribution). A skipped group must not add to accByX because
+                // that would corrupt later groups' baselines: they would appear to stack on top
+                // of a value that is not actually visible in the chart.
+                val newAccByX =
+                    if !hasContribution then accByX
+                    else
+                        xKeys.foldLeft(accByX): (m, xk) =>
+                            val groupMap = dataMap.getOrElse(xk, Map.empty)
+                            m.updated(xk, m.getOrElse(xk, 0.0) + groupMap.getOrElse(gck, 0.0))
+
+                loopGroups(gi + 1, newAccByX, newAcc)
+        loopGroups(0, Map.empty, Chunk.empty)
+    end lowerAreaStacked
+
+    /** Lower a `Mark.Point` to glyphs (circle, square, triangle, diamond, or cross).
+      *
+      * Color encoding: when `mark.color` is `Present`, rows are split by
+      * `ChartFoundations.categoryKey` and each category gets a distinct palette color
+      * via the same `resolvePalette` the legend uses. Without a `color` encoding, all
+      * points use `defaultColor`.
+      *
+      * Size encoding: `sizePx` overrides with raw pixel radius; `size` uses a
+      * sqrt-area scale built from the magnitude extent over all rows. Absent: `DefaultRadius`.
+      *
+      * Symbol encoding: dispatches on `Symbol` to circle (`Svg.circle`) or a
+      * path glyph helper (square, triangle, diamond, cross).
+      *
+      * Encodings: `opacity` sets `fillOpacity`; `label` emits an `Svg.text`
+      * above the glyph; `tooltip` attaches a `<title>` child.
+      */
+    private def lowerPoint[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Point[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        spec: Maybe[Chart[A]] = Absent,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        theme: Theme = Theme.default,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val separator = pointSeparatorColor(theme)
+
+        // Build the sqrt-area size scale once from the full row set.
+        val sizeScale: Maybe[SizeScale] = mark.size match
+            case Present(fn) =>
+                // Fold the magnitude extent, skipping rows with Absent y (gap rows).
+                @scala.annotation.tailrec
+                def foldMag(i: Int, mn: Double, mx: Double): (Double, Double) =
+                    if i >= rows.size then (mn, mx)
+                    else
+                        val row   = rows(i)
+                        val hasPt = mark.y.accessor(row).isDefined
+                        if hasPt then
+                            val mag = fn(row)
+                            foldMag(i + 1, math.min(mn, mag), math.max(mx, mag))
+                        else foldMag(i + 1, mn, mx)
+                        end if
+                val (magMin, magMax) = foldMag(0, Double.MaxValue, Double.MinValue)
+                val safeMin          = if magMin == Double.MaxValue then 0.0 else magMin
+                val safeMax          = if magMax == Double.MinValue then 0.0 else magMax
+                Present(SizeScale(safeMin, safeMax, SizeScale.DefaultRMin, SizeScale.DefaultRMax))
+            case Absent => Absent
+
+        // Resolve color categories when a `color` encoding is present.
+        // Carry the encoding's ConcreteTag so the colorByKey lookup keys raw values under the same
+        // stable, cross-platform type identity the per-row lookup uses below.
+        val colorResolved: Maybe[(Chunk[(String, Any)], Chunk[Style.Color], ConcreteTag[Any])] = mark.color match
+            case Present(colorEnc) =>
+                val cats = collectColorCategoriesWithRaw(rows, colorEnc)
+                val palette = spec match
+                    case Present(s) => resolvePalette(s, cats)
+                    case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette(i % DefaultPalette.size))
+                Present((cats, palette, colorEnc.tag.asInstanceOf[ConcreteTag[Any]]))
+            case Absent => Absent
+
+        // Build per-row color lookup: CatKey -> Style.Color.
+        val colorByKey: Map[ChartFoundations.CatKey, Style.Color] =
+            colorResolved match
+                case Absent => Map.empty
+                case Present((cats, palette, tag)) =>
+                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
+                        val ((label, raw), idx) = pair
+                        val key                 = ChartFoundations.categoryKey(tag, raw)
+                        val color               = if idx < palette.size then palette(idx) else DefaultPalette(idx % DefaultPalette.size)
+                        m.updated(key, color)
+
+        // Glyph elements are tagged with their source row so the built-in highlight can re-style the
+        // active row's glyph(s); label texts are not row-shapes and stay outside the highlight region.
+        @scala.annotation.tailrec
+        def loop(
+            i: Int,
+            glyphs: Chunk[(A, Svg.SvgElement)],
+            labels: Chunk[Svg.SvgElement]
+        ): (Chunk[(A, Svg.SvgElement)], Chunk[Svg.SvgElement]) =
+            if i >= rows.size then (glyphs, labels)
+            else
+                val row = rows(i)
+                val nextAcc: (Chunk[(A, Svg.SvgElement)], Chunk[Svg.SvgElement]) = mark.y.accessor(row) match
+                    case Absent => (glyphs, labels)
+                    case Present(yv) =>
+                        val xd = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        val yd = mark.y.plottable.toDomain(yv)
+                        (xd, yd) match
+                            case (Present(x), Present(y)) =>
+                                // Centre on the band (xs.apply is the band LEFT edge; bandwidth is 0 for
+                                // continuous scales) so glyphs align with the centred tick labels.
+                                val cx = xs.apply(x) + xs.bandwidth / 2.0
+                                val cy = ys.apply(y)
+                                // Skip non-finite pixel coordinates: they produce invisible or corrupt SVG elements.
+                                if !java.lang.Double.isFinite(cx) || !java.lang.Double.isFinite(cy) then (glyphs, labels)
+                                else
+                                    // Resolve radius: sizePx > size > DefaultRadius.
+                                    val r = mark.sizePx match
+                                        case Present(fn) => fn(row)
+                                        case Absent =>
+                                            sizeScale match
+                                                case Present(sc) => sc.radius(mark.size.map(_(row)).getOrElse(DefaultRadius))
+                                                case Absent      => DefaultRadius
+
+                                    // Resolve fill color.
+                                    val fillColor = mark.color match
+                                        case Absent => defaultColor
+                                        case Present(colorEnc) =>
+                                            val key = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(row))
+                                            colorByKey.getOrElse(key, defaultColor)
+
+                                    val iAttrs = spec.map(s => buildInteractionAttrs(row, s, internalHoverRef)).getOrElse(UI.Ast.Attrs())
+
+                                    // Resolve symbol and build the glyph shape.
+                                    val sym = mark.symbol.map(_(row)).getOrElse(Symbol.circle)
+
+                                    // Opacity encoding.
+                                    val opacity = mark.opacity match
+                                        case Present(fn) => Present(math.max(0.0, math.min(1.0, fn(row))))
+                                        case Absent      => Absent
+
+                                    // Build glyph elements (circle or path-based).
+                                    val glyphElems: Chunk[Svg.SvgElement] = sym match
+                                        case Symbol.circle =>
+                                            val base = Svg.circle
+                                                .cx(cx).cy(cy).r(r)
+                                                .fill(Svg.Paint.Color(fillColor))
+                                                .stroke(Svg.Paint.Color(separator))
+                                                .strokeWidth(PointStrokeWidth)
+                                                .withAttrs(iAttrs)
+                                            val withOp = opacity.fold(base)(op => base.fillOpacity(op))
+                                            val withTip = mark.tooltip match
+                                                case Present(fn) => withOp(Svg.title(fn(row)))
+                                                case Absent      => withOp
+                                            Chunk(withTip)
+                                        case Symbol.cross =>
+                                            // Cross: two perpendicular Svg.Line elements.
+                                            val h = Svg.line.x1(cx - r).y1(cy).x2(cx + r).y2(cy)
+                                                .stroke(Svg.Paint.Color(fillColor)).strokeWidth(PointStrokeWidth + 0.5)
+                                                .withAttrs(iAttrs)
+                                            val v = Svg.line.x1(cx).y1(cy - r).x2(cx).y2(cy + r)
+                                                .stroke(Svg.Paint.Color(fillColor)).strokeWidth(PointStrokeWidth + 0.5)
+                                            Chunk(h, v)
+                                        case _ =>
+                                            val pd = sym match
+                                                case Symbol.square   => squarePath(cx, cy, r)
+                                                case Symbol.triangle => trianglePath(cx, cy, r)
+                                                case Symbol.diamond  => diamondPath(cx, cy, r)
+                                                case _               => squarePath(cx, cy, r) // unreachable
+                                            val base = Svg.path.d(pd)
+                                                .fill(Svg.Paint.Color(fillColor))
+                                                .stroke(Svg.Paint.Color(separator))
+                                                .strokeWidth(PointStrokeWidth)
+                                                .withAttrs(iAttrs)
+                                            val withOp = opacity.fold(base)(op => base.fillOpacity(op))
+                                            val withTip = mark.tooltip match
+                                                case Present(fn) => withOp(Svg.title(fn(row)))
+                                                case Absent      => withOp
+                                            Chunk(withTip)
+
+                                    // Label encoding: emit Svg.text above the glyph.
+                                    val labelElems: Chunk[Svg.SvgElement] = mark.label match
+                                        case Present(fn) =>
+                                            val labelStr = fn(row)
+                                            Chunk(
+                                                Svg.text
+                                                    .x(cx)
+                                                    .y(cy - r - 2.0)
+                                                    .textAnchor(Svg.TextAnchor.Middle)
+                                                    .dominantBaseline(Svg.DominantBaseline.Auto)
+                                                    .fill(Svg.Paint.Color(fillColor))
+                                                    .apply(labelStr)
+                                            )
+                                        case Absent => Chunk.empty
+
+                                    (glyphs ++ glyphElems.map(g => (row, g)), labels ++ labelElems)
+                                end if
+                            case _ => (glyphs, labels)
+                        end match
+                loop(i + 1, nextAcc._1, nextAcc._2)
+        val (glyphs, labels) = loop(0, Chunk.empty, Chunk.empty)
+        withHighlight(glyphs, highlight) ++ labels
+    end lowerPoint
+
+    // ---- Symbol glyph path helpers ----
+
+    /** Square path centered at (cx, cy) with half-width r.
+      * Corners at (cx-r, cy-r), (cx+r, cy-r), (cx+r, cy+r), (cx-r, cy+r).
+      */
+    private def squarePath(cx: Double, cy: Double, r: Double): Svg.PathData =
+        Svg.PathData.from(cx - r, cy - r)
+            .lineTo(cx + r, cy - r)
+            .lineTo(cx + r, cy + r)
+            .lineTo(cx - r, cy + r)
+            .close
+
+    /** Equilateral triangle centered at (cx, cy) with circumradius r.
+      * Apex at (cx, cy-r); base vertices at (cx-r*sin(pi/3), cy+r/2) and (cx+r*sin(pi/3), cy+r/2).
+      */
+    private def trianglePath(cx: Double, cy: Double, r: Double): Svg.PathData =
+        val h = r * math.sin(math.Pi / 3.0)
+        Svg.PathData.from(cx, cy - r)
+            .lineTo(cx + h, cy + r / 2.0)
+            .lineTo(cx - h, cy + r / 2.0)
+            .close
+    end trianglePath
+
+    /** Diamond path (rotated square) centered at (cx, cy) with arm length r.
+      * Points: top (cx, cy-r), right (cx+r, cy), bottom (cx, cy+r), left (cx-r, cy).
+      */
+    private def diamondPath(cx: Double, cy: Double, r: Double): Svg.PathData =
+        Svg.PathData.from(cx, cy - r)
+            .lineTo(cx + r, cy)
+            .lineTo(cx, cy + r)
+            .lineTo(cx - r, cy)
+            .close
+
+    /** Lower a `Mark.Rule` to an `Svg.Line` spanning the full plot width (horizontal rule) or height (vertical rule).
+      *
+      * `Const` rule values produce a static `Svg.Line` immediately. `Reactive` rule values produce a
+      * `Svg.G` wrapping a `Reactive[Svg.Line]` so the line position tracks the signal. The returned
+      * `Chunk[Svg.SvgElement]` contains only static elements; call `lowerRuleChildren` when reactive
+      * rules must be included as `UI` children (which the marks region uses).
+      */
+    private def lowerRule[A](
+        mark: Mark.Rule[A],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale
+    )(using Frame): Chunk[Svg.SvgElement] =
+        lowerRuleChildren(mark, layout, xs, ys).collect:
+            case el: Svg.SvgElement => el
+
+    /** Lower a `Mark.Rule` to a `Chunk[UI]` that may include `Reactive` nodes.
+      *
+      * `Const` rule values produce a static `Svg.Line`. `Reactive` rule values produce a `Svg.G` whose
+      * single child is a `Reactive[Svg.Line]` that re-renders whenever the signal emits a new value. This
+      * `Svg.G` is itself a `Svg.SvgElement` so it fits into the marks-region fold without type widening.
+      *
+      * No `url(#id)` references are emitted (plain lines only).
+      */
+    private def lowerRuleChildren[A](
+        mark: Mark.Rule[A],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale
+    )(using Frame): Chunk[UI] =
+        val xChildren: Chunk[UI] = mark.x match
+            case Present(RuleValue.Const(v, pl)) =>
+                pl.asInstanceOf[Plottable[Any]].toDomain(v) match
+                    case Present(d) =>
+                        // For a category domain, place the vertical rule at the band center so the line
+                        // bisects the bar/data point rather than aligning to the band left wall.
+                        val leftEdge = xs.apply(d)
+                        val px = d match
+                            case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
+                            case _                  => leftEdge
+                        Chunk(Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline))
+                    case Absent => Chunk.empty
+            case Present(RuleValue.Reactive(signal, pl)) =>
+                // Unsafe: signal.asInstanceOf[Signal[Any]] is type-erasure-safe because RuleValue.Reactive
+                // carries the matching Plottable that was paired with the signal at construction time.
+                val reactiveChild: UI.Ast.Reactive[Svg.Line] =
+                    signal.asInstanceOf[Signal[Any]].render: v =>
+                        pl.asInstanceOf[Plottable[Any]].toDomain(v) match
+                            case Present(d) =>
+                                // For a category domain, place the vertical rule at the band center
+                                // (left edge + half bandwidth) rather than the band left edge, so the
+                                // line bisects the bar/data point rather than aligning to its left wall.
+                                val leftEdge = xs.apply(d)
+                                val px = d match
+                                    case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
+                                    case _                  => leftEdge
+                                Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline)
+                            case Absent =>
+                                // Absent value: emit a zero-length invisible line (not emitting nothing
+                                // avoids a type mismatch; the renderer skips zero-length lines).
+                                Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
+                val wrapper: Svg.G = Svg.g(reactiveChild)
+                Chunk(wrapper)
+            case _ => Chunk.empty
+        val yChildren: Chunk[UI] = mark.y match
+            case Present(RuleValue.Const(v, pl)) =>
+                pl.asInstanceOf[Plottable[Any]].toDomain(v) match
+                    case Present(d) =>
+                        val py = ys.apply(d)
+                        Chunk(Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py))
+                    case Absent => Chunk.empty
+            case Present(RuleValue.Reactive(signal, pl)) =>
+                val reactiveChild: UI.Ast.Reactive[Svg.Line] =
+                    signal.asInstanceOf[Signal[Any]].render: v =>
+                        pl.asInstanceOf[Plottable[Any]].toDomain(v) match
+                            case Present(d) =>
+                                val py = ys.apply(d)
+                                Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py)
+                            case Absent =>
+                                Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
+                val wrapper: Svg.G = Svg.g(reactiveChild)
+                Chunk(wrapper)
+            case _ => Chunk.empty
+        xChildren ++ yChildren
+    end lowerRuleChildren
+
+    // ---- keyed transitions and animation ----
+
+    /** Per-key geometry captured from one render frame.
+      *
+      * `Bar` stores the scaled height and y-coordinate so the next render can compute SMIL `from`/`to`
+      * values for bar SMIL transitions.
+      *
+      * `LinePath` stores the full `PathData` produced by the previous emission. On the next emission,
+      * if the new path has the same command count as the stored one (a structural match: same number
+      * of MoveTo/LineTo/Close in the same order), a declarative SMIL `animate` is emitted on the `d`
+      * attribute with `from` = the previous rendered `d` string and `to` = the new one. The browser
+      * drives the interpolation; no fiber is required, which fits the pure `Svg.Root` lowering.
+      *
+      * If the command counts DIFFER (e.g. a category was added or removed), the path SNAPS with no
+      * animate child. This is a documented v1 limitation: a structural path morph requires a bounded
+      * stepped-interpolation fiber that can only be launched from an effectful mount hook, which the
+      * pure `Svg.Root` lowering does not provide.
+      */
+    sealed private[kyo] trait MarkGeom
+    private[kyo] object MarkGeom:
+        final case class Bar(height: Double, y: Double)   extends MarkGeom
+        final case class LinePath(pathData: Svg.PathData) extends MarkGeom
+    end MarkGeom
+
+    /** Key type for the transition geometry maps (`fromGeom` / `currentGeom`).
+      *
+      * Keys transition geometry by value identity rather than by a display-label string, so two distinct
+      * color categories whose `toString` collides (e.g. both return `"color"`) stay distinct and never
+      * overwrite each other's stored geometry:
+      *
+      *   - `BarSlot(rowKey)`: a simple bar row, keyed by the x-domain string. The bar transition
+      *     uses `rowKey(spec, mark, row)` (x-domain string); `BarSlot` wraps it so it
+      *     never collides with a line/area key even if the strings are identical.
+      *   - `Series(markIdx, cat)`: a line or area color-category series keyed by `(markIdx, CatKey)`.
+      *     `CatKey` pairs the raw value with its compile-time-derived `ConcreteTag`, so two enum cases
+      *     with identical `toString` stay distinct.
+      *   - `SingleSeries(markIdx)`: a line or area with NO `color` encoding (single-path series). Uses
+      *     only `markIdx` as the key, so it cannot collide with any user-supplied category key.
+      */
+    private[kyo] enum TransKey derives CanEqual:
+        case BarSlot(rowKey: String)
+        case Series(markIdx: Int, cat: ChartFoundations.CatKey)
+        case SingleSeries(markIdx: Int)
+    end TransKey
+
+    /** Three-slot transition state for a live chart, held in a chart-private `AtomicRef.Unsafe`.
+      *
+      * Slots:
+      *   - `lastRows`: the row chunk used in the most-recently-committed render.
+      *   - `fromGeom`: the geometry that was current BEFORE the last row change (the animation origin).
+      *   - `currentGeom`: the geometry produced BY the last row change (the animation target).
+      *
+      * The three-slot design makes the render projection idempotent across repeated pulls of the same
+      * emission. On each call to `marksRegionWithTransitions(rows)`:
+      *   - if `rows == lastRows` (repeat pull of the same emission): use the stored `fromGeom` and
+      *     `currentGeom` unchanged; do NOT write the ref. Every repeat pull reproduces the same
+      *     from-to pair.
+      *   - else (a genuinely new emission): compute `newGeom` from the incoming rows; write
+      *     `TransState(rows, fromGeom = currentGeom, currentGeom = newGeom)`. This write happens
+      *     exactly once per distinct emission regardless of how many times the engine re-pulls it.
+      *
+      * Invariant: writes occur only when `rows != lastRows`. Repeated pulls of one emission are
+      * therefore idempotent: they always see the same stable `fromGeom`/`currentGeom` pair and
+      * produce identical SVG output. Writes are serialized by the reactive engine's single-threaded
+      * emission model, so no concurrent-write hazard exists.
+      */
+    final private[kyo] case class TransState[A](
+        lastRows: Chunk[A],
+        fromGeom: Map[TransKey, MarkGeom],
+        currentGeom: Map[TransKey, MarkGeom]
+    )
+
+    private[kyo] object TransState:
+        /** Initial state: empty sentinel last-rows so the first genuine emission is always treated as new.
+          *
+          * Both geometry maps are empty, so every key in the first emission is an ENTER (animates from
+          * the baseline). Repeat pulls of that first emission compare `rows == Chunk.empty` and reuse
+          * the stored from/to, which is the correct stable ENTER animation.
+          */
+        def empty[A]: TransState[A] = TransState(Chunk.empty[A], Map.empty, Map.empty)
+    end TransState
+
+    /** Compute the string key for a row in a given mark, using the spec's key function or falling back to
+      * the x encoding.
+      *
+      * Default: the x encoding's domain string (`domainKey`). Override: `spec.key` when `Present`.
+      */
+    private def rowKey[A](spec: Chart[A], mark: Mark[A], row: A): String =
+        spec.key match
+            case Present(kf) => kf(row)
+            case Absent =>
+                mark match
+                    case m: Mark.Bar[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Line[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Area[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Point[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.Text[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case m: Mark.ErrorBar[A, ?, ?] =>
+                        m.x.plottable.toDomain(m.x.accessor(row)) match
+                            case Present(d) => domainKey(d)
+                            case Absent     => ""
+                    case _: Mark.Rule[A] => ""
+    end rowKey
+
+    /** Format a `Duration` as a CSS/SMIL duration string (e.g. "0.3s"). */
+    private def formatDur(d: Duration): String =
+        val ms = d.toMillis
+        if ms % 1000 == 0 then s"${ms / 1000}s"
+        else s"${ms / 1000.0}s"
+    end formatDur
+
+    /** Cubic Bezier control points for the easeInOutCubic timing curve, in SMIL `keySplines` form
+      * (`x1 y1 x2 y2`). With `calcMode="spline"` + `keyTimes="0;1"` this eases the single from->to segment
+      * so the transition accelerates out of the start and decelerates into the end instead of moving
+      * linearly. Matches the `AnimateConfig` scaladoc's documented ease-in-out-cubic curve.
+      */
+    private val EaseInOutCubicSplines = "0.645 0.045 0.355 1"
+
+    /** Build one SMIL `Svg.Animate` child that animates a single numeric attribute over the config duration.
+      *
+      * Uses `begin("indefinite")` so the animation does NOT auto-play against the shared SVG document
+      * timeline (which would make any post-load reactive update snap straight to the frozen `to` value,
+      * since `begin="0s"` resolves to page-load time). Instead the reactive runtime calls `beginElement()`
+      * on each freshly-inserted `<animate>` after a mount/patch (DomBackend.beginAnimationsSync and the
+      * server client-script `ba(...)`), which starts the tween relative to insertion time. `repeatCount("1")`
+      * plays it once. No `url(#id)` references are emitted.
+      */
+    private def smilAnimate(attributeName: String, from: Double, to: Double, dur: String)(using Frame): Svg.Animate =
+        Svg.animate
+            .attributeName(attributeName)
+            .from(from)
+            .to(to)
+            .dur(dur)
+            .calcMode(Svg.CalcMode.Spline)
+            .keyTimes("0;1")
+            .keySplines(EaseInOutCubicSplines)
+            .begin("indefinite")
+            .repeatCount("1")
+    end smilAnimate
+
+    /** Build one SMIL `Svg.Animate` child that animates the `d` path attribute using string `from`/`to`.
+      *
+      * Used for the declarative line/area path morph: when the previous and new paths have the same
+      * command structure (same count and types), the browser interpolates the vertex coordinates.
+      * No `url(#id)` references are emitted.
+      */
+    private def smilAnimatePath(fromD: String, toD: String, dur: String)(using Frame): Svg.Animate =
+        Svg.animate
+            .attributeName("d")
+            .from(fromD)
+            .to(toD)
+            .dur(dur)
+            .calcMode(Svg.CalcMode.Spline)
+            .keyTimes("0;1")
+            .keySplines(EaseInOutCubicSplines)
+            .begin("indefinite")
+            .repeatCount("1")
+    end smilAnimatePath
+
+    /** Render a `PathData` to its SVG `d` attribute string, using the same format as `HtmlRenderer`.
+      *
+      * The result is identical to what `HtmlRenderer` would write for `svgAttr(sb, "d", ...)` so the
+      * SMIL `from`/`to` strings round-trip correctly through the browser's SMIL engine. Integers are
+      * rendered without a decimal point; fractions use the shortest representation.
+      *
+      * Used for path-morph SMIL `animate` children: the previous path's rendered string becomes `from`
+      * and the new path's rendered string becomes `to`.
+      */
+    private def renderPathDataStr(d: Svg.PathData): String =
+        def fmtD(v: Double): String = NumberFormat.double(v)
+        def cmd(c: Svg.PathCommand): String = c match
+            case Svg.PathCommand.MoveTo(x, y)   => s"M${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.MoveBy(dx, dy) => s"m${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.LineTo(x, y)   => s"L${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.LineBy(dx, dy) => s"l${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.HLineTo(x)     => s"H${fmtD(x)}"
+            case Svg.PathCommand.HLineBy(dx)    => s"h${fmtD(dx)}"
+            case Svg.PathCommand.VLineTo(y)     => s"V${fmtD(y)}"
+            case Svg.PathCommand.VLineBy(dy)    => s"v${fmtD(dy)}"
+            case Svg.PathCommand.CubicTo(c1x, c1y, c2x, c2y, x, y) =>
+                s"C${fmtD(c1x)} ${fmtD(c1y)} ${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.CubicBy(c1x, c1y, c2x, c2y, dx, dy) =>
+                s"c${fmtD(c1x)} ${fmtD(c1y)} ${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.SmoothCubicTo(c2x, c2y, x, y) =>
+                s"S${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.SmoothCubicBy(c2x, c2y, dx, dy) =>
+                s"s${fmtD(c2x)} ${fmtD(c2y)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.QuadTo(cx, cy, x, y)   => s"Q${fmtD(cx)} ${fmtD(cy)} ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.QuadBy(cx, cy, dx, dy) => s"q${fmtD(cx)} ${fmtD(cy)} ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.SmoothQuadTo(x, y)     => s"T${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.SmoothQuadBy(dx, dy)   => s"t${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.ArcTo(rx, ry, xRot, largeArc, sweep, x, y) =>
+                val la = if largeArc then 1 else 0
+                val sw = if sweep then 1 else 0
+                s"A${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(x)} ${fmtD(y)}"
+            case Svg.PathCommand.ArcBy(rx, ry, xRot, largeArc, sweep, dx, dy) =>
+                val la = if largeArc then 1 else 0
+                val sw = if sweep then 1 else 0
+                s"a${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(dx)} ${fmtD(dy)}"
+            case Svg.PathCommand.Close => "Z"
+        Svg.PathData.commands(d).map(cmd).mkString(" ")
+    end renderPathDataStr
+
+    /** Attach a SMIL path-morph animate to `rawPath` when the previous and new paths have the same
+      * command-type signature and animation is enabled; otherwise return `rawPath` unchanged.
+      *
+      * Used by both `lowerLineWithTransitions` and `lowerAreaWithTransitions` to avoid duplicating the
+      * prevSig/newSig comparison and smilAnimatePath call. `animOk` is checked first so callers do not
+      * need to guard the call themselves.
+      */
+    private def morphedPath(
+        rawPath: Svg.Path,
+        fromGeom: Map[TransKey, MarkGeom],
+        transKey: TransKey,
+        newPd: Svg.PathData,
+        animOk: Boolean,
+        durStr: String
+    )(using Frame): Svg.SvgElement =
+        if !animOk then rawPath
+        else
+            Maybe.fromOption(fromGeom.get(transKey)) match
+                case Present(MarkGeom.LinePath(prevPd)) =>
+                    // Compare command-type signatures (ordered ordinals), not just counts.
+                    // M-L-L and M-M-L both have 3 commands but different ordinals: the count
+                    // gate alone would wrongly morph between structurally incompatible paths.
+                    val prevSig = Svg.PathData.commands(prevPd).map(_.ordinal)
+                    val newSig  = Svg.PathData.commands(newPd).map(_.ordinal)
+                    if prevSig == newSig && prevSig.nonEmpty then
+                        val fromD = renderPathDataStr(prevPd)
+                        val toD   = renderPathDataStr(newPd)
+                        rawPath(smilAnimatePath(fromD, toD, durStr))
+                    else rawPath
+                    end if
+                case _ => rawPath
+    end morphedPath
+
+    /** Lower a simple bar mark with keyed enter/update SMIL transitions.
+      *
+      * For each row:
+      *   - UPDATE (key in `fromGeom`): emit a rect with two `Svg.Animate` children: one for `height`
+      *     (from previous height to new) and one for `y` (from previous y to new).
+      *   - ENTER (key absent in `fromGeom`): emit a rect with two `Svg.Animate` children where `from`
+      *     is the baseline (height=0, y=baseline), animating from the baseline up to the new position.
+      *   - DISABLED (animation not enabled): emit the rect with no animate children.
+      *
+      * Accumulates the new per-key `MarkGeom.Bar` into `newGeom` and returns it alongside the shapes.
+      * `fromGeom` is the stable animation-origin map for this emission (pre-computed by the caller from
+      * the `TransState`; not modified here).
+      */
+    private def lowerBarSimpleWithTransitions[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Bar[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        defaultFill: Style.Color,
+        spec: Chart[A],
+        fromGeom: Map[TransKey, MarkGeom],
+        newGeom: Map[TransKey, MarkGeom],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
+        // Use ys.apply(0) as the zero-line baseline (same reason as lowerBarSimple).
+        val baseline = ys.apply(Domain.Continuous(0.0))
+        val durStr   = formatDur(spec.animateCfg.duration)
+        val animOk   = spec.animateCfg.enabled
+        @scala.annotation.tailrec
+        def loop(
+            i: Int,
+            acc: Chunk[(A, Svg.SvgElement)],
+            geom: Map[TransKey, MarkGeom],
+            labels: Chunk[Svg.SvgElement]
+        ): (Chunk[(A, Svg.SvgElement)], Map[TransKey, MarkGeom], Chunk[Svg.SvgElement]) =
+            if i >= rows.size then (acc, geom, labels)
+            else
+                val row     = rows(i)
+                val yDomain = mark.y.plottable.toDomain(mark.y.accessor(row))
+                val nextResult = yDomain match
+                    case Absent => (acc, geom, labels)
+                    case Present(yd) =>
+                        val xDomain = mark.x.plottable.toDomain(mark.x.accessor(row))
+                        xDomain match
+                            case Absent => (acc, geom, labels)
+                            case Present(xd) =>
+                                val barX = xs.apply(xd)
+                                val barW = xs.bandwidth
+                                val barY = ys.apply(yd)
+                                // min/abs ensure a non-negative rect height for negative data values.
+                                val rectY    = math.min(barY, baseline)
+                                val rectH    = math.abs(baseline - barY)
+                                val transKey = TransKey.BarSlot(rowKey(spec, mark, row))
+                                val newG2    = geom.updated(transKey, MarkGeom.Bar(rectH, rectY))
+                                // Attach interaction attrs (mirrors lowerBarSimple: buildInteractionAttrs per row).
+                                val iAttrs = buildInteractionAttrs(row, spec, internalHoverRef)
+                                val baseRect =
+                                    Svg.rect.x(barX).y(rectY).width(barW).height(rectH).fill(Svg.Paint.Color(defaultFill)).withAttrs(iAttrs)
+                                val (decoratedRect, labelEls) = applyBarEncodings(baseRect, mark, row, barX, barW, rectY, defaultFill)
+                                val r: Svg.SvgElement =
+                                    if !animOk then decoratedRect
+                                    else
+                                        val (fromH, fromY) = Maybe.fromOption(fromGeom.get(transKey)) match
+                                            case Present(MarkGeom.Bar(ph, py)) => (ph, py)
+                                            case _                             => (0.0, baseline) // enter from baseline
+                                        // Unsafe: decoratedRect is a Svg.Rect at runtime (applyBarEncodings returns the rect with
+                                        // opacity/title applied; only .fillOpacity and .apply(ShapeChild) are called,
+                                        // both returning Svg.Rect). Cast back to Svg.Rect to attach the SMIL animate
+                                        // children. Child order: tooltip (<title>) added first by applyBarEncodings,
+                                        // animates follow: [<title>, <animate height>, <animate y>].
+                                        decoratedRect.asInstanceOf[Svg.Rect](
+                                            smilAnimate("height", fromH, rectH, durStr),
+                                            smilAnimate("y", fromY, rectY, durStr)
+                                        )
+                                (acc.append((row, r)), newG2, labels ++ labelEls)
+                        end match
+                loop(i + 1, nextResult._1, nextResult._2, nextResult._3)
+        val (bars, finalGeom, labels) = loop(0, Chunk.empty, newGeom, Chunk.empty)
+        // Wrap bar shapes with the built-in highlight region (mirrors lowerBarSimple).
+        (withHighlight(bars, highlight) ++ labels, finalGeom)
+    end lowerBarSimpleWithTransitions
+
+    /** Lower a line mark with keyed-transition awareness, emitting a declarative SMIL path morph when
+      * the previous and new paths have the same command structure.
+      *
+      * When animation is enabled and a previous `MarkGeom.LinePath` entry exists in `fromGeom` for the
+      * same path slot, the command-type signatures of the previous and new paths are compared:
+      *   - Same type signature (structural match, stable x-categories, changing y-values): the path is
+      *     emitted with one `Svg.animate` child `attributeName="d" from={prevD} to={newD}`. The browser
+      *     drives the interpolation declaratively; no fiber or mount hook is required.
+      *   - Different type signature (structural change, e.g. a gap introduction that inserts an extra
+      *     MoveTo, or a category added/removed): the path snaps with no animate child. This is a
+      *     documented v1 limitation: a structural path morph requires a bounded stepped-interpolation
+      *     fiber that can only be launched from an effectful mount hook, which the pure `Svg.Root`
+      *     lowering does not provide.
+      *
+      * The type-signature comparison (ordered list of PathCommand ordinals) is strictly stronger than a
+      * count comparison: `M L L` and `M M L` both have 3 commands but different ordinal sequences and
+      * MUST NOT morph (SVG `d` interpolation requires identical command-type sequences). A count-only gate
+      * would wrongly morph when a gap introduction keeps the total count the same but changes the command
+      * types (e.g. one segment with 3 points -> two segments with 1 and 2 points after a gap).
+      *
+      * The current `PathData` is always recorded in `newGeom` under a `TransKey` so the next emission can
+      * use it as the `from` path. Color-category series use `TransKey.Series(markIdx, catKey)`, where
+      * `catKey` is a `CatKey` (compile-time tag plus raw value) from `collectColorCategoriesWithRaw`; the
+      * no-color single-series case uses `TransKey.SingleSeries(markIdx)`. Because the key is keyed by
+      * category value identity, it is stable across series add/remove/reorder, a prior mark's
+      * geometry-count change does NOT shift a later mark's key, and two color categories with identical
+      * display labels (e.g. both `toString` = "color") stay distinct.
+      *
+      * No `url(#id)` references are emitted.
+      */
+    private def lowerLineWithTransitions[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Line[A, X, Y],
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        spec: Chart[A],
+        fromGeom: Map[TransKey, MarkGeom],
+        newGeom: Map[TransKey, MarkGeom],
+        markIdx: Int,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
+        val animOk = spec.animateCfg.enabled
+        val durStr = formatDur(spec.animateCfg.duration)
+        // rawPathsWithKey carries the TransKey (CatKey-based series identity) and the series-representative
+        // row alongside each path. TransKey.Series keys by value identity (CatKey = tag + value), so two
+        // enum cases with colliding toString stay distinct. TransKey.SingleSeries is used when there is no
+        // color encoding. Both keys are stable across series add/remove/reorder.
+        // The representative row (repRow) is needed for withHighlight (mirrors lowerLine's tagged approach).
+        val rawPathsWithKey: Chunk[(Svg.Path, TransKey, Maybe[A])] = mark.color match
+            case Absent =>
+                // No color encoding: single series. Use TransKey.SingleSeries(markIdx) as a stable key so
+                // it cannot collide with any color-encoding series key.
+                // Pass Present(spec) and internalHoverRef so interaction attrs are attached to the path.
+                val path = lowerLineSeries(rows, mark, xs, ys, defaultColor, Present(spec), internalHoverRef)
+                Chunk((path, TransKey.SingleSeries(markIdx), rows.headMaybe))
+            case Present(colorEnc) =>
+                // Transitions path, mirrors lowerLine: resolve per-series colors via resolvePalette
+                // (the same path the legend and the static line use) so an explicit categorical/sequential
+                // colorScale is honored and the animated line agrees with the legend. resolvePalette falls
+                // back to theme.palette then DefaultPalette when no colorScale is set, so an animated line
+                // without a colorScale uses the theme palette indexed by series position.
+                // collectColorCategoriesWithRaw and distinctKeyed dedupe by the SAME categoryKey, so
+                // resolved[seriesIdx] aligns with distinct[seriesIdx].
+                val cats: Chunk[(String, Any)]   = collectColorCategoriesWithRaw(rows, colorEnc)
+                val resolved: Chunk[Style.Color] = resolvePalette(spec, cats)
+                val distinct = ChartFoundations.distinctKeyed(
+                    rows,
+                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
+                )
+                // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                val rowsByKey = ChartFoundations.groupByKey(
+                    rows,
+                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
+                )
+                distinct.zipWithIndex.map:
+                    case ((catKey, rep), seriesIdx) =>
+                        val seriesRows = rowsByKey.getOrElse(catKey, Chunk.empty)
+                        val strokeColor =
+                            if resolved.isEmpty then DefaultPalette(seriesIdx % DefaultPalette.size)
+                            else resolved(seriesIdx                           % resolved.size)
+                        // TransKey.Series keys by (markIdx, CatKey): value identity, not toString label.
+                        // Two enum cases with identical toString stay distinct because CatKey pairs the
+                        // raw value with its compile-time ConcreteTag.
+                        val transKey = TransKey.Series(markIdx, catKey)
+                        // Pass Present(spec) and internalHoverRef so interaction attrs are attached.
+                        val path = lowerLineSeries(seriesRows, mark, xs, ys, strokeColor, Present(spec), internalHoverRef)
+                        (path, transKey, seriesRows.headMaybe)
+        // For each raw path: optionally attach a SMIL animate on `d`, then record the new PathData.
+        // Also accumulate (repRow, emittedPath) pairs for withHighlight (mirrors lowerLine's tagged approach).
+        // TransKey is stable per (mark identity, series category identity): a prior mark's geometry-count
+        // change does NOT shift this mark's key, and removing/reordering a color series does not cause a
+        // surviving series to look up a different series' prior geometry. Colliding-toString categories
+        // stay distinct because TransKey uses CatKey (tag + value), not the display label string.
+        val (tagged, updatedGeom) = rawPathsWithKey.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
+            case ((accTagged, accGeom), (rawPath, transKey, repRowMaybe)) =>
+                val newPd       = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                val newGeom2    = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
+                val emittedPath = morphedPath(rawPath, fromGeom, transKey, newPd, animOk, durStr)
+                val nextTagged = repRowMaybe match
+                    case Present(r) => accTagged.append((r, emittedPath))
+                    case Absent     => accTagged
+                (nextTagged, newGeom2)
+        // Wrap paths with the built-in highlight region, mirroring lowerLine's withHighlight call.
+        (withHighlight(tagged, highlight), updatedGeom)
+    end lowerLineWithTransitions
+
+    /** Lower an area mark with keyed-transition awareness, emitting a declarative SMIL path morph when
+      * the previous and new paths have the same command structure.
+      *
+      * Mirrors `lowerLineWithTransitions` for area paths. A simple (non-stacked) area mark produces one
+      * closed path; the SMIL morph fires when the previous path's command count equals the new one.
+      *
+      * Stacked area marks fall through to the plain `lowerArea` because multi-path stacking uses
+      * per-group path indices that would need per-group geometry tracking not yet plumbed in v1.
+      *
+      * Structural path morphs (different command-type signature) snap: see `lowerLineWithTransitions`
+      * scaladoc for the v1 limitation note and the type-signature rationale.
+      *
+      * No `url(#id)` references are emitted.
+      */
+    private def lowerAreaWithTransitions[A, X, Y](
+        rows: Chunk[A],
+        mark: Mark.Area[A, X, Y],
+        layout: Layout,
+        xs: Scale,
+        ys: Scale,
+        defaultColor: Style.Color,
+        spec: Chart[A],
+        fromGeom: Map[TransKey, MarkGeom],
+        newGeom: Map[TransKey, MarkGeom],
+        markIdx: Int,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent,
+        highlight: Maybe[Highlight[A]] = Absent
+    )(using Frame): (Chunk[Svg.SvgElement], Map[TransKey, MarkGeom]) =
+        // Stacked area: fall through to plain lowerArea (no per-group path tracking yet).
+        // Pass internalHoverRef and highlight so interaction and highlight fire for stacked paths too.
+        val isStacked = mark.y.isDefined && mark.stack.group.isDefined
+        if isStacked then
+            val elems = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef, highlight)
+            (elems, newGeom)
+        else
+            val animOk = spec.animateCfg.enabled
+            val durStr = formatDur(spec.animateCfg.duration)
+            // Forward Present(spec) so the non-stacked color-encoding arm resolves the
+            // palette via resolvePalette (honoring an explicit colorScale) instead of defaulting to
+            // DefaultPalette. Mirrors the lowerLineWithTransitions pattern.
+            // Pass internalHoverRef so buildSimpleAreaPath attaches interaction attrs to each raw path.
+            // Do NOT pass highlight here: lowerArea would call withHighlight internally, which wraps
+            // paths in Reactive[Svg.G] nodes that are not Svg.Path and would be dropped by .collect.
+            // Instead we apply withHighlight ourselves after SMIL is attached, using the repRows we
+            // compute below (mirrors lowerLineWithTransitions).
+            val rawPaths: Chunk[Svg.Path] = lowerArea(rows, mark, layout, xs, ys, defaultColor, Present(spec), internalHoverRef).collect:
+                case p: Svg.Path => p
+            // Compute TransKeys and representative rows for each series so the key for each area path
+            // is keyed by CatKey value identity rather than the label string. TransKey.Series(markIdx, catKey)
+            // keeps colliding-toString categories distinct. lowerArea emits one path per category in the
+            // ordinal order of collectColorCategoriesWithRaw, so rawPaths(i) corresponds to transKeys(i).
+            // For the no-color single-series case, use TransKey.SingleSeries(markIdx).
+            val (seriesTransKeys, seriesRepRows): (Chunk[TransKey], Chunk[Maybe[A]]) = mark.color match
+                case Absent => (Chunk(TransKey.SingleSeries(markIdx)), Chunk(rows.headMaybe))
+                case Present(colorEnc) =>
+                    val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
+                    val cats                          = collectColorCategoriesWithRaw(rows, colorEncAny)
+                    val catKeys: Chunk[ChartFoundations.CatKey] =
+                        cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
+                    val transKeys = catKeys.map(ck => TransKey.Series(markIdx, ck))
+                    // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
+                    val rowsByKey =
+                        ChartFoundations.groupByKey(rows, r => ChartFoundations.categoryKey(colorEncAny.tag, colorEncAny.accessor(r)))
+                    val repRows = catKeys.map(catKey => rowsByKey.getOrElse(catKey, Chunk.empty).headMaybe)
+                    (transKeys, repRows)
+            // TransKey is stable per (mark identity, series category identity): a prior mark's
+            // geometry-count change does NOT shift this mark's key, and removing/reordering a color
+            // series does not cause a surviving series to look up a different series' prior geometry.
+            // Colliding-toString categories stay distinct because TransKey uses CatKey (tag + value).
+            val (tagged, updatedGeom) = rawPaths.zipWithIndex.foldLeft((Chunk.empty[(A, Svg.SvgElement)], newGeom)):
+                case ((accTagged, accGeom), (rawPath, seriesIdx)) =>
+                    val transKey = if seriesIdx < seriesTransKeys.size then seriesTransKeys(seriesIdx) else TransKey.SingleSeries(markIdx)
+                    val newPd    = rawPath.svgAttrs.d.getOrElse(Svg.PathData.empty)
+                    val newGeom2 = accGeom.updated(transKey, MarkGeom.LinePath(newPd))
+                    val emittedPath = morphedPath(rawPath, fromGeom, transKey, newPd, animOk, durStr)
+                    val repRowMaybe = if seriesIdx < seriesRepRows.size then seriesRepRows(seriesIdx) else Absent
+                    val nextTagged = repRowMaybe match
+                        case Present(r) => accTagged.append((r, emittedPath))
+                        case Absent     => accTagged
+                    (nextTagged, newGeom2)
+            // Wrap area paths with the built-in highlight region, mirroring lowerArea's withHighlight call.
+            (withHighlight(tagged, highlight), updatedGeom)
+        end if
+    end lowerAreaWithTransitions
+
+    /** Build the marks region `Svg.G` for a reactive emission with keyed enter/update transitions.
+      *
+      * `stateRef` is the chart-private `AtomicRef.Unsafe[TransState[A]]` created once in `lowerLive`.
+      * On each call:
+      *   1. Read the current `TransState` `t`.
+      *   2. If `rows.equals(t.lastRows)` (repeat pull of the same emission): use `t.fromGeom` as the
+      *      animation origin and `t.currentGeom` as the target; do NOT write `stateRef`. Every repeat
+      *      pull sees the same stable pair and produces identical SVG output.
+      *   3. If `rows` differ from `t.lastRows` (genuinely new emission): produce shapes AND geometry
+      *      in a single pass; write `TransState(rows, fromGeom = t.currentGeom, currentGeom = newGeom)`
+      *      exactly once.
+      *
+      * The `==` comparison uses Chunk's structural equality. Writes are serialized by the reactive
+      * engine's single-threaded emission model, so no concurrent-write hazard exists.
+      *
+      * Unsafe: `stateRef.get()` and `stateRef.set()` bypass kyo effects tracking. This is sound
+      * because the ref is private to this chart instance and writes occur only on genuine row changes.
+      */
+    private def marksRegionWithTransitions[A](
+        rows: Chunk[A],
+        spec: Chart[A],
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale],
+        stateRef: AtomicRef.Unsafe[TransState[A]],
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+    )(using Frame, AllowUnsafe): Svg.G =
+        // Unsafe: stateRef is chart-private and its writes are serialized by the reactive engine's
+        // single-threaded emission model; reading it synchronously here (pure SVG projection, no
+        // suspension) is sound and carries no concurrent-write hazard.
+        val t            = stateRef.get()
+        val animOk       = spec.animateCfg.enabled
+        val isRepeatPull = rows.equals(t.lastRows)
+        // The animation origin is the geometry from the previous emission.
+        // For a repeat pull it is t.fromGeom (already stored); for a new emission it is t.currentGeom.
+        val fromGeom: Map[TransKey, MarkGeom] =
+            if isRepeatPull then t.fromGeom else t.currentGeom
+        // Produce SVG shapes and accumulate new geometry in a single pass.
+        // Each mark with no explicit color encoding uses a distinct palette color by its index (per-mark default).
+        val (shapes, newGeom) = spec.marks.zipWithIndex.foldLeft((Chunk.empty[Svg.SvgElement], Map.empty[TransKey, MarkGeom])):
+            case ((accElems, accGeom), (mark, markIdx)) =>
+                val markColor = markDefaultColor(spec.theme, markIdx)
+                val ys        = if markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
+                val highlight = resolveHighlight(Present(spec))
+                mark match
+                    case m: Mark.Bar[A, ?, ?] if m.stack.group.isEmpty && m.color.isEmpty =>
+                        // Simple ungrouped bar: supports keyed SMIL transitions.
+                        // fromGeom is the stable animation origin for this call (same on every pull of this emission).
+                        // Pass internalHoverRef and highlight so interaction handlers and the highlight region
+                        // fire on animated bars, mirroring the static lowerBarSimple path.
+                        val (elems, geom) = lowerBarSimpleWithTransitions(
+                            rows,
+                            m,
+                            xs,
+                            ys,
+                            markColor,
+                            spec,
+                            fromGeom,
+                            accGeom,
+                            internalHoverRef,
+                            highlight
+                        )
+                        (accElems ++ elems, geom)
+                    case m: Mark.Line[A, ?, ?] if animOk =>
+                        // Line path: declarative SMIL `d` morph when command counts match; snaps otherwise.
+                        // fromGeom carries the previous PathData for the `from` side of the SMIL animate.
+                        // Pass internalHoverRef and highlight so interaction and highlight fire on animated lines.
+                        val (elems, geom) = lowerLineWithTransitions(
+                            rows,
+                            m,
+                            xs,
+                            ys,
+                            markColor,
+                            spec,
+                            fromGeom,
+                            accGeom,
+                            markIdx,
+                            internalHoverRef,
+                            highlight
+                        )
+                        (accElems ++ elems, geom)
+                    case m: Mark.Area[A, ?, ?] if animOk =>
+                        // Area path: same declarative SMIL `d` morph discipline as line.
+                        // Pass internalHoverRef and highlight so interaction and highlight fire on animated areas.
+                        val (elems, geom) = lowerAreaWithTransitions(
+                            rows,
+                            m,
+                            layout,
+                            xs,
+                            ys,
+                            markColor,
+                            spec,
+                            fromGeom,
+                            accGeom,
+                            markIdx,
+                            internalHoverRef,
+                            highlight
+                        )
+                        (accElems ++ elems, geom)
+                    case m: Mark.Bar[A, ?, ?] =>
+                        (accElems ++ lowerBar(rows, m, layout, xs, ys, markColor, Present(spec), internalHoverRef), accGeom)
+                    // Pass highlight (pre-computed) and internalHoverRef for the static fallback paths (non-animated line/area).
+                    case m: Mark.Line[A, ?, ?] => (
+                            accElems ++ lowerLine(
+                                rows,
+                                m,
+                                xs,
+                                ys,
+                                markColor,
+                                Present(spec),
+                                internalHoverRef,
+                                highlight
+                            ),
+                            accGeom
+                        )
+                    case m: Mark.Area[A, ?, ?] => (
+                            accElems ++ lowerArea(
+                                rows,
+                                m,
+                                layout,
+                                xs,
+                                ys,
+                                markColor,
+                                Present(spec),
+                                internalHoverRef,
+                                highlight
+                            ),
+                            accGeom
+                        )
+                    case m: Mark.Point[A, ?, ?] =>
+                        (
+                            accElems ++ lowerPoint(
+                                rows,
+                                m,
+                                layout,
+                                xs,
+                                ys,
+                                markColor,
+                                Present(spec),
+                                internalHoverRef,
+                                spec.theme,
+                                highlight
+                            ),
+                            accGeom
+                        )
+                    case m: Mark.Rule[A] => (accElems ++ lowerRule(m, layout, xs, ys), accGeom)
+                    // Text/errorBar produce no geometry for morph tracking; elements are emitted.
+                    // Pass highlight (pre-computed) so the active text glyph / errorBar group gets the highlight stroke.
+                    case m: Mark.Text[A, ?, ?] =>
+                        (
+                            accElems ++ lowerText(m, rows, xs, ys, markColor, spec.theme, Present(spec), highlight),
+                            accGeom
+                        )
+                    case m: Mark.ErrorBar[A, ?, ?] =>
+                        (
+                            accElems ++ lowerErrorBar(
+                                m,
+                                rows,
+                                xs,
+                                ys,
+                                markColor,
+                                spec.theme,
+                                Present(spec),
+                                highlight
+                            ),
+                            accGeom
+                        )
+                end match
+        // Write the new state only when this is a genuinely new emission.
+        // On repeat pulls, the ref is left untouched so the next real emission still sees the correct fromGeom.
+        if !isRepeatPull then
+            stateRef.set(TransState(rows, fromGeom = t.currentGeom, currentGeom = newGeom))
+        shapes.foldLeft(Svg.g): (g, el) =>
+            el match
+                case r: Svg.Rect   => g(r)
+                case p: Svg.Path   => g(p)
+                case c: Svg.Circle => g(c)
+                case l: Svg.Line   => g(l)
+                case inner: Svg.G  => g(inner)
+                // Unsafe: `shapes` only ever holds the Svg element subtypes the lowerers emit, each of which is an
+                // `SvgElement & SvgChild`; the residual `other` arm restates that bound for elements not matched above.
+                case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+    end marksRegionWithTransitions
+
+    // ---- reactive helpers ----
+
+    /** Returns true when the y-scale's domain is fully determined by the `ScaleOverride` (not the data).
+      *
+      * A fixed domain means the y-axis ticks are independent of the live rows and can be drawn once in the
+      * static frame. An inferred domain means the ticks must live inside the reactive region so they update
+      * when the data changes.
+      */
+    private def isYDomainFixed(yOverride: Maybe[ScaleOverride]): Boolean =
+        yOverride.flatMap(_.kind) match
+            case Present(ScaleKind.Linear(_, _)) => true
+            case Present(ScaleKind.Log)          => true
+            case _                               => false
+    end isYDomainFixed
+
+    /** Build the domain-independent portion of the static frame for a live chart.
+      *
+      * Includes: background rect and axis lines. If the y-domain is fixed (by a `ScaleOverride`),
+      * also includes the full y-axis (ticks, labels, gridlines); otherwise the y-axis is omitted here and
+      * included inside the reactive region where it can update with the data. The legend is data-dependent and
+      * lives inside the reactive region, not here.
+      *
+      * The x-axis ticks and labels are NOT included in the static frame: they depend on the live x-scale
+      * (which tracks the current category set) and are therefore placed inside the reactive region by
+      * `buildReactiveRegion`. Only the axis border lines (bottom and left) are static.
+      *
+      * No `url(#id)` references are emitted.
+      */
+    private[kyo] def buildStaticFrameLive[A](
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale],
+        spec: Chart[A],
+        initialRows: Chunk[A]
+    )(using Frame): Chunk[Svg.SvgElement] =
+        val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+        val rightChrome   = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+        val gridColor     = gridlineColor(spec.theme)
+        val leftDrawGrid  = spec.yAxisCfg.showGrid
+        val rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+        val background    = buildBackground(layout, spec.theme)
+        val axisLines     = buildAxisLines(layout, ysR, spec.theme, leftChrome, rightChrome)
+        // The legend is NOT built here: it is data-dependent and lives inside the reactive region, where it
+        // reflects each emission's live category set. Building it from a one-shot sample would freeze it to the
+        // first emission's categories.
+        val yAxisElems: Chunk[Svg.SvgElement] =
+            if isYDomainFixed(spec.yScaleOverride) then
+                val leftAxis = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
+                val rightAxis = ysR match
+                    case Present(ysR_) =>
+                        buildYAxis(
+                            layout,
+                            ysR_,
+                            spec.yAxisRightCfg.getOrElse(AxisConfig.default),
+                            isRight = true,
+                            spec.theme,
+                            rightChrome,
+                            gridColor,
+                            rightDrawGrid
+                        )
+                    case Absent => Chunk.empty
+                leftAxis ++ rightAxis
+            else Chunk.empty
+        background ++ axisLines ++ yAxisElems
+    end buildStaticFrameLive
+
+    /** Build the reactive region `Svg.G` for one emission of the live signal.
+      *
+      * The x-axis ticks are always included here so they use the same live `xs` scale that drives the marks:
+      * for a band (categorical) x-axis the tick labels must match the actual category keys, which come from
+      * the data, not from an empty-rows initial resolution. Building them from `Chunk.empty` would produce a
+      * Linear [0,1] fallback and emit numeric labels (0, 0.25, ...) instead of the band category labels.
+      *
+      * When the y-domain is inferred from the data, the y-axis ticks are also included here so they update
+      * with the data range. When the y-domain is fixed, only the marks and x-axis are included (the static
+      * y-axis already lives in the outer frame).
+      *
+      * The returned `Svg.G` is the child that the engine replaces on each signal emission.
+      */
+    private def buildReactiveRegion[A](
+        rows: Chunk[A],
+        spec: Chart[A],
+        layout: Layout,
+        xs: Scale,
+        ysL: Scale,
+        ysR: Maybe[Scale],
+        stateRef: Maybe[AtomicRef.Unsafe[TransState[A]]],
+        gradPrefix: String,
+        internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = Absent
+    )(using Frame, AllowUnsafe): Svg.G =
+        // Interactive hidden-series filter: the marks drop rows whose color label is hidden; the
+        // legend keeps every category (built from the full emission rows) so a hidden series can be toggled on.
+        val visibleRows = visibleRowsFor(rows, spec)
+        val marksG = stateRef match
+            case Present(ref) => marksRegionWithTransitions(visibleRows, spec, layout, xs, ysL, ysR, ref, internalHoverRef)
+            case Absent       => marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
+        // Live legend: built per emission from the full rows so it reflects the current category set.
+        val legendElems = buildLegend(layout, spec, rows, gradPrefix)
+        val xAxisElems  = buildXAxis(layout, xs, spec.xAxisCfg, spec.theme)
+        if isYDomainFixed(spec.yScaleOverride) then
+            // Fixed y-domain: y-axis is static; only x-axis ticks, legend, and marks are reactive.
+            val xAxisG = (xAxisElems ++ legendElems).foldLeft(Svg.g): (g, el) =>
+                el match
+                    case l: Svg.Line => g(l)
+                    case t: Svg.Text => g(t)
+                    // Unsafe: the axis/legend builders only emit `Svg.Line`/`Svg.Text` (and the cases above);
+                    // every such element is an `SvgElement & SvgChild`, so the residual arm restates that bound.
+                    case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+            Svg.g(xAxisG)(marksG)
+        else
+            // Inferred domain: include y-axis ticks, x-axis ticks, and the legend inside the reactive region.
+            val leftChrome    = axisChromeColorFor(spec.theme, spec.marks, Axis.Left)
+            val rightChrome   = axisChromeColorFor(spec.theme, spec.marks, Axis.Right)
+            val gridColor     = gridlineColor(spec.theme)
+            val leftDrawGrid  = spec.yAxisCfg.showGrid
+            val rightDrawGrid = spec.yAxisRightCfg.exists(_.showGrid) && !leftDrawGrid
+            val leftAxisElems = buildYAxis(layout, ysL, spec.yAxisCfg, isRight = false, spec.theme, leftChrome, gridColor, leftDrawGrid)
+            val rightAxisElems = ysR match
+                case Present(ysR_) =>
+                    buildYAxis(
+                        layout,
+                        ysR_,
+                        spec.yAxisRightCfg.getOrElse(AxisConfig.default),
+                        isRight = true,
+                        spec.theme,
+                        rightChrome,
+                        gridColor,
+                        rightDrawGrid
+                    )
+                case Absent => Chunk.empty
+            val allElems: Chunk[Svg.SvgElement] = leftAxisElems ++ rightAxisElems ++ xAxisElems ++ legendElems
+            val axisG = allElems.foldLeft(Svg.g): (g, el) =>
+                el match
+                    case l: Svg.Line => g(l)
+                    case t: Svg.Text => g(t)
+                    // Unsafe: the axis/legend builders only emit `Svg.Line`/`Svg.Text` (and the cases above);
+                    // every such element is an `SvgElement & SvgChild`, so the residual arm restates that bound.
+                    case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+            Svg.g(axisG)(marksG)
+        end if
+    end buildReactiveRegion
+
+    /** Drop rows whose color category index is in the interactive legend's hidden set.
+      *
+      * When the legend is not interactive (or no `hiddenSeries` ref is attached), all rows are returned. The
+      * hidden indices are read synchronously from the user's ref; the index derivation mirrors the legend's
+      * category list (collectColorCategoriesWithRaw order), so toggling index i hides exactly the rows
+      * belonging to the i-th color category. Two categories with colliding `toString` values get distinct
+      * indices and can be toggled independently.
+      */
+    private def visibleRowsFor[A](rows: Chunk[A], spec: Chart[A])(using AllowUnsafe): Chunk[A] =
+        spec.legendCfg.hiddenSeries match
+            case Absent       => rows
+            case Present(ref) =>
+                // Unsafe: a synchronous read of the user's SignalRef. Sound because this runs inside the pure
+                // reactive projection (buildReactiveRegion) / synchronous static lowering; the ref is read, not
+                // written, and the filter is a pure function of its current value.
+                val hidden = ref.unsafe.get()
+                if hidden.isEmpty then rows
+                else
+                    legendEncoding(spec.marks) match
+                        case Present(ch) =>
+                            val colorEnc = ch.asInstanceOf[Encoding[A, Any]]
+                            // Build a CatKey -> index map from the same ordered color-category list the legend uses.
+                            val catsList = collectColorCategoriesWithRaw(rows, colorEnc)
+                            val idxByKey: Map[ChartFoundations.CatKey, Int] =
+                                catsList.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, pair) =>
+                                    val ((_, raw), idx) = pair
+                                    m.updated(ChartFoundations.categoryKey(colorEnc.tag, raw), idx)
+                            rows.filter: r =>
+                                val key = ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
+                                !hidden.contains(idxByKey.getOrElse(key, -1))
+                        case Absent => rows
+                end if
+    end visibleRowsFor
+
+    /** Lower a `Chart[A]` with a `DataSource.Live` signal to an `Svg.Root`.
+      *
+      * The static frame (background, axis lines, and the y-axis when the domain is fixed) is drawn once. The
+      * marks region, the legend, the x-axis, and (when the domain is inferred) the y-axis ticks are wrapped in
+      * `signal.render` so they re-render on each emission. The legend reflects each emission's live category set.
+      *
+      * Partition logic:
+      *   - Fixed domain (`yScale(_.linear(lo,hi))` or `yScale(_.log)`): the y-scale is computed once from the
+      *     override, so the y-axis is static. Only the marks `Svg.G` is reactive.
+      *   - Inferred domain (default): the y-scale is recomputed from each new batch of rows. Both the y-axis
+      *     ticks and the marks live inside the reactive `Svg.G` so the tick labels update with the data.
+      *
+      * The x-scale is always computed from the first emission via `initialRows`. For a categorically-typed x
+      * axis (band scale) the category set is fixed to the initial categories; dynamic category insertion
+      * requires re-resolving the x-scale reactively, which is not yet implemented.
+      *
+      * When `spec.animateCfg.enabled` is true, a chart-private `AtomicRef.Unsafe[TransState[A]]` is
+      * created once and closed over by the reactive render function. The `TransState` carries three slots:
+      * `lastRows` (the row chunk of the last committed render), `fromGeom` (animation origin), and
+      * `currentGeom` (animation target). Each call to the render projection compares the incoming rows to
+      * `lastRows`. A new emission writes the ref once; repeat pulls of the same emission reuse the stored
+      * from/to and produce identical SVG, making the projection idempotent. Bar marks emit SMIL `animate`
+      * children. Line and area marks emit a declarative SMIL `d` morph when the command-type signature
+      * of the previous and new paths matches (same ordered sequence of MoveTo/LineTo/Close types); they
+      * snap with no animate child when the signature differs (structural change such as a gap introduction
+      * or a category add/remove).
+      *
+      * No `url(#id)` references are emitted; `Frame.internal` is safe.
+      *
+      * Unsafe boundary: `stateRef` uses `AtomicRef.Unsafe` so it can be read and written from within the
+      * pure render function. The ref is private to this chart instance and writes occur only on genuine row
+      * changes, so the bypass is sound.
+      */
+    private[kyo] def lowerLive[A](spec: Chart[A], signal: Signal[Chunk[A]], gradPrefix: String)(using Frame, AllowUnsafe): Svg.Root =
+        val layout = buildLayout(spec)
+        // Use a fixed initial row set for the layout/x-scale/ysR-presence check.
+        // The x-scale is computed from the signal's current value via initConst or the first emission.
+        // We resolve from Chunk.empty to get a stable layout; the reactive region re-resolves the y-scale
+        // per emission.
+        val initialRows: Chunk[A] = Chunk.empty
+        val hasRight = spec.marks.exists:
+            case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?]    => m.axis == Axis.Right
+            case _: Mark.Rule[A]           => false
+            case _: Mark.Text[A, ?, ?]     => false
+            case _: Mark.ErrorBar[A, ?, ?] => false
+        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        // Resolve initial scales for the static frame using resolveAllScales.
+        val ResolvedScales(xs, ysLInitial, ysRFixed) =
+            resolveAllScales(
+                initialRows,
+                spec.marks,
+                layout,
+                spec.xScaleOverride,
+                spec.yScaleOverride,
+                computeRight,
+                spec.xAxisCfg,
+                spec.yAxisCfg,
+                spec.yScaleRightOverride,
+                spec.yAxisRightCfg.getOrElse(AxisConfig.default)
+            )
+        // For fixed domain, compute ysL once from the override; for inferred domain, ysL is recomputed per
+        // emission inside the reactive region.
+        val ysLFixed: Maybe[Scale] =
+            if isYDomainFixed(spec.yScaleOverride) then Present(ysLInitial) else Absent
+        // Static frame: drawn once, never changes.
+        val ysLForFrame = ysLFixed.getOrElse(ysLInitial)
+        val staticFrame = buildStaticFrameLive(layout, xs, ysLForFrame, ysRFixed, spec, initialRows)
+        val vb          = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
+        val baseSvg     = buildBaseSvg(spec, layout, vb)
+        val withFrame = staticFrame.foldLeft(baseSvg): (acc, el) =>
+            el match
+                case r: Svg.Rect => acc(r)
+                case l: Svg.Line => acc(l)
+                case t: Svg.Text => acc(t)
+                case g: Svg.G    => acc(g)
+                // Unsafe: the static frame only holds `Svg.Rect`/`Line`/`Text`/`G` (the cases above); each is an
+                // `SvgElement & SvgChild`, so the residual arm restates that bound for any element not matched.
+                case other => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+        // Create the chart-private transition-state ref when animation is enabled.
+        // Unsafe: AtomicRef.Unsafe bypasses kyo effects tracking; sound because the ref is private to this
+        // chart and writes occur only on genuine row changes (idempotent within any single emission).
+        val stateRefMaybe: Maybe[AtomicRef.Unsafe[TransState[A]]] =
+            if spec.animateCfg.enabled then
+                Present(AtomicRef.Unsafe.init(TransState.empty[A]))
+            else Absent
+        // Create an internal hover ref when a tooltip is configured so shape handlers can drive it.
+        // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
+        val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
+            case Present(_) =>
+                given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
+                Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
+            case Absent => Absent
+        // Reactive region: re-renders on each signal emission.
+        val reactiveMarks: UI.Ast.Reactive[Svg.G] = signal.render: rows =>
+            // Re-resolve scales from the current rows so categorical axes expand when categories are added.
+            val ResolvedScales(xsLive, ysLLiveResolved, ysRLive) =
+                resolveAllScales(
+                    rows,
+                    spec.marks,
+                    layout,
+                    spec.xScaleOverride,
+                    spec.yScaleOverride,
+                    computeRight,
+                    spec.xAxisCfg,
+                    spec.yAxisCfg,
+                    spec.yScaleRightOverride,
+                    spec.yAxisRightCfg.getOrElse(AxisConfig.default)
+                )
+            val ysLLive = ysLFixed.getOrElse(ysLLiveResolved)
+            buildReactiveRegion(rows, spec, layout, xsLive, ysLLive, ysRLive, stateRefMaybe, gradPrefix, internalHoverRef)
+        val withMarks = withFrame(reactiveMarks)
+        // Append the tooltip overlay as the last child so it renders on top.
+        (spec.tooltip, internalHoverRef) match
+            case (Present(fn), Present(ref)) =>
+                withMarks(buildTooltipOverlay(ref, fn, layout))
+            case _ =>
+                withMarks
+        end match
+    end lowerLive
+
+    // ---- main entry point ----
+
+    /** Lower a `Chart[A]` to an `Svg.Root`.
+      *
+      * Dispatches to `lowerStatic` for `DataSource.Static` and `lowerLive` for `DataSource.Live`.
+      *
+      * A fresh document-unique id prefix is allocated per lowering (`chartInstancePrefix`) so a
+      * sequential-color gradient def gets an id distinct from any other lowered chart on the page, even
+      * another lowering of the same spec. Within one chart the gradient def id and its `url(#id)` reference
+      * always match (the def carries the prefix-derived `defId`, the swatch fill references the same id).
+      */
+    private[kyo] def lower[A](spec: Chart[A])(using AllowUnsafe): Svg.Root =
+        given Frame    = Frame.internal
+        val gradPrefix = ChartFoundations.chartInstancePrefix()
+        spec.data match
+            case DataSource.Static(rows) => lowerStatic(rows, spec, gradPrefix)
+            case DataSource.Live(signal) => lowerLive(spec, signal, gradPrefix)
+        end match
+    end lower
+
+    /** Lower a `Chart[A]` to an `Svg.Root` together with its resolved scales.
+      *
+      * The returned `ChartScales` projects the same resolved `xs`/`ysL`/`ysR` the lowering used, plus the inner
+      * plot rectangle, so callers can compute exact chart pixel coordinates. For a live chart the scales are
+      * resolved from the signal's current value at call time.
+      */
+    private[kyo] def lowerWithScales[A](spec: Chart[A])(using AllowUnsafe): (Svg.Root, Chart.Scales) =
+        given Frame = Frame.internal
+        val rows: Chunk[A] = spec.data match
+            case DataSource.Static(rs)   => rs
+            case DataSource.Live(signal) =>
+                // For a live chart, sample the current emission so the scales match what is on screen now.
+                // Unsafe: evalOrThrow runs the pure synchronous current-value read; the escape hatch is a
+                // point-in-time projection, documented to reflect the signal value at call time.
+                // Cannot throw: signal.current returns A < Sync (no Abort in scope), so Abort.run yields
+                // Result.Ok and getOrThrow never executes the throw branch.
+                Sync.Unsafe.evalOrThrow(signal.current)
+        val layout = buildLayout(spec)
+        val hasRight = spec.marks.exists:
+            case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?]    => m.axis == Axis.Right
+            case _: Mark.Rule[A]           => false
+            case _: Mark.Text[A, ?, ?]     => false
+            case _: Mark.ErrorBar[A, ?, ?] => false
+        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        val ResolvedScales(xs, ysL, ysR) =
+            resolveAllScales(
+                rows,
+                spec.marks,
+                layout,
+                spec.xScaleOverride,
+                spec.yScaleOverride,
+                computeRight,
+                spec.xAxisCfg,
+                spec.yAxisCfg,
+                spec.yScaleRightOverride,
+                spec.yAxisRightCfg.getOrElse(AxisConfig.default)
+            )
+        val plot   = Chart.Scales.Rect(layout.plotX, layout.plotY, layout.plotW, layout.plotH)
+        val scales = Chart.Scales.from(xs, ysL, ysR, plot)
+        val svg    = lower(spec)
+        (svg, scales)
+    end lowerWithScales
+
+    /** Build a tooltip overlay `Reactive[Svg.G]` driven by the chart's internal hover ref.
+      *
+      * When the hover ref holds `Present(row)`, the overlay renders a translucent rect background and
+      * a text label formatted by `spec.tooltip`. When `Absent`, it renders an empty `Svg.g`. The
+      * overlay is placed in the upper-left of the plot area and drawn last so it appears on top.
+      *
+      * The `internalHoverRef` is created once per chart instance (in `lowerStatic`/`lowerLive`) and
+      * is separate from `spec.onHover` so the tooltip can work without a user-visible hover ref.
+      *
+      * No `url(#id)` references are emitted (plain rect + text).
+      */
+    private def buildTooltipOverlay[A](
+        internalHoverRef: Signal.SignalRef[Maybe[A]],
+        tooltipFn: A => String,
+        layout: Layout
+    )(using Frame): UI.Ast.Reactive[Svg.G] =
+        internalHoverRef.render:
+            case Present(row) =>
+                val label = tooltipFn(row)
+                val tipX  = layout.plotX + 8.0
+                val tipY  = layout.plotY + 8.0
+                Svg.g(
+                    Svg.rect
+                        .x(tipX - 4.0)
+                        .y(tipY - 14.0)
+                        .width((label.length * 7.0 + 8.0) max 40.0)
+                        .height(20.0)
+                        .fill(Svg.Paint.Color(Style.Color.white))
+                        .fillOpacity(0.85),
+                    Svg.text
+                        .x(tipX)
+                        .y(tipY)
+                        .dominantBaseline(Svg.DominantBaseline.Auto)
+                        .apply(label)
+                )
+            case Absent =>
+                Svg.g
+    end buildTooltipOverlay
+
+    /** Build the root `<svg>` with responsive sizing and a11y attributes applied.
+      *
+      * Responsive: when `spec.isResponsive`, the root uses `width="100%"` and a `viewBox` (no fixed
+      * pixel `height`) so the chart scales to its container; an explicit `aspectRatio` adds a `preserveAspectRatio`.
+      * A11y: `spec.a11y.title`/`desc` become `<title>`/`<desc>` children; a title implies the generic
+      * `role="img"` builder, and `ariaLabel` sets the generic `aria-label`. All attrs use the generic UI builders;
+      * no chart-specific hardwiring in the renderer.
+      */
+    private def buildBaseSvg[A](spec: Chart[A], layout: Layout, vb: Svg.ViewBox)(using Frame): Svg.Root =
+        val sized =
+            if spec.isResponsive then
+                val base = Svg.svg.width(Svg.SvgLength.Pct(100.0)).viewBox(vb)
+                spec.aspectRatio match
+                    case Present(_) =>
+                        base.preserveAspectRatio(Svg.PreserveAspectRatio(Svg.Align.XMidYMid, Svg.MeetOrSlice.Meet))
+                    case Absent => base
+                end match
+            else Svg.svg.width(layout.svgW).height(layout.svgH).viewBox(vb)
+        val withTitle = spec.a11y.title.fold(sized)(t => sized(Svg.title(t)))
+        val withDesc  = spec.a11y.desc.fold(withTitle)(d => withTitle(Svg.desc(d)))
+        val withRole  = if spec.a11y.title.isDefined then withDesc.role("img") else withDesc
+        spec.a11y.ariaLabel.fold(withRole)(lbl => withRole.aria("label", lbl))
+    end buildBaseSvg
+
+    private def lowerStatic[A](rows: Chunk[A], spec: Chart[A], gradPrefix: String)(using Frame, AllowUnsafe): Svg.Root =
+        val layout = buildLayout(spec)
+        val hasRight = spec.marks.exists:
+            case m: Mark.Bar[A, ?, ?]      => m.axis == Axis.Right
+            case m: Mark.Line[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Area[A, ?, ?]     => m.axis == Axis.Right
+            case m: Mark.Point[A, ?, ?]    => m.axis == Axis.Right
+            case _: Mark.Rule[A]           => false
+            case _: Mark.Text[A, ?, ?]     => false
+            case _: Mark.ErrorBar[A, ?, ?] => false
+        val computeRight = hasRight || spec.yAxisRightCfg.isDefined
+        val ResolvedScales(xs, ysL, ysR) =
+            resolveAllScales(
+                rows,
+                spec.marks,
+                layout,
+                spec.xScaleOverride,
+                spec.yScaleOverride,
+                computeRight,
+                spec.xAxisCfg,
+                spec.yAxisCfg,
+                spec.yScaleRightOverride,
+                spec.yAxisRightCfg.getOrElse(AxisConfig.default)
+            )
+        val vb = Svg.ViewBox(0.0, 0.0, layout.svgW, layout.svgH)
+        // Interactive hidden-series filter: the marks drop hidden rows; the legend keeps every
+        // category (built from the full rows) so the user can still toggle a hidden series back on.
+        val visibleRows = visibleRowsFor(rows, spec)
+        val frame       = buildFrame(layout, xs, ysL, ysR, spec, rows, gradPrefix)
+        // Create an internal hover ref when a tooltip is configured so shape handlers can drive it.
+        // Unsafe: SignalRef.Unsafe.init bypasses kyo effects; sound because the ref is private to this chart.
+        val internalHoverRef: Maybe[Signal.SignalRef[Maybe[A]]] = spec.tooltip match
+            case Present(_) =>
+                given CanEqual[Maybe[A], Maybe[A]] = CanEqual.derived
+                Present(Signal.SignalRef.Unsafe.init[Maybe[A]](Absent).safe)
+            case Absent => Absent
+        val marksG  = marksRegion(visibleRows, spec.marks, layout, xs, ysL, ysR, Present(spec), internalHoverRef)
+        val baseSvg = buildBaseSvg(spec, layout, vb)
+        val withFrame = frame.foldLeft(baseSvg): (acc, el) =>
+            el match
+                case r: Svg.Rect => acc(r)
+                case l: Svg.Line => acc(l)
+                case t: Svg.Text => acc(t)
+                case g: Svg.G    => acc(g)
+                // Unsafe: the static frame only holds `Svg.Rect`/`Line`/`Text`/`G` (the cases above); each is an
+                // `SvgElement & SvgChild`, so the residual arm restates that bound for any element not matched.
+                case other => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+        val withMarks = withFrame(marksG)
+        // Append the tooltip overlay as the last child so it renders on top.
+        (spec.tooltip, internalHoverRef) match
+            case (Present(fn), Present(ref)) =>
+                withMarks(buildTooltipOverlay(ref, fn, layout))
+            case _ =>
+                withMarks
+        end match
+    end lowerStatic
+
+end ChartLower

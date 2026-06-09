@@ -91,10 +91,22 @@ object Svg:
     def feDisplacementMap(using Frame): FeDisplacementMap = FeDisplacementMap()
 
     // ---- factories: SMIL animation ----
-    def animate(using Frame): Animate                   = Animate()
+
+    /** Builds a `<animate>` element that animates a single SVG attribute over time. */
+    def animate(using Frame): Animate = Animate()
+
+    /** Builds a `<animateTransform>` element that animates a transform attribute
+      * (translate, scale, rotate, skewX, skewY) on the parent element over time.
+      */
     def animateTransform(using Frame): AnimateTransform = AnimateTransform()
-    def animateMotion(using Frame): AnimateMotion       = AnimateMotion()
-    def set(using Frame): SetAnim                       = SetAnim()
+
+    /** Builds a `<animateMotion>` element that moves the parent element along a path. */
+    def animateMotion(using Frame): AnimateMotion = AnimateMotion()
+
+    /** Builds a `<set>` animation element. Named `SetAnim` in the API to avoid clashing
+      * with `scala.collection.Set`; this factory is the canonical entry point.
+      */
+    def set(using Frame): SetAnim = SetAnim()
 
     // ---- AST root ----
 
@@ -319,6 +331,20 @@ object Svg:
         case Translate, Scale, Rotate, SkewX, SkewY
     end TransformType
 
+    /** `animate` `calcMode`: the interpolation mode between keyframe values. Cases render to their lowercase SVG
+      * tokens (`Discrete -> "discrete"`, `Spline -> "spline"`, ...). `Spline` is the mode that activates
+      * `keySplines`.
+      */
+    enum CalcMode derives CanEqual:
+        case Discrete, Linear, Paced, Spline
+    end CalcMode
+
+    private def calcModeToken(v: CalcMode): String = v match
+        case CalcMode.Discrete => "discrete"
+        case CalcMode.Linear   => "linear"
+        case CalcMode.Paced    => "paced"
+        case CalcMode.Spline   => "spline"
+
     // ---- SVG attribute bag ----
 
     /** Typed presentation/geometry attributes for an SVG element. Separate from CSS
@@ -422,6 +448,9 @@ object Svg:
         animDur: Maybe[String] = Absent,
         animRepeatCount: Maybe[String] = Absent,
         animBegin: Maybe[String] = Absent,
+        animCalcMode: Maybe[String] = Absent,
+        animKeyTimes: Maybe[String] = Absent,
+        animKeySplines: Maybe[String] = Absent,
         animType: Maybe[TransformType] = Absent
     )
 
@@ -1066,8 +1095,16 @@ object Svg:
 
     // ---- SMIL animation: leaf elements placed inside a shape via ShapeChild ----
 
-    /** `<animate>`: animates a single attribute over time. Numeric `from`/`to` overloads
-      * format with the shared `NumberFormat.double` encoder (so `from(20.0)` is `"20"`).
+    /** `<animate>`: the SMIL element that animates a single attribute of its parent shape over time.
+      *
+      * Name the target attribute with `attributeName`, then describe the value trajectory. Use `from`/`to`
+      * for a two-point tween, or `values` for a multi-keyframe list. Numeric `from`/`to` overloads format
+      * with the shared `NumberFormat.double` encoder (so `from(20.0)` is `"20"`). Timing is set with `dur`,
+      * `begin`, and `repeatCount`.
+      *
+      * The interpolation curve is selected with `calcMode`; `CalcMode.Spline` is the mode that activates the
+      * `keySplines` control points, while `keyTimes` fixes when each keyframe value applies. This is a leaf
+      * child placed inside a shape via `ShapeChild`, not a standalone element.
       */
     final case class Animate(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
@@ -1084,8 +1121,34 @@ object Svg:
         def dur(v: String): Animate           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): Animate   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): Animate         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+
+        /** Sets the interpolation mode between keyframe values. `CalcMode.Spline` is the mode that activates
+          * `keySplines`; the other modes ignore it.
+          */
+        def calcMode(v: CalcMode): Animate = withSvg(svgAttrs.copy(animCalcMode = Present(calcModeToken(v))))
+
+        /** Sets the `keyTimes` list (semicolon-separated fractions in `[0,1]`) defining when each keyframe value
+          * applies.
+          */
+        def keyTimes(v: String): Animate = withSvg(svgAttrs.copy(animKeyTimes = Present(v)))
+
+        /** Sets the `keySplines` control points for spline interpolation. Requires `calcMode = CalcMode.Spline` to
+          * take effect.
+          */
+        def keySplines(v: String): Animate = withSvg(svgAttrs.copy(animKeySplines = Present(v)))
     end Animate
 
+    /** `<animateTransform>`: the SMIL element that animates a transform attribute on its parent element over
+      * time.
+      *
+      * The `type` setter selects the transform kind (`Translate`, `Scale`, `Rotate`, `SkewX`, or `SkewY`).
+      * The `from`/`to` values are the transform arguments formatted as a space-separated string per the SVG
+      * spec (e.g., `"0 0"` for translate). Use `attributeName` to specify which transform attribute to
+      * animate (typically `"transform"`).
+      *
+      * Timing is controlled by `dur`, `begin`, and `repeatCount`. Like `Animate`, this is a leaf child placed
+      * inside a shape via `ShapeChild`.
+      */
     final case class AnimateTransform(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
     ) extends SvgElement:
@@ -1101,6 +1164,15 @@ object Svg:
         def begin(v: String): AnimateTransform         = withSvg(svgAttrs.copy(animBegin = Present(v)))
     end AnimateTransform
 
+    /** `<animateMotion>`: the SMIL element that moves its parent element along a motion path over time.
+      *
+      * The `path` setter accepts a `PathData` value (the same `d` attribute used by `<path>`) describing the
+      * trajectory the element follows. Timing is controlled by `dur` and `repeatCount`.
+      *
+      * Unlike `Animate`, this element does not take `attributeName` because it always targets the implicit
+      * motion path transform of the parent. Like the other SMIL leaves, it is placed inside a shape via
+      * `ShapeChild`.
+      */
     final case class AnimateMotion(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame
     ) extends SvgElement:
@@ -1112,8 +1184,14 @@ object Svg:
         def repeatCount(v: String): AnimateMotion = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
     end AnimateMotion
 
-    /** `<set>`: sets an attribute to a value at a time. Named `SetAnim` to avoid clashing
-      * with `scala.collection.Set`; the factory is `Svg.set`.
+    /** `<set>`: the SMIL element that sets an attribute of its parent shape to a single value at a given time.
+      *
+      * Name the target attribute with `attributeName`, supply the value with `to`, and schedule the change
+      * with `begin`. Unlike `Animate`, there is no interpolation: the attribute jumps to the value at the
+      * scheduled time and holds it. This is the discrete-change counterpart to the tweening SMIL elements.
+      *
+      * Named `SetAnim` to avoid clashing with `scala.collection.Set`; the factory is `Svg.set`. Like the
+      * other SMIL leaves, it is placed inside a shape via `ShapeChild`.
       */
     final case class SetAnim(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
         val frame: Frame

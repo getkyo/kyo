@@ -22,7 +22,7 @@ private[kyo] object HtmlRenderer:
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(esc(sessionId), esc(basePath))}</script>
+           |<script>${clientJs(jsStr(sessionId), jsStr(basePath))}</script>
            |</body>
            |</html>""".stripMargin
 
@@ -246,6 +246,7 @@ private[kyo] object HtmlRenderer:
         attrs.ariaAttrs.toSeq.sortBy(_._1).foreach { case (name, value) =>
             w(sb, s""" aria-$name="${esc(value)}"""")
         }
+        attrs.role.foreach(r => w(sb, s""" role="${esc(r)}""""))
         attrs.dataAttrs.toSeq.sortBy(_._1).foreach { case (name, value) =>
             w(sb, s""" data-$name="${esc(value)}"""")
         }
@@ -526,6 +527,41 @@ private[kyo] object HtmlRenderer:
         sb.toString
     end esc
 
+    // Escape a string for safe embedding inside a JS double-quoted string literal within a
+    // <script> element. Must handle both JS parse hazards and the HTML parser's raw-text
+    // model: </script> (or </Script> etc.) ends the script element regardless of JS context.
+    //
+    // Rules applied, in order:
+    //   \  -> \\   (backslash first, before any escape that produces \)
+    //   "  -> \"   (closing double-quote)
+    //   '  -> \'   (single-quote, safe-by-default)
+    //  \r  -> \r   (CR, JS line terminator)
+    //  \n  -> \n   (LF, JS line terminator)
+    // U+2028 -> U+2028  (LINE SEPARATOR, JS line terminator)
+    // U+2029 -> U+2029  (PARAGRAPH SEPARATOR, JS line terminator)
+    //  </  -> <\/  (prevents </script> from closing the element; < alone is harmless in JS)
+    private def jsStr(s: String): String =
+        val sb = new StringBuilder(s.length)
+        var i  = 0
+        while i < s.length do
+            s.charAt(i) match
+                case '\\' => sb.append("\\\\")
+                case '"'  => sb.append("\\\"")
+                case '\'' => sb.append("\\'")
+                case '\r' => sb.append("\\r")
+                case '\n' => sb.append("\\n")
+                case ' '  => sb.append("\\u2028")
+                case ' '  => sb.append("\\u2029")
+                case '<' if i + 1 < s.length && s.charAt(i + 1) == '/' =>
+                    sb.append("<\\/")
+                    i += 1
+                case c => sb.append(c)
+            end match
+            i += 1
+        end while
+        sb.toString
+    end jsStr
+
     // ---- Client JS ----
 
     private def clientJs(sessionId: String, basePath: String): String =
@@ -570,7 +606,7 @@ private[kyo] object HtmlRenderer:
            |      var ss=(ae&&typeof ae.selectionStart==='number')?ae.selectionStart:null;
            |      var se=(ae&&typeof ae.selectionEnd==='number')?ae.selectionEnd:null;
            |      el.outerHTML=op.Replace.html;
-           |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel)applyJsProps(nel);
+           |      var nel=document.querySelector('[data-kyo-path="'+p+'"]');if(nel){applyJsProps(nel);ba(nel);}
            |      if(ap){var rf=document.querySelector('[data-kyo-path="'+ap+'"]');if(rf&&rf.hasAttribute&&rf.hasAttribute('data-kyo-reactive')){var inner=rf.querySelector('input,textarea,select,[contenteditable]');if(inner)rf=inner;}if(rf){rf.focus();if(ss!==null&&typeof rf.setSelectionRange==='function'){try{rf.setSelectionRange(ss,se);}catch(e){if(e.name!=='InvalidStateError')throw e;}}}}
            |    }
            |  }else if(op.Remove){
@@ -643,7 +679,17 @@ private[kyo] object HtmlRenderer:
            |    for(var k=0;k<rem.length;k++)el.removeAttribute(rem[k]);
            |  }
            |}
-           |applyJsProps(document.body);
+           |// Start freshly-inserted SMIL animations. Chart transition <animate> elements use
+           |// begin="indefinite" so they do not auto-play against the shared document timeline (which would
+           |// snap a post-load update to its frozen end value); beginElement() starts them relative to the
+           |// insertion. Deferred one frame so the SMIL engine has registered the new nodes.
+           |function ba(root){
+           |  if(!root||!root.querySelectorAll)return;
+           |  var an=root.querySelectorAll("animate,animateTransform,animateMotion");
+           |  if(!an.length)return;
+           |  requestAnimationFrame(function(){for(var i=0;i<an.length;i++){try{an[i].beginElement();}catch(e){}}});
+           |}
+           |applyJsProps(document.body);ba(document.body);
            |// Dropdown helpers: close all dropdowns except the given id
            |function kyoCloseDropdown(exceptId){
            |  var all=document.querySelectorAll('[data-kyo-dropdown-options]');
@@ -1097,6 +1143,9 @@ private[kyo] object HtmlRenderer:
                 s.animTo.foreach(v => svgAttr(sb, "to", v))
                 s.animValues.foreach(v => svgAttr(sb, "values", v))
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
+                s.animCalcMode.foreach(v => svgAttr(sb, "calcMode", v))
+                s.animKeyTimes.foreach(v => svgAttr(sb, "keyTimes", v))
+                s.animKeySplines.foreach(v => svgAttr(sb, "keySplines", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
             case _: Svg.AnimateTransform =>

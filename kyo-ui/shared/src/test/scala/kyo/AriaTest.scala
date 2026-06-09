@@ -88,4 +88,30 @@ class AriaTest extends kyo.test.Test[Any]:
         }
     }
 
+    // ---- role: the bare `role` HTML attribute, distinct from aria-role ----
+
+    "role(v) renders the bare role attribute on div" in {
+        val html = renderHtml(UI.div.role("button"))
+        html.map { s =>
+            assert(s.contains("""role="button""""))
+            // It must be the bare `role`, not `aria-role`.
+            assert(!s.contains("""aria-role="button""""))
+        }
+    }
+
+    "no role set emits no role attribute" in {
+        val html = renderHtml(UI.div("x"))
+        html.map { s =>
+            assert(!s.contains("role="), s"Expected no role attribute but got: $s")
+        }
+    }
+
+    "role and aria-role are distinct attributes and both render" in {
+        val html = renderHtml(UI.div.role("img").aria("role", "button"))
+        html.map { s =>
+            assert(s.contains("""role="img""""), s"missing bare role: $s")
+            assert(s.contains("""aria-role="button""""), s"missing aria-role: $s")
+        }
+    }
+
 end AriaTest
