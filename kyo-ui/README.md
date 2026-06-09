@@ -813,113 +813,122 @@ The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`
 
 ## Charts
 
-A chart is built from your data and a list of marks, and lowers to an `Svg.Root` (the typed [SVG](#svg) layer, covered later) you can drop into any `UI` container. Marks take their mappings as named parameters, so accessor lambdas like `_.revenue` infer their types with no annotations.
+A `Chart` is a pure immutable spec, not a `UI` node. You describe what to plot from your data and a list of marks, and nothing renders until you call `.lower`, which yields an `Svg.Root`. `Svg.Root` is the one SVG type that is also `HtmlContent` (the typed [SVG](#svg) layer, covered later), so a lowered chart drops into any `UI` container exactly where an `<svg>` root fits. Lowering suspends in `Sync` because it allocates the chart's reactive state and samples live data once, so you thread it like any other effect.
 
-### A first chart
+The running fixtures (`Region`, `Sale`, `sales`) are defined once at the top of this README. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later. `Region` derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site.
 
-`Chart(data)` opens a chart over a `Seq[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
+### One chart, end to end
 
-Every example below shares one running domain. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later by the band and error-bar examples. The `region` enum derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site:
-
-```scala doctest:expect=skipped
-enum Region derives CanEqual, Plottable:
-    case NA, EU, APAC
-
-case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
-
-val sales: Seq[Sale] = Seq(
-    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
-    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
-)
-```
-
-With that domain in scope, the first chart is one `bar` mark over `sales` plus a horizontal `rule` baseline:
+The smallest chart is `Chart(data)(mark)`. The first application fixes the row type `A` from `data`; the second names the visual layers. This two-group shape is load-bearing: binding `A` before the mark lambdas are read is what lets `x = _.month` infer with no annotation. Lowering turns the spec into an `Svg.Root < Sync`, and you embed it by threading that effect into a `UI.div`:
 
 ```scala
 val firstChart: Svg.Root < Sync =
-    Chart(sales)(
-        Chart.bar(x = _.month, y = _.revenue, color = _.region),
-        Chart.rule(y = 1000.0)
-    )
-        .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
-        .legend(_.top)
-        .size(640, 360)
-        .lower
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
 
 val view: UI < Sync =
     for chart <- firstChart
     yield UI.div(UI.h2("Revenue by region"), chart)
 ```
 
-The `rule` mark's `y` takes a plain `Double` threshold; it also accepts a `Signal[Double]` for a threshold that tracks a signal, with no wrapper either way. `.lower` suspends the `Chart` into a `Sync` effect and produces an `Svg.Root` (because lowering allocates the chart's reactive state), so you embed it by threading the effect: `for chart <- spec.lower yield UI.div(UI.h2(...), chart)`.
+That is the whole pipeline: `Chart(data)(marks*)`, optional configuration, `.lower`, embed. Everything below refines one of those steps.
 
-### Marks compose; there is no chart zoo
+### Marks are the visual vocabulary
 
-There is one `Chart` and a list of marks. The mark you pick, and the parameters you map onto it, determine the chart type:
+There is one `Chart` type and a list of marks. The mark you choose, and the channels you map onto it, decide the chart kind. The seven factories are `bar`, `line`, `area`, `point`, `text`, `errorBar`, and `rule`:
 
 ```scala
 val barChart: Svg.Root < Sync  = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
 val lineChart: Svg.Root < Sync = Chart(sales)(Chart.line(x = _.month, y = _.revenue)).lower
 val scatter: Svg.Root < Sync   = Chart(sales)(Chart.point(x = _.lo, y = _.hi)).lower
+val areaChart: Svg.Root < Sync = Chart(sales)(Chart.area(x = _.month, y = _.revenue)).lower
 ```
 
-A combo chart is two marks in the same list. Marks share the chart's x-scale automatically:
+Many marks can layer over the same rows. A combo chart is just two marks in one list; they share the chart's x-scale automatically:
 
 ```scala
 val combo: Svg.Root < Sync =
     Chart(sales)(
         Chart.bar(x = _.month, y = _.revenue),
-        Chart.line(x = _.month, y = _.hi),
-        Chart.rule(y = 50000.0)
+        Chart.line(x = _.month, y = _.hi)
     ).lower
 ```
 
-A `point` mark carries `size` (a magnitude scaled by square-root area, so the eye reads area not radius) and `sizePx` (a raw-pixel-radius escape hatch). If you supply both, `size` wins and `sizePx` is silently dropped:
+Every mark maps its data through named parameters, never chained method calls. The named form is what keeps the accessor lambdas inferring: a hypothetical chained `.color(_.region)` would collapse the row type to `Any`. Beyond `x` and `y`, channels are optional named parameters. `color` groups rows and derives a legend; `stack` (built with `Chart.by`) stacks grouped series:
+
+```scala
+val grouped: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region)).lower
+
+val stacked: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region))).lower
+
+val normalized: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true))).lower
+```
+
+Each factory exposes only the channels that make sense for it, and the rest do not compile. A `bar`'s magnitude is its `y`, so `bar` has no `size`. A `point` carries `size` (a magnitude scaled by square-root area, so the eye reads area, not radius) and `sizePx` (a raw-pixel-radius escape hatch); if you pass both, `size` wins. The `symbol` parameter picks the glyph from `Chart.Symbol` (`circle`, `square`, `triangle`, `diamond`, `cross`):
 
 ```scala
 val bubbles: Svg.Root < Sync =
     Chart(sales)(Chart.point(x = _.month, y = _.revenue, size = _.hi)).lower
-```
 
-The `symbol` parameter selects the glyph for each point from the `Chart.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
-
-```scala
 val diamonds: Svg.Root < Sync =
     Chart(sales)(Chart.point(x = _.lo, y = _.hi, symbol = _ => Chart.Symbol.diamond)).lower
 ```
 
-### Named parameters
-
-Each mark maps its data through named parameters, not chained method calls. This is what keeps the accessor lambdas inferring without annotations. A chained `.color(by = _.region)` after `bar(...)` would collapse the row type to `Any`; the named form does not:
+`line` and `area` take a `curve` channel that selects the interpolation between vertices, drawn from `Curve` (`linear`, `monotone`, `stepBefore`, `stepAfter`, `basis`, `catmullRom`):
 
 ```scala
-// named parameter: row type inferred before the lambda is read
-val grouped = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
-
-// stack carries its grouping; normalize is a named parameter
-val stacked    = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region)))
-val normalized = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true)))
+val smooth: Svg.Root < Sync =
+    Chart(sales)(Chart.line(x = _.month, y = _.revenue, curve = Curve.monotone)).lower
 ```
 
-> **Note:** Mark factories gate capability by omission. `bar` has no `symbol` or `size` parameter; `rule` has no `color` or `size`. If a mark does not offer a given parameter, the type system rejects any attempt to pass it: there is no runtime flag to check and no silent no-op.
+### Reference lines with `rule`
 
-### Typed values
-
-The scale for each parameter is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically (`Region` above gets one from `derives ... Plottable`), and an opaque numeric type can supply one with `Plottable.numeric`. So in the running domain `Region` selects a band (categorical) x-scale and `revenue: Double` selects a linear y-scale, with no annotation at the call site:
+A `rule` is the one mark that reads no row. It draws a reference line at a fixed position, such as a target or threshold, so it has no `color` or `size` channel. Its `y` (or `x`) takes a plain constant, and an implicit conversion lets you pass the bare value with no wrapper:
 
 ```scala
-// month: String selects a band x-scale; revenue: Double selects a linear y-scale
-val typedChart: Svg.Root < Sync = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+val withTarget: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.line(x = _.month, y = _.revenue),
+        Chart.rule(y = 55000.0)
+    ).lower
 ```
 
-A parameter mapped over a type with no `Plottable` instance does not compile, so you cannot accidentally plot a `Boolean` or an arbitrary class.
+The same `y` also accepts a `Signal[Double]` for a threshold that tracks live state, again with no wrapper. That reactive form is shown later under [Reactivity](#reactivity).
 
-### Scales, axes, and legends
+### Typed values pick the scale
 
-Scales are inferred from the accessor type and are overridable. Axes and legends appear automatically and are configured through builder lambdas:
+Each channel's scale is chosen from the static type of its accessor, so you rarely declare a scale at all. `Int`/`Double` select a linear scale, `String` and enums select a band (categorical) scale, and `Instant` selects a time scale. In the running domain, `month: String` gives a band x-scale and `revenue: Double` a linear y-scale, with nothing to annotate:
 
 ```scala
-val axisChart: Svg.Root < Sync =
+val typedChart: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+```
+
+A `Maybe[Y]` accessor type-checks too and means gaps: a line breaks and a point or bar drops at the `Absent` rows.
+
+The rule that makes this work is that an accessor's value type must have a `Plottable` instance, the evidence that also selects the scale family. A channel over a type with no instance, such as a `Boolean` or an arbitrary class, does not compile. You rarely name `Plottable` directly: instances exist for `Int`, `Long`, `Double`, `String`, and `Instant`, enums derive one automatically, and an opaque numeric type can supply one with `Plottable.numeric`:
+
+<!-- doctest:setup
+```scala
+opaque type Usd <: Double = Double
+object Usd:
+    given Plottable[Usd] = Plottable.numeric
+```
+-->
+
+```scala
+val opaqueY: Svg.Root < Sync =
+    Chart(sales)(Chart.point(x = _.month, y = (s: Sale) => (s.revenue: Usd))).lower
+```
+
+### Axes, scales, legends, and theme
+
+The spec is a record, and each configuration method is a focused copy returning a new `Chart`. Defaults are sensible (640x480, light theme, scales inferred from the data), so all of this is opt-in. Axes and a legend appear automatically; their lambdas refine them. Scale overrides replace the inferred scale only when you want a different one:
+
+```scala
+val configured: Svg.Root < Sync =
     Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
         .xScale(_.band)
         .yScale(_.linear(0.0, 80000.0))
@@ -931,9 +940,55 @@ val axisChart: Svg.Root < Sync =
         .lower
 ```
 
-### Two axes
+A `.yScale(_.log)` swaps in a log scale; the same builder carries `.withNice` (round the fitted domain to tidy values, stretching `[0, 78432]` to `[0, 80000]`), `.withClamp`, and `.withPad`. A time x-axis needs only an `Instant` accessor:
 
-A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its own independent scale. `.yScaleRight` configures the right-axis scale independently of the left; pass any of the same `ScaleOverride` builders you would pass to `.yScale`:
+```scala
+case class Hit(at: Instant, count: Double)
+val hits: Seq[Hit] = Seq(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
+
+val logOverTime: Svg.Root < Sync =
+    Chart(hits)(Chart.line(x = _.at, y = _.count)).yScale(_.log).lower
+```
+
+#### Color scales
+
+The legend's color scale decides how the `color` channel maps to swatch and mark fills, and it applies to every mark that carries `color`. A categorical scale takes value-equality pairs over a typed key; a category with no pair falls back to `Style.Color.blue`. A `colorScale` overload instead takes a function from each category's label to a color:
+
+```scala
+val categorical: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        .lower
+
+val byLabel: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(label => if label == "NA" then Style.Color.blue else Style.Color.green))
+        .lower
+```
+
+A sequential scale maps a numeric `color` onto a gradient: each row's value is normalized across the data range and drawn as the interpolated color between two endpoints:
+
+```scala
+val sequential: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.hi))
+        .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
+        .lower
+```
+
+#### Theme
+
+`.theme` switches between light and dark and selects a named palette from `Chart.Palette` (`Default`, `Okabe`, `Viridis`, `Tableau10`; `Okabe` is the color-vision-accessible Okabe-Ito set). The same builder sets `.font(family)`, `.fontSize(px)`, `.background`, `.axisColor`, and `.gridColor`:
+
+```scala
+val themed: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .theme(_.dark.palette(Chart.Palette.Okabe).font("monospace"))
+        .lower
+```
+
+### A second axis
+
+A mark opts onto the right y-axis with `axis = Axis.Right`. That axis gets its own scale, configured independently through `.yAxisRight` and `.yScaleRight`; on a single-axis chart `.yScaleRight` is a no-op:
 
 ```scala
 val twoAxis: Svg.Root < Sync =
@@ -947,117 +1002,37 @@ val twoAxis: Svg.Root < Sync =
         .lower
 ```
 
-The right axis can draw its own gridlines. If both axes enable `.grid`, only the left axis draws them, so the gridlines are never doubled.
-
-### More one-liners
-
-An `area` mark fills between a y value and the baseline:
-
-```scala
-val areaChart: Svg.Root < Sync = Chart(sales)(Chart.area(x = _.month, y = _.revenue)).lower
-```
-
-A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line:
-
-```scala
-val withTarget: Svg.Root < Sync =
-    Chart(sales)(
-        Chart.line(x = _.month, y = _.revenue),
-        Chart.rule(y = 55000.0)
-    ).lower
-```
-
-`curve` selects the interpolation between vertices. `Curve.monotone` smooths the line; `Curve.stepAfter` draws a staircase:
-
-```scala
-val smooth: Svg.Root < Sync = Chart(sales)(Chart.line(x = _.month, y = _.revenue, curve = Curve.monotone)).lower
-```
-
-`.yScale(_.log)` overrides the inferred scale with a log scale. A time x-axis needs nothing special: map `x` to an `Instant` accessor, which has a `Plottable` instance:
-
-```scala
-case class Hit(at: Instant, count: Double)
-val hits: Seq[Hit] = Seq(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
-
-val logOverTime: Svg.Root < Sync = Chart(hits)(Chart.line(x = _.at, y = _.count)).yScale(_.log).lower
-```
-
-### Color scales and themes
-
-The legend's color scale decides how the `color` parameter maps to swatch and mark fills. A categorical scale takes value-equality pairs over a typed key; a category with no matching pair falls back to `Style.Color.blue`:
-
-```scala
-val categorical: Svg.Root < Sync =
-    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
-        .legend(_.colorScale(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
-        .lower
-```
-
-A sequential scale maps a numeric `color` parameter onto a gradient. Each row's value is normalized across the data range and drawn as the matching interpolated color between the two endpoints:
-
-```scala
-val sequential: Svg.Root < Sync =
-    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.hi))
-        .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
-        .lower
-```
-
-Both color-scale forms apply to every mark with a `color` parameter: bar, area, point, line, text, and errorBar. A `colorScale` overload takes a function from each category's label to a color, so a custom palette does not require a typed pair list:
-
-```scala
-val byLabel: Svg.Root < Sync =
-    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
-        .legend(_.colorScale(label => if label == "NA" then Style.Color.blue else Style.Color.green))
-        .lower
-```
-
-`.theme` switches between light and dark and selects a named palette. The palettes live at `Chart.Palette`: `Okabe` is the Okabe-Ito set chosen for color-vision accessibility, `Viridis` is an 8-category perceptually-derived set, and `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family across all axis labels, ticks, and titles; `.fontSize(px)` sets the size in pixels; `.background` overrides the plot fill; `.axisColor` overrides axis line and tick colors; and `.gridColor` overrides gridline color:
-
-```scala
-val themed: Svg.Root < Sync =
-    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
-        .theme(_.dark.palette(Chart.Palette.Okabe).font("monospace"))
-        .lower
-```
+If both axes enable `.grid`, only the left axis draws gridlines, so they are never doubled.
 
 ### Annotations and intervals
 
-A `text` mark stamps a label string at each `(x, y)`; `anchor` controls horizontal alignment:
+A `text` mark stamps a label at each `(x, y)`, with `anchor` controlling horizontal alignment. An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` defaults to 6 pixels) and a center marker at `y`:
 
 ```scala
-val labeled: Svg.Root < Sync =
-    Chart(sales)(
-        Chart.bar(x = _.month, y = _.revenue),
-        Chart.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = Chart.TextAnchor.Middle)
-    ).lower
-```
-
-An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` defaults to 6 pixels) and a center marker at `y`:
-
-```scala
-val withError: Svg.Root < Sync =
+val annotated: Svg.Root < Sync =
     Chart(sales)(
         Chart.point(x = _.month, y = _.revenue),
+        Chart.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = Chart.TextAnchor.Middle),
         Chart.errorBar(x = _.month, y = _.revenue, low = _.lo, high = _.hi)
     ).lower
 ```
 
-An `area` mark also fills a band between `y0` and `y1`. Supply exactly one of `{y}` or `{y0, y1}`; a misconfiguration renders an empty frame rather than crashing:
+An `area` mark fills a band when given `y0` and `y1` instead of `y`. Supply exactly one of `{y}` or `{y0, y1}`; a misconfiguration renders an empty frame rather than crashing:
 
 ```scala
 val band: Svg.Root < Sync =
     Chart(sales)(Chart.area(x = _.month, y0 = _.lo, y1 = _.hi)).lower
 ```
 
-### Axis chrome, responsive sizing, and accessibility
+### Sizing and accessibility
 
-Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad`/`anchor` adjust tick chrome on either axis; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also sets `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you want a short override without a visible `<title>`). All accessibility fields default to absent:
+`.size(w, h)` fixes pixel dimensions; `.responsive(ratio)` instead scales the root to its container at a fixed aspect ratio. The two are last-write-wins, so pick one. `.margins(_.left(80))` widens one plot margin, tick chrome adjusts through `rotateTicks`/`pad`/`anchor`, and `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also sets `role="img"` so assistive tech announces the chart as one image). The accessibility fields default to absent:
 
 ```scala
 val a11yChart: Svg.Root < Sync =
     Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
         .responsive(16.0 / 9)
-        .yScale(_.linear(0.0, 80000.0).withNice(true).withClamp(true).withPad(0.05))
+        .margins(_.left(80))
         .xAxis(_.rotateTicks(45).pad(8))
         .yAxis(_.rotateTicks(30).anchor(Chart.TextAnchor.End))
         .title("Revenue by region")
@@ -1066,23 +1041,9 @@ val a11yChart: Svg.Root < Sync =
         .lower
 ```
 
-`.withNice` (or `.noNice`) rounds the fitted domain to tidy human values, such as stretching `[0, 78,432]` to `[0, 80,000]`. It is a `ScaleOverride` knob like `.withClamp` and `.withPad`.
-
-### Reading back scales for overlays
-
-`lowerWithScales` returns the lowered SVG together with the resolved scales, so you can place overlays at exact chart pixels. `scales.x.toPixel`, `invert`, and `kind` expose the projection both ways:
-
-```scala
-val pixelForRevenue: Double < Sync =
-    for (overlaySvg, scales) <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lowerWithScales
-    yield scales.y.toPixel(60000.0)
-```
-
-For a live chart the returned scales reflect the signal value at call time and do not update on later emissions; call `lowerWithScales` again to recompute.
-
 ### Reactivity
 
-Pass a `Signal[Seq[A]]` instead of a `Seq[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and parameters are identical to the static form:
+A chart goes live by swapping its data source: pass a `Signal[Seq[A]]` instead of a `Seq[A]`. The marks region redraws on each emission while the frame, axes, and legend stay put. The marks and channels are identical to the static form. `.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed:
 
 ```scala
 val livePage: UI < Async =
@@ -1094,34 +1055,38 @@ val livePage: UI < Async =
     yield UI.div(liveChart)
 ```
 
-`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a `color` or `stack` parameter snaps rather than tweens.
+The data source is not the only reactive surface, and none of these are chart-specific machinery: they are ordinary signals in the same reactive model. A `rule` threshold can be a `Signal`, so a reference line tracks live state:
 
-The data source is not the only reactive surface. A `rule` threshold can be a `Signal` (a reference line that tracks live state, shown above); `.onHover` and `.onSelect` publish the hovered or selected datum into `SignalRef`s the rest of the page reads; and `.legend(_.interactive(ref))` toggles series visibility from the legend. All of these are ordinary signals in the same reactive model, not chart-specific machinery. The next section covers the interaction surfaces.
+```scala
+val liveThreshold: UI < Async =
+    for
+        target <- Signal.initRef(50000.0)
+        chart <- Chart(sales)(
+            Chart.bar(x = _.month, y = _.revenue),
+            Chart.rule(y = target)
+        ).lower
+    yield UI.div(chart)
+```
 
 ### Interaction
 
-Hover and selection are published to `SignalRef`s. The hovered datum becomes an ordinary signal readable anywhere on the page:
+A chart does not own interaction state. It writes the hovered or selected datum into a `SignalRef` you own, and you read that ref elsewhere in your reactive UI. `.onHover(ref)` and `.onSelect(ref)` publish a `Maybe[A]` on pointer enter/leave and click; `.tooltip(f)` formats the hovered datum:
 
 ```scala
 val interactivePage: UI < Async =
     for
-        hovered  <- Signal.initRef(Maybe.empty[Sale])
-        selected <- Signal.initRef(Maybe.empty[Sale])
+        hovered <- Signal.initRef(Maybe.empty[Sale])
         hoverChart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
             .onHover(hovered)
-            .onSelect(selected)
-            .lower
-        withTooltip <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
             .tooltip(s => s"${s.month}: ${s.revenue}")
             .lower
     yield UI.div(
         hoverChart,
-        hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar"))),
-        withTooltip
+        hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar")))
     )
 ```
 
-`.interaction(_.highlightSelect)` and `.interaction(_.highlightHover)` highlight the selected or hovered datum. They do nothing unless the matching `onSelect` or `onHover` ref is wired; when both apply at once, the select highlight takes precedence. Highlighting works on every mark (bar, point, line, area, text, errorBar), and `.hoverStyle(s)`/`.selectStyle(s)` customize its appearance:
+`.interaction(_.highlightSelect)` (or `.highlightHover`) opts into a built-in opacity boost on the selected or hovered datum. It does nothing unless the matching `onSelect`/`onHover` ref is wired, select wins when both apply, and `.hoverStyle`/`.selectStyle` customize the look:
 
 ```scala
 val highlightPage: UI < Async =
@@ -1134,9 +1099,7 @@ val highlightPage: UI < Async =
     yield UI.div(chart)
 ```
 
-### Interactive legend
-
-`.legend(_.interactive(ref))` makes the legend swatches clickable: clicking a series toggles its visibility. `ref` is a `SignalRef[Set[Int]]` holding the indices of the currently hidden series. Clicking a swatch adds or removes its series index, and the marks lowering drops rows whose series is in the set, so the remaining series re-lay out to fill the plot. Index keying (rather than a label) keeps two categories that share a `toString` independently toggleable. It is the same `SignalRef` model as the rest of the page, so the hidden set is also readable anywhere else (for a count, a "reset" button, and so on):
+An interactive legend follows the same model. `.legend(_.interactive(ref))` makes swatches clickable; `ref` is a `SignalRef[Set[Int]]` holding the indices of the hidden series. Clicking a swatch toggles its series index, and the dropped rows make the remaining series re-lay out to fill the plot. Keying by index, not by label, keeps two categories that share a `toString` independently toggleable, and the hidden set is readable anywhere else (for a count or a reset button):
 
 ```scala
 val legendTogglePage: UI < Async =
@@ -1147,6 +1110,18 @@ val legendTogglePage: UI < Async =
             .lower
     yield UI.div(chart)
 ```
+
+### Reading back scales
+
+`.lower` produces only the SVG. When you need to place an overlay (a brush, a callout, a custom annotation) at exact chart pixels, `.lowerWithScales` returns the lowered SVG together with the resolved `Scales`, so you do not re-derive the scale math. `Scales` exposes `x`, `y`, an optional `yRight`, and the inner `plot` rect; each axis offers `toPixel`, `toPixelCategory`, `invert`, and `kind` (a `ScaleKind`):
+
+```scala
+val pixelForRevenue: Double < Sync =
+    for (overlaySvg, scales) <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lowerWithScales
+    yield scales.y.toPixel(60000.0)
+```
+
+For a live chart these scales reflect the signal value at call time and do not update on later emissions; call `.lowerWithScales` again to recompute.
 
 ## Running a UI
 
