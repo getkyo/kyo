@@ -63,8 +63,8 @@ class PaletteTest extends kyo.test.Test[Any]:
 
     "Palette.Default returns the same chunk as the built-in DefaultPalette" in {
         assert(
-            Palette.colors(Palette.Default) == kyo.internal.ChartLower.DefaultPalette,
-            "Palette.Default must equal internal.ChartLower.DefaultPalette"
+            Palette.colors(Palette.Default) == kyo.internal.ChartAxes.DefaultPalette,
+            "Palette.Default must equal internal.ChartAxes.DefaultPalette"
         )
     }
 

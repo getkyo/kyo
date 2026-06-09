@@ -787,7 +787,7 @@ object Chart:
     object Palette:
         /** Resolve a named palette to its `Chunk[Style.Color]`. */
         def colors(p: Palette): Chunk[Style.Color] = p match
-            case Palette.Default => kyo.internal.ChartLower.DefaultPalette
+            case Palette.Default => kyo.internal.ChartAxes.DefaultPalette
             case Palette.Okabe =>
                 Chunk(
                     Style.Color.rgb(0, 0, 0),
