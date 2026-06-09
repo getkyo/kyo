@@ -3,7 +3,6 @@ package kyo
 import kyo.UI.Ast.*
 import kyo.UI.foreach
 import kyo.internal.HtmlRenderer
-import scala.language.implicitConversions
 
 /** Tests for the SVG renderer branch: tag name dispatch, attribute serialization, text-bearing elements,
   * typed-value encoders, deterministic ids, and dispatch exhaustiveness for svgTagName and rebuildSvgElement.

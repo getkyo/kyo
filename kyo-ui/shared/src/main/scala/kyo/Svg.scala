@@ -3,6 +3,7 @@ package kyo
 import kyo.UI.Ast.*
 import kyo.internal.CssStyleRenderer
 import kyo.internal.NumberFormat
+import scala.language.implicitConversions
 
 /** The SVG namespace: every SVG element factory, the sealed `SvgElement` AST, the
   * capability traits, the typed value DSLs, and the constrained enums.
@@ -228,7 +229,7 @@ object Svg:
         case object CurrentColor                   extends Paint
         final case class Color(value: Style.Color) extends Paint
         final case class Ref(server: PaintServer)  extends Paint
-        given Conversion[Style.Color, Paint] = Color(_)
+        implicit def colorToPaint(c: Style.Color): Paint = Color(c)
     end Paint
 
     /** A definition element that is referenced by id (gradient/pattern/clipPath/mask/marker/filter).

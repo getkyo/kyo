@@ -11,6 +11,7 @@ import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
 import kyo.internal.NumberFormat
 import kyo.internal.Scale
+import scala.language.implicitConversions
 
 class ChartLowerTest extends kyo.test.Test[Any]:
 
@@ -21,10 +22,10 @@ class ChartLowerTest extends kyo.test.Test[Any]:
 
     opaque type Usd <: Double = Double
     object Usd:
-        def apply(d: Double): Usd     = d
-        given Plottable[Usd]          = Plottable.numeric
-        given CanEqual[Usd, Usd]      = CanEqual.derived
-        given Conversion[Double, Usd] = d => d
+        def apply(d: Double): Usd                = d
+        given Plottable[Usd]                     = Plottable.numeric
+        given CanEqual[Usd, Usd]                 = CanEqual.derived
+        implicit def doubleToUsd(d: Double): Usd = d
     end Usd
 
     case class Sale(month: String, revenue: Usd, region: Region = Region.NA)

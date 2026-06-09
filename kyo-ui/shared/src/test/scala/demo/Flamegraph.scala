@@ -3,7 +3,6 @@ package demo
 import kyo.*
 import kyo.Style.*
 import kyo.UI.*
-import scala.language.implicitConversions
 
 /** Interactive flamegraph built entirely on the kyo-ui SVG layer and served as a server-push app via `UI.runHandlers`.
   *

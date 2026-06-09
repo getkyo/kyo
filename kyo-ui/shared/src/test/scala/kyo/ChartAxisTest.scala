@@ -7,6 +7,7 @@ import kyo.Svg.PathData
 import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.internal.Scale
+import scala.language.implicitConversions
 
 /** Tests for axes, legends, scale overrides, theme, two axes, and stacking.
   *
@@ -24,11 +25,11 @@ class ChartAxisTest extends kyo.test.Test[Any]:
 
     opaque type Usd <: Double = Double
     object Usd:
-        def apply(d: Double): Usd     = d
-        given Plottable[Usd]          = Plottable.numeric
-        given CanEqual[Usd, Usd]      = CanEqual.derived
-        given Conversion[Double, Usd] = d => d
-        given Conversion[Int, Usd]    = d => d.toDouble
+        def apply(d: Double): Usd                = d
+        given Plottable[Usd]                     = Plottable.numeric
+        given CanEqual[Usd, Usd]                 = CanEqual.derived
+        implicit def doubleToUsd(d: Double): Usd = d
+        implicit def intToUsd(d: Int): Usd       = d.toDouble
     end Usd
 
     case class Sale(month: String, revenue: Usd, region: Region = Region.NA)

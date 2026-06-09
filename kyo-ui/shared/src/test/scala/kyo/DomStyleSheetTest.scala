@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 // DomStyleSheet.scala is a JS-only source that manages injected <style> sheets.
 // These tests verify end-to-end observable effects (style attributes, class presence,

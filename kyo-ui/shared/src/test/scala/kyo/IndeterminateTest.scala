@@ -3,7 +3,6 @@ package kyo
 import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.internal.HtmlRenderer
-import scala.language.implicitConversions
 
 class IndeterminateTest extends kyo.test.Test[Any]:
 

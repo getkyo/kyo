@@ -6,6 +6,7 @@ import kyo.UI.Ast.*
 import kyo.UI.Ast.Reactive
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
+import scala.language.implicitConversions
 
 /** Tests for reactivity, static/reactive split, fixed vs inferred domain.
   *
@@ -34,10 +35,10 @@ class ChartReactiveTest extends kyo.test.Test[Any]:
 
     opaque type Rev <: Double = Double
     object Rev:
-        def apply(d: Double): Rev     = d
-        given Plottable[Rev]          = Plottable.numeric
-        given CanEqual[Rev, Rev]      = CanEqual.derived
-        given Conversion[Double, Rev] = d => d
+        def apply(d: Double): Rev                = d
+        given Plottable[Rev]                     = Plottable.numeric
+        given CanEqual[Rev, Rev]                 = CanEqual.derived
+        implicit def doubleToRev(d: Double): Rev = d
     end Rev
 
     case class Sale(month: String, revenue: Rev)

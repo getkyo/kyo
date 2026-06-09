@@ -17,7 +17,6 @@ Event handlers are typed `Any < Async` and can call anything in the kyo ecosyste
 import Chart.*
 import UI.*
 import kyo.*
-import scala.language.implicitConversions
 case class Todo(id: String, text: String, done: Boolean)
 enum Region derives CanEqual, Plottable:
     case NA, EU, APAC
@@ -1397,7 +1396,6 @@ A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `P
 ```scala
 import UI.*
 import kyo.*
-import scala.language.implicitConversions
 
 val viaConversion: UI =
     Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(

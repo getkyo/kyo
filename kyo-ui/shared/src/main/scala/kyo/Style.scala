@@ -1,7 +1,6 @@
 package kyo
 
 import scala.annotation.tailrec
-import scala.language.implicitConversions
 
 /** An immutable, ordered list of style properties to attach to a [[kyo.UI]] element.
   *

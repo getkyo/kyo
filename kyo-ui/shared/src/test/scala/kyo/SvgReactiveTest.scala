@@ -6,7 +6,6 @@ import kyo.internal.HtmlOp
 import kyo.internal.HtmlRenderer
 import kyo.internal.ReactiveUI
 import kyo.internal.UISession
-import scala.language.implicitConversions
 
 /** Tests SVG reactive resolution via the engine's rebuildSvgElement and resolveReactives, and the `<g>`-based
   * reactive placeholders used for a reactive boundary in SVG context.

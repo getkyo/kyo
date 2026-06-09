@@ -5,10 +5,11 @@ import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.internal.ChartLower
 import kyo.internal.HtmlRenderer
+import scala.language.implicitConversions
 
 /** Tests for LINE/AREA PATH-MORPH TWEEN (declarative SMIL on `d`).
   *
-  * The chart lowers to a pure `Svg.Root` via a `given Conversion`, which has NO effect context and
+  * The chart lowers to a pure `Svg.Root` via an implicit conversion, which has NO effect context and
   * cannot launch an `Async` stepping fiber. SMIL can animate a path's `d` attribute declaratively
   * (one `<animate>` element, browser-driven, no fiber) WHEN the previous and new paths have the same
   * command structure (same number of MoveTo/LineTo/Close commands in the same order). This is the
@@ -57,10 +58,10 @@ class ChartMorphTest extends kyo.test.Test[Any]:
 
     opaque type Rev <: Double = Double
     object Rev:
-        def apply(d: Double): Rev     = d
-        given Plottable[Rev]          = Plottable.numeric
-        given CanEqual[Rev, Rev]      = CanEqual.derived
-        given Conversion[Double, Rev] = d => d
+        def apply(d: Double): Rev                = d
+        given Plottable[Rev]                     = Plottable.numeric
+        given CanEqual[Rev, Rev]                 = CanEqual.derived
+        implicit def doubleToRev(d: Double): Rev = d
     end Rev
 
     case class Sale(month: String, revenue: Rev)

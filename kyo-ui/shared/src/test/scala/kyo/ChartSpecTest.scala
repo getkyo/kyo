@@ -3,6 +3,7 @@ package kyo
 import kyo.Chart.*
 import kyo.UI.*
 import kyo.UI.Ast.*
+import scala.language.implicitConversions
 
 class ChartSpecTest extends kyo.test.Test[Any]:
 
@@ -13,10 +14,10 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     opaque type Usd <: Double = Double
     object Usd:
-        def apply(d: Double): Usd     = d
-        given Plottable[Usd]          = Plottable.numeric
-        given CanEqual[Usd, Usd]      = CanEqual.derived
-        given Conversion[Double, Usd] = d => d
+        def apply(d: Double): Usd                = d
+        given Plottable[Usd]                     = Plottable.numeric
+        given CanEqual[Usd, Usd]                 = CanEqual.derived
+        implicit def doubleToUsd(d: Double): Usd = d
     end Usd
 
     case class Sale(month: String, revenue: Usd, region: Region)
@@ -274,7 +275,7 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     // ---- Chart converts to Svg.Root ----
 
-    "Chart[Sale] converts to Svg.Root via given Conversion" in {
+    "Chart[Sale] converts to Svg.Root via implicit conversion" in {
         val spec: Chart[Sale] = Chart(sales)(bar(x = _.month, y = _.revenue))
         (spec).lower.map { root =>
             assert(root.children.nonEmpty, "Expected the converted Svg.Root to have children")
