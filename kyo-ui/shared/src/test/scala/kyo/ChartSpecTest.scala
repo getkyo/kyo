@@ -65,16 +65,53 @@ class ChartSpecTest extends kyo.test.Test[Any]:
 
     // ---- grouping carrier: by(_.region) and normalize ----
 
-    "by(_.region) yields a Stack accepted by bar's stack parameter" in {
-        val stack: Stack[Sale] = by((s: Sale) => s.region)
-        val spec               = Chart(sales)(bar(x = _.month, y = _.revenue, stack = stack))
-        assert(spec.marks.length == 1)
+    private def stackedRects(root: Svg.Root): Chunk[Svg.Rect] =
+        root.children.last match
+            case g: Svg.G =>
+                g.children.flatMap:
+                    case r: Svg.Rect => Chunk(r)
+                    case _           => Chunk.empty
+            case _ => Chunk.empty
+
+    "by(_.group) drives a Stack that accumulates the two groups at a shared x slot" in {
+        case class Row(month: String, group: String, revenue: Double)
+        given CanEqual[Row, Row] = CanEqual.derived
+        val rows = Chunk(
+            Row("Jan", "A", 300.0),
+            Row("Jan", "B", 700.0)
+        )
+        val stack: Stack[Row] = by((r: Row) => r.group)
+        val spec              = Chart(rows)(bar(x = _.month, y = _.revenue, stack = stack)).legend(_.hidden)
+        spec.lower.map { root =>
+            val rects = stackedRects(root)
+            // Both groups share x="Jan", so without grouping they would collapse to one rect; the Stack splits
+            // them into two segments and accumulates the second atop the first.
+            assert(rects.size == 2, s"Expected 2 stacked segments but got ${rects.size}")
+            val tops = rects.map(r => r.svgAttrs.y).collect { case Present(Svg.Coord.Num(v)) => v }.toSeq
+            assert(tops.size == 2, s"Expected 2 numeric rect tops but got $tops")
+            // The upper segment (group B) sits strictly above the lower segment (group A): smaller y.
+            assert(tops(1) < tops(0), s"Expected the second group to stack above the first, got tops=$tops")
+        }
     }
 
-    "by(_.region, normalize = true) yields a Stack with normalize=true accepted by bar" in {
-        val stack: Stack[Sale] = by((s: Sale) => s.region, normalize = true)
-        val spec               = Chart(sales)(bar(x = _.month, y = _.revenue, stack = stack))
-        assert(spec.marks.length == 1)
+    "by(_.group, normalize = true) drives a Stack that fills the full plot height" in {
+        case class Row(month: String, group: String, revenue: Double)
+        given CanEqual[Row, Row] = CanEqual.derived
+        val rows = Chunk(
+            Row("Jan", "A", 300.0),
+            Row("Jan", "B", 700.0)
+        )
+        val stack: Stack[Row] = by((r: Row) => r.group, normalize = true)
+        val spec              = Chart(rows)(bar(x = _.month, y = _.revenue, stack = stack)).legend(_.hidden)
+        spec.lower.map { root =>
+            val rects = stackedRects(root)
+            assert(rects.size == 2, s"Expected 2 normalized stacked segments but got ${rects.size}")
+            val heights = rects.map(r => r.svgAttrs.height).collect { case Present(Svg.Coord.Num(v)) => v }.toSeq
+            assert(heights.size == 2, s"Expected 2 numeric rect heights but got $heights")
+            // Normalized stacks fill the entire plot band: the two segments together span the full plot height
+            // (420 = default plot height), regardless of the raw values.
+            assert(math.abs(heights.sum - 420.0) < 1e-6, s"Expected normalized segments to fill plot height 420, got sum=${heights.sum}")
+        }
     }
 
     // ---- config threading ----

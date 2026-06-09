@@ -14,13 +14,26 @@ import scala.language.implicitConversions
   */
 class ChartTypeSafetyTest extends kyo.test.Test[Any]:
 
-    // ---- domain types ----
+    // Domain types shared across the tests below.
 
     enum Region derives CanEqual, Plottable:
         case NA, EU, APAC
 
     case class Sale(month: String, revenue: Double, hi: Double = 0.0, region: Region = Region.NA)
     given CanEqual[Sale, Sale] = CanEqual.derived
+
+    // Opaque types defined at the class level because Scala 3 forbids opaque type aliases inside a method body.
+    opaque type Celsius <: Double = Double
+    object Celsius:
+        def apply(d: Double): Celsius    = d
+        given Plottable[Celsius]         = Plottable.continuous((c: Celsius) => (c: Double), c => f"$c%.1f C")
+        given CanEqual[Celsius, Celsius] = CanEqual.derived
+    end Celsius
+
+    opaque type Usd2 <: Double = Double
+    object Usd2:
+        def apply(d: Double): Usd2 = d
+        given CanEqual[Usd2, Usd2] = CanEqual.derived
 
     private def fillOf(fill: Maybe[Svg.Paint])(using Frame, kyo.test.AssertScope): Style.Color = fill match
         case Present(Svg.Paint.Color(c)) => c
@@ -34,7 +47,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
                     case _           => Chunk.empty
             case _ => Chunk.empty
 
-    // ---- Leaf 1: enum color summons with no type argument ----
+    // An enum color summons ColorKey with no explicit type argument.
 
     "enum color summons ColorKey[Region] with no explicit type argument" in {
         val rows = Chunk(Sale("Jan", 1000.0, region = Region.NA))
@@ -42,7 +55,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         assert(summon[ColorKey[Region]] != null)
     }
 
-    // ---- Leaf 2: Double color summons ----
+    // A Double color summons ColorKey for a sequential-scale use case.
 
     "Double color summons ColorKey[Double] for a sequential-scale use case" in {
         val rows = Chunk(Sale("Jan", 1000.0, hi = 50.0))
@@ -50,7 +63,9 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         assert(summon[ColorKey[Double]] != null)
     }
 
-    // ---- Leaf 3: String / Int / Long each summon (Instant uses an opaque type that ConcreteTag handles at java.time.Instant's class level) ----
+    // String, Int, and Long each summon ColorKey. Instant cannot be a color key: ConcreteTag does not
+    // summon for the opaque Instant alias, so there is no ColorKey[Instant], and coloring by an Instant
+    // value is rejected at compile time.
 
     "String, Int, and Long all summon ColorKey[_]" in {
         assert(summon[ColorKey[String]] != null)
@@ -58,7 +73,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         assert(summon[ColorKey[Long]] != null)
     }
 
-    // ---- Leaf 4: omitted color compiles with no annotation (Nothing default) ----
+    // An omitted color compiles with no type annotation, defaulting to the empty color encoding.
 
     "omitted color compiles with no annotation and produces Absent color encoding" in {
         typeCheck("Chart.bar(x = (_: Sale).month, y = (_: Sale).revenue)")
@@ -70,7 +85,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         }
     }
 
-    // ---- Leaf 5: coloring by a non-keyable type is a compile error ----
+    // Coloring by a type with no ColorKey instance is a compile error.
 
     "coloring by a type with no Color instance is a compile error" in {
         typeCheckFailure("""
@@ -83,18 +98,19 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         """)
     }
 
-    // ---- Leaf 6: enum WITHOUT derives CanEqual does not summon ----
+    // An enum without `derives CanEqual` does not summon ColorKey: under strict equality there is no
+    // CanEqual[Plain, Plain], so the ColorKey instance cannot be derived.
 
     "enum without derives CanEqual does not summon ColorKey" in {
         typeCheckFailure("""
             import kyo.*
             import kyo.Chart.*
-            enum Plain { case A, case B }
+            enum Plain { case A, B }
             summon[Chart.ColorKey[Plain]]
-        """)
+        """)("ColorKey")
     }
 
-    // ---- Leaf 7: a generic color type does not summon ----
+    // A generic color type does not summon ColorKey.
 
     "a generic color type (Maybe[Region]) does not summon ColorKey" in {
         typeCheckFailure("""
@@ -105,7 +121,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         """)
     }
 
-    // ---- Leaf 8: by infers G and returns Stack, drops into bar's stack parameter ----
+    // `by` infers its group type and returns a Stack accepted by bar's stack parameter.
 
     "by infers G = Region and returns Stack[Sale] accepted by bar" in {
         val stack: Stack[Sale]  = by((s: Sale) => s.region)
@@ -116,7 +132,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         assert(specN.marks.length == 1, s"Expected 1 mark series for normalized stack, got ${specN.marks.length}")
     }
 
-    // ---- Leaf 9: by over a non-keyable group is a compile error ----
+    // `by` over a non-keyable group type is a compile error.
 
     "by over a non-keyable group type is a compile error" in {
         typeCheckFailure("""
@@ -129,7 +145,8 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         """)
     }
 
-    // ---- Leaf 10: bridge soundness: enum cases with colliding toString stay distinct ----
+    // Enum cases that collide on toString stay distinct after lowering: category identity is keyed by
+    // ConcreteTag and ordinal, not by the display string.
 
     "two enum cases that collide on toString receive distinct fills after lowering" in {
         enum Collision derives CanEqual:
@@ -150,7 +167,7 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         }
     }
 
-    // ---- Leaf 11: omitted color produces no color encoding (single-series render) ----
+    // An omitted color produces no color encoding, so the bars render as a single undivided series.
 
     "bar with omitted color lowers to a single series with no split" in {
         val rows = Chunk(
@@ -166,9 +183,9 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
         }
     }
 
-    // ---- Leaf 12: typed accessor compiles; Any-typed accessor fails if ColorKey[Any] absent ----
+    // A typed color accessor compiles, while an accessor returning a type with no ColorKey is rejected.
 
-    "typed color accessor compiles; Any-upcast falls back to leaf 5 negative case" in {
+    "typed color accessor compiles while a non-keyable accessor is rejected" in {
         typeCheck("Chart.bar(x = (_: Sale).month, y = (_: Sale).revenue, color = (_: Sale).region)")
         typeCheckFailure("""
             import kyo.*
@@ -178,6 +195,125 @@ class ChartTypeSafetyTest extends kyo.test.Test[Any]:
             given CanEqual[Row, Row] = CanEqual.derived
             Chart.bar(x = (_: Row).month, y = (_: Row).revenue, color = (r: Row) => r.o)
         """)
+    }
+
+    // A custom continuous Plottable plots and renders at the correct linear pixel positions.
+
+    "custom Plottable via continuous renders a line at the correct linear pixel positions" in {
+        case class Row(x: String, y: Celsius)
+        given CanEqual[Row, Row] = CanEqual.derived
+        val rows                 = Chunk(Row("a", Celsius(10.0)), Row("b", Celsius(20.0)))
+        val spec                 = Chart(rows)(line(x = _.x, y = _.y))
+        spec.lower.map { root =>
+            val paths = root.children.flatMap:
+                case g: Svg.G =>
+                    g.children.flatMap:
+                        case p: Svg.Path => Chunk(p)
+                        case _           => Chunk.empty
+                case _ => Chunk.empty
+            assert(paths.nonEmpty, s"Expected at least one path but got none")
+            val cmds = Svg.PathData.commands(paths(0).svgAttrs.d.getOrElse(Svg.PathData.empty))
+            assert(cmds.size == 2, s"Expected 2 path commands (MoveTo + LineTo) but got ${cmds.size}")
+            // y Linear: extent [10, 20], niceTicks(10,20,5) => step=5 => nLo=10, nHi=20
+            // Scale.Linear(10, 20, 440, 20): apply(10.0)=440, apply(20.0)=20
+            val yOf10 = 440.0
+            val yOf20 = 20.0
+            cmds(0) match
+                case Svg.PathCommand.MoveTo(_, y) =>
+                    assert(math.abs(y - yOf10) < 1e-6, s"MoveTo y for Celsius(10) expected $yOf10 but got $y")
+                case other => fail(s"Expected MoveTo but got $other")
+            end match
+            cmds(1) match
+                case Svg.PathCommand.LineTo(_, y) =>
+                    assert(math.abs(y - yOf20) < 1e-6, s"LineTo y for Celsius(20) expected $yOf20 but got $y")
+                case other => fail(s"Expected LineTo but got $other")
+            end match
+        }
+    }
+
+    // A custom categorical Plottable builds a band scale, positioning the bar at the band center and labeling correctly.
+
+    "custom Plottable via categorical positions the bar at the band center and labels correctly" in {
+        case class Sku(code: String)
+        given CanEqual[Sku, Sku] = CanEqual.derived
+        given Plottable[Sku]     = Plottable.categorical(_.code)
+        case class Row(sku: Sku, value: Double)
+        given CanEqual[Row, Row] = CanEqual.derived
+        assert(summon[Plottable[Sku]].label(Sku("ABC")) == "ABC", "label must return the code string")
+        val rows = Chunk(Row(Sku("ABC"), 1000.0))
+        val spec = Chart(rows)(bar(x = _.sku, y = _.value))
+        spec.lower.map { root =>
+            val rects = root.children.flatMap:
+                case g: Svg.G =>
+                    g.children.flatMap:
+                        case r: Svg.Rect => Chunk(r)
+                        case _           => Chunk.empty
+                case _ => Chunk.empty
+            assert(rects.nonEmpty, s"Expected at least one bar rect but got none")
+            // x Band: n=1, totalW=560, slot=560, bandW=560*0.9=504
+            // barX = 60 + (560 - 504)/2 = 60 + 28 = 88
+            val expectedX = 88.0
+            val actualX = rects(0).svgAttrs.x match
+                case Present(Svg.Coord.Num(v)) => v
+                case other                     => fail(s"Expected Coord.Num for x but got $other")
+            assert(math.abs(actualX - expectedX) < 1e-6, s"bar x expected $expectedX but got $actualX")
+        }
+    }
+
+    // A custom temporal Plottable builds a time scale and labels correctly.
+
+    "custom Plottable via temporal labels correctly" in {
+        case class Stamp(millis: Long, iso: String)
+        given CanEqual[Stamp, Stamp] = CanEqual.derived
+        given Plottable[Stamp]       = Plottable.temporal(_.millis, _.iso)
+        val s                        = Stamp(0L, "epoch")
+        assert(summon[Plottable[Stamp]].label(s) == "epoch", "temporal label must return the iso string")
+    }
+
+    // Each built-in Plottable selects the scale family appropriate to its value type.
+
+    "p.kind returns the correct Scale.Kind for built-in Plottable instances" in {
+        import kyo.internal.Scale
+        assert(summon[Plottable[Int]].kind == Scale.Kind.Linear, "Int -> Linear scale")
+        assert(summon[Plottable[Long]].kind == Scale.Kind.Linear, "Long -> Linear scale")
+        assert(summon[Plottable[Double]].kind == Scale.Kind.Linear, "Double -> Linear scale")
+        assert(summon[Plottable[String]].kind == Scale.Kind.Band, "String -> Band scale")
+        assert(summon[Plottable[Instant]].kind == Scale.Kind.Time, "Instant -> Time scale")
+    }
+
+    // Each built-in Plottable projects its values to the expected domain coordinates.
+
+    "p.toDomain returns Present domain values for built-in Plottable instances" in {
+        import kyo.internal.Domain
+        val intP = summon[Plottable[Int]]
+        assert(intP.toDomain(5) == Present(Domain.Continuous(5.0)), "Int 5 -> Continuous(5.0)")
+        val strP = summon[Plottable[String]]
+        assert(strP.toDomain("x") == Present(Domain.Category("x")), "String x -> Category(x)")
+        val maybePT = summon[Plottable[Maybe[Int]]]
+        assert(maybePT.toDomain(Absent) == Absent, "Absent -> Absent (no domain contribution)")
+        assert(maybePT.toDomain(Present(3)) == Present(Domain.Continuous(3.0)), "Present(3) -> Continuous(3.0)")
+    }
+
+    // Plottable.label is callable from user code and returns the expected string.
+
+    "p.label compiles from user code and returns the expected string" in {
+        val p = summon[Plottable[Int]]
+        typeCheck("{ import kyo.*; import kyo.Chart.*; val p: Chart.Plottable[Int] = summon; p.label(3) }")
+        assert(p.label(3) == "3", s"Plottable[Int].label(3) expected \"3\" but got \"${p.label(3)}\"")
+    }
+
+    // The built-in Plottable givens and the numeric and derived factories all resolve and label correctly.
+
+    "built-in Plottable givens and factories all resolve and label correctly" in {
+        assert(summon[Plottable[Int]].label(42) == "42", "Plottable[Int].label(42)")
+        assert(summon[Plottable[String]].label("x") == "x", "Plottable[String].label(\"x\")")
+        assert(summon[Plottable[Long]].label(7L) == "7", "Plottable[Long].label(7)")
+        val numericP: Plottable[Usd2] = Plottable.numeric[Usd2]
+        assert(numericP.label(Usd2(10.0)) == summon[Plottable[Double]].label(10.0), "numeric label matches double label")
+        enum Color2 derives Plottable:
+            case Red, Blue
+        assert(summon[Plottable[Color2]].label(Color2.Red) == "Red", "derived enum label for Red")
+        assert(summon[Plottable[Color2]].label(Color2.Blue) == "Blue", "derived enum label for Blue")
     }
 
 end ChartTypeSafetyTest

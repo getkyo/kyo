@@ -1134,20 +1134,23 @@ object Chart:
 
     // ---- Plottable typeclass ----
 
-    /** Maps a static value type to the scale that plots it.
+    /** A typeclass that maps a value type to the scale used to plot it.
       *
-      * Open: the library ships built-in instances for `Int`, `Long`, `Double`, `String`, and `Instant`; enum types
-      * derive instances automatically; opaque numeric quantities use `Plottable.numeric`. A parameter mapped over a
-      * type with no instance is a compile error, so you cannot accidentally plot a `Boolean` or an arbitrary class.
+      * Built-in instances cover `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances
+      * automatically via `derives Plottable`. Opaque numeric quantities backed by `Double` use `Plottable.numeric`.
+      * Any type without an instance produces a compile error when used as a chart parameter, preventing accidental
+      * plotting of unscalable types.
       *
-      * `kind` selects the scale family (`Scale.Kind`). `toDomain` projects a value into the scale's native domain
-      * coordinate: `Present(d)` for a valid domain point, `Absent` for a value that must be SKIPPED and contribute
-      * nothing to the extent (used by `Plottable[Maybe[A]]` for `Absent` inputs). `label` returns the tick or
-      * legend text for a value.
+      * Custom instances are built through the public factories `Plottable.continuous`, `Plottable.categorical`,
+      * and `Plottable.temporal`. Each factory takes only standard function types, so custom instances do not
+      * depend on any internal scale representation.
+      *
+      * `label` returns the tick or legend text for a value and is the only public method. The scale family and
+      * domain projection are implementation details managed by the chart engine.
       */
     abstract class Plottable[A]:
-        def kind: kyo.internal.Scale.Kind
-        def toDomain(a: A): Maybe[kyo.internal.Domain]
+        private[kyo] def kind: kyo.internal.Scale.Kind
+        private[kyo] def toDomain(a: A): Maybe[kyo.internal.Domain]
         def label(a: A): String
     end Plottable
 
@@ -1170,13 +1173,10 @@ object Chart:
 
         given string: Plottable[String] = categorical(identity)
 
-        /** Plots any value categorically by its `toString` label.
-          *
-          * Used by the group/color encoding builders, which key categorically by the value's label string
-          * regardless of the accessor's declared element type. It is semantically identical to reusing
-          * `string` at an `Any`-typed encoding, but is typed directly at `Any` so no widening is needed.
-          */
-        val any: Plottable[Any] = categorical(_.toString)
+        // Internal fallback: plots any value categorically by its toString label. Used by the
+        // color/group encoding bridge which stores the accessor erased to Any; the label string
+        // is the display text and the CatKey identity is carried separately by ConcreteTag.
+        private[kyo] val any: Plottable[Any] = categorical(_.toString)
 
         given instant: Plottable[Instant] = temporal(i => i.toJava.toEpochMilli, i => i.toJava.toString)
 
@@ -1189,8 +1189,8 @@ object Chart:
           */
         given maybe[A](using inner: Plottable[A]): Plottable[Maybe[A]] =
             new Plottable[Maybe[A]]:
-                def kind: Scale.Kind = inner.kind
-                def toDomain(a: Maybe[A]): Maybe[Domain] = a match
+                private[kyo] def kind: Scale.Kind = inner.kind
+                private[kyo] def toDomain(a: Maybe[A]): Maybe[Domain] = a match
                     case Present(v) => inner.toDomain(v)
                     case Absent     => Absent
                 def label(a: Maybe[A]): String = a match
@@ -1217,8 +1217,8 @@ object Chart:
 
         private def deriveEnum[A](labels: Chunk[String]): Plottable[A] =
             new Plottable[A]:
-                def kind: Scale.Kind = Scale.Kind.Band
-                def toDomain(a: A): Maybe[Domain] =
+                private[kyo] def kind: Scale.Kind = Scale.Kind.Band
+                private[kyo] def toDomain(a: A): Maybe[Domain] =
                     // Unsafe: sound because derivation is gated on Mirror.SumOf[A], guaranteeing A is a
                     // scala.reflect.Enum whose ordinal is in range of the mirrored element labels.
                     val idx = a.asInstanceOf[scala.reflect.Enum].ordinal
@@ -1245,23 +1245,78 @@ object Chart:
             loop(t, Chunk.empty)
         end tupleToChunk
 
-        private def continuous[A](toD: A => Double, lbl: A => String): Plottable[A] =
+        /** Builds a `Plottable` instance for a type that maps to a continuous numeric scale.
+          *
+          * The resulting instance selects a linear scale. `value` extracts the numeric coordinate from an `A`
+          * value; `label` produces the tick or legend text. Both are plain function types, so custom instances
+          * do not depend on any internal representation.
+          *
+          * Typical use: define a `given` in the companion object of a custom numeric type, then pass values of
+          * that type directly to the `x` or `y` parameter of any chart factory.
+          *
+          * Example:
+          * {{{
+          * opaque type Celsius <: Double = Double
+          * object Celsius:
+          *     given Plottable[Celsius] = Chart.Plottable.continuous(c => c, c => f"$c%.1f C")
+          * }}}
+          */
+        def continuous[A](value: A => Double, label: A => String): Plottable[A] =
+            val lbl = label
             new Plottable[A]:
-                def kind: Scale.Kind              = Scale.Kind.Linear
-                def toDomain(a: A): Maybe[Domain] = Present(Domain.Continuous(toD(a)))
-                def label(a: A): String           = lbl(a)
+                private[kyo] def kind: Scale.Kind              = Scale.Kind.Linear
+                private[kyo] def toDomain(a: A): Maybe[Domain] = Present(Domain.Continuous(value(a)))
+                def label(a: A): String                        = lbl(a)
+            end new
+        end continuous
 
-        private def categorical[A](lbl: A => String): Plottable[A] =
+        /** Builds a `Plottable` instance for a type that maps to a categorical band scale.
+          *
+          * The resulting instance selects a band (ordinal) scale. `label` produces the category key and the
+          * tick text for each value. It is a plain function type, so custom instances do not depend on any
+          * internal representation.
+          *
+          * Typical use: define a `given` for a custom identifier or code type and pass values of that type to
+          * the `x` parameter of a bar or point chart.
+          *
+          * Example:
+          * {{{
+          * case class Sku(code: String)
+          * given Plottable[Sku] = Chart.Plottable.categorical(_.code)
+          * }}}
+          */
+        def categorical[A](label: A => String): Plottable[A] =
+            val lbl = label
             new Plottable[A]:
-                def kind: Scale.Kind              = Scale.Kind.Band
-                def toDomain(a: A): Maybe[Domain] = Present(Domain.Category(lbl(a)))
-                def label(a: A): String           = lbl(a)
+                private[kyo] def kind: Scale.Kind              = Scale.Kind.Band
+                private[kyo] def toDomain(a: A): Maybe[Domain] = Present(Domain.Category(lbl(a)))
+                def label(a: A): String                        = lbl(a)
+            end new
+        end categorical
 
-        private def temporal[A](toMillis: A => Long, lbl: A => String): Plottable[A] =
+        /** Builds a `Plottable` instance for a type that maps to a time scale.
+          *
+          * The resulting instance selects a time scale. `epochMillis` extracts the Unix epoch millisecond
+          * timestamp from an `A` value; `label` produces the tick or legend text. Both are plain function
+          * types, so custom instances do not depend on any internal representation.
+          *
+          * Typical use: define a `given` for a custom timestamp type and pass values of that type to the `x`
+          * parameter of a line or area chart.
+          *
+          * Example:
+          * {{{
+          * case class Stamp(millis: Long, iso: String)
+          * given Plottable[Stamp] = Chart.Plottable.temporal(_.millis, _.iso)
+          * }}}
+          */
+        def temporal[A](epochMillis: A => Long, label: A => String): Plottable[A] =
+            val lbl = label
             new Plottable[A]:
-                def kind: Scale.Kind              = Scale.Kind.Time
-                def toDomain(a: A): Maybe[Domain] = Present(Domain.Temporal(toMillis(a)))
-                def label(a: A): String           = lbl(a)
+                private[kyo] def kind: Scale.Kind              = Scale.Kind.Time
+                private[kyo] def toDomain(a: A): Maybe[Domain] = Present(Domain.Temporal(epochMillis(a)))
+                def label(a: A): String                        = lbl(a)
+            end new
+        end temporal
 
     end Plottable
 
