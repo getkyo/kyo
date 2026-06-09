@@ -14,9 +14,18 @@ Event handlers are typed `Any < Async` and can call anything in the kyo ecosyste
 
 <!-- doctest:setup
 ```scala
+import Chart.*
 import UI.*
 import kyo.*
+import scala.language.implicitConversions
 case class Todo(id: String, text: String, done: Boolean)
+enum Region derives CanEqual, Plottable:
+    case NA, EU, APAC
+case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
+val sales: Seq[Sale] = Seq(
+    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
+    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
+)
 ```
 -->
 
@@ -74,7 +83,7 @@ val labeled: UI =
 
 ### Event handlers
 
-Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a communication channel; reach the rest of the app via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
+Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a way to communicate with the rest of the app; reach it via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
 
 ```scala
 import UI.*
@@ -713,8 +722,8 @@ val sameButton: Style =
 `Color` is a sealed ADT with private constructors. Use the factories or the named constants:
 
 - `Color.hex(s: String): Maybe[Color]`. Validates: accepts 3, 4, 6, or 8 hex digits with or without a leading `#`. Returns `Absent` on any other length or any non-hex character. No exception is thrown.
-- `Color.rgb(r, g, b)`: channels clamped to `[0, 255]`.
-- `Color.rgba(r, g, b, a)`: channels clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
+- `Color.rgb(r, g, b)`: components clamped to `[0, 255]`.
+- `Color.rgba(r, g, b, a)`: components clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
 - Named constants: `Color.white`, `black`, `transparent`, `red`, `orange`, `yellow`, `green`, `blue`, `indigo`, `purple`, `pink`, `gray`, `slate`.
 
 ```scala
@@ -802,6 +811,494 @@ val noPadding: Style                   = base.without[Style.Prop.Padding]
 ```
 
 The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`, `Width`, `Height`, `BorderWidthProp`, `HoverProp(style: Style)`, etc. You will rarely name these in app code, but they are useful for theme transforms (drop one property kind across an entire merged style, or query whether a hover variant exists).
+
+## Charts
+
+A chart is built from your data and a list of marks, and lowers to an `Svg.Root` (the typed [SVG](#svg) layer, covered later) you can drop into any `UI` container. Marks take their mappings as named parameters, so accessor lambdas like `_.revenue` infer their types with no annotations.
+
+### A first chart
+
+`Chart(data)` opens a chart over a `Seq[A]`, fixing the row type. The second application `(marks*)` names the visual layers. Configuration methods chain fluently and each returns a copy.
+
+Every example below shares one running domain. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later by the band and error-bar examples. The `region` enum derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site:
+
+```scala doctest:expect=skipped
+enum Region derives CanEqual, Plottable:
+    case NA, EU, APAC
+
+case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
+
+val sales: Seq[Sale] = Seq(
+    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
+    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
+)
+```
+
+With that domain in scope, the first chart is one `bar` mark over `sales` plus a horizontal `rule` baseline:
+
+```scala
+val firstChart: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue, color = _.region),
+        Chart.rule(y = 1000.0)
+    )
+        .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .legend(_.top)
+        .size(640, 360)
+        .lower
+
+val view: UI < Sync =
+    for chart <- firstChart
+    yield UI.div(UI.h2("Revenue by region"), chart)
+```
+
+The `rule` mark's `y` takes a plain `Double` threshold; it also accepts a `Signal[Double]` for a threshold that tracks a signal, with no wrapper either way. `.lower` suspends the `Chart` into a `Sync` effect and produces an `Svg.Root` (because lowering allocates the chart's reactive state), so you embed it by threading the effect: `for chart <- spec.lower yield UI.div(UI.h2(...), chart)`.
+
+### Marks compose; there is no chart zoo
+
+There is one `Chart` and a list of marks. The mark you pick, and the parameters you map onto it, determine the chart type:
+
+```scala
+val barChart: Svg.Root < Sync  = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+val lineChart: Svg.Root < Sync = Chart(sales)(Chart.line(x = _.month, y = _.revenue)).lower
+val scatter: Svg.Root < Sync   = Chart(sales)(Chart.point(x = _.lo, y = _.hi)).lower
+```
+
+A combo chart is two marks in the same list. Marks share the chart's x-scale automatically:
+
+```scala
+val combo: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.line(x = _.month, y = _.hi),
+        Chart.rule(y = 50000.0)
+    ).lower
+```
+
+A `point` mark carries `size` (a magnitude scaled by square-root area, so the eye reads area not radius) and `sizePx` (a raw-pixel-radius escape hatch). If you supply both, `size` wins and `sizePx` is silently dropped:
+
+```scala
+val bubbles: Svg.Root < Sync =
+    Chart(sales)(Chart.point(x = _.month, y = _.revenue, size = _.hi)).lower
+```
+
+The `symbol` parameter selects the glyph for each point from the `Chart.Symbol` enum (`circle`, `square`, `triangle`, `diamond`, `cross`). Here every point uses a constant glyph; an accessor could vary it by row:
+
+```scala
+val diamonds: Svg.Root < Sync =
+    Chart(sales)(Chart.point(x = _.lo, y = _.hi, symbol = _ => Chart.Symbol.diamond)).lower
+```
+
+### Named parameters
+
+Each mark maps its data through named parameters, not chained method calls. This is what keeps the accessor lambdas inferring without annotations. A chained `.color(by = _.region)` after `bar(...)` would collapse the row type to `Any`; the named form does not:
+
+```scala
+// named parameter: row type inferred before the lambda is read
+val grouped = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+
+// stack carries its grouping; normalize is a named parameter
+val stacked    = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region)))
+val normalized = Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true)))
+```
+
+> **Note:** Mark factories gate capability by omission. `bar` has no `symbol` or `size` parameter; `rule` has no `color` or `size`. If a mark does not offer a given parameter, the type system rejects any attempt to pass it: there is no runtime flag to check and no silent no-op.
+
+### Typed values
+
+The scale for each parameter is selected by the static type of its accessor. `Plottable` is an open typeclass. The library provides instances for `Int`, `Long`, `Double`, `String`, and `Instant`. Enum types derive instances automatically (`Region` above gets one from `derives ... Plottable`), and an opaque numeric type can supply one with `Plottable.numeric`. So in the running domain `Region` selects a band (categorical) x-scale and `revenue: Double` selects a linear y-scale, with no annotation at the call site:
+
+```scala
+// month: String selects a band x-scale; revenue: Double selects a linear y-scale
+val typedChart: Svg.Root < Sync = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+```
+
+A parameter mapped over a type with no `Plottable` instance does not compile, so you cannot accidentally plot a `Boolean` or an arbitrary class.
+
+### Scales, axes, and legends
+
+Scales are inferred from the accessor type and are overridable. Axes and legends appear automatically and are configured through builder lambdas:
+
+```scala
+val axisChart: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .xScale(_.band)
+        .yScale(_.linear(0.0, 80000.0))
+        .xAxis(_.label("Month"))
+        .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .legend(_.top)
+        .theme(_.light)
+        .size(640, 360)
+        .lower
+```
+
+### Two axes
+
+A mark opts onto the right y-axis with `axis = Axis.Right`. Each axis gets its own independent scale. `.yScaleRight` configures the right-axis scale independently of the left; pass any of the same `ScaleOverride` builders you would pass to `.yScale`:
+
+```scala
+val twoAxis: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.line(x = _.month, y = _.hi, axis = Axis.Right)
+    )
+        .yAxis(_.label("Revenue"))
+        .yAxisRight(_.label("Upper bound"))
+        .yScaleRight(_.linear(40000.0, 70000.0))
+        .lower
+```
+
+The right axis can draw its own gridlines. If both axes enable `.grid`, only the left axis draws them, so the gridlines are never doubled.
+
+### More one-liners
+
+An `area` mark fills between a y value and the baseline:
+
+```scala
+val areaChart: Svg.Root < Sync = Chart(sales)(Chart.area(x = _.month, y = _.revenue)).lower
+```
+
+A `rule` is a reference line at a constant (or `Signal`-tracked) value; here a horizontal target line:
+
+```scala
+val withTarget: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.line(x = _.month, y = _.revenue),
+        Chart.rule(y = 55000.0)
+    ).lower
+```
+
+`curve` selects the interpolation between vertices. `Curve.monotone` smooths the line; `Curve.stepAfter` draws a staircase:
+
+```scala
+val smooth: Svg.Root < Sync = Chart(sales)(Chart.line(x = _.month, y = _.revenue, curve = Curve.monotone)).lower
+```
+
+`.yScale(_.log)` overrides the inferred scale with a log scale. A time x-axis needs nothing special: map `x` to an `Instant` accessor, which has a `Plottable` instance:
+
+```scala
+case class Hit(at: Instant, count: Double)
+val hits: Seq[Hit] = Seq(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
+
+val logOverTime: Svg.Root < Sync = Chart(hits)(Chart.line(x = _.at, y = _.count)).yScale(_.log).lower
+```
+
+### Color scales and themes
+
+The legend's color scale decides how the `color` parameter maps to swatch and mark fills. A categorical scale takes value-equality pairs over a typed key; a category with no matching pair falls back to `Style.Color.blue`:
+
+```scala
+val categorical: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        .lower
+```
+
+A sequential scale maps a numeric `color` parameter onto a gradient. Each row's value is normalized across the data range and drawn as the matching interpolated color between the two endpoints:
+
+```scala
+val sequential: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.hi))
+        .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
+        .lower
+```
+
+Both color-scale forms apply to every mark with a `color` parameter: bar, area, point, line, text, and errorBar. A `colorScale` overload takes a function from each category's label to a color, so a custom palette does not require a typed pair list:
+
+```scala
+val byLabel: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(label => if label == "NA" then Style.Color.blue else Style.Color.green))
+        .lower
+```
+
+`.theme` switches between light and dark and selects a named palette. The palettes live at `Chart.Palette`: `Okabe` is the Okabe-Ito set chosen for color-vision accessibility, `Viridis` is an 8-category perceptually-derived set, and `Tableau10` is the Tableau 10 categorical palette. Beyond palette and scheme, `.font(family)` sets the font family across all axis labels, ticks, and titles; `.fontSize(px)` sets the size in pixels; `.background` overrides the plot fill; `.axisColor` overrides axis line and tick colors; and `.gridColor` overrides gridline color:
+
+```scala
+val themed: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .theme(_.dark.palette(Chart.Palette.Okabe).font("monospace"))
+        .lower
+```
+
+### Annotations and intervals
+
+A `text` mark stamps a label string at each `(x, y)`; `anchor` controls horizontal alignment:
+
+```scala
+val labeled: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = Chart.TextAnchor.Middle)
+    ).lower
+```
+
+An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` defaults to 6 pixels) and a center marker at `y`:
+
+```scala
+val withError: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.point(x = _.month, y = _.revenue),
+        Chart.errorBar(x = _.month, y = _.revenue, low = _.lo, high = _.hi)
+    ).lower
+```
+
+An `area` mark also fills a band between `y0` and `y1`. Supply exactly one of `{y}` or `{y0, y1}`; a misconfiguration renders an empty frame rather than crashing:
+
+```scala
+val band: Svg.Root < Sync =
+    Chart(sales)(Chart.area(x = _.month, y0 = _.lo, y1 = _.hi)).lower
+```
+
+### Axis chrome, responsive sizing, and accessibility
+
+Config methods chain on the spec. `.responsive(ratio)` makes the root scale to its container at a fixed aspect ratio; `.margins(_.left(80))` widens one plot margin; scale knobs refine the fitted domain; `rotateTicks`/`pad`/`anchor` adjust tick chrome on either axis; `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also sets `role="img"` on the root `<svg>`, so assistive tech announces the chart as one image; `.ariaLabel` sets the `aria-label` attribute directly when you want a short override without a visible `<title>`). All accessibility fields default to absent:
+
+```scala
+val a11yChart: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
+        .responsive(16.0 / 9)
+        .yScale(_.linear(0.0, 80000.0).withNice(true).withClamp(true).withPad(0.05))
+        .xAxis(_.rotateTicks(45).pad(8))
+        .yAxis(_.rotateTicks(30).anchor(Chart.TextAnchor.End))
+        .title("Revenue by region")
+        .desc("Quarterly revenue, EU vs NA")
+        .ariaLabel("Revenue by region bar chart")
+        .lower
+```
+
+`.withNice` (or `.noNice`) rounds the fitted domain to tidy human values, such as stretching `[0, 78,432]` to `[0, 80,000]`. It is a `ScaleOverride` knob like `.withClamp` and `.withPad`.
+
+### Reading back scales for overlays
+
+`lowerWithScales` returns the lowered SVG together with the resolved scales, so you can place overlays at exact chart pixels. `scales.x.toPixel`, `invert`, and `kind` expose the projection both ways:
+
+```scala
+val pixelForRevenue: Double < Sync =
+    for (overlaySvg, scales) <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lowerWithScales
+    yield scales.y.toPixel(60000.0)
+```
+
+For a live chart the returned scales reflect the signal value at call time and do not update on later emissions; call `lowerWithScales` again to recompute.
+
+### Reactivity
+
+Pass a `Signal[Seq[A]]` instead of a `Seq[A]` to get a live chart. The marks region redraws on each emission; the frame, axes, and legend stay put. The marks and parameters are identical to the static form:
+
+```scala
+val livePage: UI < Async =
+    for
+        data <- Signal.initRef(sales)
+        liveChart <- Chart(data)(Chart.bar(x = _.month, y = _.revenue))
+            .animate(_.ease(300.millis))
+            .lower
+    yield UI.div(liveChart)
+```
+
+`.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed; for bars, the height/y tween fires, but a bar carrying a `color` or `stack` parameter snaps rather than tweens.
+
+The data source is not the only reactive surface. A `rule` threshold can be a `Signal` (a reference line that tracks live state, shown above); `.onHover` and `.onSelect` publish the hovered or selected datum into `SignalRef`s the rest of the page reads; and `.legend(_.interactive(ref))` toggles series visibility from the legend. All of these are ordinary signals in the same reactive model, not chart-specific machinery. The next section covers the interaction surfaces.
+
+### Interaction
+
+Hover and selection are published to `SignalRef`s. The hovered datum becomes an ordinary signal readable anywhere on the page:
+
+```scala
+val interactivePage: UI < Async =
+    for
+        hovered  <- Signal.initRef(Maybe.empty[Sale])
+        selected <- Signal.initRef(Maybe.empty[Sale])
+        hoverChart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
+            .onHover(hovered)
+            .onSelect(selected)
+            .lower
+        withTooltip <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
+            .tooltip(s => s"${s.month}: ${s.revenue}")
+            .lower
+    yield UI.div(
+        hoverChart,
+        hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar"))),
+        withTooltip
+    )
+```
+
+`.interaction(_.highlightSelect)` and `.interaction(_.highlightHover)` highlight the selected or hovered datum. They do nothing unless the matching `onSelect` or `onHover` ref is wired; when both apply at once, the select highlight takes precedence. Highlighting works on every mark (bar, point, line, area, text, errorBar), and `.hoverStyle(s)`/`.selectStyle(s)` customize its appearance:
+
+```scala
+val highlightPage: UI < Async =
+    for
+        selected <- Signal.initRef(Maybe.empty[Sale])
+        chart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+            .onSelect(selected)
+            .interaction(_.highlightSelect)
+            .lower
+    yield UI.div(chart)
+```
+
+### Interactive legend
+
+`.legend(_.interactive(ref))` makes the legend swatches clickable: clicking a series toggles its visibility. `ref` is a `SignalRef[Set[Int]]` holding the indices of the currently hidden series. Clicking a swatch adds or removes its series index, and the marks lowering drops rows whose series is in the set, so the remaining series re-lay out to fill the plot. Index keying (rather than a label) keeps two categories that share a `toString` independently toggleable. It is the same `SignalRef` model as the rest of the page, so the hidden set is also readable anywhere else (for a count, a "reset" button, and so on):
+
+```scala
+val legendTogglePage: UI < Async =
+    for
+        hidden <- Signal.initRef(Set.empty[Int])
+        chart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+            .legend(_.top.interactive(hidden))
+            .lower
+    yield UI.div(chart)
+```
+
+## Running a UI
+
+The same `UI` value plugs into different targets. The runner picks the transport; the UI shape is unchanged.
+
+### `UI.runMount(ui)` (Scala.js)
+
+The typical client app entrypoint. `mount` is a JS-only extension method on `UI.type` requiring `Async & Scope` in the effect row. The lifecycle is `Scope`-bound: closing the scope removes the DOM nodes and detaches all listeners. There is no separate "unmount" call.
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+object App extends KyoApp:
+    run {
+        for
+            counter <- Signal.initRef(0)
+            ui = div(
+                button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
+                counter.render(n => span(n.toString).id("count"))
+            )
+            _ <- runMount(ui)
+        yield ()
+    }
+end App
+```
+
+The 2-arg overload mounts into a specific container by CSS selector instead of `document.body`:
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+val ui: UI                          = div(button("+1").id("inc"))
+val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
+```
+
+### `UI.runHandlers(basePath)(ui)`
+
+Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: three handlers in one sequence, a GET that serves the initial page, a POST that receives client events, and an SSE stream that pushes diff updates. You wire them into `HttpServer.init` alongside your other routes.
+
+```scala
+import UI.*
+import kyo.*
+
+val server: Unit < (Async & Scope) =
+    for
+        counter <- Signal.initRef(0)
+        page = div(
+            button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
+            counter.render(n => span(n.toString).id("count"))
+        )
+        uiHandlers <- runHandlers("/app")(page)
+        otherHandlers = Seq.empty[HttpHandler[?, ?, ?]]
+        _ <- HttpServer.init((uiHandlers ++ otherHandlers)*)
+    yield ()
+```
+
+The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
+
+### `UI.runRender(ui)`
+
+`Stream[String, Async]` of full HTML. First emission is the initial render; subsequent emissions are full re-renders on any signal change. Use for SSR, tests, snapshot exports, or a custom transport.
+
+```scala
+import UI.*
+import kyo.*
+
+val page: UI                         = div(h1("Hello"), p("world"))
+val snapshots: Stream[String, Async] = runRender(page)
+val firstFrame: String < Async       = snapshots.take(1).run.map(_.headMaybe.getOrElse(""))
+```
+
+> **Note:** `UI.runRender` re-emits the WHOLE document on every change, not a diff. The HTTP handlers do diff-pushing; if you want diff semantics in a custom transport, port the logic from `UIServer` and `UIExchange`.
+
+When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over SSE). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, a custom WebSocket transport you want to write yourself.
+
+## Window and routing (Scala.js)
+
+`UIWindow` and `UILocation` are JS-only namespaces useful inside `UI.runMount` apps. Both expose reactive `Signal`s for browser state plus thin wrappers over the underlying browser APIs, so a Scala.js component reads window size or the current path the same way it reads any other signal.
+
+### `UIWindow`: viewport size, page visibility, document keys
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+val responsiveLayout: UI < Async =
+    UIWindow.size.render { case (w, h) =>
+        if w < 600 then div.text(s"mobile $w x $h")
+        else div.text(s"desktop $w x $h")
+    }
+```
+
+`UIWindow.size: Signal[(Int, Int)]` updates on `resize`. `UIWindow.visibility: Signal[Boolean]` is `!document.hidden`, updates on `visibilitychange`. Both install a single listener the first time the signal is read.
+
+Document-level key handlers attach for the lifetime of the enclosing scope; closing the scope removes the listener.
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+val keyboardShortcuts: Unit < (Async & Scope) =
+    UIWindow.onKeyDown { ke =>
+        ke.key match
+            case Keyboard.Escape => closeDialog
+            case _               => Sync.defer(())
+    }
+```
+
+The handler closure receives a `UI.KeyboardEvent` (key, modifiers, targetId), matching the typed payload from in-element `onKeyDown` handlers.
+
+### `UILocation`: client-side routing
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+val router: UI < Async =
+    UILocation.current.render { path =>
+        path match
+            case "/"          => homePage
+            case "/about"     => aboutPage
+            case s"/user/$id" => userPage(id)
+            case _            => notFoundPage
+    }
+```
+
+`UILocation.current: Signal[String]` is `pathname + search`. It updates on `push`, `replace`, the browser back/forward buttons, and intercepted anchor clicks.
+
+```scala doctest:platform=js expect=skipped
+import kyo.*
+
+val navigate: Unit < Sync = UILocation.push("/about?ref=home")
+val back: Unit < Sync     = UILocation.back
+val jumpBack: Unit < Sync = UILocation.go(-2)
+```
+
+A document-level click interceptor installed at first use rewrites plain anchor clicks into `pushState`, so `a(href := "/foo")` participates in routing without explicit `onClick` wiring. Modifier-key clicks (ctrl/cmd/shift/alt), middle clicks, and `target="_blank"` anchors are passed through to the browser unchanged so new-tab/window/save-as still work natively.
+
+```scala
+import UI.*
+import kyo.*
+
+val navBar: UI =
+    nav(
+        a.href(Href.Path("/"))("home"),
+        a.href(Href.Path("/about"))("about"),
+        a.href(Href.External("https", "example.com"), Target.Blank)("external") // not intercepted
+    )
+```
 
 ## SVG
 
@@ -1003,188 +1500,35 @@ val interactiveCell: UI < Async =
     )
 ```
 
-### A worked example: a small bar chart
+### A worked example: a small grid
 
-Putting the pieces together, a bar chart is one `Svg.rect` per value (positioned via typed lengths), an axis baseline via `Svg.line`, and centered labels via `Svg.text`. This mirrors the in-repo `demo/BarChart.scala`:
+Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/Snake.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
 
 ```scala
 import UI.*
 import kyo.*
 
-val barChart: UI =
-    val values = Chunk(("kyo", 61.0), ("cats", 49.0), ("zio", 52.0))
-    val maxV   = 64.0
-    val baseY  = 110.0
-    val bars = values.zipWithIndex.flatMap { case ((label, v), i) =>
-        val x = 20.0 + i * 60.0
-        val h = (v / maxV) * 90.0
-        Chunk(
-            Svg.rect.x(x).y(baseY - h).width(40).height(h)
-                .fill(Svg.Paint.Color(Style.Color.blue)),
-            Svg.text.x(x + 20).y(baseY + 14)
-                .textAnchor(Svg.TextAnchor.Middle)
-                .fontSize(Svg.SvgLength.px(10.0))(label)
-        )
+val board: UI =
+    val cell  = 16
+    val cells = 10
+    val snake = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
+    val food  = (7, 3)
+    val backing = Svg.rect.x(0).y(0).width(cell * cells).height(cell * cells)
+        .fill(Svg.Paint.Color(Style.Color.rgb(24, 28, 42)))
+    val foodDot = Svg.circle
+        .cx(food._1 * cell + cell / 2.0).cy(food._2 * cell + cell / 2.0).r(cell / 2.0 - 2.0)
+        .fill(Svg.Paint.Color(Style.Color.red))
+    val segments = snake.map { case (cx, cy) =>
+        Svg.rect.x(cx * cell + 1).y(cy * cell + 1).width(cell - 2).height(cell - 2)
+            .fill(Svg.Paint.Color(Style.Color.green))
     }
-    val axis = Svg.line.x1(15).y1(baseY).x2(205).y2(baseY)
-        .stroke(Svg.Paint.Color(Style.Color.gray)).strokeWidth(1.0)
     div(
-        Svg.svg.width(220).height(130).viewBox(Svg.ViewBox(0, 0, 220, 130))(
-            (axis +: bars)*
-        )
-    )
-end barChart
-```
-
-## Running a UI
-
-The same `UI` value plugs into different targets. The runner picks the transport; the UI shape is unchanged.
-
-### `UI.runMount(ui)` (Scala.js)
-
-The typical client app entrypoint. `mount` is a JS-only extension method on `UI.type` requiring `Async & Scope` in the effect row. The lifecycle is `Scope`-bound: closing the scope removes the DOM nodes and detaches all listeners. There is no separate "unmount" call.
-
-```scala doctest:platform=js expect=skipped
-import UI.*
-import kyo.*
-
-object App extends KyoApp:
-    run {
-        for
-            counter <- Signal.initRef(0)
-            ui = div(
-                button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
-                counter.render(n => span(n.toString).id("count"))
+        Svg.svg.width(cell * cells).height(cell * cells)
+            .viewBox(Svg.ViewBox(0, 0, cell * cells, cell * cells))(
+                (backing +: foodDot +: segments)*
             )
-            _ <- runMount(ui)
-        yield ()
-    }
-end App
-```
-
-The 2-arg overload mounts into a specific container by CSS selector instead of `document.body`:
-
-```scala doctest:platform=js expect=skipped
-import UI.*
-import kyo.*
-
-val ui: UI                          = div(button("+1").id("inc"))
-val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
-```
-
-### `UI.runHandlers(basePath)(ui)`
-
-Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: three handlers in one sequence, a GET that serves the initial page, a POST that receives client events, and an SSE stream that pushes diff updates. You wire them into `HttpServer.init` alongside your other routes.
-
-```scala
-import UI.*
-import kyo.*
-
-val server: Unit < (Async & Scope) =
-    for
-        counter <- Signal.initRef(0)
-        page = div(
-            button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
-            counter.render(n => span(n.toString).id("count"))
-        )
-        uiHandlers <- runHandlers("/app")(page)
-        otherHandlers = Seq.empty[HttpHandler[?, ?, ?]]
-        _ <- HttpServer.init((uiHandlers ++ otherHandlers)*)
-    yield ()
-```
-
-The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
-
-### `UI.runRender(ui)`
-
-`Stream[String, Async]` of full HTML. First emission is the initial render; subsequent emissions are full re-renders on any signal change. Use for SSR, tests, snapshot exports, or a custom transport.
-
-```scala
-import UI.*
-import kyo.*
-
-val page: UI                         = div(h1("Hello"), p("world"))
-val snapshots: Stream[String, Async] = runRender(page)
-val firstFrame: String < Async       = snapshots.take(1).run.map(_.headMaybe.getOrElse(""))
-```
-
-> **Note:** `UI.runRender` re-emits the WHOLE document on every change, not a diff. The HTTP handlers do diff-pushing; if you want diff semantics in a custom transport, port the logic from `UIServer` and `UIExchange`.
-
-When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over SSE). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, a custom WebSocket transport you want to write yourself.
-
-## Window and routing (Scala.js)
-
-`UIWindow` and `UILocation` are JS-only namespaces useful inside `UI.runMount` apps. Both expose reactive `Signal`s for browser state plus thin wrappers over the underlying browser APIs, so a Scala.js component reads window size or the current path the same way it reads any other signal.
-
-### `UIWindow`: viewport size, page visibility, document keys
-
-```scala doctest:platform=js expect=skipped
-import UI.*
-import kyo.*
-
-val responsiveLayout: UI < Async =
-    UIWindow.size.render { case (w, h) =>
-        if w < 600 then div.text(s"mobile $w x $h")
-        else div.text(s"desktop $w x $h")
-    }
-```
-
-`UIWindow.size: Signal[(Int, Int)]` updates on `resize`. `UIWindow.visibility: Signal[Boolean]` is `!document.hidden`, updates on `visibilitychange`. Both install a single listener the first time the signal is read.
-
-Document-level key handlers attach for the lifetime of the enclosing scope; closing the scope removes the listener.
-
-```scala doctest:platform=js expect=skipped
-import UI.*
-import kyo.*
-
-val keyboardShortcuts: Unit < (Async & Scope) =
-    UIWindow.onKeyDown { ke =>
-        ke.key match
-            case Keyboard.Escape => closeDialog
-            case _               => Sync.defer(())
-    }
-```
-
-The handler closure receives a `UI.KeyboardEvent` (key, modifiers, targetId), matching the typed payload from in-element `onKeyDown` handlers.
-
-### `UILocation`: client-side routing
-
-```scala doctest:platform=js expect=skipped
-import UI.*
-import kyo.*
-
-val router: UI < Async =
-    UILocation.current.render { path =>
-        path match
-            case "/"          => homePage
-            case "/about"     => aboutPage
-            case s"/user/$id" => userPage(id)
-            case _            => notFoundPage
-    }
-```
-
-`UILocation.current: Signal[String]` is `pathname + search`. It updates on `push`, `replace`, the browser back/forward buttons, and intercepted anchor clicks.
-
-```scala doctest:platform=js expect=skipped
-import kyo.*
-
-val navigate: Unit < Sync = UILocation.push("/about?ref=home")
-val back: Unit < Sync     = UILocation.back
-val jumpBack: Unit < Sync = UILocation.go(-2)
-```
-
-A document-level click interceptor installed at first use rewrites plain anchor clicks into `pushState`, so `a(href := "/foo")` participates in routing without explicit `onClick` wiring. Modifier-key clicks (ctrl/cmd/shift/alt), middle clicks, and `target="_blank"` anchors are passed through to the browser unchanged so new-tab/window/save-as still work natively.
-
-```scala
-import UI.*
-import kyo.*
-
-val navBar: UI =
-    nav(
-        a.href(Href.Path("/"))("home"),
-        a.href(Href.Path("/about"))("about"),
-        a.href(Href.External("https", "example.com"), Target.Blank)("external") // not intercepted
     )
+end board
 ```
 
 ## Pattern-matching on UI (AST access)
@@ -1304,6 +1648,10 @@ Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cov
 - [**Playground**](shared/src/test/scala/demo/Playground.scala): HTML playground: a textarea feeds a live `iframe` preview.
 - [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
 - [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
+- [**ChartFeatureGallery**](shared/src/test/scala/demo/ChartFeatureGallery.scala): static gallery of the [Charts](#charts) layer, one cell per feature: sequential color scale, error bars, text annotations, stacked area, themes and named palettes, grouped bars, and an accessible titled chart.
+- [**ChartShowcase**](shared/src/test/scala/demo/ChartShowcase.scala): animated and interactive [Charts](#charts): a dual-axis bar-plus-line combo, a multi-series line with select-to-highlight, and animated multi-series areas that tween between datasets via `.animate`.
+- [**ChartReactiveScales**](shared/src/test/scala/demo/ChartReactiveScales.scala): reactive [Charts](#charts) and scales: a line bound to a `Signal` that morphs on update, a bar with a clamped fixed y-domain, and a `lowerWithScales` readback that pins an `Svg.line` to an exact data pixel.
+- [**LinkedSelection**](shared/src/test/scala/demo/LinkedSelection.scala): two linked [Charts](#charts) wired by a single shared `SignalRef`: clicking a bar in the category chart drives a detail line, with no event bus or callbacks.
+- [**LiveDashboard**](shared/src/test/scala/demo/LiveDashboard.scala): a live service-metrics dashboard on the reactive [Charts](#charts) layer: KPI tiles, fixed-domain throughput bars, a rolling-window latency line split by series, and stacked status codes, all random-walked by one background fiber on a fixed cadence.
 - [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
-- [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
-- [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.
+- [**Snake**](shared/src/test/scala/demo/Snake.scala): the classic game on the raw [SVG](#svg) API: a grid of `Svg.rect`s driven by a background game-loop fiber and arrow-key / WASD input, with all state in one `SignalRef`.
