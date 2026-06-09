@@ -225,8 +225,6 @@ private[kyo] object ChartLower:
       * snap with no animate child when the signature differs (structural change such as a gap introduction
       * or a category add/remove).
       *
-      * No `url(#id)` references are emitted; `Frame.internal` is safe.
-      *
       * Unsafe boundary: `stateRef` uses `AtomicRef.Unsafe` so it can be read and written from within the
       * pure render function. The ref is private to this chart instance and writes occur only on genuine row
       * changes, so the bypass is sound.
@@ -332,8 +330,7 @@ private[kyo] object ChartLower:
       * another lowering of the same spec. Within one chart the gradient def id and its `url(#id)` reference
       * always match (the def carries the prefix-derived `defId`, the swatch fill references the same id).
       */
-    private[kyo] def lower[A](spec: Chart[A])(using AllowUnsafe): Svg.Root =
-        given Frame    = Frame.internal
+    private[kyo] def lower[A](spec: Chart[A])(using Frame, AllowUnsafe): Svg.Root =
         val gradPrefix = ChartFoundations.chartInstancePrefix()
         spec.data match
             case DataSource.Static(rows) => lowerStatic(rows, spec, gradPrefix)
@@ -347,8 +344,7 @@ private[kyo] object ChartLower:
       * plot rectangle, so callers can compute exact chart pixel coordinates. For a live chart the scales are
       * resolved from the signal's current value at call time.
       */
-    private[kyo] def lowerWithScales[A](spec: Chart[A])(using AllowUnsafe): (Svg.Root, Chart.Scales) =
-        given Frame = Frame.internal
+    private[kyo] def lowerWithScales[A](spec: Chart[A])(using Frame, AllowUnsafe): (Svg.Root, Chart.Scales) =
         val rows: Chunk[A] = spec.data match
             case DataSource.Static(rs)   => rs
             case DataSource.Live(signal) =>
