@@ -883,7 +883,7 @@ val diamonds: Svg.Root < Sync =
     Chart(sales)(Chart.point(x = _.lo, y = _.hi, symbol = _ => Chart.Symbol.diamond)).lower
 ```
 
-`line` and `area` take a `curve` encoding that selects the interpolation between vertices, drawn from `Curve` (`linear`, `monotone`, `stepBefore`, `stepAfter`, `basis`, `catmullRom`):
+`line` and `area` take a `curve` parameter that selects the interpolation between vertices, drawn from `Curve` (`linear`, `monotone`, `stepBefore`, `stepAfter`, `basis`, `catmullRom`):
 
 ```scala
 val smooth: Svg.Root < Sync =
@@ -915,7 +915,7 @@ val typedChart: Svg.Root < Sync =
 
 A `Maybe[Y]` accessor type-checks too and means gaps: a line breaks and a point or bar drops at the `Absent` rows.
 
-The rule that makes this work is that an accessor's value type must have a `Plottable` instance, the evidence that also selects the scale family. A encoding over a type with no instance, such as a `Boolean` or an arbitrary class, does not compile. You rarely name `Plottable` directly: instances exist for `Int`, `Long`, `Double`, `String`, and `Instant`, enums derive one automatically, and an opaque numeric type can supply one with `Plottable.numeric`:
+The rule that makes this work is that an accessor's value type must have a `Plottable` instance, the evidence that also selects the scale family. An encoding over a type with no instance, such as a `Boolean` or an arbitrary class, does not compile. You rarely name `Plottable` directly: instances exist for `Int`, `Long`, `Double`, `String`, and `Instant`, enums derive one automatically, and an opaque numeric type can supply one with `Plottable.numeric`:
 
 <!-- doctest:setup
 ```scala
