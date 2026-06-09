@@ -658,7 +658,7 @@ object Chart:
 
     object AnimateConfig:
         val default: AnimateConfig =
-            AnimateConfig(true, Duration.fromJava(java.time.Duration.ofMillis(300)))
+            AnimateConfig(true, 300.millis)
 
     /** Overrides the automatically-inferred scale for an axis.
       *
@@ -1098,7 +1098,9 @@ object Chart:
                 scale match
                     case b: kyo.internal.Scale.Band =>
                         if b.keys.contains(key) then Present(scale.apply(kyo.internal.Domain.Category(key))) else Absent
-                    case _ => Absent
+                    case _: kyo.internal.Scale.Linear | _: kyo.internal.Scale.Log |
+                        _: kyo.internal.Scale.Time | _: kyo.internal.Scale.Symlog =>
+                        Absent
                 end match
             end toPixelCategory
             def invert(pixel: Double): Scales.Resolved =

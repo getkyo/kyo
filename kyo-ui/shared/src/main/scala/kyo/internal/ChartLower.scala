@@ -238,16 +238,20 @@ private[kyo] object ChartLower:
                     case Present(ScaleKind.Time)         => Scale.Kind.Time
                     case Present(ScaleKind.Point)        => Scale.Kind.Point
                     case Present(ScaleKind.Symlog)       => Scale.Kind.Symlog
-                    case _                               => Scale.Kind.Linear
+                    case Absent                          => Scale.Kind.Linear
                 val extFinal: Extent = spec.yScaleOverride.flatMap(_.kind) match
                     case Present(ScaleKind.Linear(domLo, domHi)) => Extent.Continuous(domLo, domHi)
                     case Present(ScaleKind.Log) =>
                         yLeftExtentNoZero(rows, spec.marks).getOrElse(Extent.Continuous(1.0, 10.0))
-                    case _ => yExt
+                    case Absent | Present(ScaleKind.Band) | Present(ScaleKind.Time) |
+                        Present(ScaleKind.Point) | Present(ScaleKind.Symlog) =>
+                        yExt
                 val useNice = spec.yScaleOverride.flatMap(_.kind) match
                     case Present(ScaleKind.Linear(_, _)) => false
                     case Present(ScaleKind.Log)          => false
-                    case _                               => yNice
+                    case Absent | Present(ScaleKind.Band) | Present(ScaleKind.Time) |
+                        Present(ScaleKind.Point) | Present(ScaleKind.Symlog) =>
+                        yNice
                 val scale = Scale.fit(yKind, extFinal, 100.0, 0.0, nice = useNice, clamp = false)
                 val labels = scale.ticks(cfg.tickCount).map: t =>
                     cfg.tickFormat match
@@ -308,7 +312,9 @@ private[kyo] object ChartLower:
                         case m: Mark.Point[?, ?, ?] =>
                             val r = if m.size.isDefined then SizeScale.DefaultRMax else DefaultRadius
                             math.max(mx, r)
-                        case _ => mx
+                        case (_: Mark.Bar[?, ?, ?] | _: Mark.Line[?, ?, ?] | _: Mark.Area[?, ?, ?] | _: Mark.Rule[?] |
+                            _: Mark.Text[?, ?, ?] | _: Mark.ErrorBar[?, ?, ?]) =>
+                            mx
         // Grow the configured left margin so wide left y-tick labels + a rotated left axis title clear the SVG edge.
         val marginLeft = leftAxisMargin(spec, m.left)
         Layout(
@@ -448,7 +454,9 @@ private[kyo] object ChartLower:
                         val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r)))
                         val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r)))
                         ensureZero(mergeExtents(mergeExtents(eY, eLow), eHigh))
-                    case _ => Absent
+                    case (_: Mark.Bar[?, ?, ?] | _: Mark.Line[?, ?, ?] | _: Mark.Area[?, ?, ?] | _: Mark.Point[?, ?, ?] |
+                        _: Mark.Rule[?] | _: Mark.Text[?, ?, ?] | _: Mark.ErrorBar[?, ?, ?]) =>
+                        Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -511,7 +519,9 @@ private[kyo] object ChartLower:
                             mergeExtents(posExtent(m.y), posExtent(m.low)),
                             posExtent(m.high)
                         )
-                    case _ => Absent
+                    case (_: Mark.Bar[?, ?, ?] | _: Mark.Line[?, ?, ?] | _: Mark.Area[?, ?, ?] | _: Mark.Point[?, ?, ?] |
+                        _: Mark.Rule[?] | _: Mark.Text[?, ?, ?] | _: Mark.ErrorBar[?, ?, ?]) =>
+                        Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -544,7 +554,9 @@ private[kyo] object ChartLower:
                         val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r)))
                         val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r)))
                         ensureZero(mergeExtents(mergeExtents(eY, eLow), eHigh))
-                    case _ => Absent
+                    case (_: Mark.Bar[?, ?, ?] | _: Mark.Line[?, ?, ?] | _: Mark.Area[?, ?, ?] | _: Mark.Point[?, ?, ?] |
+                        _: Mark.Rule[?] | _: Mark.Text[?, ?, ?] | _: Mark.ErrorBar[?, ?, ?]) =>
+                        Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -605,7 +617,9 @@ private[kyo] object ChartLower:
                             mergeExtents(posExtent(m.y), posExtent(m.low)),
                             posExtent(m.high)
                         )
-                    case _ => Absent
+                    case (_: Mark.Bar[?, ?, ?] | _: Mark.Line[?, ?, ?] | _: Mark.Area[?, ?, ?] | _: Mark.Point[?, ?, ?] |
+                        _: Mark.Rule[?] | _: Mark.Text[?, ?, ?] | _: Mark.ErrorBar[?, ?, ?]) =>
+                        Absent
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -823,8 +837,8 @@ private[kyo] object ChartLower:
 
     private def inferKind[A](ext: Extent, marks: Chunk[Mark[A]], isX: Boolean): Scale.Kind =
         ext match
-            case Extent.Categories(_)    => Scale.Kind.Band
-            case Extent.Continuous(_, _) => Scale.Kind.Linear
+            case _: Extent.Categories => Scale.Kind.Band
+            case _: Extent.Continuous => Scale.Kind.Linear
 
     // ---- static frame chrome ----
 
@@ -1204,7 +1218,7 @@ private[kyo] object ChartLower:
                                 // Sequential legend: a continuous gradient swatch under a doc-unique def id, plus
                                 // the numeric value extent (min/mid/max) so the gradient is quantitatively readable.
                                 buildSequentialLegend(layout, spec, lo, hi, categories, domOv, gradPrefix)
-                            case _ =>
+                            case Absent | Present(_: LegendConfig.ColorScale.Categorical) =>
                                 val palette = resolvePalette(spec, categories)
                                 buildLegendItems(
                                     layout,
@@ -1224,7 +1238,9 @@ private[kyo] object ChartLower:
                         case Present(fn) =>
                             buildSizeLegend(layout, rows, m, axisChromeColor(spec.theme), colorItems.size, spec.theme)
                         case Absent => Chunk.empty
-                case _ => Chunk.empty
+                case (_: Mark.Bar[?, ?, ?] | _: Mark.Line[?, ?, ?] | _: Mark.Area[?, ?, ?] | _: Mark.Rule[?] |
+                    _: Mark.Text[?, ?, ?] | _: Mark.ErrorBar[?, ?, ?]) =>
+                    Chunk.empty
 
             colorItems ++ sizeItems
         end if
@@ -3261,12 +3277,11 @@ private[kyo] object ChartLower:
                                             val v = Svg.line.x1(cx).y1(cy - r).x2(cx).y2(cy + r)
                                                 .stroke(Svg.Paint.Color(fillColor)).strokeWidth(PointStrokeWidth + 0.5)
                                             Chunk(h, v)
-                                        case _ =>
+                                        case Symbol.square | Symbol.triangle | Symbol.diamond =>
                                             val pd = sym match
                                                 case Symbol.square   => squarePath(cx, cy, r)
                                                 case Symbol.triangle => trianglePath(cx, cy, r)
                                                 case Symbol.diamond  => diamondPath(cx, cy, r)
-                                                case _               => squarePath(cx, cy, r) // unreachable
                                             val base = Svg.path.d(pd)
                                                 .fill(Svg.Paint.Color(fillColor))
                                                 .stroke(Svg.Paint.Color(separator))
@@ -3385,7 +3400,7 @@ private[kyo] object ChartLower:
         def xLine(d: Domain): Svg.Line =
             val leftEdge = xs.apply(d)
             val px = d match
-                case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
+                case _: Domain.Category => leftEdge + xs.bandwidth / 2.0
                 case _                  => leftEdge
             Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline)
         end xLine
@@ -3399,7 +3414,7 @@ private[kyo] object ChartLower:
                     case Absent     => Chunk.empty
             case Present(r: RuleValue.Reactive[?]) =>
                 Chunk(Svg.g(reactiveLine(r, xLine)))
-            case _ => Chunk.empty
+            case Absent => Chunk.empty
         val yChildren: Chunk[UI] = mark.y match
             case Present(c: RuleValue.Const[?]) =>
                 constDomain(c) match
@@ -3407,7 +3422,7 @@ private[kyo] object ChartLower:
                     case Absent     => Chunk.empty
             case Present(r: RuleValue.Reactive[?]) =>
                 Chunk(Svg.g(reactiveLine(r, yLine)))
-            case _ => Chunk.empty
+            case Absent => Chunk.empty
         xChildren ++ yChildren
     end lowerRuleChildren
 
@@ -3659,7 +3674,7 @@ private[kyo] object ChartLower:
                         rawPath(smilAnimatePath(fromD, toD, durStr))
                     else rawPath
                     end if
-                case _ => rawPath
+                case Absent | Present(_: MarkGeom.Bar) => rawPath
     end morphedPath
 
     /** Lower a simple bar mark with keyed enter/update SMIL transitions.

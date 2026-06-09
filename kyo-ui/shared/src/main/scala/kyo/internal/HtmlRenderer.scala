@@ -542,23 +542,38 @@ private[kyo] object HtmlRenderer:
     //  </  -> <\/  (prevents </script> from closing the element; < alone is harmless in JS)
     private def jsStr(s: String): String =
         val sb = new StringBuilder(s.length)
-        var i  = 0
-        while i < s.length do
-            s.charAt(i) match
-                case '\\' => sb.append("\\\\")
-                case '"'  => sb.append("\\\"")
-                case '\'' => sb.append("\\'")
-                case '\r' => sb.append("\\r")
-                case '\n' => sb.append("\\n")
-                case ' '  => sb.append("\\u2028")
-                case ' '  => sb.append("\\u2029")
-                case '<' if i + 1 < s.length && s.charAt(i + 1) == '/' =>
-                    sb.append("<\\/")
-                    i += 1
-                case c => sb.append(c)
-            end match
-            i += 1
-        end while
+        @scala.annotation.tailrec
+        def loop(i: Int): Unit =
+            if i < s.length then
+                s.charAt(i) match
+                    case '\\' =>
+                        sb.append("\\\\")
+                        loop(i + 1)
+                    case '"' =>
+                        sb.append("\\\"")
+                        loop(i + 1)
+                    case '\'' =>
+                        sb.append("\\'")
+                        loop(i + 1)
+                    case '\r' =>
+                        sb.append("\\r")
+                        loop(i + 1)
+                    case '\n' =>
+                        sb.append("\\n")
+                        loop(i + 1)
+                    case ' ' =>
+                        sb.append("\\u2028")
+                        loop(i + 1)
+                    case ' ' =>
+                        sb.append("\\u2029")
+                        loop(i + 1)
+                    case '<' if i + 1 < s.length && s.charAt(i + 1) == '/' =>
+                        sb.append("<\\/")
+                        loop(i + 2)
+                    case c =>
+                        sb.append(c)
+                        loop(i + 1)
+        loop(0)
         sb.toString
     end jsStr
 

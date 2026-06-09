@@ -156,7 +156,7 @@ private[kyo] object Scale:
                         if out < lo then lo else if out > hi then hi else out
                     else out
                     end if
-            case Domain.Category(_)  => rangeLo
+            case _: Domain.Category  => rangeLo
             case Domain.Temporal(ms) => apply(Domain.Continuous(ms.toDouble))
 
         def invert(px: Double): Domain =
@@ -244,7 +244,7 @@ private[kyo] object Scale:
                         else out
                         end if
                     end if
-            case Domain.Category(_)  => rangeLo
+            case _: Domain.Category  => rangeLo
             case Domain.Temporal(ms) => apply(Domain.Continuous(ms.toDouble))
 
         def invert(px: Double): Domain =
@@ -311,7 +311,7 @@ private[kyo] object Scale:
                         else rangeLo
                         end if
                 end match
-            case Domain.Temporal(_) => rangeLo
+            case _: Domain.Temporal => rangeLo
 
         def invert(px: Double): Domain =
             // Guard only empty scale or zero-width range, NOT a reversed range (rangeLo > rangeHi). A reversed
@@ -354,7 +354,7 @@ private[kyo] object Scale:
         def apply(d: Domain): Double = d match
             case Domain.Temporal(ms)  => inner.apply(Domain.Continuous(ms.toDouble))
             case Domain.Continuous(v) => inner.apply(Domain.Continuous(v))
-            case Domain.Category(_)   => rangeLo
+            case _: Domain.Category   => rangeLo
 
         def invert(px: Double): Domain = inner.invert(px) match
             case Domain.Continuous(v) => Domain.Temporal(v.toLong)
@@ -416,7 +416,7 @@ private[kyo] object Scale:
     private def fitTime(extent: Extent, rangeLo: Double, rangeHi: Double, nice: Boolean): Scale =
         val (lo, hi) = extent match
             case Extent.Continuous(mn, mx) => (mn.toLong, mx.toLong)
-            case Extent.Categories(_)      => (0L, 1L)
+            case _: Extent.Categories      => (0L, 1L)
         Time(lo, hi, rangeLo, rangeHi)
     end fitTime
 
@@ -435,7 +435,7 @@ private[kyo] object Scale:
     private def fitSymlog(extent: Extent, rangeLo: Double, rangeHi: Double, clamp: Boolean): Scale =
         val (rawLo, rawHi) = extent match
             case Extent.Continuous(mn, mx) => (mn, mx)
-            case Extent.Categories(_)      => (-1.0, 1.0)
+            case _: Extent.Categories      => (-1.0, 1.0)
         Symlog(rawLo, rawHi, rangeLo, rangeHi, clamp)
     end fitSymlog
 
@@ -472,7 +472,7 @@ private[kyo] object Scale:
                 val v = ms.toDouble
                 if clamp then applyRaw(math.max(domainMin, math.min(domainMax, v)))
                 else applyRaw(v)
-            case Domain.Category(_) => applyRaw(domainMin)
+            case _: Domain.Category => applyRaw(domainMin)
         end apply
 
         def invert(px: Double): Domain =

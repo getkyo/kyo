@@ -105,6 +105,41 @@ class ChartSurfaceTest extends kyo.test.Test[Any]:
         """)("cannot be accessed")
     }
 
+    "Mark.Point is not accessible outside kyo" in {
+        typeCheckFailure("""
+            import kyo.*
+            import kyo.Chart.*
+            val m: Chart.Mark[String] =
+                Chart.point(x = (s: String) => s, y = (s: String) => s.length.toDouble)
+            m match { case Chart.Mark.Point(x, y, _, _, _, _, _, _) => x }
+        """)("cannot be accessed")
+    }
+
+    "Mark.Text is not accessible outside kyo" in {
+        typeCheckFailure("""
+            import kyo.*
+            import kyo.Chart.*
+            val m: Chart.Mark[String] =
+                Chart.text(x = (s: String) => s, y = (s: String) => s.length.toDouble, label = identity)
+            m match { case Chart.Mark.Text(x, y, _, _, _, _, _) => x }
+        """)("cannot be accessed")
+    }
+
+    "Mark.ErrorBar is not accessible outside kyo" in {
+        typeCheckFailure("""
+            import kyo.*
+            import kyo.Chart.*
+            val m: Chart.Mark[String] =
+                Chart.errorBar(
+                    x = (s: String) => s,
+                    y = (s: String) => s.length.toDouble,
+                    low = (s: String) => s.length.toDouble - 0.5,
+                    high = (s: String) => s.length.toDouble + 0.5
+                )
+            m match { case Chart.Mark.ErrorBar(x, y, _, _, _, _, _, _) => x }
+        """)("cannot be accessed")
+    }
+
     // The carrier classes that back mark field storage are not reachable from user code.
 
     "Chart.Encoding is not accessible outside kyo" in {
@@ -149,16 +184,24 @@ class ChartSurfaceTest extends kyo.test.Test[Any]:
         )
     }
 
-    // Batch acceptance: all ex-public carriers and the Any-bearing enum case are inaccessible
-    // together, confirming no user-visible Any or existential ? remains on the chart surface.
+    // Batch acceptance: each ex-public carrier is independently inaccessible, so a single
+    // regression (one carrier becoming visible again) is caught without the others masking it.
 
     "Mark, Encoding, EncodingMaybe, Grouping, and ColorScale.Categorical are all inaccessible" in {
         typeCheckFailure("""
             import kyo.*
             import kyo.Chart.*
-            val _1: Chart.Encoding[String, Int]      = ???
-            val _2: Chart.EncodingMaybe[String, Int] = ???
-            val _3: Chart.Grouping[String]           = ???
+            val _1: Chart.Encoding[String, Int] = ???
+        """)("cannot be accessed")
+        typeCheckFailure("""
+            import kyo.*
+            import kyo.Chart.*
+            val _1: Chart.EncodingMaybe[String, Int] = ???
+        """)("cannot be accessed")
+        typeCheckFailure("""
+            import kyo.*
+            import kyo.Chart.*
+            val _1: Chart.Grouping[String] = ???
         """)("cannot be accessed")
         typeCheckFailure("""
             import kyo.*

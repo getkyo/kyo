@@ -110,6 +110,6 @@ private[kyo] object ChartFoundations:
     def chartInstancePrefix()(using AllowUnsafe): String =
         // Unsafe: reading the random generator is a side effect, justified inside the Sync lowering boundary so
         // each instance gets its own url(#id) namespace.
-        "kyo-chart-" + java.lang.Long.toHexString(scala.util.Random.nextLong())
+        "kyo-chart-" + java.lang.Long.toHexString(Random.live.unsafe.nextLong())
 
 end ChartFoundations
