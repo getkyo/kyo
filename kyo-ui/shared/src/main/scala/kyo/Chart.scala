@@ -1176,6 +1176,14 @@ object Chart:
 
         given string: Plottable[String] = categorical(identity)
 
+        /** Plots any value categorically by its `toString` label.
+          *
+          * Used by the group/color encoding builders, which key categorically by the value's label string
+          * regardless of the accessor's declared element type. It is semantically identical to reusing
+          * `string` at an `Any`-typed encoding, but is typed directly at `Any` so no widening is needed.
+          */
+        val any: Plottable[Any] = categorical(_.toString)
+
         given instant: Plottable[Instant] = temporal(i => i.toJava.toEpochMilli, i => i.toJava.toString)
 
         /** `Plottable[Maybe[A]]` projects only `Present` values; `Absent` returns `Absent` so the extent-folding
@@ -1360,12 +1368,10 @@ object Chart:
 
     /** Builds the `Encoding[A, Any]` for a mark's optional `color`/group accessor.
       *
-      * Color/group values are keyed categorically by their label string, so the shared `Plottable.string`
+      * Color/group values are keyed categorically by their label string, so the shared `Plottable.any`
       * instance is the correct evidence regardless of the accessor's declared return type.
       */
     private def colorEncoding[A](color: A => Any): Encoding[A, Any] =
-        // Unsafe: `Plottable.string` plots label strings; the color accessor's values are keyed categorically by
-        // their `toString`, so widening the shared `string` instance to `Plottable[Any]` is erasure-safe here.
-        Encoding[A, Any](color, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+        Encoding[A, Any](color, Plottable.any, summon[ConcreteTag[Any]])
 
 end Chart

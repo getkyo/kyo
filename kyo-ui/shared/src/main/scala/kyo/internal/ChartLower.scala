@@ -328,7 +328,7 @@ private[kyo] object ChartLower:
       *
       * `Absent` returns from `toDomain` (gap values) are skipped and contribute nothing to the extent.
       */
-    private def foldExtent(rows: Chunk[?], domainFn: Any => Maybe[Domain]): Maybe[Extent] =
+    private def foldExtent[A](rows: Chunk[A], domainFn: A => Maybe[Domain]): Maybe[Extent] =
         @scala.annotation.tailrec
         def loop(i: Int, acc: Maybe[Extent]): Maybe[Extent] =
             if i >= rows.size then acc
@@ -366,21 +366,11 @@ private[kyo] object ChartLower:
         loop(0, Absent)
     end foldExtent
 
-    // Why every `asInstanceOf[A]` and `Encoding[A, Any]` cast in this file is sound: each one re-narrows a
-    // value the typed-mark boundary erased to `Any` but that is already the concrete row type. `rows:
-    // Chunk[A]`, the `DataSource[A]`, and each `Mark.*[A, ...]` are all built from the same `A`, and the
-    // GADT match arms (e.g. `m: Mark.Bar[A, ?, ?]`) re-prove the matched mark carries that same `A`. So
-    // `r.asInstanceOf[A]` recovers a value that is already `A`, and `colorEnc.asInstanceOf[Encoding[A, Any]]`
-    // recovers an `Encoding[?, ?]` widened by that same erasure; neither can fail at runtime.
-    //
-    // Two related widenings are sound for a different reason: nothing ever reads the element type back
-    // through them.
-    //   - `Plottable.string.asInstanceOf[Plottable[Any]]` (the group/color encoding builders): the group
-    //     accessor yields categorical label strings, so the `string` instance is the correct evidence and
-    //     widening it to `Plottable[Any]` discards nothing the code relies on.
-    //   - `mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])` and `colorEnc.tag.asInstanceOf[ConcreteTag[Any]]`
-    //     (the color-tag widenings): the tag serves only as a structural CatKey identity component, never to
-    //     reconstruct or constrain the element type, so widening it to `ConcreteTag[Any]` cannot fail.
+    // Group/color encodings carry an `Any` element type because nothing ever reads it back: the value is
+    // keyed by its label string only. So the group/color encoding builders pair `Plottable.any` (which plots
+    // any value by its `toString` label) with `summon[ConcreteTag[Any]]` as the encoding's tag. Both are the
+    // correct evidence at `Any`: the categorical label is total on any value, and the tag serves only as a
+    // structural `CatKey` identity component, never to reconstruct or constrain an element type.
 
     /** Collect x-extent across all marks' x encodings for the given rows. */
     private def xExtent[A](rows: Chunk[A], marks: Chunk[Mark[A]]): Maybe[Extent] =
@@ -389,13 +379,13 @@ private[kyo] object ChartLower:
             if i >= marks.size then acc
             else
                 val markExtent = marks(i) match
-                    case m: Mark.Bar[A, ?, ?]      => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.Line[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.Area[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.Point[A, ?, ?]    => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Bar[A, ?, ?]      => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r)))
+                    case m: Mark.Line[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r)))
+                    case m: Mark.Area[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r)))
+                    case m: Mark.Point[A, ?, ?]    => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r)))
                     case _: Mark.Rule[A]           => Absent
-                    case m: Mark.Text[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
-                    case m: Mark.ErrorBar[A, ?, ?] => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r.asInstanceOf[A])))
+                    case m: Mark.Text[A, ?, ?]     => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r)))
+                    case m: Mark.ErrorBar[A, ?, ?] => foldExtent(rows, r => m.x.plottable.toDomain(m.x.accessor(r)))
                 val merged = mergeExtents(acc, markExtent)
                 loop(i + 1, merged)
         loop(0, Absent)
@@ -416,13 +406,13 @@ private[kyo] object ChartLower:
                     case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Left =>
                         val base = m.stack.group match
                             case Absent =>
-                                foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
+                                foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r)))
                             case Present(_) =>
                                 if m.stack.normalize then Present(Extent.Continuous(0.0, 1.0))
                                 else stackedYExtent(rows, m)
                         ensureZero(base)
                     case m: Mark.Line[A, ?, ?] if m.axis == Axis.Left =>
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(rows, r => m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.Area[A, ?, ?] if m.axis == Axis.Left =>
                         val base = m.y match
                             case Present(ch) =>
@@ -431,32 +421,32 @@ private[kyo] object ChartLower:
                                         if m.stack.normalize then Present(Extent.Continuous(0.0, 1.0))
                                         else stackedAreaYExtent(rows, m, ch)
                                     case Absent =>
-                                        foldExtent(rows, r => ch.accessor(r.asInstanceOf[A]).flatMap(v => ch.plottable.toDomain(v)))
+                                        foldExtent(rows, r => ch.accessor(r).flatMap(v => ch.plottable.toDomain(v)))
                             case Absent =>
                                 val e0 = m.y0 match
-                                    case Present(ch) => foldExtent(rows, r => ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])))
+                                    case Present(ch) => foldExtent(rows, r => ch.plottable.toDomain(ch.accessor(r)))
                                     case Absent      => Absent
                                 val e1 = m.y1 match
-                                    case Present(ch) => foldExtent(rows, r => ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])))
+                                    case Present(ch) => foldExtent(rows, r => ch.plottable.toDomain(ch.accessor(r)))
                                     case Absent      => Absent
                                 mergeExtents(e0, e1)
                         ensureZero(base)
                     case m: Mark.Point[A, ?, ?] if m.axis == Axis.Left =>
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(rows, r => m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.Rule[A] if m.axis == Axis.Left =>
                         m.y match
-                            case Present(RuleValue.Const(v, pl)) => pl.asInstanceOf[Plottable[Any]].toDomain(v.asInstanceOf[Any]) match
+                            case Present(c: RuleValue.Const[?]) => constDomain(c) match
                                     case Present(d) => Present(extentFromDomain(d))
                                     case Absent     => Absent
                             case _ => Absent
                     case m: Mark.Text[A, ?, ?] if m.axis == Axis.Left =>
                         // Text y encoding contributes to y-extent; gap rows (Absent) are skipped.
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(rows, r => m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Left =>
                         // All three y encodings (low, high, y) fold into the y-extent.
-                        val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
-                        val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r.asInstanceOf[A])))
-                        val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r.asInstanceOf[A])))
+                        val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r)))
+                        val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r)))
+                        val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r)))
                         ensureZero(mergeExtents(mergeExtents(eY, eLow), eHigh))
                     case _ => Absent
                 val merged = mergeExtents(acc, markExtent)
@@ -479,7 +469,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])).flatMap:
+                                m.y.plottable.toDomain(m.y.accessor(r)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -487,7 +477,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -495,7 +485,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -504,7 +494,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -513,13 +503,13 @@ private[kyo] object ChartLower:
                         def posExtent(ch: Encoding[A, ?]) = foldExtent(
                             rows,
                             r =>
-                                ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])).flatMap:
+                                ch.plottable.toDomain(ch.accessor(r)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
                         mergeExtents(
-                            mergeExtents(posExtent(m.y.asInstanceOf[Encoding[A, ?]]), posExtent(m.low.asInstanceOf[Encoding[A, ?]])),
-                            posExtent(m.high.asInstanceOf[Encoding[A, ?]])
+                            mergeExtents(posExtent(m.y), posExtent(m.low)),
+                            posExtent(m.high)
                         )
                     case _ => Absent
                 val merged = mergeExtents(acc, markExtent)
@@ -535,24 +525,24 @@ private[kyo] object ChartLower:
             else
                 val markExtent: Maybe[Extent] = marks(i) match
                     case m: Mark.Bar[A, ?, ?] if m.axis == Axis.Right =>
-                        ensureZero(foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A]))))
+                        ensureZero(foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r))))
                     case m: Mark.Line[A, ?, ?] if m.axis == Axis.Right =>
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(rows, r => m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.Area[A, ?, ?] if m.axis == Axis.Right =>
                         val base = m.y match
-                            case Present(ch) => foldExtent(rows, r => ch.accessor(r.asInstanceOf[A]).flatMap(v => ch.plottable.toDomain(v)))
+                            case Present(ch) => foldExtent(rows, r => ch.accessor(r).flatMap(v => ch.plottable.toDomain(v)))
                             case Absent      => Absent
                         ensureZero(base)
                     case m: Mark.Point[A, ?, ?] if m.axis == Axis.Right =>
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(rows, r => m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.Text[A, ?, ?] if m.axis == Axis.Right =>
                         // Text y contributes to right-axis extent when on the right axis.
-                        foldExtent(rows, r => m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)))
+                        foldExtent(rows, r => m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)))
                     case m: Mark.ErrorBar[A, ?, ?] if m.axis == Axis.Right =>
                         // Low/high/y contribute to right-axis extent.
-                        val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])))
-                        val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r.asInstanceOf[A])))
-                        val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r.asInstanceOf[A])))
+                        val eY    = foldExtent(rows, r => m.y.plottable.toDomain(m.y.accessor(r)))
+                        val eLow  = foldExtent(rows, r => m.low.plottable.toDomain(m.low.accessor(r)))
+                        val eHigh = foldExtent(rows, r => m.high.plottable.toDomain(m.high.accessor(r)))
                         ensureZero(mergeExtents(mergeExtents(eY, eLow), eHigh))
                     case _ => Absent
                 val merged = mergeExtents(acc, markExtent)
@@ -575,7 +565,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.plottable.toDomain(m.y.accessor(r.asInstanceOf[A])).flatMap:
+                                m.y.plottable.toDomain(m.y.accessor(r)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -583,7 +573,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -591,7 +581,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -599,7 +589,7 @@ private[kyo] object ChartLower:
                         foldExtent(
                             rows,
                             r =>
-                                m.y.accessor(r.asInstanceOf[A]).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
+                                m.y.accessor(r).flatMap(v => m.y.plottable.toDomain(v)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
@@ -607,13 +597,13 @@ private[kyo] object ChartLower:
                         def posExtent(ch: Encoding[A, ?]) = foldExtent(
                             rows,
                             r =>
-                                ch.plottable.toDomain(ch.accessor(r.asInstanceOf[A])).flatMap:
+                                ch.plottable.toDomain(ch.accessor(r)).flatMap:
                                     case Domain.Continuous(v) if v > 0 => Present(Domain.Continuous(v))
                                     case _                             => Absent
                         )
                         mergeExtents(
-                            mergeExtents(posExtent(m.y.asInstanceOf[Encoding[A, ?]]), posExtent(m.low.asInstanceOf[Encoding[A, ?]])),
-                            posExtent(m.high.asInstanceOf[Encoding[A, ?]])
+                            mergeExtents(posExtent(m.y), posExtent(m.low)),
+                            posExtent(m.high)
                         )
                     case _ => Absent
                 val merged = mergeExtents(acc, markExtent)
@@ -1415,7 +1405,7 @@ private[kyo] object ChartLower:
                     case _                     => Absent
                 groupMaybe match
                     case Present(g) =>
-                        Present(Encoding[A, Any](g, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]]))
+                        Present(Encoding[A, Any](g, Plottable.any, summon[ConcreteTag[Any]]))
                     case Absent => loop(i + 1)
                 end match
         loop(0)
@@ -1834,18 +1824,17 @@ private[kyo] object ChartLower:
         // chart uses palette(0). Grouped/stacked color encoding marks keep mapping color categories to the
         // palette (handled inside the per-mark lowerers).
         val theme = spec.map(_.theme).getOrElse(Theme.default)
-        // Why each `.asInstanceOf[Chunk[UI]]` below is sound: every `lower*` returns a `Chunk[<Svg subtype>]`
-        // (e.g. `Chunk[Svg.Rect]`), `Svg` subtypes are `UI`, and `Chunk` is covariant in its element. The cast
-        // only restates a subtype relation the type system already permits at the element level.
+        // Each `lower*` returns a `Chunk[<Svg subtype>]` (e.g. `Chunk[Svg.Rect]`); `Svg` subtypes are `UI` and
+        // `Chunk` is covariant, so ascribing the per-mark result to `Chunk[UI]` upcasts each arm by covariance.
         val allShapes: Chunk[UI] = marks.zipWithIndex.flatMap: (mark, markIdx) =>
             val markColor = markDefaultColor(theme, markIdx)
             val ys        = if markAxisOf(mark) == Axis.Right then ysR.getOrElse(ysL) else ysL
-            mark match
+            val region: Chunk[UI] = mark match
                 case m: Mark.Bar[A, ?, ?] =>
                     spec match
                         case Present(s) =>
-                            lowerBar(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef).asInstanceOf[Chunk[UI]]
-                        case Absent => lowerBar(rows, m, layout, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                            lowerBar(rows, m, layout, xs, ys, markColor, Present(s), internalHoverRef)
+                        case Absent => lowerBar(rows, m, layout, xs, ys, markColor)
                 case m: Mark.Line[A, ?, ?] =>
                     spec match
                         case Present(s) =>
@@ -1858,10 +1847,10 @@ private[kyo] object ChartLower:
                                 Present(s),
                                 internalHoverRef,
                                 resolveHighlight(Present(s))
-                            ).asInstanceOf[Chunk[UI]]
-                        case Absent => lowerLine(rows, m, xs, ys, markColor).asInstanceOf[Chunk[UI]]
+                            )
+                        case Absent => lowerLine(rows, m, xs, ys, markColor)
                 case m: Mark.Area[A, ?, ?] =>
-                    lowerArea(rows, m, layout, xs, ys, markColor, spec, internalHoverRef, resolveHighlight(spec)).asInstanceOf[Chunk[UI]]
+                    lowerArea(rows, m, layout, xs, ys, markColor, spec, internalHoverRef, resolveHighlight(spec))
                 case m: Mark.Point[A, ?, ?] =>
                     spec match
                         case Present(s) =>
@@ -1876,14 +1865,14 @@ private[kyo] object ChartLower:
                                 internalHoverRef,
                                 theme,
                                 resolveHighlight(Present(s))
-                            ).asInstanceOf[Chunk[UI]]
-                        case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme).asInstanceOf[Chunk[UI]]
+                            )
+                        case Absent => lowerPoint(rows, m, layout, xs, ys, markColor, theme = theme)
                 case m: Mark.Rule[A] => lowerRuleChildren(m, layout, xs, ys)
                 case m: Mark.Text[A, ?, ?] =>
-                    lowerText(m, rows, xs, ys, markColor, theme, spec, resolveHighlight(spec)).asInstanceOf[Chunk[UI]]
+                    lowerText(m, rows, xs, ys, markColor, theme, spec, resolveHighlight(spec))
                 case m: Mark.ErrorBar[A, ?, ?] =>
-                    lowerErrorBar(m, rows, xs, ys, markColor, theme, spec, resolveHighlight(spec)).asInstanceOf[Chunk[UI]]
-            end match
+                    lowerErrorBar(m, rows, xs, ys, markColor, theme, spec, resolveHighlight(spec))
+            region
         allShapes.foldLeft(Svg.g): (g, el) =>
             el match
                 case r: Svg.Rect   => g(r)
@@ -1929,7 +1918,7 @@ private[kyo] object ChartLower:
                         lowerBarGrouped(
                             rows,
                             mark,
-                            colorEnc.asInstanceOf[Encoding[A, Any]],
+                            colorEnc,
                             xs,
                             ys,
                             spec,
@@ -2015,7 +2004,7 @@ private[kyo] object ChartLower:
         barW: Double,
         barY: Double,
         fill: Style.Color
-    )(using Frame): (Svg.SvgElement, Chunk[Svg.SvgElement]) =
+    )(using Frame): (Svg.Rect, Chunk[Svg.SvgElement]) =
         // Opacity encoding.
         val withOpacity = mark.opacity match
             case Present(fn) => rect.fillOpacity(math.max(0.0, math.min(1.0, fn(row))))
@@ -2045,7 +2034,7 @@ private[kyo] object ChartLower:
     private def lowerBarGrouped[A, X, Y](
         rows: Chunk[A],
         mark: Mark.Bar[A, X, Y],
-        colorEnc: Encoding[A, Any],
+        colorEnc: Encoding[A, ?],
         xs: Scale,
         ys: Scale,
         spec: Maybe[Chart[A]] = Absent,
@@ -2199,7 +2188,7 @@ private[kyo] object ChartLower:
         // The raw values feed the same palette resolution the legend uses, so each stacked segment is
         // painted in exactly the color its legend swatch shows (honoring an explicit `colorScale`).
         val groupEnc: Encoding[A, Any] =
-            Encoding(groupFn, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+            Encoding(groupFn, Plottable.any, summon[ConcreteTag[Any]])
         val groupCats: Chunk[(String, Any)] = collectColorCategoriesWithRaw(rows, groupEnc)
         val groupKeys: Chunk[String]        = groupCats.map(_._1)
         val groupPalette: Chunk[Style.Color] = spec match
@@ -2545,7 +2534,7 @@ private[kyo] object ChartLower:
             case TextAnchor.End    => Svg.TextAnchor.End
         // Resolve per-category palette when mark.color is Present.
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
-            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
+            case Present(ch) => collectColorCategoriesWithRaw(rows, ch)
             case Absent      => Chunk.empty
         val basePaletteText: Chunk[Style.Color] = themePalette(theme)
         val palette: Chunk[Style.Color] =
@@ -2555,15 +2544,16 @@ private[kyo] object ChartLower:
                     case Present(s) => resolvePalette(s, colorCatsWithRaw)
                     case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteText(i % basePaletteText.size))
         // Precompute CatKey (tag + raw value) -> index once, so distinct color values with a colliding
-        // toString resolve to distinct palette indices (not collapsed onto one label bucket).
-        val colorTagText: Maybe[ConcreteTag[Any]] = mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])
+        // toString resolve to distinct palette indices (not collapsed onto one label bucket). Matching
+        // `mark.color` here keeps the encoding's tag a fresh existential so `categoryKey` infers its element
+        // type with no widening cast.
         val catIdxText: Map[ChartFoundations.CatKey, Int] =
-            (colorTagText, colorCatsWithRaw) match
-                case (Present(tag), cats) =>
-                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
-                        val key = ChartFoundations.categoryKey(tag, ci._1._2)
+            mark.color match
+                case Present(colorEnc) =>
+                    colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
+                        val key = ChartFoundations.categoryKey(colorEnc.tag, ci._1._2)
                         if m.contains(key) then m else m.updated(key, ci._2)
-                case _ => Map.empty
+                case Absent => Map.empty
         // Accumulate row-tagged glyphs so withHighlight can re-style the active row.
         @scala.annotation.tailrec
         def loop(i: Int, acc: Chunk[(A, Svg.SvgElement)]): Chunk[(A, Svg.SvgElement)] =
@@ -2586,7 +2576,7 @@ private[kyo] object ChartLower:
                                 val fillColor: Style.Color = mark.color match
                                     case Absent => defaultColor
                                     case Present(ch) =>
-                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row))
                                         val idx    = catIdxText.getOrElse(catKey, -1)
                                         if idx >= 0 && idx < palette.size then palette(idx) else defaultColor
                                 val baseText = Svg.text
@@ -2624,7 +2614,7 @@ private[kyo] object ChartLower:
         highlight: Maybe[Highlight[A]] = Absent
     )(using Frame): Chunk[Svg.SvgElement] =
         val colorCatsWithRaw: Chunk[(String, Any)] = mark.color match
-            case Present(ch) => collectColorCategoriesWithRaw(rows, ch.asInstanceOf[Encoding[A, Any]])
+            case Present(ch) => collectColorCategoriesWithRaw(rows, ch)
             case Absent      => Chunk.empty
         val basePaletteErr: Chunk[Style.Color] = themePalette(theme)
         val palette: Chunk[Style.Color] =
@@ -2635,14 +2625,13 @@ private[kyo] object ChartLower:
                     case Absent     => colorCatsWithRaw.zipWithIndex.map((_, i) => basePaletteErr(i % basePaletteErr.size))
         // Precompute CatKey (tag + raw value) -> index once, so distinct color values with a colliding
         // toString resolve to distinct palette indices (not collapsed onto one label bucket).
-        val colorTagErr: Maybe[ConcreteTag[Any]] = mark.color.map(_.tag.asInstanceOf[ConcreteTag[Any]])
         val catIdxErr: Map[ChartFoundations.CatKey, Int] =
-            (colorTagErr, colorCatsWithRaw) match
-                case (Present(tag), cats) =>
-                    cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
-                        val key = ChartFoundations.categoryKey(tag, ci._1._2)
+            mark.color match
+                case Present(colorEnc) =>
+                    colorCatsWithRaw.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Int]): (m, ci) =>
+                        val key = ChartFoundations.categoryKey(colorEnc.tag, ci._1._2)
                         if m.contains(key) then m else m.updated(key, ci._2)
-                case _ => Map.empty
+                case Absent => Map.empty
         val halfCap = mark.capWidth / 2.0
         highlight match
             case Absent =>
@@ -2665,7 +2654,7 @@ private[kyo] object ChartLower:
                                 val colorIdx = mark.color match
                                     case Absent => -1
                                     case Present(ch) =>
-                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row))
                                         catIdxErr.getOrElse(catKey, -1)
                                 val color: Style.Color =
                                     if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
@@ -2702,7 +2691,7 @@ private[kyo] object ChartLower:
                                 val colorIdx = mark.color match
                                     case Absent => -1
                                     case Present(ch) =>
-                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row.asInstanceOf[A]))
+                                        val catKey = ChartFoundations.categoryKey(ch.tag, ch.accessor(row))
                                         catIdxErr.getOrElse(catKey, -1)
                                 val color: Style.Color =
                                     if colorIdx >= 0 && colorIdx < palette.size then palette(colorIdx) else defaultColor
@@ -2852,7 +2841,7 @@ private[kyo] object ChartLower:
                                 // Color encoding: split rows by category, one path per series.
                                 // resolvePalette falls back to theme.palette / DefaultPalette when no colorScale is set,
                                 // so a non-stacked area without a colorScale uses the theme palette.
-                                val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
+                                val colorEncAny: Encoding[A, ?] = colorEnc
                                 val cats: Chunk[(String, Any)] =
                                     collectColorCategoriesWithRaw(rows, colorEncAny)
                                 val palette: Chunk[Style.Color] = spec match
@@ -2995,7 +2984,7 @@ private[kyo] object ChartLower:
 
         // Collect all distinct group keys in encounter order
         val groupEnc: Encoding[A, Any] =
-            Encoding(groupFn, Plottable.string.asInstanceOf[Plottable[Any]], summon[ConcreteTag[Any]])
+            Encoding(groupFn, Plottable.any, summon[ConcreteTag[Any]])
         val groupKeys: Chunk[String] = collectColorCategories(rows, groupEnc)
         // Per-group palette, resolved the SAME way the stacked-bar path does so each band gets a
         // distinct fill color (honoring a custom theme.palette; DefaultPalette under the default theme).
@@ -3183,26 +3172,20 @@ private[kyo] object ChartLower:
                 Present(SizeScale(safeMin, safeMax, SizeScale.DefaultRMin, SizeScale.DefaultRMax))
             case Absent => Absent
 
-        // Resolve color categories when a `color` encoding is present.
-        // Carry the encoding's ConcreteTag so the colorByKey lookup keys raw values under the same
-        // stable, cross-platform type identity the per-row lookup uses below.
-        val colorResolved: Maybe[(Chunk[(String, Any)], Chunk[Style.Color], ConcreteTag[Any])] = mark.color match
-            case Present(colorEnc) =>
-                val cats = collectColorCategoriesWithRaw(rows, colorEnc)
-                val palette = spec match
-                    case Present(s) => resolvePalette(s, cats)
-                    case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette(i % DefaultPalette.size))
-                Present((cats, palette, colorEnc.tag.asInstanceOf[ConcreteTag[Any]]))
-            case Absent => Absent
-
-        // Build per-row color lookup: CatKey -> Style.Color.
+        // Build the per-row color lookup CatKey -> Style.Color when a `color` encoding is present. Matching
+        // `mark.color` here keeps the encoding's tag a fresh existential so `categoryKey` keys raw values under
+        // the same stable, cross-platform type identity the per-row lookup uses below, with no widening cast.
         val colorByKey: Map[ChartFoundations.CatKey, Style.Color] =
-            colorResolved match
+            mark.color match
                 case Absent => Map.empty
-                case Present((cats, palette, tag)) =>
+                case Present(colorEnc) =>
+                    val cats = collectColorCategoriesWithRaw(rows, colorEnc)
+                    val palette = spec match
+                        case Present(s) => resolvePalette(s, cats)
+                        case Absent     => cats.zipWithIndex.map((_, i) => DefaultPalette(i % DefaultPalette.size))
                     cats.zipWithIndex.foldLeft(Map.empty[ChartFoundations.CatKey, Style.Color]): (m, pair) =>
                         val ((label, raw), idx) = pair
-                        val key                 = ChartFoundations.categoryKey(tag, raw)
+                        val key                 = ChartFoundations.categoryKey(colorEnc.tag, raw)
                         val color               = if idx < palette.size then palette(idx) else DefaultPalette(idx % DefaultPalette.size)
                         m.updated(key, color)
 
@@ -3376,64 +3359,54 @@ private[kyo] object ChartLower:
       *
       * No `url(#id)` references are emitted (plain lines only).
       */
+    // Project a `RuleValue.Const`'s value into its domain. Taking the case directly opens the existential
+    // once into a single `C`, so `plottable.toDomain(value)` type-checks (both are `C`) with no cast.
+    private def constDomain[C](c: RuleValue.Const[C]): Maybe[Domain] =
+        c.plottable.toDomain(c.value)
+
+    // Build a `Reactive[Svg.Line]` from a `RuleValue.Reactive`. Taking the case directly binds `signal` and
+    // `plottable` to one `C`, so `signal.render` yields `v: C` and `plottable.toDomain(v)` type-checks with
+    // no cast. `lineOf` builds the line from a present domain; `Absent` emits a zero-length invisible line
+    // (not emitting nothing avoids a type mismatch; the renderer skips zero-length lines).
+    private def reactiveLine[C](r: RuleValue.Reactive[C], lineOf: Domain => Svg.Line)(using Frame): UI.Ast.Reactive[Svg.Line] =
+        r.signal.render: v =>
+            r.plottable.toDomain(v) match
+                case Present(d) => lineOf(d)
+                case Absent     => Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
+
     private def lowerRuleChildren[A](
         mark: Mark.Rule[A],
         layout: Layout,
         xs: Scale,
         ys: Scale
     )(using Frame): Chunk[UI] =
+        // For a category domain, place the vertical rule at the band center so the line bisects the bar/data
+        // point rather than aligning to the band left wall.
+        def xLine(d: Domain): Svg.Line =
+            val leftEdge = xs.apply(d)
+            val px = d match
+                case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
+                case _                  => leftEdge
+            Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline)
+        end xLine
+        def yLine(d: Domain): Svg.Line =
+            val py = ys.apply(d)
+            Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py)
         val xChildren: Chunk[UI] = mark.x match
-            case Present(RuleValue.Const(v, pl)) =>
-                pl.asInstanceOf[Plottable[Any]].toDomain(v) match
-                    case Present(d) =>
-                        // For a category domain, place the vertical rule at the band center so the line
-                        // bisects the bar/data point rather than aligning to the band left wall.
-                        val leftEdge = xs.apply(d)
-                        val px = d match
-                            case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
-                            case _                  => leftEdge
-                        Chunk(Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline))
-                    case Absent => Chunk.empty
-            case Present(RuleValue.Reactive(signal, pl)) =>
-                // Unsafe: signal.asInstanceOf[Signal[Any]] is type-erasure-safe because RuleValue.Reactive
-                // carries the matching Plottable that was paired with the signal at construction time.
-                val reactiveChild: UI.Ast.Reactive[Svg.Line] =
-                    signal.asInstanceOf[Signal[Any]].render: v =>
-                        pl.asInstanceOf[Plottable[Any]].toDomain(v) match
-                            case Present(d) =>
-                                // For a category domain, place the vertical rule at the band center
-                                // (left edge + half bandwidth) rather than the band left edge, so the
-                                // line bisects the bar/data point rather than aligning to its left wall.
-                                val leftEdge = xs.apply(d)
-                                val px = d match
-                                    case Domain.Category(_) => leftEdge + xs.bandwidth / 2.0
-                                    case _                  => leftEdge
-                                Svg.line.x1(px).y1(layout.plotY).x2(px).y2(layout.plotBaseline)
-                            case Absent =>
-                                // Absent value: emit a zero-length invisible line (not emitting nothing
-                                // avoids a type mismatch; the renderer skips zero-length lines).
-                                Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
-                val wrapper: Svg.G = Svg.g(reactiveChild)
-                Chunk(wrapper)
+            case Present(c: RuleValue.Const[?]) =>
+                constDomain(c) match
+                    case Present(d) => Chunk(xLine(d))
+                    case Absent     => Chunk.empty
+            case Present(r: RuleValue.Reactive[?]) =>
+                Chunk(Svg.g(reactiveLine(r, xLine)))
             case _ => Chunk.empty
         val yChildren: Chunk[UI] = mark.y match
-            case Present(RuleValue.Const(v, pl)) =>
-                pl.asInstanceOf[Plottable[Any]].toDomain(v) match
-                    case Present(d) =>
-                        val py = ys.apply(d)
-                        Chunk(Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py))
-                    case Absent => Chunk.empty
-            case Present(RuleValue.Reactive(signal, pl)) =>
-                val reactiveChild: UI.Ast.Reactive[Svg.Line] =
-                    signal.asInstanceOf[Signal[Any]].render: v =>
-                        pl.asInstanceOf[Plottable[Any]].toDomain(v) match
-                            case Present(d) =>
-                                val py = ys.apply(d)
-                                Svg.line.x1(layout.plotX).y1(py).x2(layout.plotX + layout.plotW).y2(py)
-                            case Absent =>
-                                Svg.line.x1(0.0).y1(0.0).x2(0.0).y2(0.0)
-                val wrapper: Svg.G = Svg.g(reactiveChild)
-                Chunk(wrapper)
+            case Present(c: RuleValue.Const[?]) =>
+                constDomain(c) match
+                    case Present(d) => Chunk(yLine(d))
+                    case Absent     => Chunk.empty
+            case Present(r: RuleValue.Reactive[?]) =>
+                Chunk(Svg.g(reactiveLine(r, yLine)))
             case _ => Chunk.empty
         xChildren ++ yChildren
     end lowerRuleChildren
@@ -3754,12 +3727,11 @@ private[kyo] object ChartLower:
                                         val (fromH, fromY) = Maybe.fromOption(fromGeom.get(transKey)) match
                                             case Present(MarkGeom.Bar(ph, py)) => (ph, py)
                                             case _                             => (0.0, baseline) // enter from baseline
-                                        // Unsafe: decoratedRect is a Svg.Rect at runtime (applyBarEncodings returns the rect with
-                                        // opacity/title applied; only .fillOpacity and .apply(ShapeChild) are called,
-                                        // both returning Svg.Rect). Cast back to Svg.Rect to attach the SMIL animate
-                                        // children. Child order: tooltip (<title>) added first by applyBarEncodings,
-                                        // animates follow: [<title>, <animate height>, <animate y>].
-                                        decoratedRect.asInstanceOf[Svg.Rect](
+                                        // `decoratedRect` is a `Svg.Rect` (applyBarEncodings returns the rect with
+                                        // opacity/title applied), so the SMIL animate children attach directly.
+                                        // Child order: tooltip (<title>) added first by applyBarEncodings, animates
+                                        // follow: [<title>, <animate height>, <animate y>].
+                                        decoratedRect(
                                             smilAnimate("height", fromH, rectH, durStr),
                                             smilAnimate("y", fromY, rectY, durStr)
                                         )
@@ -3835,12 +3807,12 @@ private[kyo] object ChartLower:
                 val resolved: Chunk[Style.Color] = resolvePalette(spec, cats)
                 val distinct = ChartFoundations.distinctKeyed(
                     rows,
-                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
+                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
                 )
                 // Pre-build a single-pass groupBy so each catKey lookup is O(1) rather than O(N).
                 val rowsByKey = ChartFoundations.groupByKey(
                     rows,
-                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r.asInstanceOf[A]))
+                    r => ChartFoundations.categoryKey(colorEnc.tag, colorEnc.accessor(r))
                 )
                 distinct.zipWithIndex.map:
                     case ((catKey, rep), seriesIdx) =>
@@ -3921,8 +3893,8 @@ private[kyo] object ChartLower:
             val (seriesTransKeys, seriesRepRows): (Chunk[TransKey], Chunk[Maybe[A]]) = mark.color match
                 case Absent => (Chunk(TransKey.SingleSeries(markIdx)), Chunk(rows.headMaybe))
                 case Present(colorEnc) =>
-                    val colorEncAny: Encoding[A, Any] = colorEnc.asInstanceOf[Encoding[A, Any]]
-                    val cats                          = collectColorCategoriesWithRaw(rows, colorEncAny)
+                    val colorEncAny: Encoding[A, ?] = colorEnc
+                    val cats                        = collectColorCategoriesWithRaw(rows, colorEncAny)
                     val catKeys: Chunk[ChartFoundations.CatKey] =
                         cats.map { case (_, raw) => ChartFoundations.categoryKey(colorEncAny.tag, raw) }
                     val transKeys = catKeys.map(ck => TransKey.Series(markIdx, ck))
@@ -4125,9 +4097,9 @@ private[kyo] object ChartLower:
                 case c: Svg.Circle => g(c)
                 case l: Svg.Line   => g(l)
                 case inner: Svg.G  => g(inner)
-                // Unsafe: `shapes` only ever holds the Svg element subtypes the lowerers emit, each of which is an
-                // `SvgElement & SvgChild`; the residual `other` arm restates that bound for elements not matched above.
-                case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                // `shapes` holds `Svg.SvgElement`s, and `SvgElement` is a member of the `SvgChild` union, so the
+                // residual `other` arm is accepted by `g` directly.
+                case other => g(other)
     end marksRegionWithTransitions
 
     // ---- reactive helpers ----
@@ -4236,9 +4208,9 @@ private[kyo] object ChartLower:
                 el match
                     case l: Svg.Line => g(l)
                     case t: Svg.Text => g(t)
-                    // Unsafe: the axis/legend builders only emit `Svg.Line`/`Svg.Text` (and the cases above);
-                    // every such element is an `SvgElement & SvgChild`, so the residual arm restates that bound.
-                    case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                    // The axis/legend builders emit `Svg.SvgElement`s; `SvgElement` is a member of the `SvgChild`
+                    // union, so the residual arm is accepted by `g` directly.
+                    case other => g(other)
             Svg.g(xAxisG)(marksG)
         else
             // Inferred domain: include y-axis ticks, x-axis ticks, and the legend inside the reactive region.
@@ -4266,9 +4238,9 @@ private[kyo] object ChartLower:
                 el match
                     case l: Svg.Line => g(l)
                     case t: Svg.Text => g(t)
-                    // Unsafe: the axis/legend builders only emit `Svg.Line`/`Svg.Text` (and the cases above);
-                    // every such element is an `SvgElement & SvgChild`, so the residual arm restates that bound.
-                    case other => g(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                    // The axis/legend builders emit `Svg.SvgElement`s; `SvgElement` is a member of the `SvgChild`
+                    // union, so the residual arm is accepted by `g` directly.
+                    case other => g(other)
             Svg.g(axisG)(marksG)
         end if
     end buildReactiveRegion
@@ -4293,7 +4265,7 @@ private[kyo] object ChartLower:
                 else
                     legendEncoding(spec.marks) match
                         case Present(ch) =>
-                            val colorEnc = ch.asInstanceOf[Encoding[A, Any]]
+                            val colorEnc: Encoding[A, ?] = ch
                             // Build a CatKey -> index map from the same ordered color-category list the legend uses.
                             val catsList = collectColorCategoriesWithRaw(rows, colorEnc)
                             val idxByKey: Map[ChartFoundations.CatKey, Int] =
@@ -4385,9 +4357,9 @@ private[kyo] object ChartLower:
                 case l: Svg.Line => acc(l)
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
-                // Unsafe: the static frame only holds `Svg.Rect`/`Line`/`Text`/`G` (the cases above); each is an
-                // `SvgElement & SvgChild`, so the residual arm restates that bound for any element not matched.
-                case other => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                // The static frame holds `Svg.SvgElement`s; `SvgElement` is a member of the `SvgChild` union, so
+                // the residual arm is accepted by `acc` directly.
+                case other => acc(other)
         // Create the chart-private transition-state ref when animation is enabled.
         // Unsafe: AtomicRef.Unsafe bypasses kyo effects tracking; sound because the ref is private to this
         // chart and writes occur only on genuine row changes (idempotent within any single emission).
@@ -4603,9 +4575,9 @@ private[kyo] object ChartLower:
                 case l: Svg.Line => acc(l)
                 case t: Svg.Text => acc(t)
                 case g: Svg.G    => acc(g)
-                // Unsafe: the static frame only holds `Svg.Rect`/`Line`/`Text`/`G` (the cases above); each is an
-                // `SvgElement & SvgChild`, so the residual arm restates that bound for any element not matched.
-                case other => acc(other.asInstanceOf[Svg.SvgElement & Svg.SvgChild])
+                // The static frame holds `Svg.SvgElement`s; `SvgElement` is a member of the `SvgChild` union, so
+                // the residual arm is accepted by `acc` directly.
+                case other => acc(other)
         val withMarks = withFrame(marksG)
         // Append the tooltip overlay as the last child so it renders on top.
         (spec.tooltip, internalHoverRef) match
