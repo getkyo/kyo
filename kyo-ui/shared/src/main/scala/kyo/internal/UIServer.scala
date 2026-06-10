@@ -9,69 +9,67 @@ private[kyo] object UIServer:
 
     def handlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         val base = normalizePath(basePath)
-        for store <- SessionStore.init
-        yield Seq(
-            getPage(base, basePath, Sync.defer(ui), store),
-            postEvent(base, store),
-            getSse(base, store)
-        )
+        Sync.defer(Seq(
+            getPage(base, basePath, Sync.defer(ui)),
+            wsRoute(base, Sync.defer(ui))
+        ))
     end handlers
 
-    private val sidCookie = "kyo-sid"
-
-    private def getPage(base: String, pagePath: String, ui: => UI < Async, store: SessionStore)(using Frame): HttpHandler[?, ?, ?] =
+    private def getPage(base: String, pagePath: String, ui: => UI < Async)(using Frame): HttpHandler[?, ?, ?] =
         HttpRoute.getText(pagePath).handler { _ =>
             for
-                uiTree  <- ui
-                session <- UISession.create(uiTree)
-                _       <- store.put(session)
-                html = HtmlRenderer.renderPage("kyo-ui", session.initialHtml, "", session.id, base)
-            yield HttpResponse.ok(html)
+                uiTree <- ui
+                html   <- HtmlRenderer.render(uiTree, Seq.empty)
+                page = HtmlRenderer.renderPage("kyo-ui", html, "", base)
+            yield HttpResponse.ok(page)
                 .addHeader("Content-Type", "text/html; charset=utf-8")
-                .addHeader("Set-Cookie", s"$sidCookie=${session.id}; Path=$pagePath; SameSite=Strict")
         }
 
-    private def extractSid(req: HttpRequest[?]): String =
-        req.headers.get("Cookie").getOrElse("").split(';').map(_.trim).collectFirst {
-            case s if s.startsWith(s"$sidCookie=") => s.substring(sidCookie.length + 1)
-        }.getOrElse("")
-
-    private def postEvent(basePath: String, store: SessionStore)(using Frame): HttpHandler[?, ?, ?] =
-        HttpRoute.postText(s"$basePath/_kyo/event").handler { req =>
-            val sid  = extractSid(req)
-            val body = req.fields.body
-            Json.decode[UIEvent](body) match
-                case Result.Success(event) =>
-                    for
-                        maybeSession <- store.get(sid)
-                        _ <- (maybeSession match
-                            case Present(session) => UISession.handleEvent(session, event)
-                            case Absent           => ()
-                        ): Unit < Async
-                    yield HttpResponse.ok("ok")
-                case _ =>
-                    HttpResponse.ok("error")
-            end match
+    private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(using Frame): Unit < (Async & Abort[Closed]) =
+        Scope.run {
+            for
+                uiTree <- ui
+                root   <- ReactiveUI.normalize(uiTree, Seq.empty)
+                exchange = wsExchange(root, ws)
+                sub <- ReactiveUI.subscribe(root, exchange)
+                _ <- Async.race(
+                    ws.stream.foreach(payload => dispatchEvent(sub.handle, payload)),
+                    ws.onPeerClose
+                )
+            yield ()
         }
 
-    private def getSse(basePath: String, store: SessionStore)(using Frame): HttpHandler[?, ?, ?] =
-        HttpHandler.getSseJson[HtmlOp](s"$basePath/_kyo/sse") { req =>
-            val sid = extractSid(req)
-            for maybeSession <- store.get(sid)
-            yield maybeSession match
-                case Present(session) =>
-                    Stream[HttpSseEvent[HtmlOp], Async](
-                        Loop.foreach {
-                            Abort.run[Closed](session.channel.take).map {
-                                case Result.Success(op) =>
-                                    Emit.valueWith(Chunk(HttpSseEvent(op)))(Loop.continue)
-                                case _ =>
-                                    Loop.done
-                            }
-                        }
-                    )
-                case Absent =>
-                    Stream.empty[HttpSseEvent[HtmlOp]]
+    private def wsRoute(base: String, ui: => UI < Async)(using Frame): HttpHandler[?, ?, ?] =
+        HttpHandler.webSocket(s"$base/_kyo/ws") { (_, ws) =>
+            serveSession(ws, ui)
         }
+
+    private def wsExchange(root: ReactiveUI, ws: HttpWebSocket)(using Frame): UIExchange =
+        new UIExchange:
+            private def svgContextAt(path: Seq[String]): Boolean =
+                ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
+
+            def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
+                HtmlRenderer.render(ui, path).map { html =>
+                    val finalHtml = HtmlRenderer.wrapReactiveRegion(path, svgContextAt(path), html)
+                    val op        = HtmlOp.Replace(path, finalHtml)
+                    // runPartial drops only a Closed (the socket closed mid-render -> the op is moot); a Panic
+                    // propagates to the region fiber rather than being swallowed by the discard.
+                    Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+                }
+            end onChange
+
+    private def dispatchEvent(handle: (Seq[String], UIEvent) => Boolean < Async, payload: HttpWebSocket.Payload)(using
+        Frame
+    ): Unit < Async =
+        payload match
+            case HttpWebSocket.Payload.Text(data) =>
+                Json.decode[UIEvent](data) match
+                    case Result.Success(event) => handle(event.path, event).unit
+                    // A malformed inbound frame (DecodeException) is dropped: a buggy client must not be able to tear
+                    // down the session. A Panic is a decoder defect, not bad input, and must propagate.
+                    case Result.Failure(_) => ()
+                    case Result.Panic(ex)  => Abort.panic(ex)
+            case HttpWebSocket.Payload.Binary(_) => ()
 
 end UIServer

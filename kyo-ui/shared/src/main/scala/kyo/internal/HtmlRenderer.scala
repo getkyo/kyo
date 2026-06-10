@@ -12,8 +12,28 @@ private[kyo] object HtmlRenderer:
         val sb = new StringBuilder
         renderTo(sb, ui, path).andThen(sb.toString)
 
+    /** Wrap a reactive region's inner HTML in the appropriate placeholder tag.
+      *
+      * Used by the server transport layer when pushing an updated reactive region to the client.
+      * Extracts the tag-choice logic (g in SVG context, span in HTML context) into a shared, testable
+      * function so tests can assert on the real production wrap rather than reconstructing the string
+      * themselves.
+      *
+      * @param path
+      *   the region's path segments (joined with "." for the data-kyo-path attribute)
+      * @param svgContext
+      *   true if the reactive region lives inside SVG (uses "g" tag), false for HTML (uses "span")
+      * @param innerHtml
+      *   the rendered inner content to wrap
+      * @return
+      *   the full placeholder HTML string with data-kyo-path and data-kyo-reactive attributes
+      */
+    private[kyo] def wrapReactiveRegion(path: Seq[String], svgContext: Boolean, innerHtml: String): String =
+        val tag = if svgContext then "g" else "span"
+        s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive>$innerHtml</$tag>"""
+
     /** Wrap body HTML in a full page with inline JS client. */
-    def renderPage(title: String, body: String, css: String, sessionId: String, basePath: String): String =
+    def renderPage(title: String, body: String, css: String, basePath: String): String =
         s"""<!DOCTYPE html>
            |<html>
            |<head>
@@ -22,7 +42,7 @@ private[kyo] object HtmlRenderer:
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(esc(sessionId), esc(basePath))}</script>
+           |<script>${clientJs(esc(basePath))}</script>
            |</body>
            |</html>""".stripMargin
 
@@ -528,12 +548,13 @@ private[kyo] object HtmlRenderer:
 
     // ---- Client JS ----
 
-    private def clientJs(sessionId: String, basePath: String): String =
+    private def clientJs(basePath: String): String =
         s"""(function(){
            |var base="$basePath";
-           |var evtUrl=base+"/_kyo/event";
-           |var sse=new EventSource(base+"/_kyo/sse");
-           |sse.onmessage=function(e){
+           |var __q=[];
+           |var ws=new WebSocket((location.protocol===\"https:\"?\"wss:\":\"ws:\")+"//"+location.host+base+"/_kyo/ws");
+           |ws.onopen=function(){__q.forEach(function(m){ws.send(m);});__q=[];};
+           |ws.onmessage=function(e){
            |  var op=JSON.parse(e.data);
            |  if(op.Replace){
            |    var p=op.Replace.path.join(".");
@@ -601,21 +622,13 @@ private[kyo] object HtmlRenderer:
            |  }
            |  return false;
            |}
-           |// Chain POSTs through a single Promise so the server sees events in the order they fired
-           |// on the page. Without this, parallel fetch()es race and (e.g.) a blur on the previous
-           |// focused element can land after a focus on the next, since both fire in close succession.
-           |window._kyoPostQ = window._kyoPostQ || Promise.resolve();
+           |// Send each event over the single WebSocket. ws.send preserves send order on one socket, so the
+           |// explicit fetch-queue serialization is no longer needed. Events fired before the socket opens are
+           |// buffered in __q and flushed on ws.onopen.
            |function post(b){
-           |  window._kyoPostQ = window._kyoPostQ.then(function(){
-           |    var ctrl = new AbortController();
-           |    var timer = setTimeout(function(){ ctrl.abort('kyo-ui post timeout'); }, 15000);
-           |    return fetch(evtUrl,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(b),signal:ctrl.signal})
-           |      .finally(function(){ clearTimeout(timer); });
-           |  }).catch(function(e){
-           |    window.__kyoPostFailures = (window.__kyoPostFailures || 0) + 1;
-           |    window.__kyoPostLastError = String(e);
-           |    console.error('kyo-ui event POST failed:', e);
-           |  });
+           |  var m=JSON.stringify(b);
+           |  if(ws.readyState===1)ws.send(m);
+           |  else __q.push(m);
            |}
            |function pa(el){
            |  var p=el.getAttribute("data-kyo-path");

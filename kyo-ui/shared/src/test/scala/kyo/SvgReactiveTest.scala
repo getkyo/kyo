@@ -5,7 +5,7 @@ import kyo.UI.foreach
 import kyo.internal.HtmlOp
 import kyo.internal.HtmlRenderer
 import kyo.internal.ReactiveUI
-import kyo.internal.UISession
+import kyo.internal.UIExchange
 import scala.language.implicitConversions
 
 /** Tests SVG reactive resolution via the engine's rebuildSvgElement and resolveReactives, and the `<g>`-based
@@ -122,18 +122,29 @@ class SvgReactiveTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // The UISession SSE wrapper uses <g> for a reactive in SVG context.
-    "UISession SSE wrapper uses <g> in svg context" in {
+    // The exchange wraps reactive updates in <g> for a reactive boundary in SVG context.
+    // Calls the real HtmlRenderer.wrapReactiveRegion production function; a bug in that
+    // function (wrong tag, missing attribute) makes the assertion fail. Also covers the
+    // non-svg branch: wrapReactiveRegion with svgContext=false must produce a <span>.
+    "reactive region wrapped in <g> in svg context" in {
         val sig  = Signal.initConst(Chunk.empty[Int])
         val root = Svg.svg(sig.foreach(i => Svg.rect.x(i.toDouble).y(0).width(1).height(1)))
         for
-            session <- UISession.create(root)
-            op      <- session.channel.take
-        yield op match
-            case HtmlOp.Replace(_, html) =>
-                assert(html.startsWith("<g data-kyo-path="))
-                assert(html.endsWith("</g>"))
-            case other => fail(s"expected Replace, got $other")
+            rui <- ReactiveUI.normalize(root, Seq.empty)
+            node = ReactiveUI.findNode(rui, Seq("0"))
+            innerHtml <- HtmlRenderer.render(UI.fragment(), Seq("0"))
+        yield
+            // svg-context branch: node is recorded as svg, wrapReactiveRegion must pick "g"
+            assert(node.isDefined && node.get.svgContext)
+            val svgWrapped = HtmlRenderer.wrapReactiveRegion(node.get.path, node.get.svgContext, innerHtml)
+            assert(svgWrapped.startsWith("<g data-kyo-path="))
+            assert(svgWrapped.contains("data-kyo-reactive"))
+            assert(svgWrapped.endsWith("</g>"))
+            // non-svg branch: wrapReactiveRegion with svgContext=false must pick "span"
+            val htmlWrapped = HtmlRenderer.wrapReactiveRegion(Seq("1", "2"), svgContext = false, innerHtml)
+            assert(htmlWrapped.startsWith("<span data-kyo-path=\"1.2\""))
+            assert(htmlWrapped.contains("data-kyo-reactive"))
+            assert(htmlWrapped.endsWith("</span>"))
         end for
     }
 
