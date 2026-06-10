@@ -117,6 +117,11 @@ class IonTest extends kyo.test.Test[Any]:
             )
         }
 
+        "preserves high byte CLOB escapes from iontestdata/good/clobs.ion" in {
+            val decoded = Ion.decode[Span[Byte]]("""{{"\xFf"}}""").getOrThrow
+            assert(decoded.toArray.toSeq == Seq(0xff.toByte))
+        }
+
         "ignores comments as whitespace like iontestdata/good/whitespace.ion" in {
             val input =
                 """// before
@@ -159,6 +164,13 @@ class IonTest extends kyo.test.Test[Any]:
 
         "rejects trailing content after the decoded root value" in {
             assert(Ion.decode[Int]("0 1").isFailure)
+        }
+
+        "rejects Unicode escapes above the valid code point range" in {
+            Ion.decode[String]("\"\\UFFFFFFFF\"") match
+                case Result.Failure(e: ParseException) => assert(e.getMessage.contains("Unicode code point"))
+                case other                             => fail(s"Expected ParseException failure, got $other")
+            end match
         }
 
         "decodes timestamp tokens as instants" in {

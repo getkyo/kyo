@@ -439,7 +439,7 @@ final private class IonTextParser(
             skipLobWhitespace()
             expect('}')
             expect('}')
-            Blob(Span.from(text.getBytes(StandardCharsets.US_ASCII)))
+            Blob(clobBytes(text))
         else
             val start = pos
             val end   = input.indexOf("}}", pos)
@@ -453,6 +453,18 @@ final private class IonTextParser(
             end try
         end if
     end parseLob
+
+    private def clobBytes(text: String): Span[Byte] =
+        val bytes = new Array[Byte](text.length)
+        var i     = 0
+        while i < text.length do
+            val c = text.charAt(i)
+            if c > 0xff then error("CLOB character exceeds byte range")
+            bytes(i) = c.toByte
+            i += 1
+        end while
+        Span.from(bytes)
+    end clobBytes
 
     private def parseFieldName(): String =
         skipWhitespace()
@@ -749,7 +761,7 @@ final private class IonTextParser(
                 sb.append(readHex(4).toChar)
             case 'U' =>
                 pos += 1
-                sb.appendAll(Character.toChars(readHex(8)))
+                appendCodePoint(sb, readHex(8))
             case '\n' =>
                 pos += 1
             case '\r' =>
@@ -759,6 +771,13 @@ final private class IonTextParser(
                 error(s"Invalid escape \\$other")
         end match
     end appendEscape
+
+    private def appendCodePoint(sb: StringBuilder, codePoint: Int): Unit =
+        if !Character.isValidCodePoint(codePoint) then
+            val hex = java.lang.Long.toHexString(java.lang.Integer.toUnsignedLong(codePoint)).toUpperCase(java.util.Locale.ROOT)
+            error(s"Invalid Unicode code point U+$hex")
+        sb.appendAll(Character.toChars(codePoint))
+    end appendCodePoint
 
     private def readHex(digits: Int): Int =
         if pos + digits > input.length then error("Truncated hex escape")
