@@ -84,7 +84,7 @@ jobs:
 
       - uses: coursier/setup-action@v3.0.0
         with:
-          jvm: temurin:25
+          jvm: corretto:24
           apps: sbt
 
       - name: Run sbt command

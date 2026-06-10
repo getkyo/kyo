@@ -163,7 +163,7 @@ jobs:
       - uses: coursier/setup-action@v3.0.0
         if: inputs.os != 'windows-arm64'
         with:
-          jvm: temurin:25
+          jvm: corretto:24
           apps: sbt
 
       # Windows ARM64: coursier/setup-action doesn't support this platform yet.

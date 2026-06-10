@@ -12,16 +12,11 @@ import kyo.Render
 object Diff:
 
     private def renderValue(v: Any): String =
-        // Unsafe: type-erased null check (widening Any to AnyRef to enable reference equality with null)
-        val vr = v.asInstanceOf[AnyRef]
-        if vr eq null then "null"
-        else
-            vr match
-                case s: String =>
-                    // Quote strings for display
-                    "\"" + s + "\""
-                case other => other.toString
-        end if
+        v.asInstanceOf[AnyRef] match
+            case s: String =>
+                // Quote strings; bound + flatten so a huge or multi-line value cannot break the diagram.
+                "\"" + Recorder.render(s) + "\""
+            case other => Recorder.render(other) // null renders as "null" via String.valueOf
     end renderValue
 
     private def valuesEqual(a: Any, b: Any): Boolean =
@@ -41,15 +36,18 @@ object Diff:
       * still compile.
       */
     def render[A](actual: A, expected: A)(using r: Render[A]): String =
-        (actual, expected) match
-            case (a: Product, e: Product) if a.productPrefix == e.productPrefix =>
-                caseClassDiff(a, e)
-            case (a: Iterable[?], e: Iterable[?]) =>
-                collectionDiff(a, e)
-            case (a: String, e: String) if a.contains('\n') || e.contains('\n') =>
-                stringDiff(a, e)
-            case _ =>
-                s"  actual:   ${r.asString(actual)}\n  expected: ${r.asString(expected)}"
+        val rendered =
+            (actual, expected) match
+                case (a: Product, e: Product) if a.productPrefix == e.productPrefix =>
+                    caseClassDiff(a, e)
+                case (a: Iterable[?], e: Iterable[?]) =>
+                    collectionDiff(a, e)
+                case (a: String, e: String) if a.contains('\n') || e.contains('\n') =>
+                    stringDiff(a, e)
+                case _ =>
+                    s"  actual:   ${Recorder.render(r.asString(actual))}\n  expected: ${Recorder.render(r.asString(expected))}"
+        // Total bound: covers the intentionally multi-line stringDiff and large field/element values.
+        Recorder.boundedString(rendered, Recorder.MaxDiagram)
     end render
 
     /** Field-aligned diff for case classes (Products). Underlines fields whose values differ. */

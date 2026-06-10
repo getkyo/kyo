@@ -219,8 +219,8 @@ class MeterTest extends kyo.test.Test[Any]:
         }
     }
 
-    def loop(meter: Meter, counter: AtomicInt): Unit < (Async & Abort[Closed]) =
-        meter.run(counter.incrementAndGet).map(_ => loop(meter, counter))
+    def loop(meter: Meter, ch: Channel[Unit]): Unit < (Async & Abort[Closed]) =
+        meter.run(ch.put(())).andThen(loop(meter, ch))
 
     val panic = Result.Panic(new Exception)
 
@@ -246,26 +246,32 @@ class MeterTest extends kyo.test.Test[Any]:
             yield assert(v1 == 2 && v2 == 3)
         }
         "one loop" in {
+            // A long replenish period means no permit is replenished during the test, so the limiter
+            // grants exactly its initial `rate` permits and then parks the loop. takeExactly is a
+            // happens-before on those runs (no wall-clock window, so no scheduler-starvation flake);
+            // the empty poll proves the limiter parked the loop instead of running unbounded.
             for
-                meter   <- Meter.initRateLimiter(10, 1.milli)
-                counter <- AtomicInt.init(0)
-                f1      <- Fiber.initUnscoped(loop(meter, counter))
-                _       <- Async.sleep(5.millis)
-                _       <- f1.interrupt(panic)
-                v1      <- counter.get
-            yield assert(v1 >= 2 && v1 <= 200)
+                meter <- Meter.initRateLimiter(10, 1.hour)
+                ch    <- Channel.init[Unit](1000)
+                f1    <- Fiber.initUnscoped(loop(meter, ch))
+                runs  <- ch.takeExactly(10)
+                extra <- ch.poll
+                _     <- f1.interrupt(panic)
+            yield assert(runs.size == 10 && extra.isEmpty)
         }
         "two loops" in {
+            // Two fibers share one limiter: together they consume exactly the initial `rate` permits,
+            // then both park (the long period means no replenishment happens during the test).
             for
-                meter   <- Meter.initRateLimiter(10, 1.milli)
-                counter <- AtomicInt.init(0)
-                f1      <- Fiber.initUnscoped(loop(meter, counter))
-                f2      <- Fiber.initUnscoped(loop(meter, counter))
-                _       <- Async.sleep(5.millis)
-                _       <- f1.interrupt(panic)
-                _       <- f2.interrupt(panic)
-                v1      <- counter.get
-            yield assert(v1 >= 2 && v1 <= 200)
+                meter <- Meter.initRateLimiter(10, 1.hour)
+                ch    <- Channel.init[Unit](1000)
+                f1    <- Fiber.initUnscoped(loop(meter, ch))
+                f2    <- Fiber.initUnscoped(loop(meter, ch))
+                runs  <- ch.takeExactly(10)
+                extra <- ch.poll
+                _     <- f1.interrupt(panic)
+                _     <- f2.interrupt(panic)
+            yield assert(runs.size == 10 && extra.isEmpty)
         }
         "replenish doesn't overflow" in {
             for
@@ -279,16 +285,18 @@ class MeterTest extends kyo.test.Test[Any]:
     "pipeline" - {
 
         "run" in {
+            // The pipeline acquires the rate limiter (2 permits) then the mutex; throughput is capped
+            // by the rate limiter, so the two fibers together run exactly twice, then park (long period).
             for
-                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.milli), Meter.initMutex)
-                counter <- AtomicInt.init(0)
-                f1      <- Fiber.initUnscoped(loop(meter, counter))
-                f2      <- Fiber.initUnscoped(loop(meter, counter))
-                _       <- Async.sleep(5.millis)
-                _       <- f1.interrupt(panic)
-                _       <- f2.interrupt(panic)
-                v1      <- counter.get
-            yield assert(v1 >= 0 && v1 < 200)
+                meter <- Meter.pipeline(Meter.initRateLimiter(2, 1.hour), Meter.initMutex)
+                ch    <- Channel.init[Unit](1000)
+                f1    <- Fiber.initUnscoped(loop(meter, ch))
+                f2    <- Fiber.initUnscoped(loop(meter, ch))
+                runs  <- ch.takeExactly(2)
+                extra <- ch.poll
+                _     <- f1.interrupt(panic)
+                _     <- f2.interrupt(panic)
+            yield assert(runs.size == 2 && extra.isEmpty)
         }
 
         "tryRun" in {
