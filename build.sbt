@@ -855,6 +855,7 @@ lazy val `kyo-jsonrpc` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-schema`)
         .in(file("kyo-jsonrpc"))
+        .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -866,6 +867,7 @@ lazy val `kyo-mcp` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-mcp"))
+        .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
         // Test-only dep so `demo.HttpFetch` (under jvm/src/test) can drive `HttpClient.getText`.
         // Keeping it test-scoped avoids leaking kyo-http into kyo-mcp's runtime artifact.
@@ -881,6 +883,7 @@ lazy val `kyo-lsp` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-lsp"))
+        .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
@@ -893,6 +896,7 @@ lazy val `kyo-jsonrpc-http` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-jsonrpc-http"))
+        .withKyoTest
         .dependsOn(`kyo-jsonrpc`)
         .dependsOn(`kyo-http`)
         .settings(`kyo-settings`)
