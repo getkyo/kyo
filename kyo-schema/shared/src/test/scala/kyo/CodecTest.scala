@@ -302,7 +302,7 @@ end CodecTestHelper
 
 // --- Tests ---
 
-class CodecTest extends Test:
+class CodecTest extends kyo.test.Test[Any]:
 
     import CodecTestHelper.*
 

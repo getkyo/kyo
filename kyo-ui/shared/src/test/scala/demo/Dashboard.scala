@@ -3,6 +3,7 @@ package demo
 import kyo.*
 import kyo.Style.*
 import kyo.UI.*
+import kyo.UI.Ast.HtmlContent
 
 /** Live metrics dashboard driven entirely by the server.
   *
@@ -28,7 +29,7 @@ object Dashboard extends KyoApp:
     private val logStyle            = Style.column.gap(6.px).padding(12.px).bg(Color.slate).rounded(10.px)
     private val logRow              = Style.color(Color.white).fontFamily(FontFamily.Monospace).fontSize(13.px)
 
-    private def metric(label: String, sig: Signal[Int], color: Color): UI =
+    private def metric(label: String, sig: Signal[Int], color: Color): HtmlContent =
         div.style(cardStyle)(
             span(label).style(cardLabel),
             sig.render(v => span(v.toString).style(cardValue(color)))

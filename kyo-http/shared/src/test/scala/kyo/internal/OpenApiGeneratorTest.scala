@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.codec.OpenApiGenerator
 
-class OpenApiGeneratorTest extends kyo.Test:
+class OpenApiGeneratorTest extends kyo.BaseHttpTest:
 
     "OpenApiGenerator" - {
 

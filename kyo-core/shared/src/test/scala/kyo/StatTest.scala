@@ -1,8 +1,8 @@
 package kyo
 
-class StatTest extends Test:
+class StatTest extends kyo.test.Test[Any]:
 
-    "scope" in runJVM {
+    "scope".onlyJvm in {
         import AllowUnsafe.embrace.danger
         val stat         = Stat.initScope("test1")
         val counter      = stat.initCounter("a")

@@ -3,7 +3,7 @@ package kyo
 import Record.*
 import scala.language.implicitConversions
 
-class RecordTest extends Test:
+class RecordTest extends kyo.test.Test[Any]:
 
     "creation" - {
 
@@ -342,7 +342,7 @@ class RecordTest extends Test:
 
         "duplicate fields merge to union" in {
             summon[("f" ~ Int & "f" ~ String) =:= ("f" ~ (Int | String))]
-            succeed
+            succeed("duplicate fields merge to union is a compile-time property verified by the summon above")
         }
 
         "structural subtyping assignment" in {
@@ -373,7 +373,7 @@ class RecordTest extends Test:
 
         "mixed duplicate and unique" in {
             summon[("a" ~ Int & "a" ~ String & "b" ~ Boolean) =:= ("a" ~ (Int | String) & "b" ~ Boolean)]
-            succeed
+            succeed("mixed duplicate and unique fields merge to union is a compile-time property verified by the summon above")
         }
 
         "duplicate field: last writer wins at runtime" in {

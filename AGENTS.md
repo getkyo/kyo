@@ -67,6 +67,7 @@ How to work on Kyo, not just what the code looks like. CONTRIBUTING.md carries t
 When you find a problem, it is yours to resolve, whether or not you caused it. A failing test, a compiler warning, a broken link, a flaky result, a latent bug noticed in passing: own it.
 
 - **"Pre-existing", "unrelated", "not my change", "flaky", and "out of scope" are not dismissals.** During any campaign (a CI-greening pass, a refactor, an audit, a test run), every red signal gets owned. A failure you did not introduce is still a failure you found, and walking past it ships it to the next person.
+- **Compaction may have erased the context that proves an issue is yours.** When a long task is summarized to fit the context window, you can lose the memory that you introduced a failure, deleted the symbol it depends on, or already accepted ownership of it. So a gut feeling that something is "pre-existing", "not mine", "already broken", or "out of scope" is untrustworthy: it is far more often just missing context than a real fact. Never use those labels to walk past an issue. Treat every issue you observe as yours to fix. If you genuinely believe an issue predates your work, the bar is evidence (a clean reproduction on the base commit or `origin/main`), never memory or assumption.
 - **Route what genuinely crosses a boundary; never drop it.** If an issue belongs to another module or concern and truly cannot be fixed in place, surface it explicitly: call it out in your summary, leave a tracked note, or hand it off. Silently skipping it is the exact failure mode this rule exists to prevent.
 - **No deferral to a phase that never comes.** Fix issues in the current step or the immediately-next one. "Handle it later" and "cleanup phase" reliably resolve to "never"; deferred issues compound.
 - **Do not use priority as an excuse.** Never decide a discovered issue is low-priority and therefore skippable. Address what you surface; escalate to the user only when a fix is genuinely value-underdetermined.
@@ -141,6 +142,13 @@ kyo-<module>/
   js/src/main/scala/kyo/           # JS-specific source
   native/src/main/scala/kyo/       # Native-specific source
 ```
+
+### Test File Naming (no orphan test classes)
+
+Every test file MUST share a name prefix with a source file. The goal is 1:1: `Foo.scala` is tested by `FooTest.scala`. When one source genuinely needs more than one test file, split by aspect keeping the source as the prefix: `FooParsingTest.scala`, `FooEncodingTest.scala`. Default to the 1:1 file and add tests there; only create an aspect file when the 1:1 file would grow unwieldy.
+
+- **Never commit a test class with no corresponding source.** `ReactiveLoopExperimentTest.scala` with no `ReactiveLoop.scala` is an orphan and is not allowed in a finished change. Before adding a test, find the source it covers and use that prefix.
+- **Scratch / experiment / reproduction test files are dev artifacts.** It is fine to create an ad-hoc test (with any name) while reproducing a bug or probing a hypothesis, but it MUST be removed before the change is done: fold the validated assertions into the matching `*Test.scala` for the source under test, then delete the scratch file. A finished change leaves no orphan or experiment test behind.
 
 ## Writing Module READMEs
 

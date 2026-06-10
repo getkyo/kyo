@@ -30,7 +30,7 @@ final case class YamlMultiDocumentConfig(
     unit: SealedNoArgVariants
 ) derives CanEqual
 
-class YamlTest extends Test:
+class YamlTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -671,7 +671,7 @@ class YamlTest extends Test:
             assert(second.hasNextElement())
             assert(second.int() == 2)
             second.arrayEnd()
-            succeed
+            ()
         }
 
         "captureValue advances root source by one block collection" in {
@@ -694,7 +694,7 @@ class YamlTest extends Test:
             assert(second.hasNextElement())
             assert(second.int() == 2)
             second.arrayEnd()
-            succeed
+            ()
         }
 
         "reader can pull a flow sequence prefix without parsing later malformed content" in {

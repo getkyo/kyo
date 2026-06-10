@@ -10,7 +10,7 @@ class ReadabilityJsTest extends BrowserTest:
     //   [role="contentinfo"], [aria-hidden="true"]
     // Each page has real content in an <article> and noise in the targeted element.
 
-    "role=banner noise is excluded from readableContent" in run {
+    "role=banner noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -26,7 +26,7 @@ class ReadabilityJsTest extends BrowserTest:
         }
     }
 
-    "role=navigation noise is excluded from readableContent" in run {
+    "role=navigation noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -42,7 +42,7 @@ class ReadabilityJsTest extends BrowserTest:
         }
     }
 
-    "role=complementary noise is excluded from readableContent" in run {
+    "role=complementary noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -58,7 +58,7 @@ class ReadabilityJsTest extends BrowserTest:
         }
     }
 
-    "role=contentinfo noise is excluded from readableContent" in run {
+    "role=contentinfo noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -74,7 +74,7 @@ class ReadabilityJsTest extends BrowserTest:
         }
     }
 
-    "aria-hidden=true noise is excluded from readableContent" in run {
+    "aria-hidden=true noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -95,7 +95,7 @@ class ReadabilityJsTest extends BrowserTest:
     // .menu, .popup, .modal, .overlay, .cookie-banner
     // Plan cites: .ad, .ads, .advertisement
 
-    "class .ad noise is excluded from readableContent" in run {
+    "class .ad noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -111,7 +111,7 @@ class ReadabilityJsTest extends BrowserTest:
         }
     }
 
-    "class .ads noise is excluded from readableContent" in run {
+    "class .ads noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -127,7 +127,7 @@ class ReadabilityJsTest extends BrowserTest:
         }
     }
 
-    "class .advertisement noise is excluded from readableContent" in run {
+    "class .advertisement noise is excluded from readableContent" in {
         withBrowser {
             onPage(
                 """<body>
@@ -150,7 +150,7 @@ class ReadabilityJsTest extends BrowserTest:
     // When there is no <article>, <main>, or [role="main"], readableContent
     // should fall back to document.body.innerText.
 
-    "readableContent falls back to body when no article/main/role=main present" in run {
+    "readableContent falls back to body when no article/main/role=main present" in {
         withBrowser {
             onPage(
                 """<body>

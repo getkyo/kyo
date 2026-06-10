@@ -21,7 +21,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // initUnscoped(url).map(f) invokes f without auto-closing on exit
     // ─────────────────────────────────────────────────────────────────────────
 
-    "initUnscoped + .map invokes f with the backend" in run {
+    "initUnscoped + .map invokes f with the backend" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -34,7 +34,9 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                     stillAlive <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(capturedBackend))
                     _          <- capturedBackend.close(30.seconds) // manual cleanup
                 yield stillAlive match
-                    case Result.Success(_) => succeed
+                    case Result.Success(reply) =>
+                        // The client must still be alive (initUnscoped does not auto-close); a live send returns a non-empty wire reply.
+                        assert(reply.nonEmpty)
                     case Result.Failure(err) =>
                         fail(s"initUnscoped + .map closed the backend unexpectedly: ${err.getMessage}")
                     case Result.Panic(ex) => fail(s"Panic: ${ex.getMessage}")
@@ -46,7 +48,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // close() idempotency
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close() is idempotent - second call returns without exception" in run {
+    "close() is idempotent - second call returns without exception" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -65,7 +67,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // WS connection failure on init
     // ─────────────────────────────────────────────────────────────────────────
 
-    "initUnscoped with bad URL fails fast with BrowserSetupException or BrowserConnectionLostException" in run {
+    "initUnscoped with bad URL fails fast with BrowserSetupException or BrowserConnectionLostException" in {
         // initUnscoped waits for the WebSocket connect to resolve before returning the backend (the
         // Q-002 probe gate), so an unreachable URL surfaces as Abort failure from init
         // itself rather than blocking the first send. 127.0.0.1:0 is OS-rejected immediately.
@@ -87,7 +89,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // close(Duration.Zero) short-circuit
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close(Duration.Zero) closes immediately and subsequent send raises ConnectionLost" in run {
+    "close(Duration.Zero) closes immediately and subsequent send raises ConnectionLost" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -102,7 +104,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
             case Result.Success(innerResult) =>
                 innerResult match
                     case Result.Failure(_: BrowserConnectionLostException) =>
-                        succeed
+                        ()
                     case Result.Failure(other) =>
                         fail(s"Expected BrowserConnectionLostException after close(Duration.Zero) but got ${other.getClass.getName}")
                     case Result.Success(_) =>
@@ -120,7 +122,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // closeOrderly drains in-flight
     // ─────────────────────────────────────────────────────────────────────────
 
-    "closeOrderly (close with grace) completes in-flight send before returning" in run {
+    "closeOrderly (close with grace) completes in-flight send before returning" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -154,7 +156,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 elapsed >= 900.millis,
                                 s"close(5s) returned in $elapsed; expected >=900ms - drain did not wait"
                             )
-                            succeed
+                            ()
                         case Result.Failure(_: BrowserConnectionLostException) =>
                             fail(
                                 "close(5.seconds) did NOT drain in-flight send: slow send received " +
@@ -174,7 +176,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // closeNow with in-flight
     // ─────────────────────────────────────────────────────────────────────────
 
-    "closeNow while a slow in-flight send is pending surfaces ConnectionLost (or transport-closed ProtocolError) to the caller" in run {
+    "closeNow while a slow in-flight send is pending surfaces ConnectionLost (or transport-closed ProtocolError) to the caller" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -218,7 +220,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // cross-session routing
     // ─────────────────────────────────────────────────────────────────────────
 
-    "concurrent sends on two sessions route to the correct session without cross-talk" in run {
+    "concurrent sends on two sessions route to the correct session without cross-talk" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
@@ -244,7 +246,6 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                         yield
                             assert(rA.contains("result-A"), s"Session A got wrong result: $rA")
                             assert(rB.contains("result-B"), s"Session B got wrong result: $rB")
-                            succeed
                     }
                 }
             }
@@ -255,7 +256,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // nested withSession
     // ─────────────────────────────────────────────────────────────────────────
 
-    "nested withSession routes inner sends to inner session and outer sends to outer session" in run {
+    "nested withSession routes inner sends to inner session and outer sends to outer session" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
@@ -281,7 +282,6 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                             assert(outer.sessionId == Present(SessionId(a1.sessionId)), s"outer.sessionId mismatch: ${outer.sessionId}")
                             assert(innerResult.contains("inner-session"), s"inner session returned wrong result: $innerResult")
                             assert(outerResult.contains("outer-session"), s"outer session returned wrong result: $outerResult")
-                            succeed
                     }
                 }
             }
@@ -292,7 +292,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // dialog drainer survives queue close on closeNow
     // ─────────────────────────────────────────────────────────────────────────
 
-    "dialogDrainer fiber is done after closeNow" in run {
+    "dialogDrainer fiber is done after closeNow" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -309,7 +309,6 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                     yield
                         assert(!aliveBefore, s"dialogDrainer should be running before close, but done=$aliveBefore")
                         assert(aliveAfter, s"dialogDrainer should be done after closeNow, but done=$aliveAfter")
-                        succeed
                     end for
                 }
             }
@@ -320,7 +319,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // Frame-context tracker
     // ─────────────────────────────────────────────────────────────────────────
 
-    "attachTab seeds frameContexts with the root frame's default executionContextId before user code runs" in run {
+    "attachTab seeds frameContexts with the root frame's default executionContextId before user code runs" in {
         Scope.run {
             Abort.run[BrowserConnectionException] {
                 withBrowser {
@@ -338,14 +337,14 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                     )
                                 case Absent => fail("unreachable")
                             end match
-                            succeed
+                            ()
                     }
                 }
             }.orFail("Unexpected")
         }
     }
 
-    "iframe injected via document.write triggers Runtime.executionContextCreated and adds an entry to frameContexts" in run {
+    "iframe injected via document.write triggers Runtime.executionContextCreated and adds an entry to frameContexts" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -380,14 +379,14 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 after.size > before.size,
                                 s"Expected frameContexts to grow after iframe insertion. before.size=${before.size} after.size=${after.size}"
                             )
-                            succeed
+                            ()
                     }
                 }
             }.orFail("Unexpected")
         }
     }
 
-    "iframe removal triggers Runtime.executionContextDestroyed and removes the matching entry" in run {
+    "iframe removal triggers Runtime.executionContextDestroyed and removes the matching entry" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -435,14 +434,14 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 after.size < withIframe.size,
                                 s"Expected frameContexts to shrink after iframe removal. before.size=${withIframe.size} after.size=${after.size}"
                             )
-                            succeed
+                            ()
                     }
                 }
             }.orFail("Unexpected")
         }
     }
 
-    "isolated-world contexts (auxData.isDefault == false) do not pollute frameContexts" in run {
+    "isolated-world contexts (auxData.isDefault == false) do not pollute frameContexts" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -495,14 +494,14 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                     )
                                 case Absent => fail("rootFrameId must be seeded by attachTab")
                             end match
-                            succeed
+                            ()
                     }
                 }
             }.orFail("Unexpected")
         }
     }
 
-    "Page.getFrameTree returns the root frame plus every same-origin child frame after page settle" in run {
+    "Page.getFrameTree returns the root frame plus every same-origin child frame after page settle" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -544,7 +543,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                         s"child frame ${c.frame.id} must have parentId == $rootId but was ${c.frame.parentId}"
                                     )
                                 }
-                                succeed
+                                ()
                             end for
                         }
                     }
@@ -553,7 +552,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "iframe added after page load and then removed leaves no leaked map keys" in run {
+    "iframe added after page load and then removed leaves no leaked map keys" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -601,14 +600,14 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 after.toMap.keySet == initial.toMap.keySet,
                                 s"After create+destroy the frameContexts keys must match initial. initial=${initial.toMap.keySet} after=${after.toMap.keySet}"
                             )
-                            succeed
+                            ()
                     }
                 }
             }.orFail("Unexpected")
         }
     }
 
-    "concurrent tabs share a connection but maintain independent frameContexts maps" in run {
+    "concurrent tabs share a connection but maintain independent frameContexts maps" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -676,7 +675,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                                 firstMap.size > secondMap.size,
                                                 s"tab1 has the iframe so its map should be larger than tab2. first=${firstMap.size} second=${secondMap.size}"
                                             )
-                                            succeed
+                                            ()
                                     }
                                 }
                             yield tabsCompared
@@ -692,7 +691,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // Frame-context threading
     // ─────────────────────────────────────────────────────────────────────────
 
-    "evalJs without an active frame scope evaluates against the top-level execution context" in run {
+    "evalJs without an active frame scope evaluates against the top-level execution context" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserIFrameException | BrowserNavigationException] {
                 withBrowserOnLocalhost {
@@ -710,7 +709,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 params.contextId.isEmpty,
                                 s"Expected contextId Absent but recorded params were '$recorded' (decoded: $params)"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }
@@ -718,7 +717,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "evalJs inside an active withFrame scope evaluates against the iframe's execution context" in run {
+    "evalJs inside an active withFrame scope evaluates against the iframe's execution context" in {
         Scope.run {
             Abort.run[
                 BrowserConnectionException | BrowserIFrameException | BrowserNavigationException | BrowserAssertionException |
@@ -789,7 +788,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 outsideParams.contextId.isEmpty,
                                 s"Expected contextId Absent outside the let but recorded params were '$outsideRecorded' (decoded: $outsideParams)"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }
@@ -797,7 +796,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "Resolver.resolveOne reads the active contextId and resolves elements inside the active frame" in run {
+    "Resolver.resolveOne reads the active contextId and resolves elements inside the active frame" in {
         Scope.run {
             Abort.run[
                 BrowserConnectionException | BrowserIFrameException | BrowserNavigationException | BrowserAssertionException |
@@ -844,7 +843,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 insideRef != Absent,
                                 s"Resolver in frame scope must find the iframe-only marker but got $insideRef"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }
@@ -852,7 +851,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "Actionability.check reads the active contextId and gates on the iframe's element" in run {
+    "Actionability.check reads the active contextId and gates on the iframe's element" in {
         Scope.run {
             Abort.run[
                 BrowserConnectionException | BrowserIFrameException | BrowserNavigationException | BrowserAssertionException |
@@ -907,7 +906,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 inside.isSuccess,
                                 s"Actionability in frame scope must return Success for the iframe button, got $inside"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }
@@ -915,7 +914,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "evalJs against a destroyed execution context aborts with BrowserIFrameInvalidException" in run {
+    "evalJs against a destroyed execution context aborts with BrowserIFrameInvalidException" in {
         Scope.run {
             Abort.run[
                 BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException
@@ -935,7 +934,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                             }
                         yield outcome match
                             case Result.Failure(BrowserIFrameInvalidException(IFrameReason.ContextDestroyed)) =>
-                                succeed
+                                ()
                             case other =>
                                 fail(s"Expected BrowserIFrameInvalidException(IFrameReason.ContextDestroyed) but got $other")
                         end for
@@ -945,7 +944,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "evalJsOn does not consult activeIFrameLocal - it always evaluates against the top-frame default context" in run {
+    "evalJsOn does not consult activeIFrameLocal - it always evaluates against the top-frame default context" in {
         Scope.run {
             Abort.run[
                 BrowserConnectionException | BrowserIFrameException | BrowserNavigationException | BrowserAssertionException |
@@ -1003,7 +1002,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 escapeHatchUrl.contains("/json/version"),
                                 s"evalJsOn must always target the top frame but got '$escapeHatchUrl'"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }
@@ -1011,7 +1010,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "nested Local.let calls round-trip the active frame: outer on entry, inner in body, outer restored on exit" in run {
+    "nested Local.let calls round-trip the active frame: outer on entry, inner in body, outer restored on exit" in {
         Scope.run {
             Abort.run[
                 BrowserConnectionException | BrowserIFrameException | BrowserNavigationException | BrowserAssertionException |
@@ -1079,7 +1078,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                                 absentAfter == "",
                                 s"After leaving every Local.let the parent document has no marker, got '$absentAfter'"
                             )
-                            succeed
+                            ()
                         end for
                     }
                 }
@@ -1087,7 +1086,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
         }
     }
 
-    "rapid 20 alert() dialogs are all auto-dismissed without drops" in run {
+    "rapid 20 alert() dialogs are all auto-dismissed without drops" in {
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException] {
                 withBrowserOnLocalhost {
@@ -1102,7 +1101,6 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                         })()
                     """).map { result =>
                         assert(result == "20", s"Expected 20 dialogs to complete but got: $result")
-                        succeed
                     }
                 }
             }.orFail("Unexpected")
@@ -1113,7 +1111,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // awaitDrain uses a Fiber.Promise re-issued per 0->1 in-flight transition.
     // ─────────────────────────────────────────────────────────────────────────
 
-    "CdpBackend.awaitDrain returns within microseconds of last in-flight drain (no 5ms spin)" in run {
+    "CdpBackend.awaitDrain returns within microseconds of last in-flight drain (no 5ms spin)" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
@@ -1150,7 +1148,7 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
     // close() WS full-teardown invariant
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close(grace) returns only after dialogDrainer is fully stopped (not just interrupted)" in run {
+    "close(grace) returns only after dialogDrainer is fully stopped (not just interrupted)" in {
         // This test verifies the CORRECT invariant: after close() returns, the
         // dialogDrainer fiber is fully stopped (getResult is Done), not merely
         // scheduled-for-interrupt but still running. A drainer that is only

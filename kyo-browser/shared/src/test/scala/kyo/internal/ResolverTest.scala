@@ -16,7 +16,7 @@ class ResolverTest extends kyo.BrowserTest:
 
     // ── resolveAll stress (10 matches, 50 matches) ────────────────────
 
-    "resolveAll returns all matches when count == 10" in run {
+    "resolveAll returns all matches when count == 10" in {
         val items = (0 until 10).map(i => s"<p class='m' id='p$i'>$i</p>").mkString
         val html  = page(s"<div>$items</div>")
         withBrowserOnLocalhost {
@@ -28,7 +28,7 @@ class ResolverTest extends kyo.BrowserTest:
         }
     }
 
-    "resolveAll returns all matches when count == 50 (stress)" in run {
+    "resolveAll returns all matches when count == 50 (stress)" in {
         val items = (0 until 50).map(i => s"<p class='m' id='p$i'>$i</p>").mkString
         val html  = page(s"<div>$items</div>")
         withBrowserOnLocalhost {
@@ -42,7 +42,7 @@ class ResolverTest extends kyo.BrowserTest:
 
     // ── Within(parent, child) directly via resolveOne ─────────────────
 
-    "Resolver.resolveOne(Within(parent, child)) directly resolves the child element" in run {
+    "Resolver.resolveOne(Within(parent, child)) directly resolves the child element" in {
         val html = page(
             "<div id='outer'>" +
                 "<button id='inside-btn'>Inside</button>" +
@@ -72,7 +72,7 @@ class ResolverTest extends kyo.BrowserTest:
 
     // ── decode failure raises BrowserProtocolErrorException ──────────
 
-    "decode failure path raises BrowserProtocolErrorException (pure)" in run {
+    "decode failure path raises BrowserProtocolErrorException (pure)" in {
         val malformed = "{this is not valid JSON for GetFrameTreeResult}"
         // decodeOrFail was removed in Phase 02; inline the decode logic here for test continuity.
         // Phase 03 rewrites this test file.
@@ -104,7 +104,7 @@ class ResolverTest extends kyo.BrowserTest:
 
     // ── parallel resolveOne uniqueness (handle-stable pipeline) ──────
 
-    "uniqueness across N=10 parallel resolveOne via Async.zip" in run {
+    "uniqueness across N=10 parallel resolveOne via Async.zip" in {
         // 10 distinct elements; each parallel resolveOne picks one. The Resolver pipeline
         // (Runtime.evaluate + objectId + DOM.describeNode) gives each invocation its own JS handle
         // that resolves to its own backendNodeId; concurrent CDP traffic on the same tab cannot
@@ -146,7 +146,7 @@ class ResolverTest extends kyo.BrowserTest:
 
     // ── isStaleNodeError classification (pure) ───────────────────────
 
-    "Resolver.isStaleNodeError recognises the CDP stale-node sentinel substring" in run {
+    "Resolver.isStaleNodeError recognises the CDP stale-node sentinel substring" in {
         // Match the live wire shape: CDP returns the message verbatim inside the error payload, then
         // CdpBackend.decodeOrFail composes it into a `BrowserProtocolErrorException(error=...)` whose
         // `error` field carries the CDP message. The classifier substring-matches against that field.
@@ -169,7 +169,7 @@ class ResolverTest extends kyo.BrowserTest:
     // navigation can return `nodeId: 0`; describeByObjectId then issues `DOM.getDocument` once and retries.
     // We exercise this by resolving immediately after a navigation: the bootstrap path either fires (slow
     // page) or the agent already had a document (fast page); either way the resolveOne must succeed.
-    "Resolver.resolveOne immediately after navigation succeeds (covers lazy m_document bootstrap retry path)" in run {
+    "Resolver.resolveOne immediately after navigation succeeds (covers lazy m_document bootstrap retry path)" in {
         val html = page("<button id='early'>Hello</button>")
         withBrowserOnLocalhost {
             Browser.goto(html).andThen {
@@ -197,7 +197,7 @@ class ResolverTest extends kyo.BrowserTest:
     // `Abort.fail` inside the same scope. The test asserts the Abort surfaces cleanly without hangs
     // or panics; the underlying `Scope.ensure` semantics guarantee the JS handle is released even
     // though the surrounding fiber aborts.
-    "resolveOne release path survives Abort raised after resolution" in run {
+    "resolveOne release path survives Abort raised after resolution" in {
         val html  = page("<button id='b0'>0</button>")
         val cause = BrowserConnectionLostException("simulated post-resolve abort", Maybe.empty)
         withBrowserOnLocalhost {
@@ -210,7 +210,6 @@ class ResolverTest extends kyo.BrowserTest:
                 }.map {
                     case Result.Failure(c: BrowserConnectionException) =>
                         assert(c eq cause, s"Expected the original cause to surface, got $c")
-                        succeed
                     case other => fail(s"Expected Result.Failure(BrowserConnectionException) but got $other")
                 }
             }

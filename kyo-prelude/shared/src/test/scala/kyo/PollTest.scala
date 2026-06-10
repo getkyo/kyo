@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class PollTest extends Test:
+class PollTest extends kyo.test.Test[Any]:
 
     "one" - {
         "empty" in {
@@ -127,7 +127,7 @@ class PollTest extends Test:
     }
 
     "runFirst" - {
-        "basic operation" in run {
+        "basic operation" in {
             Abort.run {
                 for
                     cont1  <- Poll.runFirst(Poll.fold[Int](0)(_ + _)).map(Abort.get(_))
@@ -141,7 +141,7 @@ class PollTest extends Test:
             }
         }
 
-        "empty" in run {
+        "empty" in {
             Abort.run {
                 for
                     cont1  <- Poll.runFirst(Poll.andMap[Int](_ => 42)).map(Abort.get(_))
@@ -153,7 +153,7 @@ class PollTest extends Test:
             }
         }
 
-        "with effects" in run {
+        "with effects" in {
             Abort.run {
                 for
                     result <- Var.runTuple(0) {
@@ -212,7 +212,7 @@ class PollTest extends Test:
             assert(result.eval == ((), Maybe(3)))
         }
 
-        "basic emit-poll cycle" in run {
+        "basic emit-poll cycle" in {
             val emitter =
                 for
                     _ <- Emit.value(1)
@@ -230,7 +230,7 @@ class PollTest extends Test:
             assert(result.eval == ("emitted", (Maybe(1), Maybe(2))))
         }
 
-        "early poller termination" in run {
+        "early poller termination" in {
             val emitter =
                 for
                     _ <- Emit.value(1)
@@ -244,7 +244,7 @@ class PollTest extends Test:
             assert(result.eval == ("emitted", Maybe(1)))
         }
 
-        "fold with emit" in run {
+        "fold with emit" in {
             val emitter =
                 for
                     _ <- Emit.value(1)
@@ -258,7 +258,7 @@ class PollTest extends Test:
             assert(result.eval == ("done", 6))
         }
 
-        "interleaved effects" in run {
+        "interleaved effects" in {
             var count = 0
 
             val emitter =
@@ -303,7 +303,7 @@ class PollTest extends Test:
                 Chunk(t21, t22, t23).collect { case Present(v) => v.str }
             )
 
-        "run" in run {
+        "run" in {
             assert(Poll.run[T.T2](Chunk.empty[T.T2])(Poll.run[T.T1](Chunk(T.T1(0), T.T1(1), T.T1(2)))(poll)).eval == (
                 Chunk(0, 1, 2),
                 Chunk()
@@ -314,7 +314,7 @@ class PollTest extends Test:
             ))
         }
 
-        "runFirst" in run {
+        "runFirst" in {
             val ranFirst = Poll.run(Chunk.empty):
                 Poll.runFirst[T.T2](poll).map:
                     case Right(cont) =>
@@ -327,7 +327,7 @@ class PollTest extends Test:
             assert(ranFirst.eval == (Chunk(0), Chunk("zero")))
         }
 
-        "runEmit" in run {
+        "runEmit" in {
             val emit =
                 for
                     _ <- Emit.value[T.T1](T.T1(0))

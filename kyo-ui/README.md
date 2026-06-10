@@ -1,12 +1,12 @@
 # kyo-ui
 
-kyo-ui describes web UIs as pure values that run unchanged in three places: a Scala.js client mounting to the DOM, a server-driven HTML-over-SSE deployment, or an HTML stream for SSR and tests. Signals are first-class values throughout the API, and the API itself is typed tightly enough that broad categories of HTML and state mistakes do not compile.
+kyo-ui describes web UIs as pure values that run unchanged in three places: a Scala.js client mounting to the DOM, a server-driven HTML-over-WebSocket deployment, or an HTML stream for SSR and tests. Signals are first-class values throughout the API, and the API itself is typed tightly enough that broad categories of HTML and state mistakes do not compile.
 
-**A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as an HTTP triple (GET page + POST events + SSE diff stream) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-SSE app; only the runner changes.
+**A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as two HTTP handlers (a GET that serves the SSR page plus a WebSocket route that carries diffs out and events in) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-WebSocket app; only the runner changes. The same value tree includes a typed SVG layer (the `Svg.*` factories) rendered by the same engine across all three runners.
 
 **A `Signal[A]` is a value of type `A` everywhere kyo-ui takes one.** Setters and child slots that accept `A` equally accept `Signal[A]` (read-only, re-renders on change) or `SignalRef[A]` (read-write, two-way binding). Conditional rendering is `when(cond: Signal[Boolean])(ui)`. There is no wrapper type, no binder operator, no hooks; reactivity is the API, not a layer on top of it.
 
-**Invalid states do not compile.** Container factories restrict their children at the type level (`ul(div(...))` is a compile error). `Length` variants are method-typed (`.padding` rejects `Auto`, `.gap` rejects `Pct`). Domain enums (`Target`, `Href`, `Keyboard`, `FileAccept`, `Color`) replace stringly-typed attributes. Capability traits gate setters (`.disabled` only on `HasDisabled` elements, `.checked` only on `BooleanInput`). Wrong HTML stops compiling.
+**Invalid states do not compile.** Container factories restrict their children at the type level (`ul(div(...))` is a compile error). The same content-model typing rejects a bare SVG primitive as an HTML child (`div(Svg.circle(...))` does not compile; only the `<svg>` root, `Svg.svg(...)`, is HTML-embeddable). `Length` variants are method-typed (`.padding` rejects `Auto`, `.gap` rejects `Pct`). Domain enums (`Target`, `Href`, `Keyboard`, `FileAccept`, `Color`) replace stringly-typed attributes. Capability traits gate setters (`.disabled` only on `HasDisabled` elements, `.checked` only on `BooleanInput`). Wrong HTML stops compiling.
 
 **Updates are fine-grained.** No virtual DOM, no component re-execution. The `UI` value is built once; the framework registers a subscription at every point where a signal appears. When a signal emits, only the subtree bound to that signal re-renders, and only the DOM nodes inside that subtree get patched. Granularity is determined at the call site: `div(name: Signal[String])` updates one text node; `when(loggedIn)(bigSubtree)` rebuilds a whole subtree. You pick the boundary.
 
@@ -14,15 +14,15 @@ Event handlers are typed `Any < Async` and can call anything in the kyo ecosyste
 
 <!-- doctest:setup
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 case class Todo(id: String, text: String, done: Boolean)
 ```
 -->
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val hello: UI = div(h1("Hello"), button("Click").onClick(Console.printLine("clicked")))
 ```
@@ -32,8 +32,8 @@ val hello: UI = div(h1("Hello"), button("Click").onClick(Console.printLine("clic
 Every visible element is a factory call on `UI`: `UI.div`, `UI.button`, `UI.h1`, `UI.input`. Each factory returns a typed element value (`Div`, `Button`, `H1`, `Input`) that you chain attribute and event setters on, then call `.apply(children*)` to attach children. The element value is immutable; every setter returns a new instance of the same type.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val card: UI =
     div(
@@ -46,8 +46,8 @@ val card: UI =
 Bare strings are valid children: `div("hello")` works because a `String` becomes a text node. A `Signal[String]` becomes a reactive text node. A `Signal[A <: UI]` becomes a reactive subtree. You can mix all three with element values inside `.apply(...)`. `UI.fragment(cs*)` emits a flat sequence of children without a wrapping element, and `UI.empty` is a no-op placeholder.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val greeting: UI = p("Hello, ", span("world").id("name"), "!")
 ```
@@ -62,8 +62,8 @@ Every `Element` carries an `Attrs` record. The chainable setters are:
 - `.tabIndex(v)`, `.focusTrap(v)`, `.focusGroup(id)`: focus order and grouping for keyboard navigation.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val labeled: UI =
     div(
@@ -77,8 +77,8 @@ val labeled: UI =
 Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a communication channel; reach the rest of the app via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val counter: UI < Async =
     for
@@ -92,8 +92,8 @@ val counter: UI < Async =
 `onClickSelf` fires only when the element itself is the click target (a click bubbled up from a child does not trigger it). `onClick` fires on any click within the subtree.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 div.onClickSelf(Console.printLine("background"))(
     button("foreground")
@@ -107,13 +107,13 @@ div.onClickSelf(Console.printLine("background"))(
 The most common HTML and state-shape mistakes are caught by the compiler, not at runtime. The clearest case is container children: most containers accept `UI*`, but five narrow it to a typed union so the document structure stays valid. `ul`/`ol` accept only `(Li | Reactive | Foreach[?] | Fragment)*`, `table` only rows, `tr` only cells, `select` only options. Passing a `Div` to `ul` is a compile error.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val list: UI = ul(li("Read"), li("Write"), li("Sleep"))
 ```
 
-Finite value domains are typed the same way, each covered in its own section below: `Length` variants are method-typed per property so `.padding` rejects `Auto` and `.gap` rejects `Pct` ([Lengths and sizing](#lengths-and-sizing)); attribute domains are enums rather than strings ([Domain enums for attributes](#domain-enums-for-attributes)); `Color` is a sealed ADT, never a CSS string ([Styles](#styles)); and capability traits gate setters, so `.checked` exists only on `BooleanInput` and `.disabled` only on `HasDisabled`.
+Finite value domains are typed the same way, each covered in its own section below: `Length` variants are method-typed per property so `.padding` rejects `Auto` and `.gap` rejects `Pct` ([Lengths and sizing](#lengths-and-sizing)); attribute domains are enums rather than strings ([Domain enums for attributes](#domain-enums-for-attributes)); `Color` is a sealed ADT, never a CSS string ([Styles](#styles)); and capability traits gate setters, so `.checked` exists only on `BooleanInput` and `.disabled` only on `HasDisabled`. The SVG-primitive content-model boundary (a bare `Svg.circle(...)` is not a valid HTML child) is covered in [SVG](#svg).
 
 ### Headings, lists, tables, structure
 
@@ -127,8 +127,8 @@ Finite value domains are typed the same way, each covered in its own section bel
 - Images: `UI.img(src, alt)` with `.src(v: ImgSrc)` and `.alt(v)`.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val grid: UI = table(
     tr(th("Name"), th("Email")),
@@ -146,13 +146,12 @@ A reactive UI needs values that change over time. kyo-core supplies two primitiv
 A `SignalRef[A]` widens to `Signal[A]` wherever a read-only signal is expected, so you can hand the same ref to inputs (which need write access) and to reactive subtrees (which only read) in the same UI.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val example: UI < Async =
-    for
-        count <- Signal.initRef(0)
-        // count: SignalRef[Int], both readable as Signal[Int] and writable
+    for count <- Signal.initRef(0)
+    // count: SignalRef[Int], both readable as Signal[Int] and writable
     yield div(
         button("+").onClick(count.updateAndGet(_ + 1)),
         count.render(n => span(s"Clicked $n times"))
@@ -183,8 +182,8 @@ A `Signal[A]` can drive almost any attribute, child slot, or layout decision. Th
 Note the consequence of the table: `when(loggedIn)(profilePanel)` is the conditional rendering primitive. The condition argument is a `Signal[Boolean]`, the framework subscribes to it, and `profilePanel` appears or disappears as the signal flips. There is no manual subscribe call and no top-level `if/else` wrapper to wire up. The same pattern applies to every entry in the table.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val example: UI < Async =
     for
@@ -206,7 +205,7 @@ One value (`loggedIn`) drives four things at once: button click writes it, `when
 
 A reader coming from React or another VDOM library is likely to ask: when a signal updates, what re-runs? The answer is: only the closure attached to that signal's boundary.
 
-kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over SSE for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
+kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over the WebSocket for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
 
 Contrast with React: a state setter call inside a component triggers re-execution of the component function and propagates down through its descendants, building a new virtual DOM, diffing against the previous one, and applying minimal DOM updates. Components are functions called over and over; expensive subtrees need `React.memo` or `useMemo` to opt out of re-running.
 
@@ -214,7 +213,7 @@ In kyo-ui:
 
 - The function that constructs the `UI` value runs once. There is no component function that re-runs on every state change.
 - A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches the DOM only at the path where the boundary was anchored.
-- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over SSE).
+- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over the WebSocket).
 - Subscription granularity is determined at the call site. `div(name: Signal[String])` is a fine-grained subscription on one text node. `when(loggedIn)(bigSubtree)` is a coarse subscription that swaps a whole subtree. Both are explicit choices in the code, not framework defaults to argue with.
 - There is no `useMemo`, `useCallback`, or `React.memo` equivalent because nothing gets re-executed that you did not opt into. The cost of "rendering" a subtree is the cost of the closure inside its boundary, and you wrote that closure.
 
@@ -223,8 +222,8 @@ In kyo-ui:
 `signal.render(f: A => UI)` is the basic boundary. The framework re-runs `f` and replaces the subtree whenever `signal` emits a new value. Same as `UI.Ast.Reactive(signal.map(f))`.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val mirror: UI < Async =
     for ref <- Signal.initRef("")
@@ -237,8 +236,8 @@ val mirror: UI < Async =
 You can also skip the `.render` wrap for two common shapes: a `Signal[String]` becomes a reactive text node, and a `Signal[A <: UI]` becomes a reactive subtree. The two examples below produce the same `UI`:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val explicit: UI < Async =
     for ref <- Signal.initRef("")
@@ -256,8 +255,8 @@ val implicitForm: UI < Async =
 `UI.when(condition: Signal[Boolean])(ui: => UI)` materializes `ui` only when `condition` emits `true`, and emits `UI.empty` (a `Fragment(Chunk.empty)`) when `false`.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val agreedToTerms: UI < Async =
     for agreed <- Signal.initRef(false)
@@ -279,8 +278,8 @@ A `Signal[Chunk[A]]` is rendered by one of the four `foreach` variants:
 - `signal.foreachKeyedIndexed(key: A => String)(render: (Int, A) => UI)`: keyed with index.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val todoList: UI < Async =
     for items <- Signal.initRef(Chunk(Todo("a", "Buy milk", false), Todo("b", "Walk dog", true)))
@@ -297,8 +296,8 @@ val todoList: UI < Async =
 When you have both `foreach` and `foreachKeyed` available, the choice is: use `foreachKeyed` whenever the collection can reorder, can have items inserted in the middle, or contains rows with focus / cursor / scroll state. Plain `foreach` re-renders rows by positional index, so a reorder loses per-row state. The framework does NOT infer keys; you must pass the key function explicitly.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val keyedReorderSafe: UI < Async =
     for items <- Signal.initRef(Chunk.empty[Todo])
@@ -324,9 +323,9 @@ Several attribute setters have a signal overload:
 Each of these wraps the entire element in a `Reactive` boundary and returns `UI`, NOT `Self`. Once you call `.style(signalStyle)` you lose the element-specific methods that follow: there is no more `.id`, `.onClick`, or `.value` available on the result.
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val rigidOrder: UI < Async =
     for theme <- Signal.initRef(Style.bg(Color.slate))
@@ -358,8 +357,8 @@ Input elements share three capability traits.
 The most useful API on every input is `.value(ref: SignalRef[String])` (text and picker) or `.checked(ref: SignalRef[Boolean])` (boolean). Passing a `SignalRef` activates two-way binding: the framework writes `ref.set(newValue)` BEFORE invoking any user-supplied `onInput` or `onChange`. By the time your handler runs, the ref already reflects the new value.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val nameField: UI < Async =
     for name <- Signal.initRef("")
@@ -374,8 +373,8 @@ You did not write `.onInput(v => name.set(v))`. The framework did that for you w
 When you want to react in addition to the binding, supply `onInput` or `onChange` and assume the ref already holds the new value:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val withSideEffect: UI < Async =
     for query <- Signal.initRef("")
@@ -393,8 +392,8 @@ When to use which setter:
 A signup form with two reactive text fields and a checkbox, validated reactively, with a disabled submit button until terms are accepted:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 case class SignupForm(name: SignalRef[String], email: SignalRef[String], agreed: SignalRef[Boolean])
 
@@ -403,8 +402,8 @@ val signup: UI < Async =
         name   <- Signal.initRef("")
         email  <- Signal.initRef("")
         agreed <- Signal.initRef(false)
-        form    = SignupForm(name, email, agreed)
-        valid   = form.name.combineLatest(form.email).map { case (n, e) => n.nonEmpty && e.contains("@") }
+        form  = SignupForm(name, email, agreed)
+        valid = form.name.combineLatest(form.email).map { case (n, e) => n.nonEmpty && e.contains("@") }
     yield UI.form.id("signup").onSubmit {
         for
             n <- form.name.get
@@ -438,8 +437,8 @@ A few things to notice in this block:
 `NumberInput` is a `TextInput` plus `.min(v: Double)`, `.max(v: Double)`, `.step(v: Double)` (clamped: any `step <= 0` becomes `1.0`), and `.onChangeNumeric(f: Double => Unit < Async)` for a typed-as-`Double` change handler.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val ageField: UI < Async =
     for age <- Signal.initRef("0")
@@ -449,8 +448,8 @@ val ageField: UI < Async =
 `RangeInput` is a slider with a `Double` value (NOT string): `.value(v: Double)`, `.value(ref: SignalRef[Double])`, `.min/.max/.step` (same clamping as `NumberInput`), `.onChange(f: Double => Unit < Async)`.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val volume: UI < Async =
     for v <- Signal.initRef(0.5)
@@ -460,8 +459,8 @@ val volume: UI < Async =
 `FileInput.accept(vs: FileAccept*)` constrains which files the browser offers. `FileAccept` carries enum cases for known media kinds and string escape hatches:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val avatarUpload: UI = fileInput.id("avatar").accept(
     FileAccept.Image(ImageExt.Png),
@@ -473,8 +472,8 @@ val avatarUpload: UI = fileInput.id("avatar").accept(
 `HiddenInput` carries no UI but participates in form submission and signal binding:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val csrf: UI < Async =
     for token <- Signal.initRef("")
@@ -488,8 +487,8 @@ Both `Select` (native `<select>`) and `Dropdown` (a custom `<div>`-based overlay
 `Select` accepts a `(Opt | Reactive | Foreach[?] | Fragment)*` child list. Each `Opt` is `UI.option.value(v).selected(b)(label)`:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val sortBy: UI < Async =
     for choice <- Signal.initRef("date")
@@ -502,8 +501,8 @@ val sortBy: UI < Async =
 `Dropdown` takes its options up front at construction as `(String, String)*` pairs, NOT as children:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val sortByCustom: UI < Async =
     for choice <- Signal.initRef("date")
@@ -519,8 +518,8 @@ Several attributes accept typed enums rather than raw strings.
 `Href` for `Anchor.href`:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val externalLink: UI =
     a("kyo on github").href(Href.External("https", "github.com/getkyo/kyo"))
@@ -533,8 +532,8 @@ val anchor: UI = a("top").href(Href.Fragment("top"))
 `Target` for the `target` attribute: `Self`, `Blank`, `Parent`, `Top` (mapped to `_self`, `_blank`, `_parent`, `_top` by the renderer).
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val newTab: UI =
     a("docs").href(Href.Path("/docs"), Target.Blank)
@@ -543,10 +542,10 @@ val newTab: UI =
 `ImgSrc` for `Img.src`:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
-val logo: UI = img(ImgSrc.Path("/logo.svg"), "Logo")
+val logo: UI    = img(ImgSrc.Path("/logo.svg"), "Logo")
 val dataUri: UI = img(ImgSrc.Data("image/svg+xml", "<svg ... />"), "inline")
 ```
 
@@ -557,8 +556,8 @@ val dataUri: UI = img(ImgSrc.Data("image/svg+xml", "<svg ... />"), "inline")
 `Keyboard` and `KeyboardEvent`: the value handed to `onKeyDown` / `onKeyUp`. `Keyboard` is an enum of named keys (`Enter`, `Tab`, `Escape`, `Space`, arrow keys, function keys) plus `Char(c: scala.Char)` for printable characters and `Unknown(raw: String)` for everything else.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val onlyOnEnter: UI < Async =
     for query <- Signal.initRef("")
@@ -575,12 +574,12 @@ val onlyOnEnter: UI < Async =
 `Length` is a sealed ADT with four variants: `Px(value)`, `Pct(value)`, `Em(value)`, and `Auto`. Every style method that takes a length is typed to a union of variants that makes sense for that property. Passing the wrong variant is a compile error, not a runtime one.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
-val padded: Style    = Style.padding(16.px)         // Px | Pct | Em
-val percent: Style   = Style.padding(10.pct)        // Px | Pct | Em
-val emPad: Style     = Style.padding(1.em)          // Px | Pct | Em
+val padded: Style  = Style.padding(16.px)  // Px | Pct | Em
+val percent: Style = Style.padding(10.pct) // Px | Pct | Em
+val emPad: Style   = Style.padding(1.em)   // Px | Pct | Em
 // Style.padding(Length.Auto) -- compile error: Auto not in the Px | Pct | Em union
 ```
 
@@ -602,8 +601,8 @@ Two coercion paths from numbers to `Length.Px` exist:
 Only the `Px` path is implicit. For `Pct` or `Em` you must use the suffix:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val explicit: Style = Style.padding(50.pct)
 // Style.padding(50) -- compile error: Int converts only to Px, not to Pct
@@ -616,11 +615,11 @@ val explicit: Style = Style.padding(50.pct)
 `Length.resolveOrAuto(length, parentPx): Maybe[Int]` is the same except `Auto` returns `Absent`, letting the caller decide what auto means in context.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
-val pixels: Int               = Length.resolve(Length.Pct(50), 800)        // 400
-val absentForAuto: Maybe[Int] = Length.resolveOrAuto(Length.Auto, 800)     // Absent
+val pixels: Int               = Length.resolve(Length.Pct(50), 800)    // 400
+val absentForAuto: Maybe[Int] = Length.resolveOrAuto(Length.Auto, 800) // Absent
 ```
 
 `Length.zero` is the named `Px(0)` constant.
@@ -630,11 +629,11 @@ val absentForAuto: Maybe[Int] = Length.resolveOrAuto(Length.Auto, 800)     // Ab
 `Style` is an immutable record of style properties (`Span[Style.Prop]`). You build a `Style` value separately from the UI tree and attach it with `.style(...)`. Two styles compose with `++`, and the merge is last-write-wins per property KIND, not per property instance:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
-val s1: Style    = Style.padding(10.px)
-val s2: Style    = Style.padding(20.px, 30.px)
+val s1: Style     = Style.padding(10.px)
+val s2: Style     = Style.padding(20.px, 30.px)
 val merged: Style = s1 ++ s2
 // merged has s2's padding only. s1's padding(10) was dropped because s2 wrote a Padding prop.
 ```
@@ -646,9 +645,9 @@ Composition is associative on kinds, not on individual setting calls.
 `Style.empty` is the identity; `.isEmpty` / `.nonEmpty` report it. Every instance method has a matching `Style.<name>(...)` factory on the companion that builds from `empty`. Both produce the same value:
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val a: Style = Style.empty.bg(Color.slate).padding(12.px)
 val b: Style = Style.bg(Color.slate).padding(12.px)
@@ -658,9 +657,9 @@ val b: Style = Style.bg(Color.slate).padding(12.px)
 ### Attaching a style
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val card: UI =
     div(h2("Title"))
@@ -670,9 +669,9 @@ val card: UI =
 The function-form overload reads cleaner for long chains:
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val card2: UI = div(h2("Title")).style { s =>
     s.padding(16.px).bg(Color.slate).rounded(8.px).color(Color.white)
@@ -684,9 +683,9 @@ val card2: UI = div(h2("Title")).style { s =>
 `.hover(s: Style)`, `.focus(s: Style)`, `.active(s: Style)`, `.disabled(s: Style)` take a NESTED `Style`. They embed the inner style as a pseudo-state property; the inner block applies when the user hovers / focuses / activates / disables the element.
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val interactiveButton: Style =
     Style.bg(Color.blue).color(Color.white).padding(8.px, 16.px)
@@ -697,9 +696,9 @@ val interactiveButton: Style =
 The shorthand form takes a `Style.type => Style`:
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val sameButton: Style =
     Style.bg(Color.blue).color(Color.white).padding(8.px, 16.px)
@@ -719,13 +718,13 @@ val sameButton: Style =
 - Named constants: `Color.white`, `black`, `transparent`, `red`, `orange`, `yellow`, `green`, `blue`, `indigo`, `purple`, `pink`, `gray`, `slate`.
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 val brand: Color           = Color.hex("#3b82f6").getOrElse(Color.blue)
 val translucent: Color     = Color.rgba(0, 0, 0, 0.5)
-val rejected: Maybe[Color] = Color.hex("not a color")  // Absent
+val rejected: Maybe[Color] = Color.hex("not a color") // Absent
 ```
 
 ### Spacing, layout, sizing
@@ -738,10 +737,10 @@ val rejected: Maybe[Color] = Color.hex("not a color")  // Absent
 - `.width(v: Length)`, `.height`, `.minWidth`, `.maxWidth`, `.minHeight`, `.maxHeight`.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
-val flexRow: Style = Style.row.gap(8.px).align(Style.Alignment.center)
+val flexRow: Style   = Style.row.gap(8.px).align(Style.Alignment.center)
 val fullWidth: Style = Style.width(100.pct).maxWidth(960.px)
 ```
 
@@ -766,11 +765,11 @@ val fullWidth: Style = Style.width(100.pct).maxWidth(960.px)
 - `.shadow(x: Px, y: Px, blur: Px, spread: Px, c: Color)`.
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
-val pill: Style = Style.bg(Color.blue).color(Color.white).padding(6.px, 12.px).rounded(999.px)
+val pill: Style    = Style.bg(Color.blue).color(Color.white).padding(6.px, 12.px).rounded(999.px)
 val outline: Style = Style.border(1.px, Color.slate).rounded(4.px)
 ```
 
@@ -793,16 +792,249 @@ val outline: Style = Style.border(1.px, Color.slate).rounded(4.px)
 - `.without[A <: Prop]`: drop all props of the given subtype.
 
 ```scala
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
-val base: Style                       = Style.bg(Color.slate).padding(12.px)
+val base: Style                        = Style.bg(Color.slate).padding(12.px)
 val padOnly: Maybe[Style.Prop.Padding] = base.find[Style.Prop.Padding]
-val noPadding: Style                  = base.without[Style.Prop.Padding]
+val noPadding: Style                   = base.without[Style.Prop.Padding]
 ```
 
 The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`, `Width`, `Height`, `BorderWidthProp`, `HoverProp(style: Style)`, etc. You will rarely name these in app code, but they are useful for theme transforms (drop one property kind across an entire merged style, or query whether a hover variant exists).
+
+## SVG
+
+SVG is not a separate document model bolted on the side. Every SVG node is a `UI` element built by a `Svg.*` factory, reusing the same path/event/reactive engine as `div` and `button`. The one boundary that matters is HTML embedding: only `Svg.svg` (the `Root`) is also `HtmlContent`, so it embeds in an HTML container, while bare SVG primitives extend `SvgElement`/`SvgNode` but NOT `HtmlContent`. Reach for the `<svg>` root as the single embed point, then build shapes inside it.
+
+```scala
+import UI.*
+import kyo.*
+
+val drawing: UI =
+    div(
+        Svg.svg.width(120).height(120).viewBox(Svg.ViewBox(0, 0, 120, 120))(
+            Svg.circle.cx(60).cy(60).r(40)
+        )
+    )
+```
+
+> **Caution:** `div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does NOT. Bare SVG primitives extend `SvgElement`/`SvgNode` but not `HtmlContent`, so the only HTML embed point is the `<svg>` root. Build shapes inside it.
+
+### Structure and grouping
+
+`Svg.g` groups elements (and carries shared `fill`/`stroke`/`transform`); `Svg.defs` holds reusable definitions; `Svg.symbol` defines a template instantiated by `Svg.use`; `Svg.switch` and `Svg.a` (an `SvgAnchor`) round out the structural set. `Svg.use(target)` resolves the target's id automatically, so a symbol with no explicit `.id` still wires up:
+
+```scala
+import UI.*
+import kyo.*
+
+val reused: UI =
+    Svg.svg.width(200).height(100).viewBox(Svg.ViewBox(0, 0, 200, 100))(
+        Svg.defs(
+            Svg.symbol.id("dot")(Svg.circle.cx(5).cy(5).r(5))
+        ),
+        Svg.g(
+            Svg.use(Svg.symbol.id("dot")),
+            Svg.use(Svg.symbol.id("dot")).x(20).y(0)
+        )
+    )
+```
+
+### Shapes and text
+
+The shape factories are `Svg.rect`, `Svg.circle`, `Svg.ellipse`, `Svg.line`, `Svg.polyline`, `Svg.polygon`, and `Svg.path`. The text factories are `Svg.text`, `Svg.tspan`, and `Svg.textPath`; each accepts a plain `String` child. Which setters exist on a given element is gated by SVG capability traits (`HasFill`, `HasStroke`, `HasTransform`, `HasOpacity`, `Positioned`, `Sized`, `HasFilter`, ...): `Svg.line` has no `fill` (it mixes in `HasStroke` but not `HasFill`), and `Svg.rect` carries `x`/`y`/`width`/`height` from `Positioned` and `Sized`.
+
+```scala
+import UI.*
+import kyo.*
+
+val labeled: UI =
+    Svg.svg.width(200).height(60).viewBox(Svg.ViewBox(0, 0, 200, 60))(
+        Svg.rect.x(0).y(0).width(200).height(60).fill(Svg.Paint.Color(Style.Color.slate)),
+        Svg.text.x(100).y(34)
+            .textAnchor(Svg.TextAnchor.Middle)
+            .fill(Svg.Paint.Color(Style.Color.white))
+            .fontSize(Svg.SvgLength.px(18.0))("centered")
+    )
+```
+
+### Typed value DSLs, no raw attribute strings
+
+SVG attribute values are typed, never raw strings. A path's `d` is built from a `Svg.PathData` value: start at `PathData.from(x, y)`, then chain `moveTo`, `lineTo`, `cubicTo`, `arcTo`, and `close` (each appends a command). There is no raw `d` string overload. The same applies to `Svg.Points` (point sequences), `Svg.Transform` (translate/rotate/scale/skew/matrix), `Svg.ViewBox`, `Svg.PreserveAspectRatio`, and `Svg.SvgLength` (`px`/`pct`/`em`/`user`).
+
+```scala
+import UI.*
+import kyo.*
+
+val triangle: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.path
+            .d(Svg.PathData.from(10, 90).lineTo(50, 10).lineTo(90, 90).close)
+            .fill(Svg.Paint.Color(Style.Color.blue))
+            .transform(Svg.Transform.Translate(0, 0))
+    )
+```
+
+### Constrained enums
+
+Where SVG would otherwise take a magic token, kyo-ui takes a typed enum: `Svg.FillRule`, `Svg.StrokeLinecap`, `Svg.StrokeLinejoin`, `Svg.TextAnchor`, `Svg.DominantBaseline`, `Svg.SpreadMethod`, `Svg.Units`, `Svg.BlendMode`, and more (each renders to its exact SVG token). A misspelled `"middel"` is impossible because `textAnchor` takes `Svg.TextAnchor`, not a `String`:
+
+```scala
+import UI.*
+import kyo.*
+
+val capped: UI =
+    Svg.svg.width(100).height(40).viewBox(Svg.ViewBox(0, 0, 100, 40))(
+        Svg.line.x1(10).y1(20).x2(90).y2(20)
+            .stroke(Svg.Paint.Color(Style.Color.black))
+            .strokeWidth(6.0)
+            .strokeLinecap(Svg.StrokeLinecap.Round)
+    )
+```
+
+### Paint and typed references
+
+A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `Paint.Color(c)`, or `Paint.Ref(server)`. An ambient `Style.Color => Paint` conversion lets you pass a plain `Style.Color` wherever a `Paint` is expected (with `scala.language.implicitConversions` in scope):
+
+```scala
+import UI.*
+import kyo.*
+import scala.language.implicitConversions
+
+val viaConversion: UI =
+    Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.circle.cx(30).cy(30).r(25).fill(Style.Color.green)
+    )
+```
+
+References are typed handles, never raw `url(#id)` strings. A paint server (`Svg.linearGradient`, `Svg.radialGradient`, `Svg.pattern`, holding `Svg.stop` children) yields a `Paint.Ref` through `.paint`; `Svg.clipPath`, `Svg.mask`, `Svg.marker`, and `Svg.filter` yield `ClipPath.Ref`/`Mask.Ref`/`Marker.Ref`/`Filter.Ref` through `.clipRef`/`.maskRef`/`.markerRef`/`.filterRef`. Define the server once, take its handle, and apply it:
+
+```scala
+import UI.*
+import kyo.*
+
+val gradientFill: UI =
+    val grad = Svg.linearGradient(
+        Svg.stop.offset(0.0).stopColor(Style.Color.blue),
+        Svg.stop.offset(1.0).stopColor(Style.Color.purple)
+    )
+    Svg.svg.width(120).height(80).viewBox(Svg.ViewBox(0, 0, 120, 80))(
+        Svg.defs(grad),
+        Svg.rect.x(0).y(0).width(120).height(80).fill(grad.paint)
+    )
+end gradientFill
+```
+
+> **Note:** SVG definition ids are derived deterministically from the construction-site `Frame` (`kyo-<hex(frame.hashCode)>`), not a global counter or randomness, so the id is stable across all three render targets. The `.paint`/`*Ref` handle and the emitted `id` attribute always agree, so a gradient referenced through `.paint` without an explicit `.id` still emits a matching `id` and never a dangling reference.
+
+### Filters
+
+`Svg.filter` defines a filter region and holds a pipeline of `fe*` primitives: `Svg.feGaussianBlur`, `Svg.feOffset`, `Svg.feBlend`, `Svg.feColorMatrix`, `Svg.feFlood`, `Svg.feComposite`, `Svg.feMerge` / `Svg.feMergeNode`, and more. Each primitive's `in`/`result` names wire the stages together; the consumer references the filter through the typed `Filter.Ref` from `.filterRef`:
+
+```scala
+import UI.*
+import kyo.*
+
+val blurred: UI =
+    val blur = Svg.filter(
+        Svg.feGaussianBlur.stdDeviation(2.0)
+    )
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.defs(blur),
+        Svg.circle.cx(40).cy(40).r(30).fill(Svg.Paint.Color(Style.Color.red)).filter(blur.filterRef)
+    )
+end blurred
+```
+
+### SMIL animation
+
+`Svg.animate`, `Svg.animateTransform`, `Svg.animateMotion`, and `Svg.set` are animation leaves placed INSIDE a shape (the `ShapeChild` content model), so the browser drives the tween with no server round-trip:
+
+```scala
+import UI.*
+import kyo.*
+
+val pulsing: UI =
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.circle.cx(40).cy(40).r(20).fill(Svg.Paint.Color(Style.Color.blue))(
+            Svg.animate.attributeName("r").from(20.0).to(35.0).dur("1s").repeatCount("indefinite")
+        )
+    )
+```
+
+### Embedding and metadata
+
+`Svg.image(href: UI.ImgSrc)` embeds a raster or vector image into the SVG canvas. The `href` is typed as `UI.ImgSrc` (the same union used by `UI.img`): `ImgSrc.Path` for a relative path, `ImgSrc.Absolute` for a full URL, or `ImgSrc.Data` for an inline base64 data URI.
+
+`Svg.foreignObject` re-enters the HTML content model inside SVG coordinate space. Its children are `HtmlContent` nodes (any `div`, `span`, or other HTML element), letting you position styled HTML fragments at an exact SVG coordinate. It is the only SVG surface that crosses back into `HtmlContent`.
+
+`Svg.title(text)` and `Svg.desc(text)` attach an accessible name and description to the containing SVG element; screen readers surface these as the element's label. `Svg.metadata` holds arbitrary structured metadata (RDF, custom XML) for the SVG document and carries no visual output.
+
+```scala
+import UI.*
+import kyo.*
+
+val annotated: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.title("Red circle"),
+        Svg.desc("A filled red circle centered in the viewport"),
+        Svg.circle.cx(50).cy(50).r(40).fill(Svg.Paint.Color(Style.Color.red))
+    )
+```
+
+### Events on SVG
+
+Because `Svg.Root` and the interactive SVG nodes mix in `Interactive`, the same typed event setters work as on HTML: `.onClick`, `.onHover((e: UI.MouseEvent) => ...)`, and `.onScroll((w: UI.WheelEvent) => ...)`, with the same payloads. Handlers usually live on the enclosing `Svg.g` (SVG hit-tests the topmost element, and dispatch delegates to ancestors), as the Flamegraph demo does:
+
+```scala
+import UI.*
+import kyo.*
+
+val interactiveCell: UI < Async =
+    for hovered <- Signal.initRef(false)
+    yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.g
+            .onClick(Console.printLine("clicked"))
+            .onHover((e: UI.MouseEvent) => hovered.set(true))
+            .onUnhover(hovered.set(false))(
+                Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
+            )
+    )
+```
+
+### A worked example: a small bar chart
+
+Putting the pieces together, a bar chart is one `Svg.rect` per value (positioned via typed lengths), an axis baseline via `Svg.line`, and centered labels via `Svg.text`. This mirrors the in-repo `demo/BarChart.scala`:
+
+```scala
+import UI.*
+import kyo.*
+
+val barChart: UI =
+    val values = Chunk(("kyo", 61.0), ("cats", 49.0), ("zio", 52.0))
+    val maxV   = 64.0
+    val baseY  = 110.0
+    val bars = values.zipWithIndex.flatMap { case ((label, v), i) =>
+        val x = 20.0 + i * 60.0
+        val h = (v / maxV) * 90.0
+        Chunk(
+            Svg.rect.x(x).y(baseY - h).width(40).height(h)
+                .fill(Svg.Paint.Color(Style.Color.blue)),
+            Svg.text.x(x + 20).y(baseY + 14)
+                .textAnchor(Svg.TextAnchor.Middle)
+                .fontSize(Svg.SvgLength.px(10.0))(label)
+        )
+    }
+    val axis = Svg.line.x1(15).y1(baseY).x2(205).y2(baseY)
+        .stroke(Svg.Paint.Color(Style.Color.gray)).strokeWidth(1.0)
+    div(
+        Svg.svg.width(220).height(130).viewBox(Svg.ViewBox(0, 0, 220, 130))(
+            (axis +: bars)*
+        )
+    )
+end barChart
+```
 
 ## Running a UI
 
@@ -813,14 +1045,14 @@ The same `UI` value plugs into different targets. The runner picks the transport
 The typical client app entrypoint. `mount` is a JS-only extension method on `UI.type` requiring `Async & Scope` in the effect row. The lifecycle is `Scope`-bound: closing the scope removes the DOM nodes and detaches all listeners. There is no separate "unmount" call.
 
 ```scala doctest:platform=js expect=skipped
-import kyo.*
 import UI.*
+import kyo.*
 
 object App extends KyoApp:
     run {
         for
             counter <- Signal.initRef(0)
-            ui       = div(
+            ui = div(
                 button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
                 counter.render(n => span(n.toString).id("count"))
             )
@@ -833,31 +1065,33 @@ end App
 The 2-arg overload mounts into a specific container by CSS selector instead of `document.body`:
 
 ```scala doctest:platform=js expect=skipped
-import kyo.*
 import UI.*
+import kyo.*
 
-val ui: UI = div(button("+1").id("inc"))
+val ui: UI                          = div(button("+1").id("inc"))
 val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
 ```
 
 ### `UI.runHandlers(basePath)(ui)`
 
-Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: three handlers in one sequence, a GET that serves the initial page, a POST that receives client events, and an SSE stream that pushes diff updates. You wire them into `HttpServer.init` alongside your other routes.
+Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
+
+The session is the WebSocket connection. The WS handler owns the reactive subscription via a `Scope`; closing the socket cascade-tears-down the whole subscription tree (leak-free by construction). Per-connection state resets on a real disconnect: a dropped socket starts a fresh session, so signal state is per-connection. The initial `ui` should be deterministic so the SSR page and the WebSocket's first render agree.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val server: Unit < (Async & Scope) =
     for
         counter <- Signal.initRef(0)
-        page     = div(
+        page = div(
             button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
             counter.render(n => span(n.toString).id("count"))
         )
         uiHandlers <- runHandlers("/app")(page)
         otherHandlers = Seq.empty[HttpHandler[?, ?, ?]]
-        _          <- HttpServer.init((uiHandlers ++ otherHandlers)*)
+        _ <- HttpServer.init((uiHandlers ++ otherHandlers)*)
     yield ()
 ```
 
@@ -868,17 +1102,17 @@ The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` compreh
 `Stream[String, Async]` of full HTML. First emission is the initial render; subsequent emissions are full re-renders on any signal change. Use for SSR, tests, snapshot exports, or a custom transport.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
-val page: UI                          = div(h1("Hello"), p("world"))
-val snapshots: Stream[String, Async]  = runRender(page)
-val firstFrame: String < Async        = snapshots.take(1).run.map(_.headMaybe.getOrElse(""))
+val page: UI                         = div(h1("Hello"), p("world"))
+val snapshots: Stream[String, Async] = runRender(page)
+val firstFrame: String < Async       = snapshots.take(1).run.map(_.headMaybe.getOrElse(""))
 ```
 
 > **Note:** `UI.runRender` re-emits the WHOLE document on every change, not a diff. The HTTP handlers do diff-pushing; if you want diff semantics in a custom transport, port the logic from `UIServer` and `UIExchange`.
 
-When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over SSE). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, a custom WebSocket transport you want to write yourself.
+When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over a WebSocket). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, or a custom transport you want to write yourself.
 
 ## Window and routing (Scala.js)
 
@@ -887,13 +1121,13 @@ When to use which target. `UI.runMount` is the right answer for any Scala.js cli
 ### `UIWindow`: viewport size, page visibility, document keys
 
 ```scala doctest:platform=js expect=skipped
-import kyo.*
 import UI.*
+import kyo.*
 
 val responsiveLayout: UI < Async =
     UIWindow.size.render { case (w, h) =>
         if w < 600 then div.text(s"mobile $w x $h")
-        else            div.text(s"desktop $w x $h")
+        else div.text(s"desktop $w x $h")
     }
 ```
 
@@ -902,8 +1136,8 @@ val responsiveLayout: UI < Async =
 Document-level key handlers attach for the lifetime of the enclosing scope; closing the scope removes the listener.
 
 ```scala doctest:platform=js expect=skipped
-import kyo.*
 import UI.*
+import kyo.*
 
 val keyboardShortcuts: Unit < (Async & Scope) =
     UIWindow.onKeyDown { ke =>
@@ -918,16 +1152,16 @@ The handler closure receives a `UI.KeyboardEvent` (key, modifiers, targetId), ma
 ### `UILocation`: client-side routing
 
 ```scala doctest:platform=js expect=skipped
-import kyo.*
 import UI.*
+import kyo.*
 
 val router: UI < Async =
     UILocation.current.render { path =>
         path match
-            case "/"        => homePage
-            case "/about"   => aboutPage
+            case "/"          => homePage
+            case "/about"     => aboutPage
             case s"/user/$id" => userPage(id)
-            case _          => notFoundPage
+            case _            => notFoundPage
     }
 ```
 
@@ -937,21 +1171,21 @@ val router: UI < Async =
 import kyo.*
 
 val navigate: Unit < Sync = UILocation.push("/about?ref=home")
-val back:     Unit < Sync = UILocation.back
+val back: Unit < Sync     = UILocation.back
 val jumpBack: Unit < Sync = UILocation.go(-2)
 ```
 
 A document-level click interceptor installed at first use rewrites plain anchor clicks into `pushState`, so `a(href := "/foo")` participates in routing without explicit `onClick` wiring. Modifier-key clicks (ctrl/cmd/shift/alt), middle clicks, and `target="_blank"` anchors are passed through to the browser unchanged so new-tab/window/save-as still work natively.
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val navBar: UI =
     nav(
         a.href(Href.Path("/"))("home"),
         a.href(Href.Path("/about"))("about"),
-        a.href(Href.External("https", "example.com"), Target.Blank)("external")  // not intercepted
+        a.href(Href.External("https", "example.com"), Target.Blank)("external") // not intercepted
     )
 ```
 
@@ -964,14 +1198,14 @@ Capability traits surface here too: `Interactive`, `Block`, `Inline`, `Void`, `F
 Typical app code never names `UI.Ast`. The AST is here for two consumers: tests that assert on tree shape, and custom backends that walk the rendered tree (the JS DOM backend in `kyo.internal.DomBackend` and the server-push backend in `kyo.internal.UIServer` are the two we ship).
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val captured: UI = div(button("Click").id("b"))
 
 val isDiv: Boolean = captured match
     case _: Ast.Div => true
-    case _             => false
+    case _          => false
 
 val buttonId: Maybe[String] = captured match
     case Ast.Div(_, children) =>
@@ -982,8 +1216,8 @@ val buttonId: Maybe[String] = captured match
 For reactive nodes:
 
 ```scala
-import kyo.*
 import UI.*
+import kyo.*
 
 val tree: UI < Async =
     for ref <- Signal.initRef("")
@@ -995,7 +1229,7 @@ val isInputWithRef: Boolean < Async =
             i.value match
                 case Present(Bound.Ref(_))   => true
                 case Present(Bound.Const(_)) => false
-                case Absent                     => false
+                case Absent                  => false
         case _ => false
     }
 ```
@@ -1007,22 +1241,22 @@ val isInputWithRef: Boolean < Async =
 A complete client-side todo list demonstrating reactive state, keyed list rendering, conditional empty-state, per-row interaction, and styles:
 
 ```scala doctest:platform=js expect=skipped
+import UI.*
 import kyo.*
 import kyo.Style.*
-import UI.*
 
 case class Todo(id: String, text: String, done: Boolean)
 
 val todoApp: UI < (Async & Scope) =
     for
-        todos    <- Signal.initRef(Chunk.empty[Todo])
-        draft    <- Signal.initRef("")
-        addTodo   = draft.get.map { text =>
-                        if text.isEmpty then ()
-                        else Random.uuid.map(id => todos.updateAndGet(_ :+ Todo(id, text, false))).andThen(draft.set(""))
-                    }
-        toggle    = (id: String) => todos.updateAndGet(_.map(t => if t.id == id then t.copy(done = !t.done) else t))
-        remove    = (id: String) => todos.updateAndGet(_.filterNot(_.id == id))
+        todos <- Signal.initRef(Chunk.empty[Todo])
+        draft <- Signal.initRef("")
+        addTodo = draft.get.map { text =>
+            if text.isEmpty then ()
+            else Random.uuid.map(id => todos.updateAndGet(_ :+ Todo(id, text, false))).andThen(draft.set(""))
+        }
+        toggle = (id: String) => todos.updateAndGet(_.map(t => if t.id == id then t.copy(done = !t.done) else t))
+        remove = (id: String) => todos.updateAndGet(_.filterNot(_.id == id))
 
         row = (t: Todo) =>
             li.style(Style.row.gap(8.px).align(Style.Alignment.center))(
@@ -1058,17 +1292,20 @@ Why every piece is there:
 - `.style(if t.done then Style.color(Color.gray).strikethrough else Style.empty)`: per-row conditional style, evaluated each time the row is rendered (which happens whenever `todos` changes).
 - `UI.runMount(ui)` runs the whole thing in `Async & Scope`. Closing the scope tears down listeners and removes nodes.
 
-This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive an SSE-backed or stream-backed deployment. Swap the runner; keep the UI.
+This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive a WebSocket-backed or stream-backed deployment. Swap the runner; keep the UI.
 
 ## Demos
 
-Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
+Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
 
 - [**Kanban**](shared/src/test/scala/demo/Kanban.scala): Trello-style board over server-push: add, move, and delete cards across columns.
 - [**Signup**](shared/src/test/scala/demo/Signup.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
-- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over SSE from a background fiber, with no client code.
+- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
 - [**Search**](shared/src/test/scala/demo/Search.scala): live Wikipedia search via `HttpClient`, with loading and error states.
 - [**Cart**](shared/src/test/scala/demo/Cart.scala): shopping cart with quantity steppers and a derived running total.
 - [**Playground**](shared/src/test/scala/demo/Playground.scala): HTML playground: a textarea feeds a live `iframe` preview.
 - [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
 - [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
+- [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
+- [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
+- [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.

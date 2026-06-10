@@ -6,7 +6,7 @@ import kyo.*
 import kyo.internal.transport.*
 import kyo.scheduler.IOPromise
 
-class ConnectionTest extends kyo.Test:
+class ConnectionTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -57,7 +57,6 @@ class ConnectionTest extends kyo.Test:
         assert(!conn.inbound.closed())
         assert(!conn.outbound.closed())
         assert(conn.isOpen)
-        succeed
     }
 
     "isOpen returns true before close and false after" in {
@@ -66,7 +65,6 @@ class ConnectionTest extends kyo.Test:
         assert(conn.isOpen)
         conn.close()
         assert(!conn.isOpen)
-        succeed
     }
 
     "close is idempotent — second close is a no-op" in {
@@ -77,7 +75,6 @@ class ConnectionTest extends kyo.Test:
         // cancel and closeHandle must each be called exactly once
         assert(driver.cancelCallCount.get() == 1)
         assert(driver.closeHandleCount.get() == 1)
-        succeed
     }
 
     "close closes channels and calls driver cancel and closeHandle" in {
@@ -101,7 +98,6 @@ class ConnectionTest extends kyo.Test:
         assert(driver.closeHandleCount.get() == 1)
         // cancel comes before closeHandle (as specified in closeFn)
         assert(closeOrder.toList == List("cancel", "closeHandle"))
-        succeed
     }
 
     "start registers first read with driver" in {
@@ -110,10 +106,9 @@ class ConnectionTest extends kyo.Test:
         conn.start()
         // ReadPump.start calls driver.awaitRead once
         assert(driver.readCallCount.get() == 1)
-        succeed
     }
 
-    "channel backpressure — full inbound channel stops read re-registration" in run {
+    "channel backpressure — full inbound channel stops read re-registration" in {
         val driver = new MockDriver
         // Capacity 1: the channel can hold at most one item
         val conn = Connection.init("handle1", driver, channelCapacity = 1)

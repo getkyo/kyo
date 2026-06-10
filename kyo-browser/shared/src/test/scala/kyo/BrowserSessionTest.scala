@@ -7,7 +7,7 @@ class BrowserSessionTest extends BrowserTest:
 
     override def timeout = 60.seconds
 
-    "cookies set in one Browser.run do not leak into the next run on the same shared Chrome" in run {
+    "cookies set in one Browser.run do not leak into the next run on the same shared Chrome" in {
         withBrowserOnLocalhost {
             Browser.setCookie("session-cookie", "v1", "localhost")
         }.andThen {
@@ -20,7 +20,7 @@ class BrowserSessionTest extends BrowserTest:
         }
     }
 
-    "localStorage set in one run does not leak across runs on the same shared Chrome" in run {
+    "localStorage set in one run does not leak across runs on the same shared Chrome" in {
         withBrowserOnLocalhost {
             Browser.eval("localStorage.setItem('session-key','session-val'); 'ok'").unit
         }.andThen {
@@ -32,7 +32,7 @@ class BrowserSessionTest extends BrowserTest:
         }
     }
 
-    "sessionStorage set in one run does not leak across runs on the same shared Chrome" in run {
+    "sessionStorage set in one run does not leak across runs on the same shared Chrome" in {
         withBrowserOnLocalhost {
             Browser.eval("sessionStorage.setItem('s-key','s-val'); 'ok'").unit
         }.andThen {
@@ -48,7 +48,7 @@ class BrowserSessionTest extends BrowserTest:
     // intercepts the same URL with a different mock body. If the HTTP cache leaked, the second fetch
     // could return the cached body from the first run. We verify the second run observes only the
     // second-run mock's body.
-    "HTTP cache does not leak across Browser.run calls on the same shared Chrome" in run {
+    "HTTP cache does not leak across Browser.run calls on the same shared Chrome" in {
         withBrowserOnLocalhost {
             // First run: mock /cache-leak-probe to return "first-run-body"; fetch it so any HTTP cache
             // entry that COULD leak is populated.
@@ -92,7 +92,7 @@ class BrowserSessionTest extends BrowserTest:
         }
     }
 
-    "per-run browser context is disposed when the Browser.run scope exits" in run {
+    "per-run browser context is disposed when the Browser.run scope exits" in {
         // Capture the shared Chrome's wsUrl once so both the outer scope (used to observe targets) and the
         // inner Browser.run (whose Scope.run absorbs the per-run context) attach to the SAME Chrome process.
         SharedChrome.init.map { wsUrl =>

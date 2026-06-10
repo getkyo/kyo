@@ -3,6 +3,7 @@ package demo
 import kyo.*
 import kyo.Style.*
 import kyo.UI.*
+import kyo.UI.Ast.HtmlContent
 
 /** Multi-view single-page app routed by a route `SignalRef`, served over server-push.
   *
@@ -31,10 +32,10 @@ object Router extends KyoApp:
         else linkBase.bg(Color.slate).color(Color.white)
     private val userLink = Style.color(Color.blue).cursor(Cursor.pointer).padding(4.px, 0.px)
 
-    private def view(title: String, body: UI*): UI =
-        div.style(viewStyle)((h2(title).style(Style.color(Color.white)) +: body)*)
+    private def view(title: String, body: HtmlContent*): HtmlContent =
+        div.style(viewStyle)((h2(title).style(Style.color(Color.white)) +: body).map(UI.Ast.HtmlChildVal.lift(_))*)
 
-    private def render(path: String, go: String => Any < Async): UI =
+    private def render(path: String, go: String => Any < Async): HtmlContent =
         path match
             case "/" =>
                 view("Home", p("Welcome. Pick a section above.").style(Style.color(Color.white)))
@@ -63,7 +64,7 @@ object Router extends KyoApp:
             val go = (path: String) => route.set(path)
             def active(cur: String, path: String): Boolean =
                 cur == path || (path != "/" && cur.startsWith(path + "/"))
-            def link(path: String, label: String): UI =
+            def link(path: String, label: String) =
                 route.render(cur => button(label).id(s"nav-$label").onClick(go(path)).style(navLink(active(cur, path))))
             UI.main.style(pageStyle)(
                 h1("Router"),

@@ -8,7 +8,7 @@ class BrowserNetworkTrackerTest extends kyo.BrowserTest:
 
     // ---- ensureResponseTrackingInstalled ----
 
-    "ensureResponseTrackingInstalled installs the JS interceptor" in run {
+    "ensureResponseTrackingInstalled installs the JS interceptor" in {
         // `Browser.waitForRequestUrl` calls `BrowserNetworkTracker.ensureResponseTrackingInstalled`
         // internally. After the call (even if it exhausts retries with no URL match), the in-page
         // `__kyoResponseTrackingInstalled` flag must be set; confirming the installer ran.
@@ -33,7 +33,7 @@ class BrowserNetworkTrackerTest extends kyo.BrowserTest:
         }
     }
 
-    "ensureResponseTrackingInstalled is idempotent across calls" in run {
+    "ensureResponseTrackingInstalled is idempotent across calls" in {
         // Calling `Browser.waitForRequestUrl` (and therefore `ensureResponseTrackingInstalled`)
         // twice in the same page context must not throw a different error on the second call
         // (e.g. from JS state mutation conflict). Both calls must surface only the expected
@@ -62,7 +62,8 @@ class BrowserNetworkTrackerTest extends kyo.BrowserTest:
                             s"expected second waitForRequestUrl to fail with BrowserAssertionException (not a connection error), got $secondResult"
                         )
                         secondResult match
-                            case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                            case Result.Failure(ex: BrowserAssertionTimedOutException) =>
+                                assert(ex.getMessage.contains("Assertion failed"))
                             case other =>
                                 fail(
                                     s"expected BrowserAssertionTimedOutException on idempotent second call, got $other - " +

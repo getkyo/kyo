@@ -8,7 +8,7 @@ class TodoScenarioItTest extends UITest:
 
     case class Todo(text: String, done: Boolean) derives CanEqual
 
-    "add item via Enter appears" in run {
+    "add item via Enter appears" in {
         val app: UI < Async =
             for
                 input <- Signal.initRef("")
@@ -31,11 +31,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "Buy milk")
                 _ <- Browser.press(Selector.id("inp"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "add 3 items counter 3" in run {
+    "add 3 items counter 3" in {
         val app: UI < Async =
             for
                 input <- Signal.initRef("")
@@ -62,11 +62,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "C")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "count:3")
-            yield succeed
+            yield ()
         }
     }
 
-    "check item updates done count" in run {
+    "check item updates done count" in {
         val app: UI < Async =
             for doneCount <- Signal.initRef(0)
             yield UI.div(
@@ -84,11 +84,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "done:1")
                 _ <- Browser.click(Selector.id("c2"))
                 _ <- Browser.assertText(Selector.id("v"), "done:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "filter active shows only unchecked" in run {
+    "filter active shows only unchecked" in {
         val app: UI < Async =
             for
                 items  <- Signal.initRef(Chunk.from(Seq(Todo("A", false), Todo("B", true), Todo("C", false))))
@@ -116,11 +116,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "showing:1")
                 _ <- Browser.click(Selector.id("all"))
                 _ <- Browser.assertText(Selector.id("v"), "showing:3")
-            yield succeed
+            yield ()
         }
     }
 
-    "clear completed removes checked items" in run {
+    "clear completed removes checked items" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq(Todo("A", true), Todo("B", false), Todo("C", true))))
             yield UI.div(
@@ -132,11 +132,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "count:3")
                 _ <- Browser.click(Selector.id("clear"))
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "add empty text rejected" in run {
+    "add empty text rejected" in {
         val app: UI < Async =
             for
                 input <- Signal.initRef("")
@@ -158,11 +158,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "valid")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "check all clear completed empty list" in run {
+    "check all clear completed empty list" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq(Todo("A", false), Todo("B", false), Todo("C", false))))
             yield UI.div(
@@ -176,11 +176,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("checkall"))
                 _ <- Browser.click(Selector.id("clear"))
                 _ <- Browser.assertText(Selector.id("v"), "count:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "counter correct at every step" in run {
+    "counter correct at every step" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.empty[String])
@@ -207,11 +207,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "C")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "count:3")
-            yield succeed
+            yield ()
         }
     }
 
-    "filter completed shows only done items" in run {
+    "filter completed shows only done items" in {
         val app: UI < Async =
             for
                 items  <- Signal.initRef(Chunk.from(Seq(Todo("A", true), Todo("B", false), Todo("C", true))))
@@ -231,11 +231,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "showing:3")
                 _ <- Browser.click(Selector.id("completed"))
                 _ <- Browser.assertText(Selector.id("v"), "showing:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "edit item inline click saves" in run {
+    "edit item inline click saves" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("Buy milk", "Walk dog")))
@@ -271,11 +271,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("edit"), "Buy eggs")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "list:Buy eggs,Walk dog")
-            yield succeed
+            yield ()
         }
     }
 
-    "cancel edit original restored" in run {
+    "cancel edit original restored" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("Buy milk")))
@@ -301,11 +301,11 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("edit"), "Modified")
                 _ <- Browser.click(Selector.id("cancel"))
                 _ <- Browser.assertText(Selector.id("v"), "list:Buy milk")
-            yield succeed
+            yield ()
         }
     }
 
-    "edit while filtered item stays visible" in run {
+    "edit while filtered item stays visible" in {
         val app: UI < Async =
             for
                 items  <- Signal.initRef(Chunk.from(Seq(Todo("Active task", false), Todo("Done task", true))))
@@ -330,7 +330,7 @@ class TodoScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("all"))
                 _ <- Browser.assertText(Selector.id("item-0"), "Active task")
                 _ <- Browser.assertText(Selector.id("item-1"), "Done task")
-            yield succeed
+            yield ()
         }
     }
 

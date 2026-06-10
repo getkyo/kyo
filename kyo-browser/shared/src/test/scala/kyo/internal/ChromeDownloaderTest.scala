@@ -10,7 +10,7 @@ import kyo.System.Parser
   * No real Chrome download is performed; scenarios use fast-fail URLs, in-process tempdirs, and a custom `System` to override
   * `KYO_BROWSER_CACHE` / OS / arch where needed.
   */
-class ChromeDownloaderTest extends Test:
+class ChromeDownloaderTest extends BaseBrowserTest:
 
     // ---- helpers ----
 
@@ -38,7 +38,7 @@ class ChromeDownloaderTest extends Test:
 
     // ---- latestVersion shape ----
 
-    "ChromeDownloader.latestVersion resolves to a non-empty dotted-numeric version" in run {
+    "ChromeDownloader.latestVersion resolves to a non-empty dotted-numeric version" in {
         // Hits the live Chrome-for-Testing metadata endpoint. On offline runners the call falls through to the
         // hardcoded backstop, which still satisfies the format check, so the test stays green either way.
         Abort.run[BrowserSetupException](ChromeDownloader.latestVersion(Browser.LaunchConfig.default.chromeDownloaderConfig)).map {
@@ -63,7 +63,7 @@ class ChromeDownloaderTest extends Test:
     private def systemWithCache(cacheDir: Path)(os: OS, arch: Arch): System =
         fakeSystem(envOverrides = Map("KYO_BROWSER_CACHE" -> cacheDir.unsafe.show), os = os, arch = arch)
 
-    "ensure(version) resolves a cacheDir that embeds the requested version (no download required)" in run {
+    "ensure(version) resolves a cacheDir that embeds the requested version (no download required)" in {
         Scope.run {
             tempDirScoped("kyo-cd-vover-").map { tmp =>
                 // Pre-create a fake executable for whichever platform this host is on so that `ensure` short-circuits
@@ -94,7 +94,7 @@ class ChromeDownloaderTest extends Test:
         }
     }
 
-    "ensure(Chrome build) resolves a cacheDir under 'chrome-{v}-{platform}' (separate from chrome-headless-shell)" in run {
+    "ensure(Chrome build) resolves a cacheDir under 'chrome-{v}-{platform}' (separate from chrome-headless-shell)" in {
         Scope.run {
             tempDirScoped("kyo-cd-fullchrome-").map { tmp =>
                 for
@@ -131,7 +131,7 @@ class ChromeDownloaderTest extends Test:
 
     // ---- cacheRoot honours KYO_BROWSER_CACHE env override ----
 
-    "cacheRoot honours KYO_BROWSER_CACHE when set" in run {
+    "cacheRoot honours KYO_BROWSER_CACHE when set" in {
         val sys = fakeSystem(
             envOverrides = Map("KYO_BROWSER_CACHE" -> "/custom/cache/dir"),
             os = OS.Linux,
@@ -142,7 +142,7 @@ class ChromeDownloaderTest extends Test:
         }
     }
 
-    "cacheRoot falls back to {Path.basePaths.cache}/kyo-browser when KYO_BROWSER_CACHE is unset" in run {
+    "cacheRoot falls back to {Path.basePaths.cache}/kyo-browser when KYO_BROWSER_CACHE is unset" in {
         val sys = fakeSystem(envOverrides = Map.empty, os = OS.Linux, arch = Arch.X86_64)
         System.let(sys)(ChromeDownloader.cacheRoot).map { root =>
             val expected = (Path.basePaths.cache / "kyo-browser").unsafe.show
@@ -152,31 +152,31 @@ class ChromeDownloaderTest extends Test:
 
     // ---- resolvePlatform branches ----
 
-    "resolvePlatform(MacOS, X86_64) == 'mac-x64'" in run {
+    "resolvePlatform(MacOS, X86_64) == 'mac-x64'" in {
         ChromeDownloader.resolvePlatform(OS.MacOS, Arch.X86_64).map { p =>
             assert(p == "mac-x64", s"got '$p'")
         }
     }
 
-    "resolvePlatform(Linux, X86_64) == 'linux64'" in run {
+    "resolvePlatform(Linux, X86_64) == 'linux64'" in {
         ChromeDownloader.resolvePlatform(OS.Linux, Arch.X86_64).map { p =>
             assert(p == "linux64", s"got '$p'")
         }
     }
 
-    "resolvePlatform(Windows, X86_64) == 'win64'" in run {
+    "resolvePlatform(Windows, X86_64) == 'win64'" in {
         ChromeDownloader.resolvePlatform(OS.Windows, Arch.X86_64).map { p =>
             assert(p == "win64", s"got '$p'")
         }
     }
 
-    "resolvePlatform(Windows, X86) == 'win32'" in run {
+    "resolvePlatform(Windows, X86) == 'win32'" in {
         ChromeDownloader.resolvePlatform(OS.Windows, Arch.X86).map { p =>
             assert(p == "win32", s"got '$p'")
         }
     }
 
-    "resolvePlatform(Linux, Arm) → Abort.fail with BrowserSetupFailedException" in run {
+    "resolvePlatform(Linux, Arm) → Abort.fail with BrowserSetupFailedException" in {
         Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(OS.Linux, Arch.Arm)).map {
             case Result.Failure(ex: BrowserSetupFailedException) =>
                 val msg = ex.getMessage
@@ -189,7 +189,7 @@ class ChromeDownloaderTest extends Test:
         }
     }
 
-    "resolvePlatform(Linux, Aarch64) → Abort.fail with the same linux-arm guidance" in run {
+    "resolvePlatform(Linux, Aarch64) → Abort.fail with the same linux-arm guidance" in {
         Abort.run[BrowserSetupException](ChromeDownloader.resolvePlatform(OS.Linux, Arch.Aarch64)).map {
             case Result.Failure(ex: BrowserSetupFailedException) =>
                 val msg = ex.getMessage
@@ -274,13 +274,13 @@ class ChromeDownloaderTest extends Test:
 
     // ---- downloadZip network failure → BrowserSetupFailedException ----
 
-    "downloadZip from a fast-fail URL raises BrowserSetupFailedException" in run {
+    "downloadZip from a fast-fail URL raises BrowserSetupFailedException" in {
         // 127.0.0.1:0 is reserved as 'no port' and refuses connection immediately.
         val url = "http://127.0.0.1:0/nonexistent"
         Scope.run {
             Path.tempScoped("kyo-cd-dl-", ".zip").map { dest =>
                 Abort.run[BrowserSetupException](ChromeDownloader.downloadZip(url, dest, 5.minutes)).map {
-                    case Result.Failure(_: BrowserSetupFailedException) => succeed
+                    case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("failed to download Chrome"))
                     case other => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
                 }
             }
@@ -289,7 +289,7 @@ class ChromeDownloaderTest extends Test:
 
     // ---- extractZip corrupt-zip failure ----
 
-    "extractZip on a garbage-bytes archive raises BrowserSetupFailedException" in run {
+    "extractZip on a garbage-bytes archive raises BrowserSetupFailedException" in {
         Scope.run {
             for
                 tmp <- Path.tempScoped("kyo-cd-zip-", ".zip")
@@ -298,14 +298,14 @@ class ChromeDownloaderTest extends Test:
                 dest = Path(tmp.unsafe.show + "-extract")
                 result <- Abort.run[BrowserSetupException](ChromeDownloader.extractZip(tmp, dest))
             yield result match
-                case Result.Failure(_: BrowserSetupFailedException) => succeed
-                case other                                          => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
+                case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("failed to extract"))
+                case other => fail(s"expected Failure(BrowserSetupFailedException) but got $other")
         }
     }
 
     // ---- cache-reuse proof; second ensure does not invoke the downloader ----
 
-    "ensure() reuses the cached binary on the second call (downloader counter does not advance)" in run {
+    "ensure() reuses the cached binary on the second call (downloader counter does not advance)" in {
         Scope.run {
             tempDirScoped("kyo-cd-reuse-").map { tmp =>
                 for

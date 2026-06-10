@@ -1,9 +1,8 @@
 package kyo.internal
 
 import kyo.*
-import scala.concurrent.Future
 
-class FlowApiTest extends Test:
+class FlowApiTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -11,9 +10,14 @@ class FlowApiTest extends Test:
     // a FlowEngine worker is running concurrently (every request hits the 30s client timeout).
     // The test passes on JVM, JS, and macOS Native locally; the failure is specific to the
     // Linux epoll-driven IO driver and has not been reproduced locally. Tracking separately.
-    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
-        if kyo.internal.Platform.isNative then Future.successful(assertionSuccess)
-        else super.run(v)
+    // Ported from the ScalaTest base's `run` override to kyo-test's `aroundLeaf` hook; the cancel is
+    // deferred into a Sync so the runner discharges it as a Cancelled result rather than running the body.
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        if kyo.internal.Platform.isNative then
+            Sync.defer(
+                cancel("skipped on Native: the Linux epoll IO driver hangs the embedded HTTP server under a concurrent FlowEngine worker")
+            )
+        else body
 
     private def withFlowServer[A](
         f: Int => A < (Async & Scope & Abort[Any])
@@ -46,9 +50,12 @@ class FlowApiTest extends Test:
         val pattern = s""""$field"\\s*:\\s*(\\d+)""".r
         pattern.findFirstMatchIn(body).map(_.group(1).toInt).getOrElse(-1)
 
-    private def awaitStatus(port: Int, eid: String)(pred: String => Boolean)(using Frame): String < (Async & Abort[Any]) =
+    private def awaitStatus(port: Int, eid: String)(pred: String => Boolean)(using
+        Frame,
+        kyo.test.AssertScope
+    ): String < (Async & Abort[Any]) =
         AtomicRef.init("").map { last =>
-            untilTrue {
+            assertEventually {
                 HttpClient.getText(url(port, s"/api/v1/executions/$eid")).map { body =>
                     last.set(body).andThen(pred(body))
                 }
@@ -60,7 +67,7 @@ class FlowApiTest extends Test:
     // =========================================================================
     "GET /api/v1/workflows" - {
 
-        "lists registered workflows" in run {
+        "lists registered workflows" in {
             withFlowServer { port =>
                 HttpClient.getText(url(port, "/api/v1/workflows")).map { body =>
                     assert(body.contains("test-flow"))
@@ -72,7 +79,7 @@ class FlowApiTest extends Test:
 
     "GET /api/v1/workflows/:id" - {
 
-        "returns workflow info" in run {
+        "returns workflow info" in {
             withFlowServer { port =>
                 HttpClient.getText(url(port, "/api/v1/workflows/test-flow")).map { body =>
                     assert(body.contains("test-flow"))
@@ -80,7 +87,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "404 for unknown workflow" in run {
+        "404 for unknown workflow" in {
             withFlowServer { port =>
                 HttpClient.getTextResponse(url(port, "/api/v1/workflows/unknown"), failOnError = false).map { resp =>
                     val body = resp.fields.body
@@ -92,7 +99,7 @@ class FlowApiTest extends Test:
 
     "GET /api/v1/workflows/:id/diagram" - {
 
-        "returns mermaid by default" in run {
+        "returns mermaid by default" in {
             withFlowServer { port =>
                 HttpClient.getText(url(port, "/api/v1/workflows/test-flow/diagram")).map { body =>
                     assert(body.contains("graph"))
@@ -100,7 +107,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "returns dot format" in run {
+        "returns dot format" in {
             withFlowServer { port =>
                 HttpClient.getText(url(port, "/api/v1/workflows/test-flow/diagram?format=dot")).map { body =>
                     assert(body.contains("digraph"))
@@ -114,7 +121,7 @@ class FlowApiTest extends Test:
     // =========================================================================
     "POST /api/v1/workflows/:id/executions" - {
 
-        "creates execution" in run {
+        "creates execution" in {
             withFlowServer { port =>
                 HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "").map { body =>
                     assert(body.contains("executionId"))
@@ -122,7 +129,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "404 for unknown workflow" in run {
+        "404 for unknown workflow" in {
             withFlowServer { port =>
                 HttpClient.postTextResponse(url(port, "/api/v1/workflows/unknown/executions"), "", failOnError = false).map { resp =>
                     val body = resp.fields.body
@@ -134,7 +141,7 @@ class FlowApiTest extends Test:
 
     "GET /api/v1/executions/:eid" - {
 
-        "returns execution status" in run {
+        "returns execution status" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -147,7 +154,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "404 for unknown execution" in run {
+        "404 for unknown execution" in {
             withFlowServer { port =>
                 HttpClient.getTextResponse(url(port, "/api/v1/executions/nonexistent"), failOnError = false).map { resp =>
                     val body = resp.fields.body
@@ -159,7 +166,7 @@ class FlowApiTest extends Test:
 
     "GET /api/v1/executions/:eid/inputs" - {
 
-        "shows pending inputs" in run {
+        "shows pending inputs" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -175,7 +182,7 @@ class FlowApiTest extends Test:
 
     "POST /api/v1/executions/:eid/signal/:name" - {
 
-        "delivers signal" in run {
+        "delivers signal" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -186,7 +193,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "400 for unknown input name" in run {
+        "400 for unknown input name" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -198,7 +205,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "rejects signal to completed execution" in run {
+        "rejects signal to completed execution" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -220,7 +227,7 @@ class FlowApiTest extends Test:
 
     "GET /api/v1/executions/:eid/history" - {
 
-        "returns events" in run {
+        "returns events" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -236,7 +243,7 @@ class FlowApiTest extends Test:
 
     "POST /api/v1/executions/:eid/cancel" - {
 
-        "cancels execution" in run {
+        "cancels execution" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -250,7 +257,7 @@ class FlowApiTest extends Test:
 
     "POST /api/v1/executions/search" - {
 
-        "searches all executions" in run {
+        "searches all executions" in {
             withFlowServer { port =>
                 for
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -264,7 +271,7 @@ class FlowApiTest extends Test:
             }
         }
 
-        "filters by workflow" in run {
+        "filters by workflow" in {
             withFlowServer { port =>
                 for
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -280,7 +287,7 @@ class FlowApiTest extends Test:
 
     "POST /api/v1/executions/cancel (cancelAll)" - {
 
-        "cancels all matching" in run {
+        "cancels all matching" in {
             withFlowServer { port =>
                 for
                     _ <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -297,7 +304,7 @@ class FlowApiTest extends Test:
 
     "GET /api/v1/executions/:eid/diagram" - {
 
-        "returns diagram with progress" in run {
+        "returns diagram with progress" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")
@@ -314,7 +321,7 @@ class FlowApiTest extends Test:
     // =========================================================================
     "full lifecycle" - {
 
-        "create → signal → complete" in run {
+        "create → signal → complete" in {
             withFlowServer { port =>
                 for
                     createBody <- HttpClient.postText(url(port, "/api/v1/workflows/test-flow/executions"), "")

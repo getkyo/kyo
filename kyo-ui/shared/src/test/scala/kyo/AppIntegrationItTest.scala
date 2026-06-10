@@ -6,7 +6,7 @@ import scala.language.implicitConversions
 
 class AppIntegrationItTest extends UITest:
 
-    "employee form fill all fields and submit" in run {
+    "employee form fill all fields and submit" in {
         val app: UI < Async =
             for
                 name    <- Signal.initRef("")
@@ -47,11 +47,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.select(Selector.id("role"), "qa")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("out"), "Alice|alice@co.com|qa|true")
-            yield succeed
+            yield ()
         }
     }
 
-    "employee form add two entries" in run {
+    "employee form add two entries" in {
         val app: UI < Async =
             for
                 name  <- Signal.initRef("")
@@ -76,11 +76,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("name"), "Bob")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "count:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "todo list add items via form" in run {
+    "todo list add items via form" in {
         val app: UI < Async =
             for
                 input <- Signal.initRef("")
@@ -110,11 +110,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "Walk dog")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("t1"), "Walk dog")
-            yield succeed
+            yield ()
         }
     }
 
-    "todo list add via Enter key" in run {
+    "todo list add via Enter key" in {
         val app: UI < Async =
             for
                 input <- Signal.initRef("")
@@ -137,11 +137,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("inp"), "Task1")
                 _ <- Browser.press(Selector.id("inp"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "todo list check off items" in run {
+    "todo list check off items" in {
         val app: UI < Async =
             for done <- Signal.initRef(Chunk.empty[Int])
             yield UI.div(
@@ -156,11 +156,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "done:1")
                 _ <- Browser.click(Selector.id("c2"))
                 _ <- Browser.assertText(Selector.id("v"), "done:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "login form validation shows error then submits" in run {
+    "login form validation shows error then submits" in {
         val app: UI < Async =
             for
                 email  <- Signal.initRef("")
@@ -195,11 +195,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("pass"), "secret")
                 _ <- Browser.click(Selector.id("login"))
                 _ <- Browser.assertText(Selector.id("out"), "login:a@b.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "settings toggle enables dependent field" in run {
+    "settings toggle enables dependent field" in {
         val app: UI < Async =
             for
                 notify   <- Signal.initRef(false)
@@ -226,11 +226,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("email"), "me@x.com")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "notify:me@x.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "settings dropdown changes visible section" in run {
+    "settings dropdown changes visible section" in {
         val app: UI < Async =
             for mode <- Signal.initRef("light")
             yield UI.div(
@@ -253,11 +253,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("info"), "Dark mode active")
                 _ <- Browser.select(Selector.id("theme"), "system")
                 _ <- Browser.assertText(Selector.id("info"), "Following system")
-            yield succeed
+            yield ()
         }
     }
 
-    "counter increment decrement" in run {
+    "counter increment decrement" in {
         val app: UI < Async =
             for count <- Signal.initRef(0)
             yield UI.div(
@@ -273,11 +273,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "3")
                 _ <- Browser.click(Selector.id("dec"))
                 _ <- Browser.assertText(Selector.id("v"), "2")
-            yield succeed
+            yield ()
         }
     }
 
-    "wizard next back with data preservation" in run {
+    "wizard next back with data preservation" in {
         val app: UI < Async =
             for
                 step   <- Signal.initRef(1)
@@ -320,11 +320,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("role"), "value", "qa")
                 _ <- Browser.click(Selector.id("done"))
                 _ <- Browser.assertText(Selector.id("result"), "Result:Alice/qa")
-            yield succeed
+            yield ()
         }
     }
 
-    "employee form submit clears fields" in run {
+    "employee form submit clears fields" in {
         val app: UI < Async =
             for
                 name  <- Signal.initRef("")
@@ -348,11 +348,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
                 _ <- Browser.assertText(Selector.id("nv"), "name:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "todo list check off updates counter" in run {
+    "todo list check off updates counter" in {
         val app: UI < Async =
             for
                 done <- Signal.initRef(Chunk.empty[Int])
@@ -367,11 +367,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "complete:1")
                 _ <- Browser.click(Selector.id("c1"))
                 _ <- Browser.assertText(Selector.id("v"), "complete:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "form Enter on input inside nested div still submits" in run {
+    "form Enter on input inside nested div still submits" in {
         val app: UI < Async =
             for
                 ref       <- Signal.initRef("")
@@ -387,11 +387,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "settings toggle disables field value not captured" in run {
+    "settings toggle disables field value not captured" in {
         val app: UI < Async =
             for
                 notify <- Signal.initRef(true)
@@ -417,11 +417,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.click(Selector.id("notify"))
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "off")
-            yield succeed
+            yield ()
         }
     }
 
-    "wizard conditional step based on selection" in run {
+    "wizard conditional step based on selection" in {
         val app: UI < Async =
             for
                 step   <- Signal.initRef(1)
@@ -461,11 +461,11 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.fill(Selector.id("card"), "1234")
                 _ <- Browser.click(Selector.id("done"))
                 _ <- Browser.assertText(Selector.id("v"), "pro|1234")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled submit until all required fields filled" in run {
+    "disabled submit until all required fields filled" in {
         val app: UI < Async =
             for
                 a       <- Signal.initRef("")
@@ -492,7 +492,7 @@ class AppIntegrationItTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("sub"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 

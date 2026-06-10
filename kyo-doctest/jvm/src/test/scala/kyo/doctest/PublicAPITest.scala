@@ -2,10 +2,8 @@ package kyo.doctest
 
 import kyo.*
 import kyo.doctest.internal.Block
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AnyFreeSpec
 
-class PublicAPITest extends AnyFreeSpec with NonImplicitAssertions:
+class PublicAPITest extends kyo.test.Test[Any]:
 
     // Test 1: Doctest.Config.apply accepts the correct field types and constructs without throwing.
     "Doctest.Config.apply accepts Chunk[Path] sources, Chunk[Path] classpath, Chunk[String] scalaOpts, Path cache, Int parallel" in {
@@ -97,7 +95,7 @@ class PublicAPITest extends AnyFreeSpec with NonImplicitAssertions:
             case _ => fail("wrong case")
         end match
         e5 match
-            case Doctest.Error.NoSourcesConfigured => succeed
+            case Doctest.Error.NoSourcesConfigured => ()
             case _                                 => fail("wrong case")
     }
 

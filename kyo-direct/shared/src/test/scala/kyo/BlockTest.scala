@@ -1,10 +1,12 @@
 package kyo
 
 import kyo.internal.TestSupport.*
-import org.scalatest.Assertions
-import org.scalatest.freespec.AnyFreeSpec
 
-class BlockTest extends AnyFreeSpec with Assertions:
+class BlockTest extends kyo.test.Test[Any]:
+
+    // runLiftTest asserts by throwing (value comparison outside the kyo.test assert macros),
+    // so the no-assertion counter sees zero. Disable the check for this suite.
+    override def config = super.config.failOnNoAssertion(false)
 
     "assigned run" - {
         "only" in {

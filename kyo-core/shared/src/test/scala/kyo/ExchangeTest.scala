@@ -6,7 +6,7 @@ package kyo
   *
   * sendCh captures outgoing wire messages written by Exchange. receiveCh is fed by tests to simulate incoming responses.
   */
-class ExchangeTest extends Test:
+class ExchangeTest extends kyo.test.Test[Any]:
 
     case class TestError(msg: String)
 
@@ -43,7 +43,7 @@ class ExchangeTest extends Test:
 
     "init" - {
 
-        "single request-response" in run {
+        "single request-response" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber                   <- Fiber.initUnscoped(ex("hello"))
@@ -54,7 +54,7 @@ class ExchangeTest extends Test:
             yield assert(result == "world")
         }
 
-        "scope closes exchange" in run {
+        "scope closes exchange" in {
             for
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
@@ -73,7 +73,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "initUnscoped requires manual close" in run {
+        "initUnscoped requires manual close" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // Exchange should be open — feed a response and verify apply works
@@ -91,7 +91,7 @@ class ExchangeTest extends Test:
 
         "simplified Int IDs (no nextId)" - {
 
-            "initUnscoped assigns sequential Int IDs" in run {
+            "initUnscoped assigns sequential Int IDs" in {
                 for
                     sendCh    <- Channel.initUnscoped[Wire](16)
                     receiveCh <- Channel.initUnscoped[Wire](16)
@@ -125,7 +125,7 @@ class ExchangeTest extends Test:
                     assert(wire2._1 == 2)
             }
 
-            "scoped init assigns sequential Int IDs" in run {
+            "scoped init assigns sequential Int IDs" in {
                 for
                     sendCh    <- Channel.initUnscoped[Wire](16)
                     receiveCh <- Channel.initUnscoped[Wire](16)
@@ -145,7 +145,7 @@ class ExchangeTest extends Test:
 
         "generic Id types" - {
 
-            "Int id" in run {
+            "Int id" in {
                 for
                     sendCh    <- Channel.initUnscoped[Wire](16)
                     receiveCh <- Channel.initUnscoped[Wire](16)
@@ -165,7 +165,7 @@ class ExchangeTest extends Test:
                 yield assert(result == "world" && wire._1.isInstanceOf[Int])
             }
 
-            "String id" in run {
+            "String id" in {
                 for
                     sendCh    <- Channel.initUnscoped[(String, String)](16)
                     receiveCh <- Channel.initUnscoped[(String, String)](16)
@@ -191,7 +191,7 @@ class ExchangeTest extends Test:
 
     "apply" - {
 
-        "returns response matched by id" in run {
+        "returns response matched by id" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber                   <- Fiber.initUnscoped(ex("ping"))
@@ -202,7 +202,7 @@ class ExchangeTest extends Test:
             yield assert(result == "pong")
         }
 
-        "routes responses to correct caller" in run {
+        "routes responses to correct caller" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber1                  <- Fiber.initUnscoped(ex("req-A"))
@@ -222,7 +222,7 @@ class ExchangeTest extends Test:
                 assert(wires.map(_._1).toSet.size == 2) // IDs must be distinct
         }
 
-        "multiple sequential requests" in run {
+        "multiple sequential requests" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 results <- Kyo.foreach(1 to 5) { i =>
@@ -237,7 +237,7 @@ class ExchangeTest extends Test:
             yield assert(results == Chunk("resp-1", "resp-2", "resp-3", "resp-4", "resp-5"))
         }
 
-        "concurrent requests" in run {
+        "concurrent requests" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 n = 10
@@ -256,7 +256,7 @@ class ExchangeTest extends Test:
                 assert(wires.map(w => s"resp-for-${w._1}").toSet == results.toSet)
         }
 
-        "uses nextId for each request" in run {
+        "uses nextId for each request" in {
             for
                 callCount <- AtomicInt.init(0)
                 sendCh    <- Channel.initUnscoped[Wire](16)
@@ -288,7 +288,7 @@ class ExchangeTest extends Test:
                 assert(Set(wire1._1, wire2._1, wire3._1).size == 3)
         }
 
-        "encode receives correct id and request" in run {
+        "encode receives correct id and request" in {
             for
                 capturedId  <- AtomicInt.init(-1)
                 capturedReq <- AtomicRef.init("")
@@ -319,7 +319,7 @@ class ExchangeTest extends Test:
                 assert(encodedReq == "my-request")
         }
 
-        "send receives encoded wire message" in run {
+        "send receives encoded wire message" in {
             for
                 sentWires <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
@@ -344,7 +344,7 @@ class ExchangeTest extends Test:
 
     "decode" - {
 
-        "Absent skips message" in run {
+        "Absent skips message" in {
             for
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
@@ -374,7 +374,7 @@ class ExchangeTest extends Test:
             yield assert(result == "actual-response")
         }
 
-        "unmatched id ignored" in run {
+        "unmatched id ignored" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber                   <- Fiber.initUnscoped(ex("req"))
@@ -388,7 +388,7 @@ class ExchangeTest extends Test:
             yield assert(result == "correct")
         }
 
-        "duplicate response for same id" in run {
+        "duplicate response for same id" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber                   <- Fiber.initUnscoped(ex("req"))
@@ -413,7 +413,7 @@ class ExchangeTest extends Test:
 
     "close" - {
 
-        "fails pending requests with Closed" in run {
+        "fails pending requests with Closed" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // Start a request but don't feed a response
@@ -427,7 +427,7 @@ class ExchangeTest extends Test:
                 case _                         => false)
         }
 
-        "multiple pending requests all fail with Closed" in run {
+        "multiple pending requests all fail with Closed" in {
             val n = 5
             for
                 (ex, sendCh, receiveCh) <- mkExchange
@@ -442,15 +442,16 @@ class ExchangeTest extends Test:
             end for
         }
 
-        "close is idempotent" in run {
+        "close is idempotent" in {
             for
                 (ex, _, _) <- mkExchange
                 _          <- ex.close
                 _          <- ex.close
-            yield succeed
+                result     <- Abort.run[Closed](ex("after-two-closes"))
+            yield assert(result.isFailure)
         }
 
-        "apply after close fails with Closed" in run {
+        "apply after close fails with Closed" in {
             for
                 (ex, _, _) <- mkExchange
                 _          <- ex.close
@@ -458,7 +459,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "events stream ends on close" in run {
+        "events stream ends on close" in {
             for
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
@@ -480,7 +481,7 @@ class ExchangeTest extends Test:
                 assert(result.isSuccess)
         }
 
-        "done completes with Closed on explicit close" in run {
+        "done completes with Closed on explicit close" in {
             for
                 (ex, _, _) <- mkExchange
                 doneFiber  <- Fiber.initUnscoped(ex.awaitDone)
@@ -494,7 +495,7 @@ class ExchangeTest extends Test:
 
     "connection close" - {
 
-        "receive stream ending fails all pending with Closed" in run {
+        "receive stream ending fails all pending with Closed" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // Start a request but don't feed a response
@@ -508,7 +509,7 @@ class ExchangeTest extends Test:
                 case _                         => false)
         }
 
-        "receive stream ending closes exchange" in run {
+        "receive stream ending closes exchange" in {
             for
                 (ex, _, receiveCh) <- mkExchange
                 // End the receive stream
@@ -520,7 +521,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "receive stream ending with no pending requests" in run {
+        "receive stream ending with no pending requests" in {
             for
                 (ex, _, receiveCh) <- mkExchange
                 // Close the receive channel with no pending requests
@@ -532,7 +533,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "done completes with Closed when stream ends normally" in run {
+        "done completes with Closed when stream ends normally" in {
             for
                 (ex, _, receiveCh) <- mkExchange
                 doneFiber          <- Fiber.initUnscoped(ex.awaitDone)
@@ -561,7 +562,7 @@ class ExchangeTest extends Test:
                 )
             }
 
-        "send error fails caller with E" in run {
+        "send error fails caller with E" in {
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 ex        <- mkFailingSendExchange(receiveCh)
@@ -570,7 +571,7 @@ class ExchangeTest extends Test:
             yield assert(result == Result.fail(TestError("send failed")))
         }
 
-        "send error fails other pending requests with E" in run {
+        "send error fails other pending requests with E" in {
             for
                 sendCh    <- Channel.initUnscoped[Wire](16)
                 receiveCh <- Channel.initUnscoped[Wire](16)
@@ -599,7 +600,7 @@ class ExchangeTest extends Test:
                 assert(result1 == Result.fail(TestError("send failed")))
         }
 
-        "send error closes exchange" in run {
+        "send error closes exchange" in {
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 ex        <- mkFailingSendExchange(receiveCh)
@@ -611,7 +612,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "done completes with E on send failure" in run {
+        "done completes with E on send failure" in {
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 ex        <- mkFailingSendExchange(receiveCh)
@@ -641,7 +642,7 @@ class ExchangeTest extends Test:
                 }
             }
 
-        "receive Abort[E] fails all pending with E" in run {
+        "receive Abort[E] fails all pending with E" in {
             for
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
@@ -662,7 +663,7 @@ class ExchangeTest extends Test:
             yield assert(result == Result.fail(TestError("receive failed")))
         }
 
-        "receive Abort[E] closes exchange" in run {
+        "receive Abort[E] closes exchange" in {
             for
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
@@ -681,7 +682,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "done completes with E on receive error" in run {
+        "done completes with E on receive error" in {
             for
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
@@ -703,7 +704,7 @@ class ExchangeTest extends Test:
 
     "interruption" - {
 
-        "interrupted caller cleans up pending entry" in run {
+        "interrupted caller cleans up pending entry" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // Start apply in a fiber, it will block waiting for a response
@@ -713,7 +714,7 @@ class ExchangeTest extends Test:
                 // Interrupt the fiber
                 _ <- fiber.interrupt
                 // Wait until the fiber is done
-                _ <- untilTrue(fiber.done)
+                _ <- assertEventually(fiber.done)
                 // Now feed a response for that ID — it should be silently ignored
                 _ <- receiveCh.put((wire._1, "ignored"))
                 // Exchange should still work for other requests
@@ -725,7 +726,7 @@ class ExchangeTest extends Test:
             yield assert(result2 == "ok")
         }
 
-        "interrupted caller does not affect other requests" in run {
+        "interrupted caller does not affect other requests" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // Start fiber1 and let it register in pending
@@ -733,7 +734,7 @@ class ExchangeTest extends Test:
                 wire1  <- sendCh.take
                 // Interrupt fiber1 while it's waiting for a response
                 _ <- fiber1.interrupt
-                _ <- untilTrue(fiber1.done)
+                _ <- assertEventually(fiber1.done)
                 // Start fiber2 independently — exchange must still work
                 fiber2  <- Fiber.initUnscoped(ex("req2"))
                 wire2   <- sendCh.take
@@ -771,7 +772,7 @@ class ExchangeTest extends Test:
                 )
             yield (ex, sendCh, receiveCh)
 
-        "Push messages appear on events stream" in run {
+        "Push messages appear on events stream" in {
             for
                 (ex, sendCh, receiveCh) <- mkEventsExchange()
                 // Start consuming events
@@ -784,7 +785,7 @@ class ExchangeTest extends Test:
             yield assert(events == Result.succeed(Chunk("hello-event")))
         }
 
-        "events and responses are routed correctly" in run {
+        "events and responses are routed correctly" in {
             for
                 (ex, sendCh, receiveCh) <- mkEventsExchange()
                 // Start a request
@@ -805,7 +806,7 @@ class ExchangeTest extends Test:
                 assert(eventsResult == Result.succeed(Chunk("event1", "event2")))
         }
 
-        "events stream backpressures when full" in run {
+        "events stream backpressures when full" in {
             for
                 (ex, sendCh, receiveCh) <- mkEventsExchange(eventCapacity = 1)
                 // Start a request so we can verify the reader is parked
@@ -834,7 +835,7 @@ class ExchangeTest extends Test:
                 assert(eventsResult == Result.succeed(Chunk("event1", "event2")))
         }
 
-        "events stream ends on close" in run {
+        "events stream ends on close" in {
             for
                 (ex, sendCh, receiveCh) <- mkEventsExchange()
                 eventsFiber             <- Fiber.initUnscoped(ex.events.run)
@@ -845,7 +846,7 @@ class ExchangeTest extends Test:
                 assert(result.isSuccess)
         }
 
-        "Skip messages are dropped" in run {
+        "Skip messages are dropped" in {
             for
                 (ex, sendCh, receiveCh) <- mkEventsExchange()
                 reqFiber                <- Fiber.initUnscoped(ex("req"))
@@ -861,7 +862,7 @@ class ExchangeTest extends Test:
             yield assert(respResult == Result.succeed("real-response"))
         }
 
-        "no-events overload returns Nothing events" in run {
+        "no-events overload returns Nothing events" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // events stream should compile and end on close
@@ -873,7 +874,7 @@ class ExchangeTest extends Test:
                 assert(result.isSuccess)
         }
 
-        "custom eventCapacity" in run {
+        "custom eventCapacity" in {
             for
                 (ex, sendCh, receiveCh) <- mkEventsExchange(eventCapacity = 64)
                 // Feed 64 Push messages — all should buffer without blocking
@@ -888,7 +889,7 @@ class ExchangeTest extends Test:
 
         // The event channel is closed (not failed) when the exchange shuts down, so
         // streamUntilClosed() returns Success — the error is observable via done, not events.
-        "events stream ends cleanly on receive error" in run {
+        "events stream ends cleanly on receive error" in {
             for
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
@@ -928,7 +929,7 @@ class ExchangeTest extends Test:
 
         // The event channel is closed (not failed) when the exchange shuts down, so
         // streamUntilClosed() returns Success — the error is observable via done, not events.
-        "events stream ends cleanly on send error" in run {
+        "events stream ends cleanly on send error" in {
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
@@ -960,7 +961,7 @@ class ExchangeTest extends Test:
 
     "done" - {
 
-        "blocks until exchange closes" in run {
+        "blocks until exchange closes" in {
             for
                 (ex, _, _) <- mkExchange
                 doneFiber  <- Fiber.initUnscoped(ex.awaitDone)
@@ -969,11 +970,11 @@ class ExchangeTest extends Test:
                 // Close the exchange
                 _ <- ex.close
                 // Now done should complete
-                _ <- untilTrue(doneFiber.done)
+                _ <- assertEventually(doneFiber.done)
             yield assert(!isDone1)
         }
 
-        "returns immediately if already closed" in run {
+        "returns immediately if already closed" in {
             for
                 (ex, _, _) <- mkExchange
                 _          <- ex.close
@@ -982,7 +983,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure)
         }
 
-        "surfaces E from send failure" in run {
+        "surfaces E from send failure" in {
             for
                 receiveCh <- Channel.initUnscoped[Wire](16)
                 counter   <- AtomicInt.init(0)
@@ -1000,7 +1001,7 @@ class ExchangeTest extends Test:
             yield assert(result == Result.fail(TestError("send-error")))
         }
 
-        "surfaces E from receive failure" in run {
+        "surfaces E from receive failure" in {
             for
                 outgoingCh <- Channel.initUnscoped[Wire](16)
                 ctrlCh     <- Channel.initUnscoped[Either[TestError, Wire]](16)
@@ -1026,7 +1027,7 @@ class ExchangeTest extends Test:
             yield assert(result == Result.fail(TestError("receive-error")))
         }
 
-        "surfaces Closed from explicit close" in run {
+        "surfaces Closed from explicit close" in {
             for
                 (ex, _, _) <- mkExchange
                 doneFiber  <- Fiber.initUnscoped(ex.awaitDone)
@@ -1037,7 +1038,7 @@ class ExchangeTest extends Test:
                 case _                         => false)
         }
 
-        "surfaces Closed from normal stream end" in run {
+        "surfaces Closed from normal stream end" in {
             for
                 (ex, _, receiveCh) <- mkExchange
                 doneFiber          <- Fiber.initUnscoped(ex.awaitDone)
@@ -1048,13 +1049,13 @@ class ExchangeTest extends Test:
                 case _                         => false)
         }
 
-        "multiple fibers can await done" in run {
+        "multiple fibers can await done" in {
             val n = 5
             for
                 (ex, _, _) <- mkExchange
                 doneFibers <- Kyo.foreach(1 to n)(_ => Fiber.initUnscoped(ex.awaitDone))
                 _          <- ex.close
-                _          <- Kyo.foreachDiscard(doneFibers)(f => untilTrue(f.done))
+                _          <- Kyo.foreachDiscard(doneFibers)(f => assertEventually(f.done))
                 results    <- Kyo.foreach(doneFibers)(f => Abort.run[TestError | Closed](f.get))
             yield assert(results.forall(_.isFailure))
             end for
@@ -1063,7 +1064,7 @@ class ExchangeTest extends Test:
 
     "Sync effects in callbacks" - {
 
-        "nextId with AtomicInt" in run {
+        "nextId with AtomicInt" in {
             for
                 idCounter <- AtomicInt.init(0)
                 sendCh    <- Channel.initUnscoped[Wire](16)
@@ -1096,7 +1097,7 @@ class ExchangeTest extends Test:
                 assert(wire3._1 == wire2._1 + 1)
         }
 
-        "encode with mutable state" in run {
+        "encode with mutable state" in {
             for
                 encodeCount <- AtomicInt.init(0)
                 sendCh      <- Channel.initUnscoped[Wire](16)
@@ -1127,7 +1128,7 @@ class ExchangeTest extends Test:
             yield assert(count == 3)
         }
 
-        "decode with stateful accumulation" in run {
+        "decode with stateful accumulation" in {
             for
                 decodeCount <- AtomicInt.init(0)
                 sendCh      <- Channel.initUnscoped[Wire](16)
@@ -1157,7 +1158,7 @@ class ExchangeTest extends Test:
                 wire3  <- sendCh.take
                 _      <- receiveCh.put((wire3._1, "r3"))
                 _      <- fiber3.get
-                _      <- untilTrue(decodeCount.get.map(_ >= 4))
+                _      <- assertEventually(decodeCount.get.map(_ >= 4))
                 count  <- decodeCount.get
                 _      <- ex.close
             yield assert(count >= 4) // decode called for each received message
@@ -1166,7 +1167,7 @@ class ExchangeTest extends Test:
 
     "concurrency" - {
 
-        "many concurrent requests" in run {
+        "many concurrent requests" in {
             val n = 100
             for
                 (ex, sendCh, receiveCh) <- mkExchange
@@ -1187,7 +1188,7 @@ class ExchangeTest extends Test:
             end for
         }
 
-        "interleaved apply and close" in run {
+        "interleaved apply and close" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 // Race apply against close
@@ -1203,12 +1204,12 @@ class ExchangeTest extends Test:
                 // or close won and we got Success(None)
                 // No hangs, no exceptions
                 result match
-                    case Result.Success(_) => succeed
-                    case Result.Failure(_) => succeed
+                    case Result.Success(_) => succeed("response or close won the race")
+                    case Result.Failure(_) => succeed("Closed failure is expected")
                     case Result.Panic(t)   => fail(s"unexpected panic: $t")
         }
 
-        "concurrent close and receive end" in run {
+        "concurrent close and receive end" in {
             val n = 5
             for
                 (ex, sendCh, receiveCh) <- mkExchange
@@ -1252,17 +1253,17 @@ class ExchangeTest extends Test:
             )
         end mkUnsafe
 
-        "init creates exchange and safe accessor compiles" in run {
+        "init creates exchange and safe accessor compiles" in {
             Sync.Unsafe.defer {
                 val ex = mkUnsafe()
                 // Safe accessor should return a valid Exchange opaque alias
                 val _: Exchange[String, String, String, TestError] = ex.safe
                 ex.close()
-                succeed
+                succeed("type ascription and init succeed without error")
             }
         }
 
-        "apply assigns sequential IDs and encodes wire correctly" in run {
+        "apply assigns sequential IDs and encodes wire correctly" in {
             Sync.Unsafe.defer {
                 val ex               = mkUnsafe()
                 val (id0, wire0, p0) = ex.apply("first")
@@ -1274,11 +1275,11 @@ class ExchangeTest extends Test:
                 // Promises are pending before feed
                 assert(p0.poll().isEmpty)
                 ex.close()
-                succeed
+                ()
             }
         }
 
-        "feed routes response to pending promise" in run {
+        "feed routes response to pending promise" in {
             Sync.Unsafe.defer {
                 val ex               = mkUnsafe()
                 val (id, _, promise) = ex.apply("ping")
@@ -1289,7 +1290,7 @@ class ExchangeTest extends Test:
             }
         }
 
-        "feed routes push to event channel via safe events" in run {
+        "feed routes push to event channel via safe events" in {
             for
                 ex <- Sync.Unsafe.defer(mkUnsafe())
                 // Consume one event from the safe events stream
@@ -1301,7 +1302,7 @@ class ExchangeTest extends Test:
             yield assert(events == Result.succeed(Chunk("hello-event")))
         }
 
-        "feed with Skip message leaves event channel empty" in run {
+        "feed with Skip message leaves event channel empty" in {
             for
                 ex <- Sync.Unsafe.defer {
                     var counter = 0
@@ -1321,7 +1322,7 @@ class ExchangeTest extends Test:
             yield assert(result.isSuccess && result.getOrElse(Chunk.empty).isEmpty)
         }
 
-        "multiple apply then feed in reverse order" in run {
+        "multiple apply then feed in reverse order" in {
             Sync.Unsafe.defer {
                 val ex           = mkUnsafe()
                 val (id0, _, p0) = ex.apply("req-0")
@@ -1338,7 +1339,7 @@ class ExchangeTest extends Test:
             }
         }
 
-        "close fails all pending promises with Closed" in run {
+        "close fails all pending promises with Closed" in {
             Sync.Unsafe.defer {
                 val ex              = mkUnsafe()
                 val (_, _, promise) = ex.apply("pending")
@@ -1351,16 +1352,16 @@ class ExchangeTest extends Test:
             }
         }
 
-        "feed after close does not throw" in run {
+        "feed after close does not throw" in {
             Sync.Unsafe.defer {
                 val ex = mkUnsafe()
                 ex.close()
                 ex.feed((0, "late-response"))
-                succeed
+                succeed("feed after close completes without throwing")
             }
         }
 
-        "safe awaitDone reflects Closed after Unsafe.close" in run {
+        "safe awaitDone reflects Closed after Unsafe.close" in {
             for
                 ex     <- Sync.Unsafe.defer(mkUnsafe())
                 _      <- Sync.Unsafe.defer(ex.close())
@@ -1370,7 +1371,7 @@ class ExchangeTest extends Test:
                 case _                         => false)
         }
 
-        "apply after close does not throw; exchange remains done" in run {
+        "apply after close does not throw; exchange remains done" in {
             for
                 ex <- Sync.Unsafe.defer(mkUnsafe())
                 _  <- Sync.Unsafe.defer(ex.close())
@@ -1383,7 +1384,7 @@ class ExchangeTest extends Test:
 
     "edge cases" - {
 
-        "apply vs close race never hangs" in run {
+        "apply vs close race never hangs" in {
             val iterations = 50
             Kyo.foreachDiscard(1 to iterations) { _ =>
                 for
@@ -1392,12 +1393,12 @@ class ExchangeTest extends Test:
                     // Race: close the exchange immediately (before or after apply sends)
                     _ <- ex.close
                     // Must complete — no hang. Test framework has a timeout, so a hang = test failure.
-                    _ <- Abort.run[TestError | Closed](applyFiber.get)
-                yield ()
-            }.andThen(succeed)
+                    r <- Abort.run[TestError | Closed](applyFiber.get)
+                yield assert(r.isSuccess || r.isFailure) // no panic; completes without hang
+            }.unit
         }
 
-        "apply after close completes with Closed (no hang)" in run {
+        "apply after close completes with Closed (no hang)" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 _                       <- ex.close
@@ -1411,7 +1412,7 @@ class ExchangeTest extends Test:
             )
         }
 
-        "apply vs close race — high iteration count" in run {
+        "apply vs close race — high iteration count" in {
             val iterations = 500
             Kyo.foreachDiscard(1 to iterations) { _ =>
                 for
@@ -1419,11 +1420,13 @@ class ExchangeTest extends Test:
                     applyFiber              <- Fiber.initUnscoped(Abort.run[TestError | Closed](ex("req")))
                     _                       <- ex.close
                     result                  <- applyFiber.getResult
-                yield ()
-            }.andThen(succeed)
+                yield
+                    // race test: no panic, completes without hang
+                    assert(!result.isPanic)
+            }.unit
         }
 
-        "apply vs receive stream end race never hangs" in run {
+        "apply vs receive stream end race never hangs" in {
             val iterations = 50
             Kyo.foreachDiscard(1 to iterations) { _ =>
                 for
@@ -1432,24 +1435,24 @@ class ExchangeTest extends Test:
                     // End the receive stream (reader loop will call shutdown)
                     _ <- receiveCh.close
                     // Must complete — no hang.
-                    _ <- Abort.run[TestError | Closed](applyFiber.get)
-                yield ()
-            }.andThen(succeed)
+                    r <- Abort.run[TestError | Closed](applyFiber.get)
+                yield assert(r.isSuccess || r.isFailure) // no panic; completes without hang
+            }.unit
         }
 
-        "apply vs receive stream end race — high iteration count" in run {
+        "apply vs receive stream end race — high iteration count" in {
             val iterations = 500
             Kyo.foreachDiscard(1 to iterations) { _ =>
                 for
                     (ex, sendCh, receiveCh) <- mkExchange
                     applyFiber              <- Fiber.initUnscoped(Abort.run[TestError | Closed](ex("req")))
                     _                       <- receiveCh.close
-                    _                       <- Abort.run[TestError | Closed](applyFiber.get)
-                yield ()
-            }.andThen(succeed)
+                    r                       <- Abort.run[TestError | Closed](applyFiber.get)
+                yield assert(r.isSuccess || r.isFailure) // no panic; completes without hang
+            }.unit
         }
 
-        "apply after receive stream end completes with Closed" in run {
+        "apply after receive stream end completes with Closed" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 _                       <- receiveCh.close
@@ -1458,7 +1461,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure, s"Expected failure, got $result")
         }
 
-        "concurrent close from many fibers — no duplicates, no exceptions" in run {
+        "concurrent close from many fibers — no duplicates, no exceptions" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 n = 20
@@ -1483,7 +1486,7 @@ class ExchangeTest extends Test:
             end for
         }
 
-        "Unsafe.apply after close — promise is not left permanently pending" in run {
+        "Unsafe.apply after close — promise is not left permanently pending" in {
             Sync.Unsafe.defer {
                 val ex = Exchange.Unsafe.init[Int, Wire, String, String, Nothing, TestError](
                     nextId = 0,
@@ -1499,7 +1502,7 @@ class ExchangeTest extends Test:
             }
         }
 
-        "Unsafe.feed with full event channel — drops silently, no crash" in run {
+        "Unsafe.feed with full event channel — drops silently, no crash" in {
             for
                 ex <- Sync.Unsafe.defer {
                     Exchange.Unsafe.init[Int, Wire, String, String, String, TestError](
@@ -1520,10 +1523,10 @@ class ExchangeTest extends Test:
                 }
                 // Close the exchange
                 _ <- Sync.Unsafe.defer(ex.close())
-            yield succeed // No crash = good; we just verify it doesn't throw
+            yield succeed("no crash from excess feed calls means silent drop works correctly")
         }
 
-        "high contention: 80 concurrent apply + response routing" in run {
+        "high contention: 80 concurrent apply + response routing" in {
             val n = 80
             for
                 (ex, sendCh, receiveCh) <- mkExchange
@@ -1544,7 +1547,7 @@ class ExchangeTest extends Test:
             end for
         }
 
-        "three-way race: apply, close, and receive stream end — no hangs, no panics" in run {
+        "three-way race: apply, close, and receive stream end — no hangs, no panics" in {
             val iterations = 30
             Kyo.foreachDiscard(1 to iterations) { _ =>
                 for
@@ -1559,13 +1562,13 @@ class ExchangeTest extends Test:
                     _      <- closeFiber.get
                     _      <- streamEndFiber.get
                 yield result match
-                    case Result.Success(_) => () // got a response (unlikely but valid)
-                    case Result.Failure(_) => () // Closed or TestError — expected
+                    case Result.Success(_) => succeed("got a response before close/stream-end")
+                    case Result.Failure(_) => succeed("Closed or TestError: expected")
                     case Result.Panic(t)   => throw t
-            }.andThen(succeed)
+            }.unit
         }
 
-        "feed for already-completed ID is silently ignored" in run {
+        "feed for already-completed ID is silently ignored" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber                   <- Fiber.initUnscoped(ex("req"))
@@ -1584,7 +1587,7 @@ class ExchangeTest extends Test:
             yield assert(result2 == "resp2")
         }
 
-        "feed for never-registered ID is silently ignored" in run {
+        "feed for never-registered ID is silently ignored" in {
             for
                 (ex, sendCh, receiveCh) <- mkExchange
                 fiber                   <- Fiber.initUnscoped(ex("req"))
@@ -1598,7 +1601,7 @@ class ExchangeTest extends Test:
             yield assert(result == "correct")
         }
 
-        "send failure propagates to all concurrent pending requests" in run {
+        "send failure propagates to all concurrent pending requests" in {
             for
                 sendCh    <- Channel.initUnscoped[Wire](32)
                 receiveCh <- Channel.initUnscoped[Wire](16)
@@ -1635,15 +1638,16 @@ class ExchangeTest extends Test:
             end for
         }
 
-        "100 sequential close calls are idempotent" in run {
+        "100 sequential close calls are idempotent" in {
             for
                 (ex, _, _) <- mkExchange
                 // Call close 100 times sequentially — must not throw or fail
-                _ <- Kyo.foreachDiscard(1 to 100)(_ => ex.close)
-            yield succeed
+                _      <- Kyo.foreachDiscard(1 to 100)(_ => ex.close)
+                result <- Abort.run[Closed](ex("after-all-closes"))
+            yield assert(result.isFailure) // exchange is closed after repeated close calls
         }
 
-        "apply after receive stream ends fails with Closed or E" in run {
+        "apply after receive stream ends fails with Closed or E" in {
             for
                 (ex, _, receiveCh) <- mkExchange
                 // Await done in a fiber first so we know when the exchange shuts down
@@ -1657,7 +1661,7 @@ class ExchangeTest extends Test:
             yield assert(result.isFailure, "apply after stream end must fail")
         }
 
-        "Unsafe close then safe awaitDone returns Closed" in run {
+        "Unsafe close then safe awaitDone returns Closed" in {
             for
                 ex <- Sync.Unsafe.defer {
                     Exchange.Unsafe.init[Int, Wire, String, String, Nothing, TestError](
@@ -1675,7 +1679,7 @@ class ExchangeTest extends Test:
             )
         }
 
-        "many concurrent apply calls on already-closed exchange all fail fast" in run {
+        "many concurrent apply calls on already-closed exchange all fail fast" in {
             val n = 50
             for
                 (ex, _, _) <- mkExchange
@@ -1689,7 +1693,7 @@ class ExchangeTest extends Test:
             end for
         }
 
-        "Unsafe.apply after close — promise poll returns defined result" in run {
+        "Unsafe.apply after close — promise poll returns defined result" in {
             Sync.Unsafe.defer {
                 val ex = Exchange.Unsafe.init[Int, Wire, String, String, Nothing, TestError](
                     nextId = 0,
@@ -1710,7 +1714,7 @@ class ExchangeTest extends Test:
             }
         }
 
-        "apply result is always Closed or TestError when stream ends concurrently" in run {
+        "apply result is always Closed or TestError when stream ends concurrently" in {
             val iterations = 40
             for
                 outcomes <- Kyo.foreach(1 to iterations) { _ =>
@@ -1722,14 +1726,12 @@ class ExchangeTest extends Test:
                         _                       <- ex.close
                     yield result
                 }
-            yield
-                outcomes.foreach { r =>
-                    r match
-                        case Result.Success(_) => // got a result before stream ended — OK
-                        case Result.Failure(_) => // Closed or E — expected
-                        case Result.Panic(t)   => fail(s"Panic: $t")
-                }
-                succeed
+            yield outcomes.foreach { r =>
+                r match
+                    case Result.Success(_) => succeed("response arrived before stream ended")
+                    case Result.Failure(_) => succeed("Closed or E: expected")
+                    case Result.Panic(t)   => fail(s"Panic: $t")
+            }
             end for
         }
     }

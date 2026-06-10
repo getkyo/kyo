@@ -69,7 +69,7 @@ class BrowserIFrameTest extends BrowserTest:
     // §6.1 IFrame discovery
     // ═══════════════════════════════════════════════════════════════════════════
 
-    "iframe.of(iframe selector) returns an IFrame whose handle carries the iframe's frameId and a default executionContextId" in run {
+    "iframe.of(iframe selector) returns an IFrame whose handle carries the iframe's frameId and a default executionContextId" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span id='inner'>x</span></body>") {
                 discoverSingleFrame.map { f =>
@@ -85,14 +85,14 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "BrowserIFrameInvalidException carries Reason.NotAFrame for non-iframe selectors" in run {
+    "BrowserIFrameInvalidException carries Reason.NotAFrame for non-iframe selectors" in {
         withBrowser {
             onPage("<body><h1 id='heading'>not a frame</h1></body>") {
                 Abort.run[BrowserIFrameException] {
                     Browser.iframe(Browser.Selector.id("heading"))
                 }.map {
                     case Result.Failure(BrowserIFrameInvalidException(Reason.NotAFrame)) =>
-                        succeed
+                        ()
                     case other =>
                         fail(s"expected BrowserIFrameInvalidException(Reason.NotAFrame) but got $other")
                 }
@@ -100,7 +100,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "iframe.of(missing selector) aborts with BrowserElementNotFoundException" in run {
+    "iframe.of(missing selector) aborts with BrowserElementNotFoundException" in {
         withBrowser {
             onPage("<body><h1>nothing here</h1></body>") {
                 tight {
@@ -108,14 +108,14 @@ class BrowserIFrameTest extends BrowserTest:
                         Browser.iframe(Browser.Selector.id("missing"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.getMessage.contains("Element not found"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
         }
     }
 
-    "iframe.main returns an IFrame for the top-level document of the current tab" in run {
+    "iframe.main returns an IFrame for the top-level document of the current tab" in {
         withBrowser {
             onPage("<body><h1>main only</h1></body>") {
                 Browser.mainFrame.map { f =>
@@ -130,7 +130,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "iframe.main aborts with BrowserIFrameInvalidException(ContextNotObserved) when the root execution context has not yet been observed" in run {
+    "iframe.main aborts with BrowserIFrameInvalidException(ContextNotObserved) when the root execution context has not yet been observed" in {
         withBrowser {
             onPage("<body><h1>main only</h1></body>") {
                 // Drain the root frame's entry from the per-tab `frameContexts` map while leaving
@@ -146,7 +146,7 @@ class BrowserIFrameTest extends BrowserTest:
                                     Browser.mainFrame
                                 }.map {
                                     case Result.Failure(BrowserIFrameInvalidException(Reason.ContextNotObserved)) =>
-                                        succeed
+                                        ()
                                     case other =>
                                         fail(s"expected BrowserIFrameInvalidException(ContextNotObserved) but got $other")
                                 }
@@ -159,7 +159,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "iframe.main aborts with BrowserIFrameInvalidException(RootNotSeeded) when the root frame id has not been seeded" in run {
+    "iframe.main aborts with BrowserIFrameInvalidException(RootNotSeeded) when the root frame id has not been seeded" in {
         withBrowser {
             onPage("<body><h1>main only</h1></body>") {
                 // Clear `rootFrameId` to model the narrow window before `attachTab`'s initial
@@ -171,7 +171,7 @@ class BrowserIFrameTest extends BrowserTest:
                             Browser.mainFrame
                         }.map {
                             case Result.Failure(BrowserIFrameInvalidException(Reason.RootNotSeeded)) =>
-                                succeed
+                                ()
                             case other =>
                                 fail(s"expected BrowserIFrameInvalidException(RootNotSeeded) but got $other")
                         }
@@ -185,7 +185,7 @@ class BrowserIFrameTest extends BrowserTest:
     // §6.2 IFrame state
     // ═══════════════════════════════════════════════════════════════════════════
 
-    "iframe.list returns main plus every child frame present at call time, in document order" in run {
+    "iframe.list returns main plus every child frame present at call time, in document order" in {
         withBrowser {
             val pageHtml = twoIframeParent("<body><span>A</span></body>", "<body><span>B</span></body>")
             Browser.goto(pageHtml).andThen {
@@ -210,7 +210,6 @@ class BrowserIFrameTest extends BrowserTest:
                                 assert(frames.size == 3, s"expected main + 2 iframes but got ${frames.size}")
                                 assert(frames.head == mainFrame, "expected main frame first in document order")
                                 assert(frames(1) != frames(2), "expected the two child iframes to differ")
-                                succeed
                             }
                         }
                     }
@@ -219,7 +218,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "iframe.list traverses nested iframes (iframe inside iframe) and returns both" in run {
+    "iframe.list traverses nested iframes (iframe inside iframe) and returns both" in {
         withBrowser {
             Browser.goto(nestedIframeParent("<body><h2>deepest</h2></body>")).andThen {
                 Retry[BrowserAssertionException](Schedule.fixed(50.millis).take(80)) {
@@ -237,28 +236,26 @@ class BrowserIFrameTest extends BrowserTest:
                         // Distinctness; three frames, three handles.
                         val distinct = frames.toSet
                         assert(distinct.size == 3, s"expected 3 distinct handles but got ${distinct.size}")
-                        succeed
                     }
                 }
             }
         }
     }
 
-    "iframe.list returns only main when the page has no iframes" in run {
+    "iframe.list returns only main when the page has no iframes" in {
         withBrowser {
             onPage(parentWithoutIframes) {
                 Browser.iframes.map { frames =>
                     Browser.mainFrame.map { mainFrame =>
                         assert(frames.size == 1, s"expected 1 frame but got ${frames.size}")
                         assert(frames.head == mainFrame, "expected single entry to be main")
-                        succeed
                     }
                 }
             }
         }
     }
 
-    "an iframe added to the DOM after page load is discoverable by iframe.of after a settle barrier" in run {
+    "an iframe added to the DOM after page load is discoverable by iframe.of after a settle barrier" in {
         withBrowser {
             onPage("""<body>
                 <h1>parent</h1>
@@ -291,7 +288,7 @@ class BrowserIFrameTest extends BrowserTest:
     // §6.3 IFrame scoping
     // ═══════════════════════════════════════════════════════════════════════════
 
-    "withIFrame(f) { Browser.click(button) } clicks the iframe's button, not a same-named button in main" in run {
+    "withIFrame(f) { Browser.click(button) } clicks the iframe's button, not a same-named button in main" in {
         withBrowser {
             // Both parent and iframe carry a button at #b; the iframe is positioned at the top-left of the parent
             // viewport so the iframe's coordinate system aligns with the parent's. This sidesteps the deferred
@@ -328,7 +325,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "withIFrame(f) { Browser.fill(input, \"hi\") } populates the iframe's input, not main's" in run {
+    "withIFrame(f) { Browser.fill(input, \"hi\") } populates the iframe's input, not main's" in {
         withBrowser {
             val inner = """<body><input id="x" type="text" /></body>"""
             onSrcdoc(
@@ -355,7 +352,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "withIFrame(f) { Browser.text(span) } reads from the iframe's DOM" in run {
+    "withIFrame(f) { Browser.text(span) } reads from the iframe's DOM" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span id='greeting'>hello from iframe</span></body>") {
                 discoverSingleFrame.map { f =>
@@ -369,7 +366,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "withIFrame(f) { Browser.eval[Int](\"document.querySelectorAll('p').length\") } counts elements inside the iframe" in run {
+    "withIFrame(f) { Browser.eval[Int](\"document.querySelectorAll('p').length\") } counts elements inside the iframe" in {
         withBrowser {
             val inner = """<body><p>1</p><p>2</p><p>3</p></body>"""
             onSrcdoc(
@@ -394,7 +391,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "nested withIFrame(inner) inside withIFrame(outer) routes the body to inner; on inner exit the outer scope is restored" in run {
+    "nested withIFrame(inner) inside withIFrame(outer) routes the body to inner; on inner exit the outer scope is restored" in {
         withBrowser {
             // Two sibling iframes; nesting their scopes proves restoration works.
             Browser.goto(twoIframeParent(
@@ -414,7 +411,6 @@ class BrowserIFrameTest extends BrowserTest:
                                     }.andThen {
                                         Browser.text(Browser.Selector.css("#m")).map { t3 =>
                                             assert(t3 == "outer-content", s"outer scope not restored: $t3")
-                                            succeed
                                         }
                                     }
                                 }
@@ -426,7 +422,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "Browser.click(button) outside any withIFrame routes to main even when an iframe with a same-named button exists" in run {
+    "Browser.click(button) outside any withIFrame routes to main even when an iframe with a same-named button exists" in {
         withBrowser {
             val inner = """<body>
                 <button id="b">Save</button>
@@ -452,7 +448,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "concurrent fibers in different withIFrame scopes do not see each other's contexts (Local fiber-isolation property)" in run {
+    "concurrent fibers in different withIFrame scopes do not see each other's contexts (Local fiber-isolation property)" in {
         withBrowser {
             // Each iframe carries a deterministic identifying span; concurrent fibers each scope into their own
             // iframe and read the span. Local-isolation means each fiber observes only its own scope's content.
@@ -477,14 +473,13 @@ class BrowserIFrameTest extends BrowserTest:
                     ).map { case (ta, tb) =>
                         assert(ta == "FRAME-A", s"fiber A saw '$ta' instead of FRAME-A")
                         assert(tb == "FRAME-B", s"fiber B saw '$tb' instead of FRAME-B")
-                        succeed
                     }
                 }
             }
         }
     }
 
-    "withIFrame(main) inside withIFrame(iframe) restores top-frame scoping, evidenced by Browser.text reading from main's document" in run {
+    "withIFrame(main) inside withIFrame(iframe) restores top-frame scoping, evidenced by Browser.text reading from main's document" in {
         withBrowser {
             onSrcdoc(
                 """<body>
@@ -501,7 +496,6 @@ class BrowserIFrameTest extends BrowserTest:
                                 Browser.withIFrame(mainFrame) {
                                     Browser.text(Browser.Selector.css("#m")).map { tMain =>
                                         assert(tMain == "main-h1", s"nested-main scope text wrong: $tMain")
-                                        succeed
                                     }
                                 }
                             }
@@ -516,7 +510,7 @@ class BrowserIFrameTest extends BrowserTest:
     // §6.4 IFrame lifecycle
     // ═══════════════════════════════════════════════════════════════════════════
 
-    "BrowserIFrameInvalidException carries Reason.ContextDestroyed when execution context is gone" in run {
+    "BrowserIFrameInvalidException carries Reason.ContextDestroyed when execution context is gone" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span id='x'>hello</span></body>") {
                 discoverSingleFrame.map { f =>
@@ -538,7 +532,7 @@ class BrowserIFrameTest extends BrowserTest:
                                     }
                                 }.map {
                                     case Result.Failure(BrowserIFrameInvalidException(Reason.ContextDestroyed)) =>
-                                        succeed
+                                        ()
                                     case Result.Failure(_: BrowserIFrameInvalidException) =>
                                         Abort.fail[Throwable](new RuntimeException("iframe invalid but not yet ContextDestroyed"))
                                     case other =>
@@ -552,7 +546,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "iframe.of after the iframe was removed aborts with BrowserElementNotFoundException" in run {
+    "iframe.of after the iframe was removed aborts with BrowserElementNotFoundException" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span>x</span></body>") {
                 // Confirm the iframe is initially present by resolving once.
@@ -565,7 +559,8 @@ class BrowserIFrameTest extends BrowserTest:
                                     Browser.iframe(Browser.Selector.testId("frame"))
                                 }
                             }.map {
-                                case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                                case Result.Failure(ex: BrowserElementNotFoundException) =>
+                                    assert(ex.getMessage.contains("Element not found"))
                                 case other => fail(s"expected BrowserElementNotFoundException but got $other")
                             }
                         }
@@ -575,7 +570,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "parent navigation (Browser.goto) invalidates pre-existing frames; subsequent withIFrame against the stale handle aborts with Reason.ContextDestroyed" in run {
+    "parent navigation (Browser.goto) invalidates pre-existing frames; subsequent withIFrame against the stale handle aborts with Reason.ContextDestroyed" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span>x</span></body>") {
                 discoverSingleFrame.map { stale =>
@@ -588,7 +583,7 @@ class BrowserIFrameTest extends BrowserTest:
                                 }
                             }.map {
                                 case Result.Failure(BrowserIFrameInvalidException(Reason.ContextDestroyed)) =>
-                                    succeed
+                                    ()
                                 case Result.Failure(_: BrowserIFrameInvalidException) =>
                                     Abort.fail[Throwable](new RuntimeException("iframe invalid but not yet ContextDestroyed"))
                                 case other =>
@@ -601,7 +596,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "re-discovering iframe.of after parent reload returns an IFrame with a fresh executionContextId distinct from the pre-reload one" in run {
+    "re-discovering iframe.of after parent reload returns an IFrame with a fresh executionContextId distinct from the pre-reload one" in {
         withBrowser {
             val pageHtml = srcdocPage(singleIframeParent, "<body><span>x</span></body>")
             Browser.goto(pageHtml).andThen {
@@ -613,7 +608,6 @@ class BrowserIFrameTest extends BrowserTest:
                         discoverSingleFrame.map { after =>
                             // Equality on opaque IFrame falls through to the underlying IFrameHandle case-class equality.
                             assert(before != after, "expected fresh executionContextId after reload but handles equal")
-                            succeed
                         }
                     }
                 }
@@ -621,7 +615,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "withIFrame body that runs to completion before iframe removal succeeds; the abort surfaces only on a post-removal action" in run {
+    "withIFrame body that runs to completion before iframe removal succeeds; the abort surfaces only on a post-removal action" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span id='x'>hi</span></body>") {
                 discoverSingleFrame.map { f =>
@@ -640,7 +634,7 @@ class BrowserIFrameTest extends BrowserTest:
                                     }
                                 }.map {
                                     case Result.Failure(BrowserIFrameInvalidException(Reason.ContextDestroyed)) =>
-                                        succeed
+                                        ()
                                     case Result.Failure(_: BrowserIFrameInvalidException) =>
                                         Abort.fail[Throwable](new RuntimeException("iframe invalid but not yet ContextDestroyed"))
                                     case other =>
@@ -658,7 +652,7 @@ class BrowserIFrameTest extends BrowserTest:
     // §6.5 IFrame edge cases
     // ═══════════════════════════════════════════════════════════════════════════
 
-    "srcdoc iframe with inline HTML is discoverable and scopable; Browser.text in withIFrame reads the srcdoc body" in run {
+    "srcdoc iframe with inline HTML is discoverable and scopable; Browser.text in withIFrame reads the srcdoc body" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span id='greeting'>srcdoc-body</span></body>") {
                 discoverSingleFrame.map { f =>
@@ -672,7 +666,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "about:blank iframe (no src, no srcdoc) is discoverable; Browser.eval evaluates against its blank document" in run {
+    "about:blank iframe (no src, no srcdoc) is discoverable; Browser.eval evaluates against its blank document" in {
         withBrowser {
             onPage("""<body>
                 <iframe id="frame" data-testid="frame"></iframe>
@@ -688,7 +682,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "data:-URL iframe inherits the parent origin sufficiently for Browser.click and Browser.fill in withIFrame to work" in run {
+    "data:-URL iframe inherits the parent origin sufficiently for Browser.click and Browser.fill in withIFrame to work" in {
         withBrowser {
             // data:-URL iframes load into a unique origin, NOT the parent's origin. The spec calls out that they
             // should still work via withIFrame because all kyo-browser does is route Runtime.evaluate by contextId
@@ -717,7 +711,7 @@ class BrowserIFrameTest extends BrowserTest:
         }
     }
 
-    "sandboxed iframe with sandbox=\"allow-same-origin allow-scripts\" is fully scopable" in run {
+    "sandboxed iframe with sandbox=\"allow-same-origin allow-scripts\" is fully scopable" in {
         // The negative-half assertion (sandbox="allow-scripts" only must abort with BrowserIFrameInvalidException) was
         // dropped: full Chrome denies an execution context to opaque-origin iframes, but chrome-headless-shell assigns
         // one, so no real sandbox combination reliably produces a missing-execution-context across both binaries.
@@ -751,7 +745,7 @@ class BrowserIFrameTest extends BrowserTest:
     // surfaced as a misleading BrowserIFrameInvalidException(ContextDestroyed).
     // -------------------------------------------------------------------------
 
-    "withIFrame followed by withNewTab does not leak the outer iframe's executionContextId into the new tab" in run {
+    "withIFrame followed by withNewTab does not leak the outer iframe's executionContextId into the new tab" in {
         val inner = "<body><div id='inner'>inner</div></body>"
         withBrowser {
             Browser.goto(srcdocPage(singleIframeParent, inner)).andThen {
@@ -785,7 +779,7 @@ class BrowserIFrameTest extends BrowserTest:
     // SOP. We assert `Browser.iframe(sel)` returns a usable handle distinct from the main frame, then pin the
     // observed behavior of a scoped action: it may succeed (kyo-browser routes Runtime.evaluate by contextId
     // so basic reads work even cross-origin) or raise a typed `BrowserIFrameException`/`BrowserReadException`.
-    "cross-origin iframe: Browser.iframe(sel) returns a usable IFrame handle and withIFrame action surfaces typed result" in run {
+    "cross-origin iframe: Browser.iframe(sel) returns a usable IFrame handle and withIFrame action surfaces typed result" in {
         val innerHtml  = """<html><body><span id="x">cross</span></body></html>"""
         val innerBytes = Span.fromUnsafe(innerHtml.getBytes("UTF-8"))
         val innerHandler = HttpRoute.getRaw("/inner").response(_.bodyBinary).handler { _ =>
@@ -821,10 +815,10 @@ class BrowserIFrameTest extends BrowserTest:
                                                     t == "cross",
                                                     s"cross-origin withIFrame text should read 'cross' but got '$t'"
                                                 )
-                                                succeed
+                                                ()
                                             case Result.Failure(_: BrowserReadException) =>
                                                 // SOP-blocked path: typed Abort is the contract. Document this is OK.
-                                                succeed
+                                                ()
                                             case other =>
                                                 fail(s"expected Result.Success or typed BrowserReadException but got $other")
                                         }
@@ -842,7 +836,7 @@ class BrowserIFrameTest extends BrowserTest:
     // <iframe id="inner"> (inner). Inner hosts a button. Asserts that
     // withIFrame(outer) { withIFrame(inner) { click(b) } } routes the click to the inner frame,
     // verified via a window.__clicked flag set inside the inner doc (not outer or main).
-    "nested withIFrame(outer) { withIFrame(inner) { Browser.click(button) } } routes the action to the inner frame" in run {
+    "nested withIFrame(outer) { withIFrame(inner) { Browser.click(button) } } routes the action to the inner frame" in {
         withBrowser {
             val innerInnerHtml = """<body>
                 <button id="b">DeepBtn</button>
@@ -878,7 +872,7 @@ class BrowserIFrameTest extends BrowserTest:
     // BrowserIFrameInvalidException(ContextDestroyed). This is the minimal direct stale-handle scenario
     // (no intermediate successful call), complementing the existing test that has an
     // intermediate-success precondition.
-    "stale IFrame handle after iframe removed from DOM: withIFrame action raises BrowserIFrameInvalidException(ContextDestroyed)" in run {
+    "stale IFrame handle after iframe removed from DOM: withIFrame action raises BrowserIFrameInvalidException(ContextDestroyed)" in {
         withBrowser {
             onSrcdoc(singleIframeParent, "<body><span id='x'>hi</span></body>") {
                 discoverSingleFrame.map { stale =>
@@ -891,7 +885,7 @@ class BrowserIFrameTest extends BrowserTest:
                                     }
                                 }.map {
                                     case Result.Failure(BrowserIFrameInvalidException(Reason.ContextDestroyed)) =>
-                                        succeed
+                                        ()
                                     case Result.Failure(_: BrowserIFrameInvalidException) =>
                                         Abort.fail[Throwable](new RuntimeException("iframe invalid but not yet ContextDestroyed"))
                                     case other =>
@@ -907,7 +901,7 @@ class BrowserIFrameTest extends BrowserTest:
 
     // ── Flat-API scenarios ──────────────────────────────────────────────────────
 
-    "Browser.iframes returns Chunk[IFrame] of all iframe elements" in run {
+    "Browser.iframes returns Chunk[IFrame] of all iframe elements" in {
         withBrowser {
             val pageHtml = twoIframeParent("<body><span>A</span></body>", "<body><span>B</span></body>")
             Browser.goto(pageHtml).andThen {
@@ -931,7 +925,6 @@ class BrowserIFrameTest extends BrowserTest:
                                 assert(frames.size == 3, s"expected main + 2 iframes but got ${frames.size}")
                                 assert(frames.head == mf, "expected main frame first in document order")
                                 assert(frames(1) != frames(2), "expected the two child iframes to differ")
-                                succeed
                             }
                         }
                     }
@@ -945,7 +938,6 @@ class BrowserIFrameTest extends BrowserTest:
         // The type check happens at compile time; no runtime assertion needed.
         import scala.compiletime.testing.typeChecks
         assert(typeChecks("val _: kyo.Browser.IFrame = ???"), "Browser.IFrame must name a type")
-        succeed
     }
 
 end BrowserIFrameTest

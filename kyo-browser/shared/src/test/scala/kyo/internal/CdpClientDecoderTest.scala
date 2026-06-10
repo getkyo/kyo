@@ -17,7 +17,7 @@ import kyo.internal.CdpTypes.*
   *
   * Wire shape coverage: same 7 shapes as the original `CdpClientDecoderTest`, same failure modes pinned.
   */
-class CdpClientDecoderTest extends kyo.Test:
+class CdpClientDecoderTest extends kyo.BaseBrowserTest:
 
     private val testLaunchCfg = Browser.LaunchConfig.default.copy(
         requestTimeout = 2.seconds,
@@ -56,7 +56,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 1. CDP error-response pipeline; well-formed (was decodeCdpMessage case 1)
     // ─────────────────────────────────────────────────────────────────────────
 
-    "CDP error-response pipeline: well-formed error surfaces as BrowserProtocolErrorException" in run {
+    "CDP error-response pipeline: well-formed error surfaces as BrowserProtocolErrorException" in {
         // Server responds with a typed JSON-RPC error.
         // Equivalent wire shape: `{"id": 1, "error": {"code": -32602, "message": "Invalid params"}}`.
         Scope.run {
@@ -81,7 +81,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 2. CDP error-response pipeline; malformed error fallback (was case 2)
     // ─────────────────────────────────────────────────────────────────────────
 
-    "CDP error-response pipeline: malformed-envelope response surfaces as BrowserProtocolErrorException" in run {
+    "CDP error-response pipeline: malformed-envelope response surfaces as BrowserProtocolErrorException" in {
         // A `JsonRpcMalformedMessage(Present(id), reason, raw)` sent directly on the server transport
         // triggers `JsonRpcError.invalidRequest("malformed response: <reason>")` at the pending caller.
         // Equivalent to the old fallback path for `{"id": 2, "error": "not-an-object"}`.
@@ -125,7 +125,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 3. Error-id branch (4a) — well-formed error at a different method
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: error-id branch surfaces BrowserProtocolErrorException (4a)" in run {
+    "decodeCdpMessage: error-id branch surfaces BrowserProtocolErrorException (4a)" in {
         // Same shape as case 1; verifies the same pipeline at a different method site.
         Scope.run {
             val errorMethod = JsonRpcRoute.request[AttachParams, AttachResult](
@@ -151,7 +151,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 4. Malformed error JSON fallback (4b) — malformed at a different method
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: malformed error JSON falls back to BrowserProtocolErrorException (4b)" in run {
+    "decodeCdpMessage: malformed error JSON falls back to BrowserProtocolErrorException (4b)" in {
         // Same shape as case 2; verifies the fallback pipeline at a different method site.
         Scope.run {
             mkBackendAndServerTransport().map { (backend, serverTransport) =>
@@ -188,7 +188,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 5. Non-Object frame returns Skip (was case 4c: `[1, 2, 3]`)
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: non-Object frame (JSON array) is silently dropped" in run {
+    "decodeCdpMessage: non-Object frame (JSON array) is silently dropped" in {
         // A Malformed envelope with no id (Absent) is skipped silently by the endpoint.
         // The pending call times out. Equivalent to old `Exchange.Message.Skip` for `[1, 2, 3]`.
         Scope.run {
@@ -229,7 +229,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 6. Truly malformed JSON returns Skip (was case 4d: `not-json`)
     // ─────────────────────────────────────────────────────────────────────────
 
-    "decodeCdpMessage: truly malformed JSON is silently dropped" in run {
+    "decodeCdpMessage: truly malformed JSON is silently dropped" in {
         // Same as case 5. Equivalent to old `Exchange.Message.Skip` for `not-json`.
         Scope.run {
             mkBackendAndServerTransport().map { (backend, serverTransport) =>
@@ -264,7 +264,7 @@ class CdpClientDecoderTest extends kyo.Test:
     // 7. Non-whitelisted event is NOT emitted (was case 5 in original)
     // ─────────────────────────────────────────────────────────────────────────
 
-    "eventWhitelist: non-whitelisted notification is silently dropped by the endpoint" in run {
+    "eventWhitelist: non-whitelisted notification is silently dropped by the endpoint" in {
         // An unregistered notification method is handled by `JsonRpcUnknownMethodPolicy.minimal` which discards it.
         // Equivalent to the old `Exchange.Message.Skip` for a non-whitelisted event.
         Scope.run {

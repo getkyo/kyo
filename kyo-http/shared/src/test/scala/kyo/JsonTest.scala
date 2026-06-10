@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class JsonTest extends Test:
+class JsonTest extends BaseHttpTest:
 
     case class User(id: Int, name: String) derives Schema, CanEqual
     case class Nested(user: User, active: Boolean) derives Schema, CanEqual

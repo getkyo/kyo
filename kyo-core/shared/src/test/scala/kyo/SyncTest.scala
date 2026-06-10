@@ -2,13 +2,12 @@ package kyo
 
 import kyo.Result.Error
 import kyo.Result.Panic
-import org.scalatest.compatible.Assertion
 import scala.util.Try
 
-class SyncTest extends Test:
+class SyncTest extends kyo.test.Test[Any]:
 
     "lazyRun" - {
-        "execution" in run {
+        "execution" in {
             var called = false
             val v =
                 Sync.defer {
@@ -21,7 +20,7 @@ class SyncTest extends Test:
                 assert(called)
             }
         }
-        "next handled effects can execute" in run {
+        "next handled effects can execute" in {
             import AllowUnsafe.embrace.danger
             var called = false
             val v =
@@ -40,7 +39,7 @@ class SyncTest extends Test:
             )
             assert(called)
         }
-        "failure" in run {
+        "failure" in {
             import AllowUnsafe.embrace.danger
             val ex        = new Exception
             def fail: Int = throw ex
@@ -54,9 +53,9 @@ class SyncTest extends Test:
             ios.foreach { io =>
                 assert(Try(Sync.Unsafe.evalOrThrow(io)) == Try(fail))
             }
-            succeed
+            ()
         }
-        "stack-safe" in run {
+        "stack-safe" in {
             val frames = 10000
             def loop(i: Int): Int < Sync =
                 Sync.defer {
@@ -71,7 +70,7 @@ class SyncTest extends Test:
         }
     }
     "run" - {
-        "execution" in run {
+        "execution" in {
             var called = false
             val v: Int < Sync =
                 Sync.defer {
@@ -84,18 +83,19 @@ class SyncTest extends Test:
                 assert(called)
             }
         }
-        "stack-safe" in run {
+        "stack-safe" in {
             val frames = 100000
-            def loop(i: Int): Assertion < Sync =
+            def loop(i: Int): Unit < Sync =
                 Sync.defer {
                     if i < frames then
                         loop(i + 1)
                     else
-                        succeed
+                        (
+                    )
                 }
-            loop(0)
+            loop(0).andThen(succeed("verifies no stack overflow at depth 100000"))
         }
-        "failure" in run {
+        "failure" in {
             import AllowUnsafe.embrace.danger
             val ex        = new Exception
             def fail: Int = throw ex
@@ -109,19 +109,19 @@ class SyncTest extends Test:
             ios.foreach { io =>
                 assert(Try(Sync.Unsafe.evalOrThrow(io)) == Try(fail))
             }
-            succeed
+            ()
         }
     }
 
     "ensure" - {
-        "success" in run {
+        "success" in {
             var called = false
             Sync.ensure { called = true }(1).map { result =>
                 assert(result == 1)
                 assert(called)
             }
         }
-        "failure" in run {
+        "failure" in {
             val ex     = new Exception
             var called = false
             Abort.run[Any](Sync.ensure { called = true } {
@@ -131,7 +131,7 @@ class SyncTest extends Test:
                 assert(called)
             }
         }
-        "call-by-name" in run {
+        "call-by-name" in {
             var count       = 0
             var countEnsure = 0
 
@@ -144,9 +144,11 @@ class SyncTest extends Test:
         }
 
         "resource safety" - {
-            "runs finalizer on Abort.fail" in pending
+            "runs finalizer on Abort.fail".ignore("Sync.ensure finalizer is not yet run when the computation aborts via Abort.fail") in {
+                ()
+            }
 
-            "runs finalizer exactly once under multiple evaluations" in run {
+            "runs finalizer exactly once under multiple evaluations" in {
                 var count = 0
                 Sync.ensure { count += 1 }(1).map(_ + 1).map { result =>
                     assert(count == 1)
@@ -154,7 +156,7 @@ class SyncTest extends Test:
                 }
             }
 
-            "nested ensures execute in LIFO order" in run {
+            "nested ensures execute in LIFO order" in {
                 var order = List.empty[Int]
                 Sync.ensure { order = 1 :: order } {
                     Sync.ensure { order = 2 :: order } {
@@ -167,7 +169,7 @@ class SyncTest extends Test:
                 }
             }
 
-            "error-aware ensure passes Absent on success" in run {
+            "error-aware ensure passes Absent on success" in {
                 var received: Maybe[Error[Any]] = Present(Panic(new Exception("sentinel")))
                 Sync.ensure((ex: Maybe[Error[Any]]) => received = ex)(42).map { result =>
                     assert(received == Absent)
@@ -175,7 +177,7 @@ class SyncTest extends Test:
                 }
             }
 
-            "error-aware ensure passes Present(Panic) on exception" in run {
+            "error-aware ensure passes Present(Panic) on exception" in {
                 var received: Maybe[Error[Any]] = Absent
                 val ex                          = new RuntimeException("boom")
                 Abort.run[Any](Sync.ensure((e: Maybe[Error[Any]]) => received = e) {
@@ -186,9 +188,11 @@ class SyncTest extends Test:
                 }
             }
 
-            "error-aware ensure passes error on Abort.fail" in pending
+            "error-aware ensure passes error on Abort.fail".ignore(
+                "an error-aware Sync.ensure finalizer is not yet passed the abort error on Abort.fail"
+            ) in { () }
 
-            "works without fiber context" in run {
+            "works without fiber context" in {
                 import AllowUnsafe.embrace.danger
                 var called = false
                 val result = Sync.Unsafe.evalOrThrow(Sync.ensure { called = true }(42))
@@ -196,7 +200,7 @@ class SyncTest extends Test:
                 assert(result == 42)
             }
 
-            "call-by-name regression (#1228)" in run {
+            "call-by-name regression (#1228)" in {
                 var sideEffect = false
                 val io         = Sync.ensure { sideEffect = true }(42)
                 assert(!sideEffect)
@@ -209,7 +213,7 @@ class SyncTest extends Test:
     }
 
     "acquireReleaseWith" - {
-        "success" in run {
+        "success" in {
             var order = List.empty[String]
 
             Sync.acquireReleaseWith(Sync.defer {
@@ -230,7 +234,7 @@ class SyncTest extends Test:
             }
         }
 
-        "release after panic in use" in run {
+        "release after panic in use" in {
             val ex        = new RuntimeException("boom")
             var released  = false
             var useCalled = false
@@ -253,7 +257,7 @@ class SyncTest extends Test:
             }
         }
 
-        "does not release when acquire panics" in run {
+        "does not release when acquire panics" in {
             val ex       = new RuntimeException("boom")
             var released = false
 
@@ -274,12 +278,12 @@ class SyncTest extends Test:
 
     "evalOrThrow" - {
         import AllowUnsafe.embrace.danger
-        "success" in run {
+        "success" in {
             val result = Sync.Unsafe.evalOrThrow(Sync.defer(42))
             assert(result == 42)
         }
 
-        "throws exceptions" in run {
+        "throws exceptions" in {
             val ex = new Exception("test error")
             val io = Sync.defer[Int, Any](throw ex)
 
@@ -289,7 +293,7 @@ class SyncTest extends Test:
             assert(caught == ex)
         }
 
-        "propagates nested exceptions" in run {
+        "propagates nested exceptions" in {
             val ex = new Exception("nested error")
             val io = Sync.defer(Sync.defer(throw ex))
 
@@ -299,7 +303,7 @@ class SyncTest extends Test:
             assert(caught == ex)
         }
 
-        "works with mapped values" in run {
+        "works with mapped values" in {
             val result = Sync.Unsafe.evalOrThrow(Sync.defer(21).map(_ * 2))
             assert(result == 42)
         }
@@ -309,7 +313,7 @@ class SyncTest extends Test:
         "Sync includes Abort[Nothing]" in {
             val a: Int < Abort[Nothing] = 1
             val b: Int < Sync           = a
-            succeed
+            succeed("compile-time subtyping check: Abort[Nothing] <: Sync")
         }
 
         "does not include wider Abort types" in {
@@ -333,7 +337,7 @@ class SyncTest extends Test:
     }
 
     "withLocal" - {
-        "basic usage" in run {
+        "basic usage" in {
             val local      = Local.init("test")
             var sideEffect = ""
 
@@ -346,7 +350,7 @@ class SyncTest extends Test:
             }
         }
 
-        "respects local modifications" in run {
+        "respects local modifications" in {
             val local    = Local.init("initial")
             var captured = ""
 
@@ -361,7 +365,7 @@ class SyncTest extends Test:
             }
         }
 
-        "lazy evaluation" in run {
+        "lazy evaluation" in {
             val local    = Local.init("test")
             var executed = false
 
@@ -384,7 +388,7 @@ class SyncTest extends Test:
         def unsafeOperation(value: Int)(using unsafe: AllowUnsafe): Int =
             value * 2
 
-        "allows unsafe operations" in run {
+        "allows unsafe operations" in {
             val local      = Local.init(42)
             var sideEffect = 0
 
@@ -397,7 +401,7 @@ class SyncTest extends Test:
             }
         }
 
-        "respects local context" in run {
+        "respects local context" in {
             val local    = Local.init(10)
             var captured = 0
 
@@ -412,7 +416,7 @@ class SyncTest extends Test:
             }
         }
 
-        "composes with other unsafe operations" in run {
+        "composes with other unsafe operations" in {
             val local            = Local.init(5)
             var steps: List[Int] = Nil
 

@@ -5,7 +5,7 @@ import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.util.*
 
-class ParsedRequestTest extends kyo.Test:
+class ParsedRequestTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -29,7 +29,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(result(2) == 3)
             assert(result(3) == 20)
             assert(result(4) == 30)
-            succeed
         }
 
         "writeAscii" in {
@@ -42,7 +41,7 @@ class ParsedRequestTest extends kyo.Test:
             while i < result.length do
                 assert(result(i) == expected(i))
                 i += 1
-            succeed
+            ()
         }
 
         "auto-grow on overflow" in {
@@ -61,7 +60,7 @@ class ParsedRequestTest extends kyo.Test:
             while i < 1000 do
                 assert(result(i) == (i % 256).toByte)
                 i += 1
-            succeed
+            ()
         }
 
         "reset reuses buffer" in {
@@ -76,7 +75,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(result.length == 2)
             assert(result(0) == 'h'.toByte)
             assert(result(1) == 'i'.toByte)
-            succeed
         }
 
         "copyTo" in {
@@ -91,7 +89,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(dest(0) == 0)
             assert(dest(1) == 0)
             assert(dest(2) == 0)
-            succeed
         }
     }
 
@@ -107,7 +104,6 @@ class ParsedRequestTest extends kyo.Test:
             val req = builder.build()
             assert(req.method == HttpMethod.GET)
             assert(req.pathAsString == "/")
-            succeed
         }
 
         "build with content-length" in {
@@ -118,7 +114,6 @@ class ParsedRequestTest extends kyo.Test:
             builder.setContentLength(100)
             val req = builder.build()
             assert(req.contentLength == 100)
-            succeed
         }
 
         "build with chunked flag" in {
@@ -130,7 +125,6 @@ class ParsedRequestTest extends kyo.Test:
             val req = builder.build()
             assert(req.isChunked == true)
             assert(req.isKeepAlive == false)
-            succeed
         }
 
         "build with keep-alive flag" in {
@@ -142,7 +136,6 @@ class ParsedRequestTest extends kyo.Test:
             val req = builder.build()
             assert(req.isKeepAlive == true)
             assert(req.isChunked == false)
-            succeed
         }
 
         "build with query" in {
@@ -155,7 +148,6 @@ class ParsedRequestTest extends kyo.Test:
             val req = builder.build()
             assert(req.hasQuery == true)
             assert(req.queryRawString == Present("key=val"))
-            succeed
         }
 
         "path segments" in {
@@ -171,7 +163,6 @@ class ParsedRequestTest extends kyo.Test:
             builder.addPathSegment(seg3, 0, seg3.length)
             val req = builder.build()
             assert(req.pathSegmentCount == 3)
-            succeed
         }
 
         "pathSegmentMatches" in {
@@ -189,7 +180,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req.pathSegmentMatches(0, ParsedRequest.Segment("api")))
             assert(req.pathSegmentMatches(1, ParsedRequest.Segment("v1")))
             assert(req.pathSegmentMatches(2, ParsedRequest.Segment("users")))
-            succeed
         }
 
         "pathSegmentMatches negative" in {
@@ -208,7 +198,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(!req.pathSegmentMatches(1, ParsedRequest.Segment("api")))
             assert(!req.pathSegmentMatches(5, ParsedRequest.Segment("api")))
             assert(!req.pathSegmentMatches(-1, ParsedRequest.Segment("api")))
-            succeed
         }
 
         "pathSegmentAsString" in {
@@ -226,7 +215,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req.pathSegmentAsString(0) == "api")
             assert(req.pathSegmentAsString(1) == "v1")
             assert(req.pathSegmentAsString(2) == "users")
-            succeed
         }
 
         "headers" in {
@@ -246,7 +234,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req.headerValue(0) == "application/json")
             assert(req.headerName(1) == "Host")
             assert(req.headerValue(1) == "localhost")
-            succeed
         }
 
         "queryParam" in {
@@ -261,7 +248,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req.queryParam("b") == Present("2"))
             assert(req.queryParam("c") == Present("hello world"))
             assert(req.queryParam("missing") == Absent)
-            succeed
         }
 
         "large request" in {
@@ -317,7 +303,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req.queryParam("sort") == Present("created_at"))
             assert(req.queryParam("order") == Present("desc"))
             assert(req.queryParam("filter") == Present("active"))
-            succeed
         }
 
         "reset and reuse" in {
@@ -362,7 +347,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req2.headerCount == 1)
             assert(req2.headerName(0) == "Content-Type")
             assert(req2.headerValue(0) == "text/plain")
-            succeed
         }
 
         "binary safety" in {
@@ -387,7 +371,7 @@ class ParsedRequestTest extends kyo.Test:
             while i < valBytes.length do
                 assert(headerVal.charAt(i) == (0x20 + i).toChar)
                 i += 1
-            succeed
+            ()
         }
 
         "empty path segments" in {
@@ -399,7 +383,6 @@ class ParsedRequestTest extends kyo.Test:
             val req = builder.build()
             assert(req.pathSegmentCount == 0)
             assert(req.pathAsString == "/")
-            succeed
         }
 
         "Segment from string" in {
@@ -411,7 +394,7 @@ class ParsedRequestTest extends kyo.Test:
             while i < bytes.length do
                 assert(bytes(i) == expected(i))
                 i += 1
-            succeed
+            ()
         }
 
         "pathSegmentMatches case sensitivity" in {
@@ -426,7 +409,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(!req.pathSegmentMatches(0, ParsedRequest.Segment("API")))
             assert(!req.pathSegmentMatches(0, ParsedRequest.Segment("Api")))
             assert(req.pathSegmentMatches(0, ParsedRequest.Segment("api")))
-            succeed
         }
 
         "method ordinal roundtrip" in {
@@ -450,7 +432,7 @@ class ParsedRequestTest extends kyo.Test:
                 val req = builder.build()
                 assert(req.method == m)
             }
-            succeed
+            ()
         }
 
         "contentLength default" in {
@@ -461,7 +443,6 @@ class ParsedRequestTest extends kyo.Test:
             // No setContentLength call
             val req = builder.build()
             assert(req.contentLength == -1)
-            succeed
         }
 
         "queryParam URL decoding" in {
@@ -476,7 +457,6 @@ class ParsedRequestTest extends kyo.Test:
             assert(req.queryParam("a") == Present("hello world"))
             assert(req.queryParam("b") == Present("foo bar"))
             assert(req.queryParam("c") == Present("/+"))
-            succeed
         }
     }
 

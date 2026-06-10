@@ -4,7 +4,7 @@ on:
     branches:
       - main
 
-# One job per arch. They run in parallel; each internally serializes JVM → JS → Native
+# One job per arch. They run in parallel; each internally serializes JVM, JS, Native, Wasm
 # via build.yml's `max-parallel: 1` matrix. Add or comment out arches here when budget
 # allows; the runner-image mapping is duplicated below to keep the workflow
 # self-contained.

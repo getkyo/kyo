@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Length.*
 
-class LengthTest extends Test:
+class LengthTest extends kyo.test.Test[Any]:
 
     "Px resolves to its integer value" in {
         assert(Length.resolve(Px(42), 100) == 42)
@@ -33,7 +33,7 @@ class LengthTest extends Test:
     }
 
     "Length.toPx is not callable: callers must match Px|Em explicitly" in {
-        assertTypeError("Length.toPx(Length.Px(5))")
+        typeCheckFailure("Length.toPx(Length.Px(5))")
     }
 
     "Px is directly usable as Px without conversion" in {

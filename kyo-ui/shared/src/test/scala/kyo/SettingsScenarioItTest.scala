@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class SettingsScenarioItTest extends UITest:
 
-    "check notifications shows email and frequency" in run {
+    "check notifications shows email and frequency" in {
         val app: UI < Async =
             for
                 notify <- Signal.initRef(false)
@@ -27,11 +27,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("notify"))
                 _ <- Browser.assertVisible(Selector.id("email"))
                 _ <- Browser.assertVisible(Selector.id("freq"))
-            yield succeed
+            yield ()
         }
     }
 
-    "fill email select frequency save captures all" in run {
+    "fill email select frequency save captures all" in {
         val app: UI < Async =
             for
                 notify <- Signal.initRef(false)
@@ -64,11 +64,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.select(Selector.id("freq"), "weekly")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "result:on|me@co.com|weekly")
-            yield succeed
+            yield ()
         }
     }
 
-    "uncheck notifications fields disappear" in run {
+    "uncheck notifications fields disappear" in {
         val app: UI < Async =
             for notify <- Signal.initRef(true)
             yield UI.div(
@@ -80,11 +80,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.assertVisible(Selector.id("email"))
                 _ <- Browser.click(Selector.id("notify"))
                 _ <- Browser.assertNotExists(Selector.id("email"))
-            yield succeed
+            yield ()
         }
     }
 
-    "recheck notifications previous values restored" in run {
+    "recheck notifications previous values restored" in {
         val app: UI < Async =
             for
                 notify <- Signal.initRef(false)
@@ -102,11 +102,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("notify"))
                 _ <- Browser.click(Selector.id("notify"))
                 _ <- Browser.assertText(Selector.id("v"), "email:me@co.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "dropdown changes visible section" in run {
+    "dropdown changes visible section" in {
         val app: UI < Async =
             for mode <- Signal.initRef("light")
             yield UI.div(
@@ -124,11 +124,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("info"), "Light mode")
                 _ <- Browser.select(Selector.id("theme"), "dark")
                 _ <- Browser.assertText(Selector.id("info"), "Dark mode")
-            yield succeed
+            yield ()
         }
     }
 
-    "reset to defaults clears all" in run {
+    "reset to defaults clears all" in {
         val app: UI < Async =
             for
                 name  <- Signal.initRef("")
@@ -147,11 +147,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.click(Selector.id("reset"))
                 _ <- Browser.assertText(Selector.id("vn"), "name:[]")
                 _ <- Browser.assertText(Selector.id("ve"), "email:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "check digest shows more fields" in run {
+    "check digest shows more fields" in {
         val app: UI < Async =
             for
                 notify <- Signal.initRef(false)
@@ -172,11 +172,11 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.assertVisible(Selector.id("email"))
                 _ <- Browser.click(Selector.id("digest"))
                 _ <- Browser.assertVisible(Selector.id("digest-email"))
-            yield succeed
+            yield ()
         }
     }
 
-    "save captures all visible and hidden signal values" in run {
+    "save captures all visible and hidden signal values" in {
         val app: UI < Async =
             for
                 name   <- Signal.initRef("")
@@ -198,7 +198,7 @@ class SettingsScenarioItTest extends UITest:
                 _ <- Browser.fill(Selector.id("name"), "Alice")
                 _ <- Browser.click(Selector.id("save"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Alice|secret")
-            yield succeed
+            yield ()
         }
     }
 

@@ -16,7 +16,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Wire-shape drift observability ----
 
-    "parseAxTree aborts with BrowserProtocolErrorException when CDP wire shape drifts" in run {
+    "parseAxTree aborts with BrowserProtocolErrorException when CDP wire shape drifts" in {
         // The new typed decoder (Json.decode[AxTreeResponse]) is strict: a malformed `properties`
         // field; a JSON string where Seq[AxPropertyWire] is required; fails the schema decode
         // and the parser raises Abort.fail(BrowserProtocolErrorException) (see Accessibility.parseAxTree).
@@ -27,14 +27,14 @@ class BrowserCoreTest extends BrowserTest:
             """{"nodes":[{"nodeId":"9","ignored":false,"role":{"type":"role","value":"button"},""" +
                 """"name":{"type":"computedString","value":"Save"},"properties":"not-an-array"}]}"""
         Abort.run[BrowserConnectionException](kyo.internal.cdp.Accessibility.parseAxTree(malformedJson)).map {
-            case Result.Failure(_: BrowserProtocolErrorException) => succeed
+            case Result.Failure(_: BrowserProtocolErrorException) => ()
             case other => fail(s"Expected Abort.fail(BrowserProtocolErrorException) for malformed properties, got $other")
         }
     }
 
     // ---- Lifecycle ----
 
-    "connect navigates to about:blank initially" in run {
+    "connect navigates to about:blank initially" in {
         withBrowser {
             Browser.url.map { u =>
                 assert(u == "about:blank")
@@ -44,7 +44,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Navigation ----
 
-    "goto navigates to data URL" in run {
+    "goto navigates to data URL" in {
         val p = page("<h1>Hello</h1>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -55,7 +55,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "goto then title returns correct title" in run {
+    "goto then title returns correct title" in {
         val p = page("<html><head><title>TestTitle</title></head><body></body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -68,12 +68,12 @@ class BrowserCoreTest extends BrowserTest:
 
     // `back` at history start raises BrowserAlreadyAtHistoryStartException rather than silently succeeding.
     // Callers wanting no-op behaviour can recover the exception explicitly.
-    "back on fresh tab raises BrowserAlreadyAtHistoryStartException" in run {
+    "back on fresh tab raises BrowserAlreadyAtHistoryStartException" in {
         withBrowser {
             Abort.run[BrowserNavigationException] {
                 Browser.back
             }.map {
-                case Result.Failure(_: BrowserAlreadyAtHistoryStartException) => succeed
+                case Result.Failure(_: BrowserAlreadyAtHistoryStartException) => ()
                 case other =>
                     fail(s"Expected BrowserAlreadyAtHistoryStartException but got $other")
             }
@@ -82,7 +82,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Reads ----
 
-    "title returns empty for page without title" in run {
+    "title returns empty for page without title" in {
         val p = page("<body>Notitlehere</body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -93,7 +93,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "eval returns arithmetic result" in run {
+    "eval returns arithmetic result" in {
         withBrowser {
             Browser.eval("1+1").map { result =>
                 assert(result == "2", s"Expected '2' but got '$result'")
@@ -101,7 +101,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "eval returns string result" in run {
+    "eval returns string result" in {
         withBrowser {
             Browser.eval("'hello'").map { result =>
                 assert(result == "hello", s"Expected 'hello' but got '$result'")
@@ -109,7 +109,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "eval returns document title" in run {
+    "eval returns document title" in {
         val p = page("<html><head><title>EvalTest</title></head><body></body></html>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -120,7 +120,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "eval returns empty string for undefined" in run {
+    "eval returns empty string for undefined" in {
         withBrowser {
             Browser.eval("undefined").map { result =>
                 assert(result == "", s"Expected empty string but got '$result'")
@@ -128,7 +128,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "eval returns boolean result" in run {
+    "eval returns boolean result" in {
         withBrowser {
             Browser.eval("true").map { result =>
                 assert(result == "true", s"Expected 'true' but got '$result'")
@@ -139,21 +139,21 @@ class BrowserCoreTest extends BrowserTest:
     // `Browser.eval` must surface JS errors as a typed `BrowserScriptException` (via `evalJsChecked`). This keeps user-written JS errors
     // distinguishable from "no result"; the property that was *not* held internally and that made the selector-escape bug invisible.
 
-    "eval raises BrowserScriptException on JS syntax error" in run {
+    "eval raises BrowserScriptException on JS syntax error" in {
         withBrowser {
             Abort.run[BrowserScriptException](Browser.eval("this is not valid js"))
                 .map(r => assert(r.isFailure, s"expected failure but got $r"))
         }
     }
 
-    "eval raises BrowserScriptException on reference error" in run {
+    "eval raises BrowserScriptException on reference error" in {
         withBrowser {
             Abort.run[BrowserScriptException](Browser.eval("thisDefinitelyDoesNotExist()"))
                 .map(r => assert(r.isFailure, s"expected failure but got $r"))
         }
     }
 
-    "eval raises BrowserScriptException on a thrown exception" in run {
+    "eval raises BrowserScriptException on a thrown exception" in {
         withBrowser {
             Abort.run[BrowserScriptException](Browser.eval("(() => { throw new Error('boom'); })()"))
                 .map(r => assert(r.isFailure, s"expected failure but got $r"))
@@ -163,7 +163,7 @@ class BrowserCoreTest extends BrowserTest:
     // Internal JS evaluation failures must surface as a typed BrowserConnectionException via Abort, never as a thrown RuntimeException.
     // Internal helpers (NavigationWatcher, MutationSettlement) call `Browser.evalJsInternal`; a CDP `exceptionDetails` payload must
     // propagate through the Abort channel rather than escape it.
-    "evalJsInternal raises BrowserProtocolErrorException on internal JS evaluation error" in run {
+    "evalJsInternal raises BrowserProtocolErrorException on internal JS evaluation error" in {
         withBrowser {
             Abort.run[BrowserConnectionException] {
                 BrowserEval.evalJs("(() => { throw new Error('internal-eval-boom'); })()")
@@ -182,7 +182,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // CDP's `exceptionDetails.stackTrace.callFrames` carries the V8 frames for a thrown exception; the BrowserScriptErrorException
     // message must include both the error text and at least one `"at <fn> (<url>:<line>:<col>)"` frame from the formatted stack trace.
-    "Script exception message includes the CDP stack trace" in run {
+    "Script exception message includes the CDP stack trace" in {
         withBrowser {
             Abort.run[BrowserScriptException] {
                 Browser.eval("(() => { throw new Error('boom at line'); })()")
@@ -205,11 +205,11 @@ class BrowserCoreTest extends BrowserTest:
 
     // CDP sets exceptionDetails for any JS throw regardless of whether the value is an Error instance; the non-Error branch must
     // also surface as BrowserScriptErrorException.
-    "eval raises BrowserScriptErrorException when JS throws a non-Error primitive" in run {
+    "eval raises BrowserScriptErrorException when JS throws a non-Error primitive" in {
         withBrowser {
             Abort.run[BrowserScriptException](Browser.eval("(() => { throw 'plain string'; })()"))
                 .map {
-                    case Result.Failure(_: BrowserScriptErrorException) => succeed
+                    case Result.Failure(_: BrowserScriptErrorException) => ()
                     case other                                          => fail(s"expected BrowserScriptErrorException but got $other")
                 }
         }
@@ -217,7 +217,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // Symbol result: CDP returns `{type:"symbol"}` without value/description/exceptionDetails. The decoder falls through to `""`
     // when no value, description, or "undefined" type is present; no BrowserScriptException is raised (a documented CDP limitation).
-    "eval returns empty string for a Symbol result and does not raise BrowserScriptException" in run {
+    "eval returns empty string for a Symbol result and does not raise BrowserScriptException" in {
         withBrowser {
             Abort.run[BrowserScriptException](Browser.eval("Symbol('tag')"))
                 .map {
@@ -235,17 +235,17 @@ class BrowserCoreTest extends BrowserTest:
 
     // CDP `eval` resolves synchronously; a Promise rejection is async, so `Browser.eval` returns the Promise object reference (`"{}"`),
     // not the rejection. No immediate BrowserScriptException is raised; a documented CDP limitation for async rejection.
-    "eval does not raise BrowserScriptException for a synchronously returned rejected Promise" in run {
+    "eval does not raise BrowserScriptException for a synchronously returned rejected Promise" in {
         withBrowser {
             Abort.run[BrowserScriptException](Browser.eval("Promise.reject(new Error('async-err'))"))
                 .map {
-                    case Result.Success(_) => succeed
+                    case Result.Success(_) => ()
                     case other             => fail(s"expected Result.Success (no immediate Abort) for Promise rejection but got $other")
                 }
         }
     }
 
-    "screenshot returns non-empty image" in run {
+    "screenshot returns non-empty image" in {
         val p = page("<h1>ScreenshotTest</h1>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -263,7 +263,7 @@ class BrowserCoreTest extends BrowserTest:
         assert(img.base64 == expected, s"Image.base64 must match the Java reference encoder")
     }
 
-    "readableContent returns page text" in run {
+    "readableContent returns page text" in {
         val p = page("<body><p>HelloWorld</p></body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -274,7 +274,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "readableContent strips nav and script elements" in run {
+    "readableContent strips nav and script elements" in {
         val p = page(
             "<body><nav>NavContent</nav><script>var x=1;</script><article><p>ArticleText</p></article><footer>FooterContent</footer></body>"
         )
@@ -289,7 +289,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "readableContent prefers article element" in run {
+    "readableContent prefers article element" in {
         val p = page(
             "<body><div>OuterText</div><article><p>MainArticle</p></article></body>"
         )
@@ -305,7 +305,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Network interception ----
 
-    "mockFetchResponse registers mocks and installs interceptor" in run {
+    "mockFetchResponse registers mocks and installs interceptor" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -326,7 +326,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse intercepts fetch requests" in run {
+    "mockFetchResponse intercepts fetch requests" in {
         val p = page("<body><div id='result'>empty</div></body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -338,7 +338,7 @@ class BrowserCoreTest extends BrowserTest:
                         // Poll for the DOM change since eval returns {} for promises
                         Retry[BrowserScriptException](Schedule.fixed(50.millis).take(20)) {
                             Browser.eval("document.getElementById('result').innerText").map { text =>
-                                if text == "hello-mock" then succeed
+                                if text == "hello-mock" then ()
                                 else
                                     Abort.fail[BrowserScriptException](
                                         BrowserScriptErrorException(s"Expected 'hello-mock' but got '$text'")
@@ -351,7 +351,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "clearMocks removes mock rules" in run {
+    "clearMocks removes mock rules" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -387,7 +387,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     end fetchMockedBody
 
-    "mockFetchResponse body preserves a single quote" in run {
+    "mockFetchResponse body preserves a single quote" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).andThen(Browser.mockFetchResponse("https://x/api", 200, "it's fine"))
@@ -396,7 +396,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse body preserves a newline" in run {
+    "mockFetchResponse body preserves a newline" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).andThen(Browser.mockFetchResponse("https://x/api", 200, "line1\nline2"))
@@ -405,7 +405,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse body preserves a backslash" in run {
+    "mockFetchResponse body preserves a backslash" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).andThen(Browser.mockFetchResponse("https://x/api", 200, "a\\b"))
@@ -414,7 +414,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse body preserves a JSON payload with quotes and backslashes" in run {
+    "mockFetchResponse body preserves a JSON payload with quotes and backslashes" in {
         val p    = page("<body></body>")
         val body = """{"name":"don't","value":42}"""
         withBrowser {
@@ -425,7 +425,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse URL with a query string containing an apostrophe matches" in run {
+    "mockFetchResponse URL with a query string containing an apostrophe matches" in {
         val p   = page("<body></body>")
         val url = "https://x/api?q=don't"
         withBrowser {
@@ -435,7 +435,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "mockFetchResponse header value preserves a single quote" in run {
+    "mockFetchResponse header value preserves a single quote" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p)
@@ -458,7 +458,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Tab management ----
 
-    "withNewTab creates independent tab at about:blank" in run {
+    "withNewTab creates independent tab at about:blank" in {
         withBrowser {
             Scope.run {
                 Browser.withNewTab {
@@ -470,7 +470,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "withNewTab eval works" in run {
+    "withNewTab eval works" in {
         withBrowser {
             Scope.run {
                 Browser.withNewTab {
@@ -482,7 +482,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "withNewTab tab can navigate independently" in run {
+    "withNewTab tab can navigate independently" in {
         val p = page("<html><head><title>FreshNav</title></head><body>hi</body></html>")
         withBrowser {
             Scope.run {
@@ -497,7 +497,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "withNewTab parent tab unaffected" in run {
+    "withNewTab parent tab unaffected" in {
         val parentPage = page("<html><head><title>Parent</title></head><body>parent</body></html>")
         withBrowser {
             Browser.goto(parentPage).map { _ =>
@@ -520,7 +520,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Navigation back/forward/reload ----
 
-    "reload keeps same URL" in run {
+    "reload keeps same URL" in {
         val p = page("<h1>ReloadTest</h1>")
         withBrowser {
             Browser.goto(p).map { _ =>
@@ -535,7 +535,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "back navigates to previous page" in run {
+    "back navigates to previous page" in {
         val p1 = page("<h1>Page1</h1>")
         val p2 = page("<h1>Page2</h1>")
         withBrowser {
@@ -551,7 +551,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "forward navigates after back" in run {
+    "forward navigates after back" in {
         val p1 = page("<h1>Page1</h1>")
         val p2 = page("<h1>Page2</h1>")
         withBrowser {
@@ -573,7 +573,7 @@ class BrowserCoreTest extends BrowserTest:
     // Rather than a real Chrome-level page nav (which across tests can leave Chrome briefly busy and break the subsequent test),
     // we drive the <a href> via a JS-intercepted click that pushes a fragment; this still exercises the nav-intent detection and
     // the settle wait path while keeping the top-level document stable across tests.
-    "click on <a href> waits for navigation to settle before returning" in run {
+    "click on <a href> waits for navigation to settle before returning" in {
         withBrowser {
             val p = page("""<body>
                 <a id="link" href="#arrived"
@@ -592,7 +592,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // A `<button type="submit">` inside a `<form>` is nav-intent. Drive the click on a JS-intercepted form submission so armAround
     // awaits the ensuing pushState.
-    "click on a submit button waits for the form POST round-trip" in run {
+    "click on a submit button waits for the form POST round-trip" in {
         withBrowser {
             val p = page("""<body>
                 <form onsubmit="event.preventDefault(); history.pushState({}, '', '#submitted'); document.getElementById('out').textContent='submitted'">
@@ -612,7 +612,7 @@ class BrowserCoreTest extends BrowserTest:
     // The actionability gate detects the `location.*` substring in the onclick source text; armAround waits for the ensuing location
     // change to settle. The test uses a same-document pushState-shaped navigation (assigning `location.hash`) so it stays
     // deterministic across repeated runs while still exercising the nav-intent classification.
-    "click on <button onclick='location.assign(...)'> auto-waits" in run {
+    "click on <button onclick='location.assign(...)'> auto-waits" in {
         withBrowser {
             val p = page("""<body>
                 <button id="b"
@@ -630,7 +630,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // A plain button without navigation intent should not be auto-waited; the click returns promptly.
-    "click on a non-nav-intent button does not auto-wait" in run {
+    "click on a non-nav-intent button does not auto-wait" in {
         withBrowser {
             val p = page("""<body>
                 <button id="b" onclick="window.__kyoClicked = true" style="width:100px;height:30px">toggle</button>
@@ -669,7 +669,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // goto(url) with no settle argument uses Browser.Settle.NetworkIdle; strictly stronger than DOMContentLoaded. A page that
     // kicks off a delayed XHR AFTER DOMContentLoaded must be awaited before goto returns.
-    "Browser.goto(url) defaults to NetworkIdle (not just DOMContentLoaded)" in run {
+    "Browser.goto(url) defaults to NetworkIdle (not just DOMContentLoaded)" in {
         withBrowser {
             withHtmlServer(Map(
                 "/main" -> """<html><body>
@@ -698,7 +698,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // Passing settle = DomContentLoaded returns earlier than NetworkIdle; before the delayed XHR fires.
-    "Browser.goto(url, Browser.Settle.DomContentLoaded) returns before the delayed XHR" in run {
+    "Browser.goto(url, Browser.Settle.DomContentLoaded) returns before the delayed XHR" in {
         withBrowser {
             withHtmlServer(Map(
                 "/main" -> """<html><body>
@@ -729,7 +729,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // SPA-style navigation via history.pushState triggered by a click; the watcher's pushState monkey-patch sees this.
-    "SPA pushState navigation triggered by a click is awaited" in run {
+    "SPA pushState navigation triggered by a click is awaited" in {
         withBrowser {
             val p = page("""<body>
                 <button id="nav" onclick="history.pushState({}, '', '#view'); document.getElementById('state').textContent = 'navigated'" style="width:100px;height:30px">nav</button>
@@ -745,7 +745,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // A real HTTP 404 response raises BrowserNavigationFailedException when throwOnFailure=true.
-    "goto raises BrowserNavigationFailedException on a 4xx with throwOnFailure=true" in run {
+    "goto raises BrowserNavigationFailedException on a 4xx with throwOnFailure=true" in {
         withBrowser {
             withStatusServer { (host, port) =>
                 val url = s"http://$host:$port/404"
@@ -764,14 +764,14 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // With failOnHttpError=false, goto succeeds on a 4xx response (the exception is suppressed).
-    "goto with failOnHttpError=false returns normally on a 4xx" in run {
+    "goto with failOnHttpError=false returns normally on a 4xx" in {
         withBrowser {
             withStatusServer { (host, port) =>
                 val url = s"http://$host:$port/404"
                 Abort.run[BrowserNavigationException] {
                     Browser.goto(url, failOnHttpError = false).unit
                 }.map {
-                    case Result.Success(_) => succeed
+                    case Result.Success(_) => ()
                     case Result.Failure(_: BrowserNavigationFailedException) =>
                         fail("expected goto(failOnHttpError=false) to succeed on a 4xx but got BrowserNavigationFailedException")
                     case other => fail(s"unexpected outcome: $other")
@@ -783,7 +783,7 @@ class BrowserCoreTest extends BrowserTest:
     // Back-to-back nav-intent clicks on the same tab serialise; the second click can only run after the first's armAround has
     // resolved. We verify by chaining two pushState-driven navigations on the same page and asserting that the final observed URL
     // matches the second click's target (not the first's).
-    "back-to-back nav-intent clicks serialise without interleaving" in run {
+    "back-to-back nav-intent clicks serialise without interleaving" in {
         withBrowser {
             val p = page("""<body>
                 <button id="first" onclick="history.pushState({}, '', '#one'); document.getElementById('out').textContent='one'" style="width:60px;height:30px">first</button>
@@ -805,7 +805,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // Maybe.Absent path: armAround threads `Maybe.Absent` into awaitSettle when the trigger is an arbitrary nav-intent click —
     // any observable navigation (URL change, pushState, beforeunload) must satisfy the watcher regardless of the prior URL.
-    "NavigationWatcher with expectedDifferentFrom=Absent settles on any navigation" in run {
+    "NavigationWatcher with expectedDifferentFrom=Absent settles on any navigation" in {
         withBrowser {
             val p = page("""<body>
                 <button id="go" onclick="history.pushState({}, '', '#x'); document.getElementById('s').textContent='done'" style="width:80px;height:30px">go</button>
@@ -827,7 +827,7 @@ class BrowserCoreTest extends BrowserTest:
     // never changes (e.g. the trigger didn't actually navigate), `urlChanged` stays false and the watcher times out as never-committed.
     // Drives `armAroundNavigation` directly with a no-op trigger so the Present branch's URL-equality gate is exercised independent of
     // any `Browser.goto` short-circuit (Browser.goto skips the watcher when the requested URL equals the current URL).
-    "NavigationWatcher with expectedDifferentFrom=Present(same URL) times out as never-committed" in run {
+    "NavigationWatcher with expectedDifferentFrom=Present(same URL) times out as never-committed" in {
         withBrowser {
             withHtmlServer(Map(
                 "/page" -> """<html><body><div id="ok">ok</div></body></html>"""
@@ -862,7 +862,7 @@ class BrowserCoreTest extends BrowserTest:
     // After a chronic-network goto settles via the NetworkIdle → Load degrade, scope-owned state clears
     // and a follow-up goto runs cleanly; no wedged nav-recorder or leaked network-tracker state from the
     // previous scope.
-    "NavigationWatcher state cleans up after a NetworkIdle → Load degrade" in run {
+    "NavigationWatcher state cleans up after a NetworkIdle → Load degrade" in {
         withBrowser {
             withHtmlServer(Map(
                 // Busy page: NetworkIdle never quiesces but `load` does fire on the initial HTML parse,
@@ -890,7 +890,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Lifecycle with run ----
 
-    "run launches browser and returns URL" in run {
+    "run launches browser and returns URL" in {
         Scope.run {
             SharedChrome.chromeConfig.map { cfg =>
                 Browser.run(cfg) {
@@ -906,7 +906,7 @@ class BrowserCoreTest extends BrowserTest:
     // ~190 MB, full UI-capable binary) and points the LaunchConfig at the correct executable, including the
     // macOS `.app` bundle's nested binary path. Boots Chrome via CDP to prove the resolved binary actually runs.
     // First call downloads (~tens of seconds on cold CI); subsequent calls reuse the per-platform cache.
-    "chromeForTestingLaunchConfig(Chrome) downloads + launches the full chrome binary" in run {
+    "chromeForTestingLaunchConfig(Chrome) downloads + launches the full chrome binary" in {
         Scope.run {
             Browser.chromeForTestingLaunchConfig(Browser.ChromeForTestingBuild.Chrome).map { cfg =>
                 assert(
@@ -920,7 +920,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "run(wsUrl) connects to existing browser" in run {
+    "run(wsUrl) connects to existing browser" in {
         SharedChrome.init.map { url =>
             Scope.run {
                 Browser.run(url) {
@@ -936,7 +936,7 @@ class BrowserCoreTest extends BrowserTest:
     // `Target.getTargets` or `Target.getBrowserContexts`. Each cycle creates a fresh browser context + tab via Browser.run's internal
     // Scope.run, runs the body, and disposes when the body completes. If the counts climbed monotonically across cycles, a `Scope.ensure`
     // finalizer somewhere would be leaking; a real bug at the kyo-browser layer. Bounded growth (≤ `Bound` past baseline) is the contract.
-    "run(wsUrl) keeps target and browser-context counts bounded across 50 cycles" in run {
+    "run(wsUrl) keeps target and browser-context counts bounded across 50 cycles" in {
         val Iterations = 50
         val Bound      = 3
         SharedChrome.init.map { wsUrl =>
@@ -1011,7 +1011,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- withActionable / withRetry coverage ----
 
-    "click on a hidden element (display: none) fails with BrowserElementNotActionableException carrying Reason.Hidden" in run {
+    "click on a hidden element (display: none) fails with BrowserElementNotActionableException carrying Reason.Hidden" in {
         val p = page("<div id='h' style='display:none'>Submit</div>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1031,7 +1031,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "click on a missing selector fails with BrowserElementNotActionableException on the not-found path" in run {
+    "click on a missing selector fails with BrowserElementNotActionableException on the not-found path" in {
         val p = page("<div id='exists'>present</div>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1051,7 +1051,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "fill on a non-fillable element (a <div>) fails with Reason.NotFillable; click on the same div succeeds" in run {
+    "fill on a non-fillable element (a <div>) fails with Reason.NotFillable; click on the same div succeeds" in {
         val p = page("<div id='d' style='width:80px;height:30px'>not an input</div>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1071,13 +1071,13 @@ class BrowserCoreTest extends BrowserTest:
                     end match
                 }.andThen {
                     // The same div is clickable; withActionable's requireFillable only applies when the caller sets it
-                    Browser.click(Browser.Selector.id("d")).andThen(succeed)
+                    Browser.click(Browser.Selector.id("d")).unit
                 }
             }
         }
     }
 
-    "dragAndDrop with missing target surfaces the target's not-found failure, not the source's" in run {
+    "dragAndDrop with missing target surfaces the target's not-found failure, not the source's" in {
         val p = page("<div id='src' style='width:60px;height:30px'>source</div>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1105,7 +1105,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "click on an element that becomes visible mid-retry succeeds" in run {
+    "click on an element that becomes visible mid-retry succeeds" in {
         val p = page("""<div id='reveal' style='display:none;width:80px;height:30px'>target</div>
             <script>setTimeout(() => { document.getElementById('reveal').style.display='block'; }, 150);</script>""")
         withBrowser {
@@ -1113,22 +1113,22 @@ class BrowserCoreTest extends BrowserTest:
                 // Use a schedule that retries every 50ms for up to 2 seconds; the element becomes visible after ~150ms
                 Browser.withConfig(_.retrySchedule(Schedule.fixed(50.millis).maxDuration(2.seconds))) {
                     Browser.click(Browser.Selector.id("reveal"))
-                }.andThen(succeed)
+                }.unit
             }
         }
     }
 
     // ---- extraArgs (Chunk-backed field, Seq-typed builder parameter) ----
 
-    "extraArgs accepts a Seq parameter and stores extraArgs as a Chunk" in run {
+    "extraArgs accepts a Seq parameter and stores extraArgs as a Chunk" in {
         val updated = Browser.LaunchConfig.default.extraArgs(Seq("--no-sandbox", "--disable-gpu"))
         // Type pattern: backing field is a Chunk[String], not just any Seq.
         updated.extraArgs match
-            case _: Chunk[String] => succeed
+            case _: Chunk[String] => ()
             case null             => fail("Expected Chunk[String] but got null")
     }
 
-    "LaunchConfig.default.extraArgs is Chunk.empty" in run {
+    "LaunchConfig.default.extraArgs is Chunk.empty" in {
         Browser.LaunchConfig.default.extraArgs match
             case c: Chunk[String] =>
                 assert(c.isEmpty, s"Expected Chunk.empty but got $c")
@@ -1138,7 +1138,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- pdf (Span-backed return type) ----
 
-    "Browser.pdf returns a Span[Byte] starting with the %PDF- magic header" in run {
+    "Browser.pdf returns a Span[Byte] starting with the %PDF- magic header" in {
         withBrowser {
             Browser.pdf.map { bytes =>
                 // Type-level assertion: the return type is Span[Byte]. The ascription forces a compile error if the
@@ -1176,7 +1176,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     end withLocalhostPage
 
-    "Browser.press(input, Key.Enter) triggers form submit" in run {
+    "Browser.press(input, Key.Enter) triggers form submit" in {
         // Same-origin localhost is required: a form submit on a `data:` URL navigates cross-origin and
         // the page is replaced before we can observe the side effect. The form's onsubmit returns false
         // to suppress the actual navigation; we only care that the listener fired.
@@ -1194,7 +1194,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.press(textbox, Key.ArrowLeft) moves caret" in run {
+    "Browser.press(textbox, Key.ArrowLeft) moves caret" in {
         val html = """<input id="i" type="text" value="hello" />"""
         withLocalhostPage(html) {
             // Position the caret at the end of "hello" (index 5), then press ArrowLeft once.
@@ -1210,7 +1210,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.scrollTo(target) scrolls so the target is in viewport" in run {
+    "Browser.scrollTo(target) scrolls so the target is in viewport" in {
         // A spacer pushes the target far below the initial viewport, then scrollTo should bring it back into view.
         val html =
             """<div style="height:5000px"></div><div id="target" style="height:50px;background:#abc">target</div>"""
@@ -1237,16 +1237,16 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.assertValueEmpty / assertNoVisibleText succeed for their respective empty matches" in run {
+    "Browser.assertValueEmpty / assertNoVisibleText succeed for their respective empty matches" in {
         val html = """<input id="empty" type="text" value="" /><div id="emptydiv">   </div>"""
         withLocalhostPage(html) {
             Browser.assertValueEmpty(Browser.Selector.id("empty")).andThen {
-                Browser.assertNoVisibleText(Browser.Selector.id("emptydiv")).andThen(succeed)
+                Browser.assertNoVisibleText(Browser.Selector.id("emptydiv")).unit
             }
         }
     }
 
-    "Browser.assertNoVisibleText fails (Abort) when the selector matches a non-empty element" in run {
+    "Browser.assertNoVisibleText fails (Abort) when the selector matches a non-empty element" in {
         val html = """<div id="full">non-empty content</div>"""
         withLocalhostPage(html) {
             Browser.withConfig(_.retrySchedule(Schedule.fixed(20.millis).take(2))) {
@@ -1266,7 +1266,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.doubleClick(target) fires a single dblclick event" in run {
+    "Browser.doubleClick(target) fires a single dblclick event" in {
         // innerHTML insertion does not execute <script> tags, so we attach the listener via a
         // separate Browser.eval that runs after the page swap.
         val html = """<button id="b" style="width:120px;height:40px">click</button>"""
@@ -1283,7 +1283,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.keyDown(Key.Shift) fires a keydown event with shiftKey=true" in run {
+    "Browser.keyDown(Key.Shift) fires a keydown event with shiftKey=true" in {
         val html = """<input id="i" type="text" />"""
         withLocalhostPage(html) {
             Browser.eval(
@@ -1300,7 +1300,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.keyUp(Key.Shift) fires keyup with the matching code" in run {
+    "Browser.keyUp(Key.Shift) fires keyup with the matching code" in {
         val html = """<input id="i" type="text" />"""
         withLocalhostPage(html) {
             Browser.eval(
@@ -1344,14 +1344,14 @@ class BrowserCoreTest extends BrowserTest:
                 s"description for $reason = '$s' does not contain expected discriminator '$discriminator'"
             )
         }
-        succeed
+        ()
     }
 
     // ---- Error-path coverage ----
 
     // `Browser.Settle.Load` waits for the `load` event (which only fires after all images are loaded).
     // We serve a slow image from a real HTTP server and assert that the `load` event has fired by the time `goto` returns.
-    "Browser.goto with Settle.Load returns only after the page's load event fires" in run {
+    "Browser.goto with Settle.Load returns only after the page's load event fires" in {
         withBrowser {
             withHtmlServer(Map(
                 // Page has an image plus an inline `addEventListener('load', ...)` that flips a boolean once the load event fires.
@@ -1373,13 +1373,13 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "evalJson fails with BrowserDecodingException when the JS result does not match the target type" in run {
+    "evalJson fails with BrowserDecodingException when the JS result does not match the target type" in {
         withBrowser {
             // Eval succeeds (returns a JSON object) but decode of `{a:1, b:2}` to `EvalJsonShape(x: Int, y: Int)` must fail.
             Abort.run[BrowserDecodingException] {
                 Browser.evalJson[EvalJsonShape]("({ a: 1, b: 2 })")
             }.map {
-                case Result.Failure(_: BrowserDecodingException) => succeed
+                case Result.Failure(_: BrowserDecodingException) => ()
                 case other =>
                     fail(s"Expected Result.Failure(BrowserDecodingException) for shape mismatch but got $other")
             }
@@ -1387,7 +1387,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // mockFetchResponse with a non-200 status; observed response.status is propagated.
-    "mockFetchResponse with status=404 surfaces 404 to the page-level fetch" in run {
+    "mockFetchResponse with status=404 surfaces 404 to the page-level fetch" in {
         val p = page("<body><div id='r'></div></body>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1410,7 +1410,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // re-mocking the same URL replaces the prior mock; the second registration wins.
-    "mockFetchResponse for the same URL replaces (not appends) the prior mock" in run {
+    "mockFetchResponse for the same URL replaces (not appends) the prior mock" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1438,7 +1438,7 @@ class BrowserCoreTest extends BrowserTest:
     // when the body of `withDialogs` raises, the per-session handler is restored
     // (i.e. removed if it was not previously registered); observable via `client.dialogHandlers` not containing
     // the session-id key after the failing scope exits.
-    "withDialogs body-failure restores the prior dialog-handler state (no leftover stub)" in run {
+    "withDialogs body-failure restores the prior dialog-handler state (no leftover stub)" in {
         val p = page("<body></body>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1467,7 +1467,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // trigger does not open a popup → withPopup aborts.
-    "withPopup aborts when the trigger does not open a new tab" in run {
+    "withPopup aborts when the trigger does not open a new tab" in {
         val p = page("""<html><body>
             <button id='noop' onclick="document.body.dataset.clicked='1';">noop</button>
         </body></html>""")
@@ -1485,7 +1485,7 @@ class BrowserCoreTest extends BrowserTest:
                         }
                     }
                 }.map {
-                    case Result.Failure(_: BrowserProtocolErrorException) => succeed
+                    case Result.Failure(_: BrowserProtocolErrorException) => ()
                     case other =>
                         fail(s"Expected Result.Failure(BrowserProtocolErrorException) but got $other")
                 }
@@ -1495,7 +1495,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // popup opens, handler raises → withPopup surfaces the failure AND the popup tab is closed
     // (asserted via Target.getTargets, anti-flake rule #5).
-    "withPopup surfaces handler failure and closes the popup tab on scope exit" in run {
+    "withPopup surfaces handler failure and closes the popup tab on scope exit" in {
         val p = page("""<html><body>
             <button id='openBtn' onclick="window.open('about:blank', '_blank');">Open</button>
         </body></html>""")
@@ -1531,7 +1531,7 @@ class BrowserCoreTest extends BrowserTest:
                                     if popups.isEmpty then "ok"
                                     else Abort.fail[String](s"popup still present: ${popups.map(_.targetId)}")
                                 }
-                            }.map(_ => succeed)
+                            }.map(_ => ())
                         }
                     }
                 }
@@ -1541,7 +1541,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // trigger opens no popup; assert the SPECIFIC failure mode is BrowserProtocolErrorException
     // with operation == "withPopup" and the documented "no new tab detected" message (Browser.scala:1567).
-    "withPopup with a no-op trigger raises BrowserProtocolErrorException(\"withPopup\", \"no new tab detected\")" in run {
+    "withPopup with a no-op trigger raises BrowserProtocolErrorException(\"withPopup\", \"no new tab detected\")" in {
         val p = page("<body><button id='inert' onclick='void 0;'>inert</button></body>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -1571,7 +1571,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // setCookie with a non-default `path` round-trips through Browser.cookies.
-    "setCookie with a non-default path round-trips into Browser.cookies" in run {
+    "setCookie with a non-default path round-trips into Browser.cookies" in {
         withBrowserOnLocalhost {
             Browser.setCookie("custompath", "v1", "localhost", path = "/json").andThen {
                 Browser.cookies.map { cs =>
@@ -1591,7 +1591,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // deleteCookie with explicit domain removes the cookie scoped to that domain.
-    "deleteCookie with an explicit domain removes the cookie" in run {
+    "deleteCookie with an explicit domain removes the cookie" in {
         withBrowserOnLocalhost {
             Browser.setCookie("explicit", "v", "localhost").andThen {
                 Browser.cookies.map { cs =>
@@ -1612,7 +1612,7 @@ class BrowserCoreTest extends BrowserTest:
     }
 
     // Browser.run(config) with a non-existent executable fails fast with BrowserSetupFailedException.
-    "Browser.run(config) with a non-existent executable fails with BrowserSetupFailedException" in run {
+    "Browser.run(config) with a non-existent executable fails with BrowserSetupFailedException" in {
         Abort.run[BrowserSetupException] {
             Scope.run {
                 Browser.run(
@@ -1623,7 +1623,7 @@ class BrowserCoreTest extends BrowserTest:
                 }
             }
         }.map {
-            case Result.Failure(_: BrowserSetupFailedException) => succeed
+            case Result.Failure(_: BrowserSetupFailedException) => ()
             case other =>
                 fail(s"Expected Result.Failure(BrowserSetupFailedException) but got $other")
         }
@@ -1631,7 +1631,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // Browser.run(config) with a launch timeout; pointing at /bin/true (exits immediately,
     // never prints DevTools URL) makes parseWsUrl exhaust the timeout and fail with BrowserSetupFailedException.
-    "Browser.run(config) launch timeout fails with BrowserSetupFailedException when no DevTools URL is announced" in run {
+    "Browser.run(config) launch timeout fails with BrowserSetupFailedException when no DevTools URL is announced" in {
         // Choose an executable that exists and exits cleanly without printing the marker.
         // /bin/true is universally present on macOS/Linux CI runners.
         Abort.run[BrowserSetupException] {
@@ -1643,7 +1643,7 @@ class BrowserCoreTest extends BrowserTest:
                 }
             }
         }.map {
-            case Result.Failure(_: BrowserSetupFailedException) => succeed
+            case Result.Failure(_: BrowserSetupFailedException) => ()
             case other =>
                 fail(s"Expected Result.Failure(BrowserSetupFailedException) but got $other")
         }
@@ -1651,11 +1651,16 @@ class BrowserCoreTest extends BrowserTest:
 
     // Browser.run(wsUrl) with an invalid wsUrl; the underlying WebSocket connect must fail,
     // which surfaces as an Abort. We point at 127.0.0.1:0 (always-fails fast per anti-slow rule #5).
+<<<<<<< HEAD
     // On some systems port-0 connects succeed (the OS may redirect), so we accept both
     // BrowserConnectionException (connect refused at the transport layer) and BrowserSetupException
     // (connection accepted but the CDP probe handshake immediately failed).
     "Browser.run(wsUrl) with an invalid wsUrl fails fast with Abort" in run {
         // 127.0.0.1:0 fails the OS connect call immediately with ECONNREFUSED on most systems.
+=======
+    "Browser.run(wsUrl) with an invalid wsUrl fails fast with Abort" in {
+        // 127.0.0.1:0 fails the OS connect call immediately with ECONNREFUSED; no timeout needed.
+>>>>>>> origin/main
         // Wrap in Scope.run because Browser.run requires Scope.
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserSetupException] {
@@ -1664,7 +1669,11 @@ class BrowserCoreTest extends BrowserTest:
                 }
             }
         }.map {
+<<<<<<< HEAD
             case Result.Failure(_: BrowserConnectionException | _: BrowserSetupException) => succeed
+=======
+            case Result.Failure(_: BrowserConnectionException) => ()
+>>>>>>> origin/main
             case other =>
                 fail(s"Expected Abort.Failure(BrowserConnectionException or BrowserSetupException) but got $other")
         }
@@ -1674,7 +1683,7 @@ class BrowserCoreTest extends BrowserTest:
     // a longer idle window must cause `goto(NetworkIdle)` to wait longer when there is a brief network burst.
     // Behaviour assertion (paired with timing): with a 1500ms window, a `setTimeout(fetch, 100)` must complete
     // (and its DOM side-effect must be observable) before goto returns.
-    "withNetworkIdleWindow propagates the configured window into the NetworkIdle watcher" in run {
+    "withNetworkIdleWindow propagates the configured window into the NetworkIdle watcher" in {
         withBrowser {
             withHtmlServer(Map(
                 "/main" -> """<html><body>
@@ -1704,7 +1713,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- count ----
 
-    "count returns 0 immediately for a missing selector without waiting for the retry schedule" in run {
+    "count returns 0 immediately for a missing selector without waiting for the retry schedule" in {
         withBrowser {
             onPage("<div>no items here</div>") {
                 val start = java.lang.System.currentTimeMillis()
@@ -1719,7 +1728,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "count returns the live element count for a present selector" in run {
+    "count returns the live element count for a present selector" in {
         withBrowser {
             onPage("<ul><li class='item'>A</li><li class='item'>B</li><li class='item'>C</li></ul>") {
                 Browser.count(Browser.Selector.css("li.item")).map { n =>
@@ -1729,7 +1738,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "count after navigation reflects the new page element count without staleness" in run {
+    "count after navigation reflects the new page element count without staleness" in {
         val pageA = page("<ul><li class='row'>one</li><li class='row'>two</li></ul>")
         val pageB = page("<ul><li class='row'>x</li></ul>")
         withBrowser {
@@ -1747,7 +1756,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "assertExists followed by count is the wait-and-count idiom and returns the matched count" in run {
+    "assertExists followed by count is the wait-and-count idiom and returns the matched count" in {
         withBrowser {
             onPage("<ul><li class='entry'>p</li><li class='entry'>q</li></ul>") {
                 Browser.assertExists(Browser.Selector.css("li.entry")).andThen {
@@ -1761,7 +1770,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- global press with modifier flags ----
 
-    "global press(Key.Enter, shift, …) emits shiftKey on keydown AND keyup at the focused body" in run {
+    "global press(Key.Enter, shift, …) emits shiftKey on keydown AND keyup at the focused body" in {
         // The global-press overload does not accept selector; modifier bits flow from the call args directly into the
         // CDP DispatchKeyEventParams. The test focuses document.body, installs body-level keydown/keyup listeners that
         // record `${type}:${shiftKey}` into `window.__events`, then asserts both events carry shiftKey=true.
@@ -1794,7 +1803,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- back / forward / reload ----
 
-    "back navigates to the previous page" in run {
+    "back navigates to the previous page" in {
         val pageA = page("<h1 id='title'>Page A</h1>")
         val pageB = page("<h1 id='title'>Page B</h1>")
         withBrowser {
@@ -1810,7 +1819,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "forward navigates to the next page" in run {
+    "forward navigates to the next page" in {
         val pageA = page("<h1 id='title'>Page A</h1>")
         val pageB = page("<h1 id='title'>Page B</h1>")
         withBrowser {
@@ -1828,7 +1837,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "reload reloads the current page" in run {
+    "reload reloads the current page" in {
         val p = page("""<html><body>
             <div id='counter'>0</div>
             <script>
@@ -1854,7 +1863,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- run with composed setup ----
 
-    "Browser.run composes a setup hook with a body that consumes its result via setup.map(body)" in run {
+    "Browser.run composes a setup hook with a body that consumes its result via setup.map(body)" in {
         Scope.run {
             kyo.internal.SharedChrome.chromeConfig.map { cfg =>
                 val setup =
@@ -1882,7 +1891,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- Browser.runShared ----
 
-    "Browser.runShared reuses the same Chrome process across calls" in run {
+    "Browser.runShared reuses the same Chrome process across calls" in {
         // Two sequential `runShared` calls should both see a working browser context (`typeof window === 'object'`),
         // proving that the second call attached a tab to the SAME long-lived Chrome rather than launching a new one.
         Browser.runShared() {
@@ -1897,7 +1906,7 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "Browser.runShared does not re-init Chrome on subsequent calls" in run {
+    "Browser.runShared does not re-init Chrome on subsequent calls" in {
         // Strong, deterministic re-use witness: `SharedChrome.init` returns the cached WebSocket URL after the first
         // launch. If `runShared` accidentally launched a new Chrome each call, the URL (which embeds the per-launch
         // browser session id assigned by Chrome) would differ. Equality across two calls proves the singleton is
@@ -1912,22 +1921,27 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- BrowserTest helpers ----
 
-    "evalAssert smoke" in run {
-        // Happy path: matching expected value succeeds. Failure path: the ScalaTest `assert` macro throws
-        // TestFailedException, which `Abort.run[Throwable]` surfaces as `Result.Failure(TestFailedException)`.
+    "evalAssert smoke" in {
+        // Happy path: matching expected value succeeds. Failure path: kyo-test's `assert` throws AssertionFailed,
+        // which `Abort.run[Throwable]` surfaces as `Result.Failure(AssertionFailed)`.
         withBrowser {
             onPage("<html></html>") {
                 evalAssert("1+1", "2").andThen {
                     Abort.run[Throwable](evalAssert("1+1", "3")).map {
-                        case Result.Failure(_: org.scalatest.exceptions.TestFailedException) => succeed
-                        case other => fail(s"expected Result.Failure(TestFailedException) on mismatch, got $other")
+                        case Result.Failure(af: kyo.test.AssertionFailed) =>
+                            // evalAssert deliberately fails its internal assert here to exercise the mismatch path.
+                            // That assert records itself into the leaf's AssertScope before throwing (so leaked-fiber
+                            // failures are still caught); since this one is expected and handled, un-record it (the
+                            // same thing intercept does) so the detached-fiber leak check does not flip the leaf.
+                            summon[kyo.test.AssertScope].remove(af)
+                        case other => fail(s"expected Result.Failure(AssertionFailed) on mismatch, got $other")
                     }
                 }
             }
         }
     }
 
-    "withLocalhostServer smoke" in run {
+    "withLocalhostServer smoke" in {
         val bytes = Span.fromUnsafe("<html><body><p id=\"x\">fixed-body</p></body></html>".getBytes("UTF-8"))
         val handler = HttpRoute.getRaw("/page").response(_.bodyBinary).handler { _ =>
             HttpResponse.ok(bytes).addHeader("Content-Type", "text/html; charset=utf-8")
@@ -1945,7 +1959,7 @@ class BrowserCoreTest extends BrowserTest:
 
     // ---- scrollTo(selector) ----
 
-    "scrollTo(selector) scrolls a deeply-positioned element into viewport" in run {
+    "scrollTo(selector) scrolls a deeply-positioned element into viewport" in {
         withBrowser {
             onPage(
                 """<div style='height:5000px'></div><div id='far' style='height:40px;background:red'>far</div>"""
@@ -1968,14 +1982,14 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    "scrollTo(selector) raises BrowserElementNotFoundException for missing selector" in run {
+    "scrollTo(selector) raises BrowserElementNotFoundException for missing selector" in {
         withBrowser {
             onPage("<div>no matching element here</div>") {
                 tight {
                     Abort.run[BrowserElementException] {
                         Browser.scrollTo(Browser.Selector.id("no-such-element"))
                     }.map {
-                        case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                        case Result.Failure(_: BrowserElementNotFoundException) => ()
                         case other =>
                             fail(s"Expected BrowserElementNotFoundException for missing selector but got $other")
                     }

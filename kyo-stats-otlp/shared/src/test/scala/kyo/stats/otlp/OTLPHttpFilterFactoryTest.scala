@@ -2,7 +2,7 @@ package kyo.stats.otlp
 
 import kyo.*
 
-class OTLPHttpFilterFactoryTest extends Test:
+class OTLPHttpFilterFactoryTest extends kyo.test.Test[Any]:
 
     given Frame = Frame.internal
     import AllowUnsafe.embrace.danger

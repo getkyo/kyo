@@ -9,9 +9,9 @@ import kyo.*
   *
   * All scenarios are pure (no browser, no I/O). Synthetic wire strings drive `parseOutcome` directly.
   */
-class StabilitySamplerTest extends kyo.Test:
+class StabilitySamplerTest extends kyo.BaseBrowserTest:
 
-    "parseOutcome decodes a well-formed stable envelope to Outcome.Stable" in run {
+    "parseOutcome decodes a well-formed stable envelope to Outcome.Stable" in {
         val wire = """{"tag":"stable","value":"42"}"""
         Abort.run[BrowserReadException](StabilitySampler.parseOutcome(wire)).map {
             case Result.Success(StabilitySampler.Outcome.Stable(v)) =>
@@ -20,7 +20,7 @@ class StabilitySamplerTest extends kyo.Test:
         }
     }
 
-    "parseOutcome decodes a well-formed unstable envelope to Outcome.Unstable, preserving the divergent value" in run {
+    "parseOutcome decodes a well-formed unstable envelope to Outcome.Unstable, preserving the divergent value" in {
         val wire = """{"tag":"unstable","value":"newval"}"""
         Abort.run[BrowserReadException](StabilitySampler.parseOutcome(wire)).map {
             case Result.Success(StabilitySampler.Outcome.Unstable(v)) =>
@@ -29,7 +29,7 @@ class StabilitySamplerTest extends kyo.Test:
         }
     }
 
-    "parseOutcome surfaces unknown tag as BrowserProtocolErrorException (typed protocol error, never silent stable)" in run {
+    "parseOutcome surfaces unknown tag as BrowserProtocolErrorException (typed protocol error, never silent stable)" in {
         // A tag the in-page IIFE does not emit must not be silently mis-read as stable; it indicates JS-template drift.
         val wire = """{"tag":"weird","value":"x"}"""
         Abort.run[BrowserReadException](StabilitySampler.parseOutcome(wire)).map {
@@ -50,7 +50,7 @@ class StabilitySamplerTest extends kyo.Test:
         }
     }
 
-    "parseOutcome surfaces malformed JSON as BrowserProtocolErrorException (no panic)" in run {
+    "parseOutcome surfaces malformed JSON as BrowserProtocolErrorException (no panic)" in {
         val wire = "this is not json"
         Abort.run[BrowserReadException](StabilitySampler.parseOutcome(wire)).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
@@ -62,11 +62,11 @@ class StabilitySamplerTest extends kyo.Test:
         }
     }
 
-    "parseOutcome surfaces wire missing required fields as BrowserProtocolErrorException" in run {
+    "parseOutcome surfaces wire missing required fields as BrowserProtocolErrorException" in {
         // Schema decoders require both `tag` and `value`; absence of `value` is a JS-template defect, not a sample.
         val wire = """{"tag":"stable"}"""
         Abort.run[BrowserReadException](StabilitySampler.parseOutcome(wire)).map {
-            case Result.Failure(_: BrowserProtocolErrorException) => succeed
+            case Result.Failure(ex: BrowserProtocolErrorException) => assert(ex.method == "StabilitySampler.sampleWindow")
             case other => fail(s"expected Failure(BrowserProtocolErrorException) for missing field but got $other")
         }
     }

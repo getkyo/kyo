@@ -2,7 +2,7 @@ package kyo.internal
 
 import kyo.*
 
-class YamlEventsTest extends Test:
+class YamlEventsTest extends kyo.test.Test[Any]:
 
     import YamlEventsTest.*
 

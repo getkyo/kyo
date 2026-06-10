@@ -29,7 +29,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         import Accessibility.AxValue
         import Accessibility.AxValue.asString
 
-        "string lifts the JSON string verbatim into the `string` variant" in run {
+        "string lifts the JSON string verbatim into the `string` variant" in {
             given Frame = Frame.internal
             val json    = """{"type":"string","value":"hello"}"""
             Json.decode[AxValue](json) match
@@ -40,7 +40,7 @@ class AccessibilityTest extends kyo.BrowserTest:
             end match
         }
 
-        "computedString / token / role / internalRole / tokenList lift string-typed values into their own variant" in run {
+        "computedString / token / role / internalRole / tokenList lift string-typed values into their own variant" in {
             given Frame = Frame.internal
             val cases: Seq[(String, AxValue)] = Seq(
                 "computedString" -> AxValue.`computedString`("X"),
@@ -58,10 +58,10 @@ class AccessibilityTest extends kyo.BrowserTest:
                     case other => fail(s"kind $kind failed: $other")
                 end match
             }
-            succeed
+            ()
         }
 
-        "boolean true / false decode into AxValue.boolean with the typed value" in run {
+        "boolean true / false decode into AxValue.boolean with the typed value" in {
             given Frame = Frame.internal
             Json.decode[AxValue]("""{"type":"boolean","value":true}""") match
                 case Result.Success(v: AxValue.`boolean`) =>
@@ -77,7 +77,7 @@ class AccessibilityTest extends kyo.BrowserTest:
             end match
         }
 
-        "number preserves int-vs-decimal source distinction via asString (integer stays 'N', decimal stays 'N.M')" in run {
+        "number preserves int-vs-decimal source distinction via asString (integer stays 'N', decimal stays 'N.M')" in {
             given Frame = Frame.internal
             Json.decode[AxValue]("""{"type":"number","value":3.5}""") match
                 case Result.Success(v: AxValue.`number`) =>
@@ -93,7 +93,7 @@ class AccessibilityTest extends kyo.BrowserTest:
             end match
         }
 
-        "integer lifts the integer literal as the typed Long value" in run {
+        "integer lifts the integer literal as the typed Long value" in {
             given Frame = Frame.internal
             val json    = """{"type":"integer","value":42}"""
             Json.decode[AxValue](json) match
@@ -104,7 +104,7 @@ class AccessibilityTest extends kyo.BrowserTest:
             end match
         }
 
-        "idref / idrefList (object / array payloads) decode into their own zero-field variant; asString is Absent" in run {
+        "idref / idrefList (object / array payloads) decode into their own zero-field variant; asString is Absent" in {
             given Frame = Frame.internal
             // CDP's idref / idrefList variants carry object / array payloads. The discriminated variants carry no
             // typed fields; permissive decoding skips the wire `value` payload, and `asString` returns Absent.
@@ -121,16 +121,16 @@ class AccessibilityTest extends kyo.BrowserTest:
             end match
         }
 
-        "unknown discriminator value surfaces as a typed UnknownVariantException at decode time" in run {
+        "unknown discriminator value surfaces as a typed UnknownVariantException at decode time" in {
             given Frame = Frame.internal
             val json    = """{"type":"unknownVariantForTestOnly","value":"mixed"}"""
             Json.decode[AxValue](json) match
-                case Result.Failure(_: kyo.UnknownVariantException) => succeed
+                case Result.Failure(ex: kyo.UnknownVariantException) => assert(ex.variantName == "unknownVariantForTestOnly")
                 case other => fail(s"expected UnknownVariantException for unknown discriminator but got: $other")
             end match
         }
 
-        "encode/decode round-trips a string-typed value" in run {
+        "encode/decode round-trips a string-typed value" in {
             given Frame           = Frame.internal
             val original: AxValue = AxValue.`string`("OK")
             val encoded           = Json.encode(original)
@@ -145,28 +145,28 @@ class AccessibilityTest extends kyo.BrowserTest:
     // parseAxTree: end-to-end wire decoding
     // -----------------------------------------------------------------------
 
-    "parseAxTree returns Abort failure on malformed JSON" in run {
+    "parseAxTree returns Abort failure on malformed JSON" in {
         val result = Abort.run(Accessibility.parseAxTree("not valid json {{ "))
         result.map { r =>
             assert(r.isFailure, s"expected Failure but got $r")
         }
     }
 
-    "parseAxTree returns Chunk.empty when the result has no nodes field" in run {
+    "parseAxTree returns Chunk.empty when the result has no nodes field" in {
         val result = Abort.run(Accessibility.parseAxTree(wrap("""{}""")))
         result.map { r =>
             assert(r == Result.Success(Chunk.empty[Accessibility.AxNode]), s"expected Chunk.empty but got $r")
         }
     }
 
-    "parseAxTree returns Chunk.empty when nodes is empty" in run {
+    "parseAxTree returns Chunk.empty when nodes is empty" in {
         val result = Abort.run(Accessibility.parseAxTree(wrap("""{"nodes":[]}""")))
         result.map { r =>
             assert(r == Result.Success(Chunk.empty[Accessibility.AxNode]), s"got $r")
         }
     }
 
-    "parseAxTree projects role, name, and string properties into AxNode" in run {
+    "parseAxTree projects role, name, and string properties into AxNode" in {
         val tree = wrap(
             """{"nodes":[
               |  {"nodeId":"1","ignored":false,
@@ -192,7 +192,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
     }
 
-    "parseAxTree surfaces backendDOMNodeId as a string entry in properties when the wire field is present" in run {
+    "parseAxTree surfaces backendDOMNodeId as a string entry in properties when the wire field is present" in {
         val tree = wrap(
             """{"nodes":[
               |  {"nodeId":"1","backendDOMNodeId":42,"ignored":false,
@@ -210,7 +210,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
     }
 
-    "parseAxTree omits backendDOMNodeId entry when the wire field is absent (virtual AX-only node)" in run {
+    "parseAxTree omits backendDOMNodeId entry when the wire field is absent (virtual AX-only node)" in {
         val tree = wrap(
             """{"nodes":[
               |  {"nodeId":"1","ignored":false,
@@ -228,7 +228,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
     }
 
-    "parseAxTree drops properties whose value is non-stringifiable (idref payload)" in run {
+    "parseAxTree drops properties whose value is non-stringifiable (idref payload)" in {
         val tree = wrap(
             """{"nodes":[
               |  {"nodeId":"1","ignored":false,
@@ -250,7 +250,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
     }
 
-    "parseAxTree surfaces a CDP error from the envelope's error field as BrowserProtocolErrorException" in run {
+    "parseAxTree surfaces a CDP error from the envelope's error field as BrowserProtocolErrorException" in {
         val errWire = """{"id":1,"error":{"code":-32000,"message":"Cannot find context"}}"""
         Abort.run(Accessibility.parseAxTree(errWire)).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
@@ -263,7 +263,7 @@ class AccessibilityTest extends kyo.BrowserTest:
     // Integration scenarios: real Chrome
     // -----------------------------------------------------------------------
 
-    "getFullAXTree returns a non-empty tree for a page with a button" in run {
+    "getFullAXTree returns a non-empty tree for a page with a button" in {
         withBrowser {
             val html = page("<button id='ok'>OK</button>")
             Browser.goto(html).andThen {
@@ -277,7 +277,7 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
     }
 
-    "AX tree entries carry role, name, and a properties map with state keys" in run {
+    "AX tree entries carry role, name, and a properties map with state keys" in {
         withBrowser {
             val html = page("<button id='ok' disabled aria-label='OK'>OK</button>")
             Browser.goto(html).andThen {
@@ -299,14 +299,15 @@ class AccessibilityTest extends kyo.BrowserTest:
         }
     }
 
-    "getFullAXTree propagates BrowserConnectionException via typed Abort on a closed client" in run {
+    "getFullAXTree propagates BrowserConnectionException via typed Abort on a closed client" in {
         SharedChrome.init.map { wsUrl =>
             for
                 client <- CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default)
                 _      <- client.close(30.seconds)
                 result <- Abort.run[BrowserConnectionException](Accessibility.getFullAXTree(client))
             yield result match
-                case Result.Failure(_: BrowserConnectionException) => succeed
+                case Result.Failure(_: BrowserConnectionException) =>
+                    succeed("Accessibility.getFullAXTree on a closed client surfaces as a typed BrowserConnectionException")
                 case other => fail(s"expected Accessibility wrapper to fail with BrowserConnectionException but got $other")
             end for
         }

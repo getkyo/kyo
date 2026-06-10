@@ -16,10 +16,9 @@ class BrowserCookieTest extends BrowserTest:
     /** Asserts the shared-Chrome cookie jar is empty (call AFTER `cleanupCookieJar`). Proves the prelude wipe
       * landed; also surfaces shared-Chrome contamination if a future API change breaks `cleanupCookieJar`.
       */
-    private def assertEmptyCookieJar(using Frame): Unit < (Browser & Async & Abort[BrowserReadException]) =
+    private def assertEmptyCookieJar(using Frame, kyo.test.AssertScope): Unit < (Browser & Async & Abort[BrowserReadException]) =
         Browser.cookies.map { cs =>
             assert(cs.isEmpty, s"global cookie jar not empty at test start (after wipe): ${cs.map(_.name)}")
-            ()
         }
 
     /** Wipes every cookie currently in the jar. Iterates `Browser.cookies` and calls `deleteCookie(name, domain)`
@@ -49,13 +48,11 @@ class BrowserCookieTest extends BrowserTest:
         val json = """{"name":"n","value":"v","expires":1234567890}"""
         val wire = decode[CookieWire](json)
         assert(wire.expires == Present(1234567890.0))
-        succeed
     }
 
     "expires absent decodes as Absent" in {
         val wire = decode[CookieWire](base)
         assert(wire.expires == Absent)
-        succeed
     }
 
     // CDP encodes session cookies as `expires:-1`. The CookieWire decoder accepts the literal -1 value
@@ -71,7 +68,7 @@ class BrowserCookieTest extends BrowserTest:
             cookie.expires == Absent,
             s"expected typed Cookie.expires == Absent (negative wire is the session-cookie sentinel) but got ${cookie.expires}"
         )
-        succeed
+        ()
     }
 
     // All-fields end-to-end round-trip: decode a fully-populated CookieWire JSON, project to the typed Cookie
@@ -112,7 +109,7 @@ class BrowserCookieTest extends BrowserTest:
             cookie.sameSite == Present(Browser.Cookie.SameSite.Lax),
             s"cookie.sameSite=${cookie.sameSite}"
         )
-        succeed
+        ()
     }
 
     // ---- size ----
@@ -121,13 +118,11 @@ class BrowserCookieTest extends BrowserTest:
         val json = """{"name":"n","value":"v","size":42}"""
         val wire = decode[CookieWire](json)
         assert(wire.size == Present(42))
-        succeed
     }
 
     "size absent decodes as Absent" in {
         val wire = decode[CookieWire](base)
         assert(wire.size == Absent)
-        succeed
     }
 
     // ---- httpOnly ----
@@ -136,20 +131,17 @@ class BrowserCookieTest extends BrowserTest:
         val json = """{"name":"n","value":"v","httpOnly":true}"""
         val wire = decode[CookieWire](json)
         assert(wire.httpOnly == Present(true))
-        succeed
     }
 
     "httpOnly false decodes as Present(false)" in {
         val json = """{"name":"n","value":"v","httpOnly":false}"""
         val wire = decode[CookieWire](json)
         assert(wire.httpOnly == Present(false))
-        succeed
     }
 
     "httpOnly absent decodes as Absent" in {
         val wire = decode[CookieWire](base)
         assert(wire.httpOnly == Absent)
-        succeed
     }
 
     // ---- secure ----
@@ -158,20 +150,17 @@ class BrowserCookieTest extends BrowserTest:
         val json = """{"name":"n","value":"v","secure":true}"""
         val wire = decode[CookieWire](json)
         assert(wire.secure == Present(true))
-        succeed
     }
 
     "secure false decodes as Present(false)" in {
         val json = """{"name":"n","value":"v","secure":false}"""
         val wire = decode[CookieWire](json)
         assert(wire.secure == Present(false))
-        succeed
     }
 
     "secure absent decodes as Absent" in {
         val wire = decode[CookieWire](base)
         assert(wire.secure == Absent)
-        succeed
     }
 
     // ---- sameSite ----
@@ -180,50 +169,42 @@ class BrowserCookieTest extends BrowserTest:
         val json = """{"name":"n","value":"v","sameSite":"Strict"}"""
         val wire = decode[CookieWire](json)
         assert(wire.sameSite == Present("Strict"))
-        succeed
     }
 
     "sameSite Lax decodes as Present(\"Lax\")" in {
         val json = """{"name":"n","value":"v","sameSite":"Lax"}"""
         val wire = decode[CookieWire](json)
         assert(wire.sameSite == Present("Lax"))
-        succeed
     }
 
     "sameSite None decodes as Present(\"None\")" in {
         val json = """{"name":"n","value":"v","sameSite":"None"}"""
         val wire = decode[CookieWire](json)
         assert(wire.sameSite == Present("None"))
-        succeed
     }
 
     "sameSite absent decodes as Absent" in {
         val wire = decode[CookieWire](base)
         assert(wire.sameSite == Absent)
-        succeed
     }
 
     // ---- Cookie.SameSite enum ----
 
     "SameSite.parse(\"Strict\") returns Present(Strict)" in {
         assert(Browser.Cookie.SameSite.parse("Strict") == Present(Browser.Cookie.SameSite.Strict))
-        succeed
     }
 
     "SameSite.parse(\"Lax\") returns Present(Lax)" in {
         assert(Browser.Cookie.SameSite.parse("Lax") == Present(Browser.Cookie.SameSite.Lax))
-        succeed
     }
 
     "SameSite.parse(\"None\") returns Present(None)" in {
         assert(Browser.Cookie.SameSite.parse("None") == Present(Browser.Cookie.SameSite.None))
-        succeed
     }
 
     "SameSite.parse of unknown string returns Absent" in {
         assert(Browser.Cookie.SameSite.parse("strict") == Absent)
         assert(Browser.Cookie.SameSite.parse("") == Absent)
-        succeed
     }
 
     "SameSite.wire round-trips through parse for all values" in {
@@ -231,21 +212,19 @@ class BrowserCookieTest extends BrowserTest:
         Seq(SameSite.Strict, SameSite.Lax, SameSite.None).foreach { s =>
             assert(SameSite.parse(s.wire) == Present(s), s"wire round-trip failed for $s")
         }
-        succeed
+        ()
     }
 
     "CookieWire.toCookie maps wire sameSite string to typed SameSite" in {
         val wire   = decode[CookieWire]("""{"name":"n","value":"v","sameSite":"Lax"}""")
         val cookie = CookieWire.toCookie(wire)
         assert(cookie.sameSite == Present(Browser.Cookie.SameSite.Lax))
-        succeed
     }
 
     "CookieWire.fromCookie maps typed SameSite to wire string" in {
         val cookie = Browser.Cookie("n", "v", sameSite = Present(Browser.Cookie.SameSite.Strict))
         val wire   = CookieWire.fromCookie(cookie)
         assert(wire.sameSite == Present("Strict"))
-        succeed
     }
 
     // ---- Cookie type-level invariants ----
@@ -256,12 +235,11 @@ class BrowserCookieTest extends BrowserTest:
         // Compile-time check: derived CanEqual is in scope, so == is allowed under NonImplicitAssertions.
         discard(summon[CanEqual[Browser.Cookie, Browser.Cookie]])
         assert(c1 == c2, s"expected structural equality but got c1=$c1 c2=$c2")
-        succeed
     }
 
     // ---- Live-browser round-trips (Maybe / Instant) ----
 
-    "cookies returns Maybe.Absent for session cookies" in run {
+    "cookies returns Maybe.Absent for session cookies" in {
         // Session cookies: set without an `expires` field. Chrome reports them with `expires` absent (or `-1` in the wire shape;
         // CDP normalises absent / negative-expiry cookies to "session"; our Maybe-Instant translation surfaces that as Absent).
         withBrowserOnLocalhost {
@@ -279,7 +257,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "cookies round-trips an explicit expires through Instant" in run {
+    "cookies round-trips an explicit expires through Instant" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Clock.now.map { now =>
@@ -315,7 +293,7 @@ class BrowserCookieTest extends BrowserTest:
 
     // ---- cookies ----
 
-    "cookies returns cookies from a real page" in run {
+    "cookies returns cookies from a real page" in {
         // Cookies require a real HTTP URL; use Chrome's own DevTools endpoint
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
@@ -331,7 +309,7 @@ class BrowserCookieTest extends BrowserTest:
 
     // ---- setCookie / deleteCookie ----
 
-    "setCookie and deleteCookie round-trip" in run {
+    "setCookie and deleteCookie round-trip" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("mycookie", "myvalue", "localhost").andThen {
@@ -351,7 +329,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "setCookie(Cookie) round-trips every populated field through cookies" in run {
+    "setCookie(Cookie) round-trips every populated field through cookies" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 val full = Browser.Cookie(
@@ -384,7 +362,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "setCookie shorthand and full-cookie overload land identical cookies" in run {
+    "setCookie shorthand and full-cookie overload land identical cookies" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 val viaCookie = Browser.Cookie(
@@ -415,7 +393,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "deleteCookie(name) removes the cookie from the current page's jar" in run {
+    "deleteCookie(name) removes the cookie from the current page's jar" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("token", "tv", "localhost").andThen {
@@ -433,7 +411,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "deleteCookie(name, domain) removes the cookie from the explicit domain's jar" in run {
+    "deleteCookie(name, domain) removes the cookie from the explicit domain's jar" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("session", "v", "localhost").andThen {
@@ -454,7 +432,7 @@ class BrowserCookieTest extends BrowserTest:
     // `restoreCookies` (called transitively via `withFork`) iterates with `Kyo.foreachDiscard`. Verify that the multi-input
     // path (every cookie applied) lands all cookies in the fork; uses Chrome's localhost DevTools page (cookies are forbidden on
     // `data:` URLs). Single- and multi-cookie cases exercise the per-iteration `Network.setCookie` send.
-    "withFork preserves multiple cookies (multi-input restoreCookies)" in run {
+    "withFork preserves multiple cookies (multi-input restoreCookies)" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("p1", "v1", "localhost").andThen {
@@ -494,7 +472,7 @@ class BrowserCookieTest extends BrowserTest:
     // Variant A: text-only button. NO id, NO class hint, NO aria-label, NO data-testid. The visible label
     // is "Accept all cookies", but the heuristic does not have a text-content selector. Expected behaviour:
     // the heuristic returns Absent (it does not falsely fire on something it cannot detect deterministically).
-    "tryAcceptCookies returns Absent when banner button has only text content (no id/class/aria-label/data-testid hint)" in run {
+    "tryAcceptCookies returns Absent when banner button has only text content (no id/class/aria-label/data-testid hint)" in {
         withBrowser {
             onPage(
                 """<div style="display:block">
@@ -514,7 +492,7 @@ class BrowserCookieTest extends BrowserTest:
 
     // Variant B: lowercase-only id "cookies-accept". Selector 1 requires id matching BOTH 'accept' (case-sensitive)
     // AND 'cookie' (case-insensitive); "cookies-accept" satisfies both, so the heuristic fires on selector 1.
-    "tryAcceptCookies fires on lowercase-only id 'cookies-accept' via selector [id*='accept'][id*='cookie' i]" in run {
+    "tryAcceptCookies fires on lowercase-only id 'cookies-accept' via selector [id*='accept'][id*='cookie' i]" in {
         withBrowser {
             onPage(
                 """<div id="banner" style="display:block">
@@ -545,7 +523,7 @@ class BrowserCookieTest extends BrowserTest:
 
     // ---- tryAcceptCookies ----
 
-    "tryAcceptCookies waits for banner removal" in run {
+    "tryAcceptCookies waits for banner removal" in {
         // button[id*='accept' i] matches "btn-accept": the 3rd selector in the heuristic list
         // The banner wrapper (#cookie-banner) is removed after 250ms; since the button is inside it, the selector
         // query returns null once the parent is gone, proving the poll loop waited.
@@ -578,7 +556,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "tryAcceptCookies times out when banner persists" in run {
+    "tryAcceptCookies times out when banner persists" in {
         // Same button selector matches; click handler does NOT remove the banner, so the poll loop times out.
         withBrowser {
             onPage(
@@ -605,7 +583,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "tryAcceptCookies no-ops without a banner" in run {
+    "tryAcceptCookies no-ops without a banner" in {
         withBrowser {
             onPage("<div><p>No cookie banner here</p></div>") {
                 for
@@ -627,7 +605,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "tryAcceptCookies returns Absent when no banner is present" in run {
+    "tryAcceptCookies returns Absent when no banner is present" in {
         withBrowser {
             onPage("<html><body><p>No cookie banner here.</p></body></html>") {
                 Browser.tryAcceptCookies.map { result =>
@@ -637,7 +615,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "tryAcceptCookies returns Present(selector) when a banner is matched and dismissed" in run {
+    "tryAcceptCookies returns Present(selector) when a banner is matched and dismissed" in {
         // The button id "accept-cookies" contains both "accept" and "cookie" → matches the FIRST heuristic
         // selector "[id*='accept'][id*='cookie' i]". The test asserts the matched selector identity, proving
         // the Present payload carries the actual selector that fired (not just any non-empty string).
@@ -668,7 +646,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "tryAcceptCookies aborts with BrowserAssertionException when a matched banner does not disappear" in run {
+    "tryAcceptCookies aborts with BrowserAssertionException when a matched banner does not disappear" in {
         // The click handler does NOT remove the banner, but a CSS rule (or simply the absence of any hide logic)
         // keeps it visible. Selector matches, click happens, banner persists → poll loop times out → typed Abort.
         withBrowser {
@@ -687,7 +665,7 @@ class BrowserCookieTest extends BrowserTest:
                         Browser.tryAcceptCookies
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"Expected Result.Failure(_: BrowserAssertionTimedOutException) but got $other")
                 }
             }
@@ -696,7 +674,7 @@ class BrowserCookieTest extends BrowserTest:
 
     // ---- cookies(forUrl) ----
 
-    "cookies(forUrl) filters by Domain attribute" in run {
+    "cookies(forUrl) filters by Domain attribute" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("a", "1", "localhost", "/").andThen {
@@ -714,7 +692,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "cookies(forUrl) is a strict subset of cookies" in run {
+    "cookies(forUrl) is a strict subset of cookies" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("alpha", "1", "localhost", "/").andThen {
@@ -739,7 +717,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "cookies(forUrl) with unrelated origin returns empty" in run {
+    "cookies(forUrl) with unrelated origin returns empty" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("only", "v", "localhost", "/").andThen {
@@ -751,7 +729,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "cookies(forUrl) filters by Path attribute" in run {
+    "cookies(forUrl) filters by Path attribute" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("apionly", "v", "localhost", "/api").andThen {
@@ -766,7 +744,7 @@ class BrowserCookieTest extends BrowserTest:
         }
     }
 
-    "zero-arg cookies still returns the full jar after overload added" in run {
+    "zero-arg cookies still returns the full jar after overload added" in {
         withBrowserOnLocalhost {
             cleanupCookieJar.andThen(assertEmptyCookieJar).andThen {
                 Browser.setCookie("a", "1", "localhost", "/").andThen {

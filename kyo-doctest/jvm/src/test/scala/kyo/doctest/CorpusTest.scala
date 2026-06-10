@@ -9,7 +9,7 @@ import kyo.doctest.internal.MarkdownParser
   * Each test loads one fixture from the resources/corpus/ directory, runs Doctest.check against it, and asserts the expected Report shape.
   * The final test self-validates README.md.
   */
-class CorpusTest extends Test:
+class CorpusTest extends kyo.test.Test[Any]:
 
     // JVM classpath so the compiler can resolve types.
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
@@ -55,8 +55,8 @@ class CorpusTest extends Test:
 
     // Helper: run Doctest.check on a named corpus fixture; invoke assertReport with the resulting Report.
     private def runAndCheck(name: String, scalaOpts: Chunk[String] = Chunk.empty)(
-        assertReport: Doctest.Report => Assertion
-    )(using Frame): Assertion < (Sync & Async & Scope) =
+        assertReport: Doctest.Report => Unit
+    )(using Frame, kyo.test.AssertScope): Unit < (Sync & Async & Scope) =
         val path = fixtureFile(name)
         Abort.run(Scope.run(runCheck(path, scalaOpts))).map {
             case Result.Success(report) =>
@@ -71,7 +71,7 @@ class CorpusTest extends Test:
     // Helper: parse the corpus fixture at the given name and return its Blocks.
     // On any parse error the test is failed immediately and Chunk.empty is returned to allow
     // the for-comprehension that follows to complete without crashing.
-    private def parseFixtureBlocks(name: String)(using Frame): Chunk[Block] < (Sync & Async & Scope) =
+    private def parseFixtureBlocks(name: String)(using Frame, kyo.test.AssertScope): Chunk[Block] < (Sync & Async & Scope) =
         val path = fixtureFile(name)
         Abort.run(MarkdownParser.parse(path)).map {
             case Result.Success(blocks) => blocks
@@ -80,14 +80,14 @@ class CorpusTest extends Test:
         }
     end parseFixtureBlocks
 
-    "visible-bare.md has 3 blocks, all compile cleanly" in run {
+    "visible-bare.md has 3 blocks, all compile cleanly" in {
         runAndCheck("visible-bare.md") { report =>
             assert(report.totalBlocks == 3, s"expected 3 blocks, got ${report.totalBlocks}")
             assert(report.failures.isEmpty, s"expected no failures, got: ${report.failures.map(_.message)}")
         }
     }
 
-    "visible-with-modifiers.md modifier combinations validated" in run {
+    "visible-with-modifiers.md modifier combinations validated" in {
         runAndCheck("visible-with-modifiers.md") { report =>
             // The expect=fails-compile block succeeds (compile failure was expected).
             // The expect=skipped block is counted but not compiled.
@@ -99,7 +99,7 @@ class CorpusTest extends Test:
         }
     }
 
-    "html-wrapper-around-block.md all blocks parse as Carrier.Visible regardless of HTML wrapper" in run {
+    "html-wrapper-around-block.md all blocks parse as Carrier.Visible regardless of HTML wrapper" in {
         for
             parsedBlocks <- parseFixtureBlocks("html-wrapper-around-block.md")
             _ =
@@ -120,7 +120,7 @@ class CorpusTest extends Test:
         yield result
     }
 
-    "html-comment-hard-hide.md hard-hidden blocks validated" in run {
+    "html-comment-hard-hide.md hard-hidden blocks validated" in {
         for
             parsedBlocks <- parseFixtureBlocks("html-comment-hard-hide.md")
             _ =
@@ -145,21 +145,21 @@ class CorpusTest extends Test:
         yield result
     }
 
-    "scope-isolated.md three isolated blocks all compile cleanly" in run {
+    "scope-isolated.md three isolated blocks all compile cleanly" in {
         runAndCheck("scope-isolated.md") { report =>
             assert(report.totalBlocks == 3, s"expected 3 blocks, got ${report.totalBlocks}")
             assert(report.failures.isEmpty, s"expected no failures, got: ${report.failures.map(_.message)}")
         }
     }
 
-    "scope-inherited.md inherited blocks see prior bindings" in run {
+    "scope-inherited.md inherited blocks see prior bindings" in {
         runAndCheck("scope-inherited.md") { report =>
             assert(report.totalBlocks == 3, s"expected 3 blocks, got ${report.totalBlocks}")
             assert(report.failures.isEmpty, s"expected no failures, got: ${report.failures.map(_.message)}")
         }
     }
 
-    "scope-env-named.md named env scopes are isolated from each other" in run {
+    "scope-env-named.md named env scopes are isolated from each other" in {
         for
             parsedBlocks <- parseFixtureBlocks("scope-env-named.md")
             _ =
@@ -184,7 +184,7 @@ class CorpusTest extends Test:
         yield result
     }
 
-    "scope-nested.md nested block sees outer but does not leak" in run {
+    "scope-nested.md nested block sees outer but does not leak" in {
         for
             parsedBlocks <- parseFixtureBlocks("scope-nested.md")
             _ =
@@ -206,7 +206,7 @@ class CorpusTest extends Test:
         yield result
     }
 
-    "expect-fails-compile.md compile failure reported as success" in run {
+    "expect-fails-compile.md compile failure reported as success" in {
         runAndCheck("expect-fails-compile.md") { report =>
             assert(report.totalBlocks == 1, s"expected 1 block, got ${report.totalBlocks}")
             // The block is marked expect=fails-compile; it should compile with type error,
@@ -218,7 +218,7 @@ class CorpusTest extends Test:
         }
     }
 
-    "expect-warns.md warning block reports success" in run {
+    "expect-warns.md warning block reports success" in {
         runAndCheck("expect-warns.md", scalaOpts = Chunk("-deprecation")) { report =>
             assert(report.totalBlocks == 1, s"expected 1 block, got ${report.totalBlocks}")
             assert(
@@ -228,7 +228,7 @@ class CorpusTest extends Test:
         }
     }
 
-    "expect-skipped.md skipped block not compiled, valid block compiled" in run {
+    "expect-skipped.md skipped block not compiled, valid block compiled" in {
         runAndCheck("expect-skipped.md") { report =>
             assert(report.totalBlocks == 2, s"expected 2 blocks, got ${report.totalBlocks}")
             // Only 1 block is compiled (the valid one); the skipped block is not.
@@ -240,7 +240,7 @@ class CorpusTest extends Test:
         }
     }
 
-    "setup-composite.md setup bindings visible to subsequent blocks" in run {
+    "setup-composite.md setup bindings visible to subsequent blocks" in {
         for
             parsedBlocks <- parseFixtureBlocks("setup-composite.md")
             _ =
@@ -263,7 +263,7 @@ class CorpusTest extends Test:
         yield result
     }
 
-    "per-readme-defaults.md default scope=inherited applies globally, per-block override works" in run {
+    "per-readme-defaults.md default scope=inherited applies globally, per-block override works" in {
         for
             parsedBlocks <- parseFixtureBlocks("per-readme-defaults.md")
             _ =
@@ -291,7 +291,7 @@ class CorpusTest extends Test:
         yield result
     }
 
-    "macro-block.md Schema derivation macro, Tag, ConcreteTag, and direct all compile cleanly" in run {
+    "macro-block.md Schema derivation macro, Tag, ConcreteTag, and direct all compile cleanly" in {
         runAndCheck("macro-block.md") { report =>
             assert(
                 report.failures.isEmpty,
@@ -303,7 +303,7 @@ class CorpusTest extends Test:
         }
     }
 
-    "kyo-doctest README.md self-validates with zero failures" in run {
+    "kyo-doctest README.md self-validates with zero failures" in {
         // Locate the README.md at the project root relative to the module.
         // In sbt, baseDirectory for kyo-doctest is kyo-doctest/. The README lives there.
         findReadme.flatMap { readmePath =>

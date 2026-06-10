@@ -3,7 +3,7 @@ package kyo.internal
 import kyo.*
 import kyo.internal.util.GrowableByteBuffer
 
-class GrowableByteBufferTest extends kyo.Test:
+class GrowableByteBufferTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
 
@@ -15,7 +15,6 @@ class GrowableByteBufferTest extends kyo.Test:
             buf.writeByte(42.toByte)
             assert(buf.size == 1)
             assert(buf.array(0) == 42.toByte)
-            succeed
         }
 
         // Test 2: Write multiple bytes sequentially — writeBytes copies from source, increments pos by length
@@ -30,7 +29,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(arr(2) == 3.toByte)
             assert(arr(3) == 4.toByte)
             assert(arr(4) == 5.toByte)
-            succeed
         }
 
         // Test 3: Reset clears position — reset() sets pos=0; next write starts at 0
@@ -44,7 +42,6 @@ class GrowableByteBufferTest extends kyo.Test:
             buf.writeByte(99.toByte)
             assert(buf.size == 1)
             assert(buf.array(0) == 99.toByte)
-            succeed
         }
 
         // Test 4: Size returns current position — size property equals pos after writes
@@ -58,7 +55,6 @@ class GrowableByteBufferTest extends kyo.Test:
             val src = Array[Byte](3, 4, 5)
             buf.writeBytes(src, 0, 3)
             assert(buf.size == 5)
-            succeed
         }
 
         // Test 5: Capacity expansion triggers at boundary — write until pos + needed >= arr.length, array doubles
@@ -81,7 +77,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(arr(0) == 7.toByte)
             assert(arr(511) == 7.toByte)
             assert(arr(512) == 99.toByte)
-            succeed
         }
 
         // Test 6: Zero-copy access via array property — array returns internal ref; modification visible without copying
@@ -93,7 +88,6 @@ class GrowableByteBufferTest extends kyo.Test:
             ref(0) = 77.toByte
             // The mutation must be visible via array without any copy
             assert(buf.array(0) == 77.toByte)
-            succeed
         }
 
         // Test 7: toByteArray returns right-sized copy — allocates Array[Byte](pos), copies [0..pos)
@@ -109,7 +103,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(copy(2) == 3.toByte)
             // Must be a distinct object (a copy, not the internal array)
             assert(!(copy eq buf.array))
-            succeed
         }
 
         // Test 8: copyTo writes to destination offset — copyTo(dest, destOffset) copies [0..pos) to dest
@@ -129,7 +122,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(dest(6) == 30.toByte)
             // Bytes after the copied region must remain 0
             assert(dest(7) == 0.toByte)
-            succeed
         }
 
         // Test 9: Write ASCII string "HTTP/1.1" — writeAscii iterates char-by-char, stores char.toByte
@@ -146,7 +138,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(arr(5) == '1'.toByte)
             assert(arr(6) == '.'.toByte)
             assert(arr(7) == '1'.toByte)
-            succeed
         }
 
         // Test 10: Write ASCII with all ASCII chars (0-127) — all encode correctly
@@ -158,7 +149,6 @@ class GrowableByteBufferTest extends kyo.Test:
             val arr = buf.array
             for i <- 0 until 128 do
                 assert(arr(i) == i.toByte, s"Mismatch at index $i: expected ${i.toByte} got ${arr(i)}")
-            succeed
         }
 
         // Test 11: Write non-ASCII char (é = 233) — stores low byte, no crash
@@ -168,7 +158,6 @@ class GrowableByteBufferTest extends kyo.Test:
             buf.writeAscii("\u00e9")
             assert(buf.size == 1)
             assert(buf.array(0) == 233.toByte)
-            succeed
         }
 
         // Test 12: Write integer 0 — writeIntAscii(0) special case, writes single '0' byte
@@ -177,7 +166,6 @@ class GrowableByteBufferTest extends kyo.Test:
             buf.writeIntAscii(0)
             assert(buf.size == 1)
             assert(buf.array(0) == '0'.toByte)
-            succeed
         }
 
         // Test 13: Write integer 12345 — writeIntAscii(12345) writes "12345" right-to-left
@@ -191,7 +179,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(arr(2) == '3'.toByte)
             assert(arr(3) == '4'.toByte)
             assert(arr(4) == '5'.toByte)
-            succeed
         }
 
         // Test 14: Write integer 1 (single digit) — writes "1", pos incremented by 1
@@ -200,7 +187,6 @@ class GrowableByteBufferTest extends kyo.Test:
             buf.writeIntAscii(1)
             assert(buf.size == 1)
             assert(buf.array(0) == '1'.toByte)
-            succeed
         }
 
         // Test 15: Write negative integer (undefined behavior) — should not crash or hang
@@ -216,7 +202,7 @@ class GrowableByteBufferTest extends kyo.Test:
                     // Throwing is also acceptable for undefined input
                     ()
             end try
-            succeed
+            ()
         }
 
         // Test 16: Reuse buffer after reset — reset(), then write again, data overwrites
@@ -230,7 +216,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(buf.size == 5)
             val copy = buf.toByteArray
             assert(new String(copy, java.nio.charset.StandardCharsets.US_ASCII) == "World")
-            succeed
         }
 
         // Test 17: Multiple growth cycles — write 512 bytes, then 512 more (grow to 1024), then 1024 more (grow to 2048)
@@ -259,7 +244,6 @@ class GrowableByteBufferTest extends kyo.Test:
             assert(arr(1023) == 1.toByte)
             assert(arr(1024) == 2.toByte)
             assert(arr(2047) == 2.toByte)
-            succeed
         }
 
         // Test 18: Write at capacity boundary — ensureCapacity(1) when arr.length=pos, triggers growth
@@ -282,7 +266,6 @@ class GrowableByteBufferTest extends kyo.Test:
             for i <- 0 until 512 do
                 assert(arrayAfter(i) == 33.toByte, s"Data lost after growth at index $i")
             assert(arrayAfter(512) == 44.toByte)
-            succeed
         }
     }
 

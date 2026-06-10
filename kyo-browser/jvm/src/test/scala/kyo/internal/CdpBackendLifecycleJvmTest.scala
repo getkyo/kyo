@@ -175,11 +175,11 @@ end CdpBackendFixtureServer
   *
   * Renamed from `CdpClientLifecycleJvmTest` in Phase 02: `CdpClient.*` -> `CdpBackend.*`, raw-string sends -> typed wrappers.
   */
-class CdpBackendLifecycleJvmTest extends Test:
+class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
 
     override def timeout = 2.minutes
 
-    "fixture sanity: Echo replies to a Target.getTargets request" in run {
+    "fixture sanity: Echo replies to a Target.getTargets request" in {
         Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
                 CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
@@ -198,7 +198,7 @@ class CdpBackendLifecycleJvmTest extends Test:
     // close after relay fiber crashed externally
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close after relay fiber crashed externally does not throw" in run {
+    "close after relay fiber crashed externally does not throw" in {
         Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
                 CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
@@ -226,7 +226,7 @@ class CdpBackendLifecycleJvmTest extends Test:
     // close(gracePeriod) falls back to closeNow on timeout
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close(gracePeriod) falls back to closeNow when in-flight send is slow" in run {
+    "close(gracePeriod) falls back to closeNow when in-flight send is slow" in {
         Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
                 CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.SlowResponses(10.seconds)).map { fixture =>
@@ -263,7 +263,7 @@ class CdpBackendLifecycleJvmTest extends Test:
     // connection drop mid-request
     // ─────────────────────────────────────────────────────────────────────────
 
-    "send raises ConnectionLost when the WebSocket connection is dropped mid-request" in run {
+    "send raises ConnectionLost when the WebSocket connection is dropped mid-request" in {
         // With DropMidRequest, the fixture responds to the Browser.getVersion probe (initUnscoped succeeds),
         // then drops the connection on the next send. The next send surfaces as BrowserConnectionLostException.
         Abort.run[BrowserConnectionException | BrowserSetupException] {
@@ -285,7 +285,7 @@ class CdpBackendLifecycleJvmTest extends Test:
     // top-level dialog with no sessionId
     // ─────────────────────────────────────────────────────────────────────────
 
-    "top-level dialog with no sessionId is auto-dismissed via empty-string handler key" in run {
+    "top-level dialog with no sessionId is auto-dismissed via empty-string handler key" in {
         Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
                 CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
@@ -298,9 +298,7 @@ class CdpBackendLifecycleJvmTest extends Test:
                             _ <- CdpBackend.getTargets(backend)
                             // Confirm the dialogDrainer fiber is still alive.
                             drainerLive <- backend.dialogDrainer.done.map(d => !d)
-                        yield
-                            assert(drainerLive, "dialogDrainer must still be alive after auto-dismiss")
-                            succeed
+                        yield assert(drainerLive, "dialogDrainer must still be alive after auto-dismiss")
                     }
                 }
             }
