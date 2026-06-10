@@ -20,12 +20,17 @@ class TypedEventTest extends kyo.test.Test[Any]:
     private class NoopExchange extends UIExchange:
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async = ()
 
-    /** Normalize a UI, subscribe it with a NoopExchange, and return the dispatch handle. */
+    /** Normalize a UI, subscribe it with a NoopExchange, and return the dispatch handle. The dispatch handle re-reads
+      * the current signal state on each event, so it stays valid after the subscription's Scope closes; these tests
+      * exercise event routing only, so the subscription runs under a local Scope.run that discharges its Scope row.
+      */
     private def makeDispatch(ui: UI)(using Frame): ((Seq[String], UIEvent) => Boolean < Async) < Async =
-        for
-            root         <- ReactiveUI.normalize(ui, Seq.empty)
-            subscription <- ReactiveUI.subscribe(root, new NoopExchange)
-        yield subscription.handle
+        Scope.run {
+            for
+                root         <- ReactiveUI.normalize(ui, Seq.empty)
+                subscription <- ReactiveUI.subscribe(root, new NoopExchange)
+            yield subscription.handle
+        }
 
     // ---- typed onClick fires with Modifiers.none ----
 

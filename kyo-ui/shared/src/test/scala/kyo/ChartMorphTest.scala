@@ -157,7 +157,7 @@ class ChartMorphTest extends kyo.test.Test[Any]:
         // snap against the shared document timeline). They only tween if the reactive runtime calls
         // beginElement() on each freshly-inserted animate after a mount/patch. This asserts the server
         // client script carries that trigger; DomBackend.beginAnimationsSync is the JS-backend mirror.
-        val page = HtmlRenderer.renderPage("t", "<div></div>", "", "sid", "/")
+        val page = HtmlRenderer.renderPage("t", "<div></div>", "", "/")
         assert(
             page.contains("beginElement"),
             s"renderPage client script must call beginElement() to start inserted SMIL animations:\n${page.take(600)}"

@@ -109,4 +109,29 @@ class DomBackendTest extends UITest:
         }
     }
 
+    // INV-008: the single-consumer drain preserves event ordering; all 5 clicks must be processed in
+    // order by the same drain fiber, so the counter reaches 5 monotonically with no dropped events.
+    "events dispatch in order under the page scope" in {
+        val app: UI < Async =
+            for counterRef <- Signal.initRef(0)
+            yield UI.div(
+                UI.button("inc").id("inc").onClick(counterRef.getAndUpdate(_ + 1).unit),
+                counterRef.map(n => UI.span(n.toString).id("counter"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "1")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "2")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "3")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "4")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "5")
+            yield ()
+        }
+    }
+
 end DomBackendTest

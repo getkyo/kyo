@@ -785,7 +785,7 @@ class HtmlRendererTest extends UITest:
     // ---- renderPage JS-string-literal escaping (pure unit tests, no browser) ----
 
     "renderPage: trailing backslash in basePath produces valid JS string literal" in {
-        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/app\\")
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "/app\\")
         // The script block must contain the backslash doubled so JS parses correctly.
         // Broken form: var base="/app\"; the \" escapes the closing quote, corrupting the literal.
         // Expected: var base="/app\\"; properly escaped.
@@ -794,7 +794,7 @@ class HtmlRendererTest extends UITest:
     }
 
     "renderPage: double-quote in basePath is backslash-escaped in JS, not HTML-entity" in {
-        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/app\"path")
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "/app\"path")
         // Broken form: var base="/app&quot;path"; &quot; appears literally in the runtime string.
         // Expected: var base="/app\"path"; JS-escaped double-quote.
         assert(html.contains("""var base="/app\"path";"""))
@@ -802,7 +802,7 @@ class HtmlRendererTest extends UITest:
     }
 
     "renderPage: closing script tag sequence in basePath is neutralized" in {
-        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/app</script>x")
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "/app</script>x")
         // A raw </script> inside a <script> element closes the element prematurely.
         // Expected: </ is encoded as <\/ so </script> cannot close the element.
         assert(!html.contains("</script>var base="))
@@ -810,13 +810,36 @@ class HtmlRendererTest extends UITest:
     }
 
     "renderPage: normal basePath slash unchanged" in {
-        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/")
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "/")
         assert(html.contains("""var base="/";"""))
     }
 
     "renderPage: normal basePath with subdirectory unchanged" in {
-        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "abc", "/myapp")
+        val html = kyo.internal.HtmlRenderer.renderPage("T", "", "", "/myapp")
         assert(html.contains("""var base="/myapp";"""))
+    }
+
+    // ---- clientJs transport (pure string inspection; no browser) ----
+
+    "clientJs transport" - {
+
+        "rendered page opens a WebSocket and carries no EventSource or fetch-POST queue" in {
+            val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
+            assert(page.contains("new WebSocket("))
+            assert(page.contains("/_kyo/ws"))
+            assert(!page.contains("new EventSource"))
+            assert(!page.contains("_kyoPostQ"))
+            assert(!page.contains("/_kyo/event"))
+            assert(!page.contains("/_kyo/sse"))
+        }
+
+        "rendered page buffers events until the socket opens" in {
+            val page = kyo.internal.HtmlRenderer.renderPage("t", "<div></div>", "", "/app")
+            assert(page.contains("__q=[]"))
+            assert(page.contains("__q.forEach"))
+            assert(page.contains("__q.push"))
+            assert(page.contains("ws.readyState===1"))
+        }
     }
 
 end HtmlRendererTest

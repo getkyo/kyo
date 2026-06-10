@@ -784,4 +784,311 @@ class SignalTest extends kyo.test.Test[Any]:
 
     }
 
+    private def pollUntil(cond: Boolean < Async, maxTries: Int = 3000)(using Frame): Boolean < Async =
+        Loop.indexed { i =>
+            if i >= maxTries then Loop.done(false)
+            else cond.map(c => if c then Loop.done(true) else Async.sleep(1.millis).andThen(Loop.continue))
+        }
+
+    private def recordValue[A](seen: AtomicRef[Chunk[A]], v: A)(using Frame): Unit < Async =
+        seen.updateAndGet(_.append(v)).unit
+
+    private def awaitValue(ref: AtomicRef[String], target: String, maxTries: Int)(using Frame): Boolean < Async =
+        Loop.indexed { i =>
+            if i >= maxTries then Loop.done(false)
+            else ref.get.map(v => if v == target then Loop.done(true) else Async.sleep(1.millis).andThen(Loop.continue))
+        }
+
+    // Leaf and `map`-over-leaf `observe` use the repairing path (the exact register-before-read override was removed
+    // because it miscompiled on Scala Native; see SignalRef in Signal.scala). The guarantee is that the final value is
+    // never lost: a write that lands in the read/register window is reconciled within `repairInterval`. Drive
+    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and require the final value to arrive
+    // within a generous multiple of it (1s); a returned count > 0 means a value was actually lost, not merely late.
+    private def observeNeverLosesFinalValue(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
+        for
+            ref <- Signal.initRef("")
+            sig = if useMap then ref.map(v => v) else ref
+            lastSeen <- AtomicRef.init("")
+            fiber    <- Fiber.initUnscoped(sig.observe(50.millis)(lastSeen.set(_)))
+            misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
+                val a = s"a$i"
+                val b = s"b$i"
+                for
+                    _   <- ref.set(a)
+                    _   <- ref.set(b)
+                    got <- awaitValue(lastSeen, b, 1000)
+                yield if got then 0 else 1
+                end for
+            }
+            _ <- fiber.interrupt
+        yield misses.foldLeft(0)(_ + _)
+
+    "observe" - {
+        "emits the current value on subscription" in {
+            for
+                ref    <- Signal.initRef("init")
+                seen   <- AtomicRef.init(Chunk.empty[String])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                ok     <- pollUntil(seen.get.map(_.nonEmpty))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(ok && result == Chunk("init"))
+        }
+
+        "emits each distinct change in order" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _      <- ref.set(1)
+                _      <- pollUntil(seen.get.map(_.contains(1)))
+                _      <- ref.set(2)
+                _      <- pollUntil(seen.get.map(_.contains(2)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(0, 1, 2))
+        }
+
+        "does not re-emit on a same-value set" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _      <- ref.set(0) // same value: SignalRef does not notify
+                _      <- Async.sleep(30.millis)
+                _      <- ref.set(1)
+                _      <- pollUntil(seen.get.map(_.contains(1)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(0, 1))
+        }
+
+        "stops after interruption" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_ == Chunk(0)))
+                _      <- fiber.interrupt
+                _      <- ref.set(1)
+                _      <- Async.sleep(50.millis)
+                result <- seen.get
+            yield assert(result == Chunk(0)) // the post-interrupt change is not observed
+        }
+
+        "never loses the final value under back-to-back writes (SignalRef leaf)" in {
+            observeNeverLosesFinalValue(useMap = false, iterations = 5000).map(lost => assert(lost == 0, s"SignalRef lost $lost / 5000"))
+        }
+
+        "never loses the final value under back-to-back writes (map delegates to leaf)" in {
+            observeNeverLosesFinalValue(useMap = true, iterations = 5000).map(lost => assert(lost == 0, s"map lost $lost / 5000"))
+        }
+
+        "reconciles a missed wakeup within repairInterval on a non-exact signal" in {
+            for
+                state <- AtomicRef.init(0)
+                sig = Signal.initRaw[Int](
+                    currentWith = [B, S] => f => state.get.map(f),
+                    nextWith = [B, S] => (_: Int => B < S) => Async.never[B] // never fires: every change is a "missed wakeup"
+                )
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(sig.observe(40.millis)(recordValue(seen, _)))
+                _      <- pollUntil(seen.get.map(_.contains(0)))
+                _      <- state.set(1)
+                ok     <- pollUntil(seen.get.map(_.contains(1)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(ok && result.contains(0) && result.contains(1))
+        }
+    }
+
+    "observe (per-value scope)" - {
+        "runs f for the current value and each subsequent change" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- assertEventually(seen.get.map(_ == Chunk(0)))
+                _      <- ref.set(1)
+                _      <- assertEventually(seen.get.map(_.contains(1)))
+                _      <- ref.set(2)
+                _      <- assertEventually(seen.get.map(_.contains(2)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(0, 1, 2))
+        }
+
+        "runs f for the mapped current value and each change (map over leaf)" in {
+            for
+                ref <- Signal.initRef(0)
+                mapped = ref.map(_ * 10)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(mapped.observe(recordValue(seen, _)))
+                _      <- assertEventually(seen.get.map(_ == Chunk(0)))
+                _      <- ref.set(1)
+                _      <- assertEventually(seen.get.map(_.contains(10)))
+                _      <- ref.set(3)
+                _      <- assertEventually(seen.get.map(_.contains(30)))
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(result == Chunk(0, 10, 30))
+        }
+
+        "closes the per-value scope before the next value's f runs (resource released on change)" in {
+            // Each value's `f` acquires a per-value-scope resource (`live` inc on acquire, dec on the scope's finalizer)
+            // and forks a child fiber into the same scope. When the value changes, the prior value's scope MUST close
+            // (running the dec and interrupting the forked child) before `f` runs for the new value, so `live` is back to
+            // exactly 1 after every change and never climbs to N. The `live` counter is the deterministic witness here
+            // (waiter-count is unreliable because cancelling a masked-promise waiter leaves a ghost until the next set).
+            for
+                parent <- Signal.initRef(0)
+                child  <- Signal.initRef("c")
+                live   <- AtomicInt.init(0)
+                peak   <- AtomicInt.init(0)
+                fiber <- Fiber.initUnscoped(parent.observe { _ =>
+                    for
+                        n <- Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit)
+                        _ <- peak.updateAndGet(p => math.max(p, n))
+                        _ <- Fiber.init(child.next)
+                    yield ()
+                })
+                _ <- assertEventually(live.get.map(_ == 1))
+                _ <- parent.set(1)
+                _ <- assertEventually(parent.current.map(_ == 1))
+                _ <- assertEventually(live.get.map(_ == 1))
+                _ <- parent.set(2)
+                _ <- assertEventually(parent.current.map(_ == 2))
+                _ <- assertEventually(live.get.map(_ == 1))
+                _ <- parent.set(3)
+                _ <- assertEventually(parent.current.map(_ == 3))
+                _ <- assertEventually(live.get.map(_ == 1))
+                p <- peak.get
+                _ <- fiber.interrupt
+            yield assert(p == 1)
+        }
+
+        "interrupts a child forked in f when the value changes" in {
+            // A child fiber forked into the per-value scope parks forever; the scope ALSO registers a finalizer that
+            // records the value on close. When the value changes, the prior value's scope closes: the child fiber is
+            // interrupted (it stops parking) and the finalizer records that value. Witnessing the finalizer for value 0
+            // proves the per-value scope (and the child fiber it owns) was torn down on the change to 1.
+            for
+                parent   <- Signal.initRef(0)
+                child    <- Signal.initRef("c")
+                running  <- AtomicInt.init(0)
+                released <- AtomicRef.init(Chunk.empty[Int])
+                fiber <- Fiber.initUnscoped(parent.observe { v =>
+                    Scope.ensure(released.updateAndGet(_.append(v)).unit).andThen {
+                        // The child fiber increments `running` while alive; the per-value scope interrupts it on close.
+                        Fiber.init(running.incrementAndGet.andThen(child.next)).unit
+                    }
+                })
+                _ <- assertEventually(running.get.map(_ == 1))
+                _ <- parent.set(1)
+                _ <- assertEventually(parent.current.map(_ == 1))
+                // value 0's scope must close on the change to 1, running its finalizer with v == 0.
+                _      <- assertEventually(released.get.map(_.contains(0)))
+                result <- released.get
+                _      <- fiber.interrupt
+            yield assert(result.contains(0))
+        }
+
+        "interrupts the current value's child on outer observe interrupt (cascade)" in {
+            // Interrupting the outer observe fiber must close the current value's per-value scope, interrupting the
+            // child fiber it forked. The per-value scope's finalizer running (released == true) is the deterministic
+            // witness that the cascade reached the child fiber owned by that scope.
+            for
+                parent   <- Signal.initRef(0)
+                child    <- Signal.initRef("c")
+                running  <- AtomicInt.init(0)
+                released <- AtomicRef.init(false)
+                fiber <- Fiber.initUnscoped(parent.observe { _ =>
+                    Scope.ensure(released.set(true)).andThen {
+                        Fiber.init(running.incrementAndGet.andThen(child.next)).unit
+                    }
+                })
+                _      <- assertEventually(running.get.map(_ == 1))
+                _      <- fiber.interrupt
+                _      <- assertEventually(released.get.map(_ == true))
+                result <- released.get
+            yield assert(result)
+        }
+
+        "does not tear the current value's scope down while the signal is idle (leaf)" in {
+            // A leaf has NO repair timer, so an idle parent (no set) must keep the current value's per-value scope open
+            // indefinitely. We drive many UNRELATED changes on a separate `ticker` signal while `parent` stays idle and
+            // assert the per-value finalizer never fired and the per-value resource stays live the whole time.
+            for
+                parent   <- Signal.initRef(0)
+                ticker   <- Signal.initRef(0)
+                live     <- AtomicInt.init(0)
+                released <- AtomicRef.init(false)
+                fiber <- Fiber.initUnscoped(parent.observe { _ =>
+                    Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit).andThen {
+                        Scope.ensure(released.set(true)).unit
+                    }
+                })
+                _ <- assertEventually(live.get.map(_ == 1))
+                // Drive several UNRELATED ticks (on `ticker`, not `parent`) while parent stays idle.
+                _ <- Kyo.foreachDiscard(Chunk(1, 2, 3, 4, 5))(i => ticker.set(i).andThen(assertEventually(ticker.current.map(_ == i))))
+                stillLive <- live.get
+                fired     <- released.get
+                _         <- fiber.interrupt
+            yield assert(stillLive == 1 && !fired)
+        }
+
+        "does not tear the current value's scope down on a repair timer for a still-current value (non-exact)" in {
+            // A non-exact `initRaw` signal whose `nextWith` never fires forces the repairing default loop: the repair
+            // timer fires repeatedly. While the value is unchanged the per-value scope MUST stay open (the hold loops
+            // until `current` actually differs). We assert the finalizer did NOT fire across several repair intervals,
+            // then change the value and assert convergence + that the OLD value's scope finally closes.
+            for
+                state <- AtomicRef.init(0)
+                sig = Signal.initRaw[Int](
+                    currentWith = [B, S] => f => state.get.map(f),
+                    nextWith = [B, S] => (_: Int => B < S) => Async.never[B] // never fires: forces the repair path
+                )
+                live     <- AtomicInt.init(0)
+                released <- AtomicRef.init(false)
+                seen     <- AtomicRef.init(Chunk.empty[Int])
+                // 30ms repair interval: the timer fires many times while the value stays 0, but must NOT close the scope.
+                fiber <- Fiber.initUnscoped(sig.observe(30.millis) { v =>
+                    recordValue(seen, v).andThen {
+                        Scope.acquireRelease(live.incrementAndGet)(_ => live.decrementAndGet.unit).andThen {
+                            Scope.ensure(released.set(true)).unit
+                        }
+                    }
+                })
+                _ <- assertEventually(seen.get.map(_.contains(0)))
+                _ <- assertEventually(live.get.map(_ == 1))
+                // Let several repair intervals (30ms each) elapse; the scope for value 0 must stay open the whole time.
+                _         <- Kyo.foreachDiscard(Chunk(1, 2, 3, 4, 5))(_ => assertEventually(live.get.map(_ == 1)))
+                idleFired <- released.get
+                idleLive  <- live.get
+                // Now actually change the value: the scope must converge to value 1 within repairInterval, closing value 0's scope.
+                _      <- state.set(1)
+                _      <- assertEventually(seen.get.map(_.contains(1)))
+                _      <- assertEventually(released.get.map(_ == true))
+                _      <- assertEventually(live.get.map(_ == 1)) // value 1's scope is now the only live one
+                result <- seen.get
+                _      <- fiber.interrupt
+            yield assert(!idleFired && idleLive == 1 && result.contains(0) && result.contains(1) && result.last == 1)
+        }
+
+        "stops after interruption" in {
+            for
+                ref    <- Signal.initRef(0)
+                seen   <- AtomicRef.init(Chunk.empty[Int])
+                fiber  <- Fiber.initUnscoped(ref.observe(recordValue(seen, _)))
+                _      <- assertEventually(seen.get.map(_ == Chunk(0)))
+                _      <- fiber.interrupt
+                _      <- fiber.getResult
+                _      <- ref.set(1)
+                result <- seen.get
+            yield assert(result == Chunk(0)) // the post-interrupt change is not observed
+        }
+    }
+
 end SignalTest

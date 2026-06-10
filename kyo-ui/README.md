@@ -1,8 +1,8 @@
 # kyo-ui
 
-kyo-ui describes web UIs as pure values that run unchanged in three places: a Scala.js client mounting to the DOM, a server-driven HTML-over-SSE deployment, or an HTML stream for SSR and tests. Signals are first-class values throughout the API, and the API itself is typed tightly enough that broad categories of HTML and state mistakes do not compile.
+kyo-ui describes web UIs as pure values that run unchanged in three places: a Scala.js client mounting to the DOM, a server-driven HTML-over-WebSocket deployment, or an HTML stream for SSR and tests. Signals are first-class values throughout the API, and the API itself is typed tightly enough that broad categories of HTML and state mistakes do not compile.
 
-**A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as an HTTP triple (GET page + POST events + SSE diff stream) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-SSE app; only the runner changes. The same value tree includes a typed SVG layer (the `Svg.*` factories) rendered by the same engine across all three runners.
+**A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as two HTTP handlers (a GET that serves the SSR page plus a WebSocket route that carries diffs out and events in) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-WebSocket app; only the runner changes. The same value tree includes a typed SVG layer (the `Svg.*` factories) rendered by the same engine across all three runners.
 
 **A `Signal[A]` is a value of type `A` everywhere kyo-ui takes one.** Setters and child slots that accept `A` equally accept `Signal[A]` (read-only, re-renders on change) or `SignalRef[A]` (read-write, two-way binding). Conditional rendering is `when(cond: Signal[Boolean])(ui)`. There is no wrapper type, no binder operator, no hooks; reactivity is the API, not a layer on top of it.
 
@@ -206,7 +206,7 @@ One value (`loggedIn`) drives four things at once: button click writes it, `when
 
 A reader coming from React or another VDOM library is likely to ask: when a signal updates, what re-runs? The answer is: only the closure attached to that signal's boundary.
 
-kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over SSE for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
+kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over the WebSocket for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
 
 Contrast with React: a state setter call inside a component triggers re-execution of the component function and propagates down through its descendants, building a new virtual DOM, diffing against the previous one, and applying minimal DOM updates. Components are functions called over and over; expensive subtrees need `React.memo` or `useMemo` to opt out of re-running.
 
@@ -214,7 +214,7 @@ In kyo-ui:
 
 - The function that constructs the `UI` value runs once. There is no component function that re-runs on every state change.
 - A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches the DOM only at the path where the boundary was anchored.
-- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over SSE).
+- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over the WebSocket).
 - Subscription granularity is determined at the call site. `div(name: Signal[String])` is a fine-grained subscription on one text node. `when(loggedIn)(bigSubtree)` is a coarse subscription that swaps a whole subtree. Both are explicit choices in the code, not framework defaults to argue with.
 - There is no `useMemo`, `useCallback`, or `React.memo` equivalent because nothing gets re-executed that you did not opt into. The cost of "rendering" a subtree is the cost of the closure inside its boundary, and you wrote that closure.
 
@@ -1168,7 +1168,9 @@ val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
 
 ### `UI.runHandlers(basePath)(ui)`
 
-Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: three handlers in one sequence, a GET that serves the initial page, a POST that receives client events, and an SSE stream that pushes diff updates. You wire them into `HttpServer.init` alongside your other routes.
+Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
+
+The session is the WebSocket connection. The WS handler owns the reactive subscription via a `Scope`; closing the socket cascade-tears-down the whole subscription tree (leak-free by construction). Per-connection state resets on a real disconnect: a dropped socket starts a fresh session, so signal state is per-connection. The initial `ui` should be deterministic so the SSR page and the WebSocket's first render agree.
 
 ```scala
 import UI.*
@@ -1204,7 +1206,7 @@ val firstFrame: String < Async       = snapshots.take(1).run.map(_.headMaybe.get
 
 > **Note:** `UI.runRender` re-emits the WHOLE document on every change, not a diff. The HTTP handlers do diff-pushing; if you want diff semantics in a custom transport, port the logic from `UIServer` and `UIExchange`.
 
-When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over SSE). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, a custom WebSocket transport you want to write yourself.
+When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over a WebSocket). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, or a custom transport you want to write yourself.
 
 ## Window and routing (Scala.js)
 
@@ -1614,7 +1616,7 @@ Why every piece is there:
 - `.style(if t.done then Style.color(Color.gray).strikethrough else Style.empty)`: per-row conditional style, evaluated each time the row is rendered (which happens whenever `todos` changes).
 - `UI.runMount(ui)` runs the whole thing in `Async & Scope`. Closing the scope tears down listeners and removes nodes.
 
-This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive an SSE-backed or stream-backed deployment. Swap the runner; keep the UI.
+This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive a WebSocket-backed or stream-backed deployment. Swap the runner; keep the UI.
 
 ## Demos
 
@@ -1622,7 +1624,7 @@ Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cov
 
 - [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: add, move, and delete cards across columns.
 - [**Signup**](shared/src/test/scala/demo/SignupDemo.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
-- [**Dashboard**](shared/src/test/scala/demo/DashboardDemo.scala): live metrics pushed over SSE from a background fiber, with no client code.
+- [**Dashboard**](shared/src/test/scala/demo/DashboardDemo.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
 - [**Search**](shared/src/test/scala/demo/SearchDemo.scala): live Wikipedia search via `HttpClient`, with loading and error states.
 - [**Cart**](shared/src/test/scala/demo/CartDemo.scala): shopping cart with quantity steppers and a derived running total.
 - [**Playground**](shared/src/test/scala/demo/PlaygroundDemo.scala): HTML playground: a textarea feeds a live `iframe` preview.

@@ -24,7 +24,7 @@ import scala.language.implicitConversions
   * The same `UI` value runs three ways, changing only the runner:
   *
   *   - `runMount` (Scala.js): mounts to the live DOM as a single-page app.
-  *   - `runHandlers`: exposes it as a server-push HTTP triple (page + events + SSE diff stream).
+  *   - `runHandlers`: exposes it as a server-push pair (SSR page GET and a WebSocket diff channel).
   *   - `runRender`: emits a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports.
   *
   * @see
@@ -170,8 +170,12 @@ object UI:
     def when[C <: UI](condition: Signal[Boolean])(body: => C)(using Frame): Reactive[C] =
         Reactive[C](condition.map(v => if v then body else UI.empty))
 
-    /** Server-push: returns HTTP handlers (GET page + POST events + SSE stream) for this UI at the given path. Compose with other handlers
+    /** Server-push: returns HTTP handlers (SSR page GET and a WebSocket route) for this UI at the given path. Compose with other handlers
       * via HttpServer.init.
+      *
+      * The page GET is pure SSR: it evaluates the UI, renders the initial HTML, and returns. It creates no session, forks no fibers, and
+      * sets no cookie. Each WebSocket connection owns its own subscription tree for the duration of the connection; per-connection state
+      * resets when the client disconnects.
       */
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         UIServer.handlers(basePath)(ui)
@@ -187,20 +191,28 @@ object UI:
                     val exchange =
                         new UIExchange:
                             def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
-                                Abort.run[Closed](channel.put(())).unit
-                    for
-                        root <- ReactiveUI.normalize(ui, Seq.empty)
-                        _    <- ReactiveUI.subscribe(root, exchange)
-                    yield Loop.foreach {
-                        Abort.run[Closed](channel.take).map {
-                            case Result.Success(_) =>
-                                HtmlRenderer.render(ui, Seq.empty).map { html =>
-                                    Emit.valueWith(Chunk(html))(Loop.continue)
-                                }
-                            case _ => Loop.done
+                                // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
+                                Abort.runPartial[Closed](channel.put(())).unit
+                    // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
+                    // the consume loop ends, the Scope closes, and the subscription tree cascade-tears-down.
+                    Scope.run {
+                        for
+                            root <- ReactiveUI.normalize(ui, Seq.empty)
+                            _    <- ReactiveUI.subscribe(root, exchange)
+                        yield Loop.foreach {
+                            // runPartial captures only the Closed failure (the channel closed when the consumer stopped
+                            // draining / on teardown -> end the stream); a Panic propagates rather than being silently
+                            // turned into a clean stream end.
+                            Abort.runPartial[Closed](channel.take).map {
+                                case Result.Success(_) =>
+                                    HtmlRenderer.render(ui, Seq.empty).map { html =>
+                                        Emit.valueWith(Chunk(html))(Loop.continue)
+                                    }
+                                case Result.Failure(_) => Loop.done
+                            }
                         }
+                        end for
                     }
-                    end for
                 }
             }
         }
