@@ -339,13 +339,13 @@ final private class IonTextParser(
         if pos >= input.length then error("Unexpected end of input")
         peek match
             case '{' =>
-                if startsWith("{{") then parseLob()
+                if nextIs('{') then parseLob()
                 else parseStruct(depth)
             case '[' => parseList(depth)
             case '(' => parseSexp(depth)
             case '"' => Str(parseQuoted('"'))
             case '\'' =>
-                if startsWith("'''") then Str(parseLongStringConcat())
+                if startsWithTripleQuote then Str(parseLongStringConcat())
                 else Symbol(parseQuoted('\''))
             case _ => parseTokenValue()
         end match
@@ -432,9 +432,9 @@ final private class IonTextParser(
         expect('{')
         expect('{')
         skipLobWhitespace()
-        if startsWith("'''") || peekOption.contains('"') then
+        if startsWithTripleQuote || hasChar('"') then
             val text =
-                if startsWith("'''") then parseLongStringConcat()
+                if startsWithTripleQuote then parseLongStringConcat()
                 else parseQuoted('"')
             skipLobWhitespace()
             expect('}')
@@ -469,13 +469,20 @@ final private class IonTextParser(
     private def parseFieldName(): String =
         skipWhitespace()
         if pos >= input.length then error("Expected field name")
-        if peek == '"' then parseQuoted('"')
-        else if startsWith("'''") then parseLongStringConcat()
-        else if peek == '\'' then parseQuoted('\'')
+        val c = input.charAt(pos)
+        if c == '"' then parseQuoted('"')
+        else if c == '\'' then
+            if startsWithTripleQuote then parseLongStringConcat()
+            else parseQuoted('\'')
         else
             val start = pos
-            while pos < input.length && !isIonWhitespace(input.charAt(pos)) && input.charAt(pos) != ':' do
+            while pos < input.length && {
+                    val c = input.charAt(pos)
+                    !isIonWhitespace(c) && c != ':'
+                }
+            do
                 pos += 1
+            end while
             if pos == start then error("Expected field name")
             input.substring(start, pos)
         end if
@@ -509,8 +516,8 @@ final private class IonTextParser(
         val lower   = cleaned.toLowerCase(java.util.Locale.ROOT)
         try
             if isRadixIntegerToken(lower) then IntNum(parseBigInt(cleaned))
-            else if lower.contains("e") then FloatNum(cleaned.toDouble)
-            else if lower.contains("d") || lower.contains(".") then
+            else if lower.indexOf('e') >= 0 then FloatNum(cleaned.toDouble)
+            else if lower.indexOf('d') >= 0 || lower.indexOf('.') >= 0 then
                 DecNum(BigDecimal(cleaned.replace('d', 'E').replace('D', 'E')))
             else IntNum(parseBigInt(cleaned))
         catch
@@ -520,11 +527,12 @@ final private class IonTextParser(
     end parseNumber
 
     private def parseBigInt(cleaned: String): BigInt =
+        val first = cleaned.charAt(0)
         val sign =
-            if cleaned.startsWith("-") then -1
+            if first == '-' then -1
             else 1
         val body =
-            if cleaned.startsWith("-") || cleaned.startsWith("+") then cleaned.substring(1)
+            if first == '-' || first == '+' then cleaned.substring(1)
             else cleaned
         val lower = body.toLowerCase(java.util.Locale.ROOT)
         val parsed =
@@ -537,17 +545,25 @@ final private class IonTextParser(
     private def parseAnnotationToken(): Option[(String, Int, Boolean)] =
         skipWhitespace()
         if pos >= input.length then None
-        else if startsWith("'''") then None
-        else if peek == '\'' then
-            val start = pos
-            Some((parseQuoted('\''), start, true))
-        else if isIdentifierStart(peek) || peek == '$' then
-            val start = pos
-            while pos < input.length && !isValueDelimiter(input.charAt(pos)) && input.charAt(pos) != ':' do
-                pos += 1
-            if pos > start then Some((input.substring(start, pos), start, false))
+        else if startsWithTripleQuote then None
+        else
+            val c = input.charAt(pos)
+            if c == '\'' then
+                val start = pos
+                Some((parseQuoted('\''), start, true))
+            else if isIdentifierStart(c) || c == '$' then
+                val start = pos
+                while pos < input.length && {
+                        val c = input.charAt(pos)
+                        !isValueDelimiter(c) && c != ':'
+                    }
+                do
+                    pos += 1
+                end while
+                if pos > start then Some((input.substring(start, pos), start, false))
+                else None
             else None
-        else None
+            end if
         end if
     end parseAnnotationToken
 
@@ -565,7 +581,7 @@ final private class IonTextParser(
 
     private def isRadixIntegerToken(token: String): Boolean =
         val start =
-            if token.startsWith("-") then 1
+            if token.charAt(0) == '-' then 1
             else 0
         token.startsWith("0x", start) || token.startsWith("0b", start)
     end isRadixIntegerToken
@@ -573,16 +589,17 @@ final private class IonTextParser(
     private def isValidNumberToken(token: String): Boolean =
         if token.isEmpty then false
         else
+            val first = token.charAt(0)
             val body =
-                if token.charAt(0) == '-' then token.substring(1)
-                else if token.charAt(0) == '+' then ""
+                if first == '-' then token.substring(1)
+                else if first == '+' then ""
                 else token
             if body.isEmpty then false
             else
                 val lower = body.toLowerCase(java.util.Locale.ROOT)
                 if lower.startsWith("0x") then validDigits(body.substring(2), isHexDigit)
                 else if lower.startsWith("0b") then validDigits(body.substring(2), isBinaryDigit)
-                else if containsExponent(body, 'e') || containsExponent(body, 'd') || body.indexOf('.') >= 0 then
+                else if hasRealMarker(body) then
                     validRealBody(body)
                 else validDecimalDigits(body, allowLeadingZeros = false)
                 end if
@@ -621,8 +638,16 @@ final private class IonTextParser(
         end if
     end validRealBody
 
-    private def containsExponent(body: String, marker: Char): Boolean =
-        exponentIndex(body, marker) >= 0
+    private def hasRealMarker(body: String): Boolean =
+        var i = 0
+        while i < body.length do
+            body.charAt(i) match
+                case '.' | 'e' | 'E' | 'd' | 'D' => return true
+                case _                           =>
+            i += 1
+        end while
+        false
+    end hasRealMarker
 
     private def exponentIndex(body: String, marker: Char): Int =
         val lower = marker.toLower
@@ -640,10 +665,7 @@ final private class IonTextParser(
 
     private def validDecimalDigits(text: String, allowLeadingZeros: Boolean): Boolean =
         validDigits(text, isDecimalDigit) &&
-            (allowLeadingZeros || {
-                val cleaned = text.replace("_", "")
-                cleaned.length == 1 || cleaned.charAt(0) != '0'
-            })
+            (allowLeadingZeros || text.length == 1 || text.charAt(0) != '0')
     end validDecimalDigits
 
     private def validDigits(text: String, validDigit: Char => Boolean): Boolean =
@@ -690,7 +712,7 @@ final private class IonTextParser(
             sb.append(parseLongString())
             val saved = pos
             skipWhitespace()
-            if !startsWith("'''") then
+            if !startsWithTripleQuote then
                 pos = saved
                 continue = false
         end while
@@ -701,11 +723,13 @@ final private class IonTextParser(
         expect('\'')
         expect('\'')
         expect('\'')
-        val sb = new StringBuilder
-        while !startsWith("'''") do
+        val sb   = new StringBuilder
+        var done = false
+        while !done do
             if pos >= input.length then error("Unterminated long string")
             val c = input.charAt(pos)
-            if c == '\\' then
+            if c == '\'' && startsWithTripleQuote then done = true
+            else if c == '\\' then
                 pos += 1
                 appendEscape(sb)
             else
@@ -721,10 +745,12 @@ final private class IonTextParser(
 
     private def parseQuoted(quote: Char): String =
         expect(quote)
-        val sb = new StringBuilder
-        while pos < input.length && peek != quote do
+        val sb   = new StringBuilder
+        var done = false
+        while !done && pos < input.length do
             val c = input.charAt(pos)
-            if c == '\\' then
+            if c == quote then done = true
+            else if c == '\\' then
                 pos += 1
                 appendEscape(sb)
             else
@@ -808,16 +834,28 @@ final private class IonTextParser(
     private def skipWhitespace(): Unit =
         var continue = true
         while continue && pos < input.length do
-            if isIonWhitespace(input.charAt(pos)) then pos += 1
-            else if startsWith("//") then
-                pos += 2
-                while pos < input.length && input.charAt(pos) != '\n' && input.charAt(pos) != '\r' do
-                    pos += 1
-            else if startsWith("/*") then
-                val end = input.indexOf("*/", pos + 2)
-                if end < 0 then error("Unterminated block comment")
-                pos = end + 2
+            val c = input.charAt(pos)
+            if isIonWhitespace(c) then pos += 1
+            else if c == '/' && pos + 1 < input.length then
+                input.charAt(pos + 1) match
+                    case '/' =>
+                        pos += 2
+                        while pos < input.length && {
+                                val c = input.charAt(pos)
+                                c != '\n' && c != '\r'
+                            }
+                        do
+                            pos += 1
+                        end while
+                    case '*' =>
+                        val end = input.indexOf("*/", pos + 2)
+                        if end < 0 then error("Unterminated block comment")
+                        pos = end + 2
+                    case _ =>
+                        continue = false
+                end match
             else continue = false
+            end if
         end while
     end skipWhitespace
 
@@ -837,21 +875,17 @@ final private class IonTextParser(
         token.length >= 10 &&
             token.charAt(4) == '-' &&
             token.charAt(7) == '-' &&
-            token.charAt(0).isDigit &&
-            token.charAt(1).isDigit &&
-            token.charAt(2).isDigit &&
-            token.charAt(3).isDigit
+            isDecimalDigit(token.charAt(0)) &&
+            isDecimalDigit(token.charAt(1)) &&
+            isDecimalDigit(token.charAt(2)) &&
+            isDecimalDigit(token.charAt(3))
 
     private def isNullToken(token: String): Boolean =
         token == "null" || isTypedNullToken(token)
 
     private def isTypedNullToken(token: String): Boolean =
         token.length > 5 &&
-            token.charAt(0) == 'n' &&
-            token.charAt(1) == 'u' &&
-            token.charAt(2) == 'l' &&
-            token.charAt(3) == 'l' &&
-            token.charAt(4) == '.' &&
+            token.startsWith("null.") &&
             isNullTypeSuffix(token, 5)
     end isTypedNullToken
 
@@ -868,10 +902,11 @@ final private class IonTextParser(
     end isNullTypeSuffix
 
     private def isNumericTokenStart(token: String): Boolean =
-        token.nonEmpty && (
-            token.charAt(0).isDigit ||
-                ((token.charAt(0) == '-' || token.charAt(0) == '+') && token.length > 1 && token.charAt(1).isDigit)
-        )
+        token.nonEmpty && {
+            val first = token.charAt(0)
+            isDecimalDigit(first) ||
+            ((first == '-' || first == '+') && token.length > 1 && isDecimalDigit(token.charAt(1)))
+        }
 
     private def isValueDelimiter(c: Char): Boolean =
         isIonWhitespace(c) || c == ',' || c == ']' || c == '}' || c == ')'
@@ -889,7 +924,7 @@ final private class IonTextParser(
         else false
 
     private def consume(c: Char): Boolean =
-        if pos < input.length && input.charAt(pos) == c then
+        if hasChar(c) then
             pos += 1
             true
         else false
@@ -907,8 +942,17 @@ final private class IonTextParser(
         if pos >= input.length then error("Unexpected end of input")
         input.charAt(pos)
 
-    private def peekOption: Option[Char] =
-        if pos >= input.length then None else Some(input.charAt(pos))
+    private def hasChar(c: Char): Boolean =
+        pos < input.length && input.charAt(pos) == c
+
+    private def nextIs(c: Char): Boolean =
+        pos + 1 < input.length && input.charAt(pos + 1) == c
+
+    private def startsWithTripleQuote: Boolean =
+        pos + 2 < input.length &&
+            input.charAt(pos) == '\'' &&
+            input.charAt(pos + 1) == '\'' &&
+            input.charAt(pos + 2) == '\''
 
     private def error(message: String): Nothing =
         val start   = math.max(0, pos - 30)
