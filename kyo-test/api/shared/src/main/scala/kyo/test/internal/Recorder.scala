@@ -18,11 +18,7 @@ final class Recorder:
 
     /** Record a subexpression value at the given source column. Returns the value unchanged. */
     def record[A](value: A, col: Int): A =
-        val rendered =
-            // Unsafe: type-erased null check (AnyRef is the widest reference type; eq null is safe for any A)
-            if value.asInstanceOf[AnyRef] eq null then "null"
-            else value.toString
-        entries += ((col, rendered))
+        entries += ((col, Recorder.render(value)))
         value
     end record
 
@@ -104,8 +100,47 @@ final class Recorder:
 
             val valLines = valueLines.map(a => new String(a).stripTrailing()).mkString("\n")
 
-            s"$sourceLine\n$pipeLine\n$valLines\n// at $location"
+            Recorder.boundedString(s"$sourceLine\n$pipeLine\n$valLines\n// at $location", Recorder.MaxDiagram)
         end if
     end diagram
+
+end Recorder
+
+object Recorder:
+
+    /** Max characters of a single value rendered inline into a power-assert diagram or a structural diff. A
+      * value larger than this is unreadable inline anyway; bounding it keeps the failure message compact.
+      */
+    private[internal] val MaxRenderedValue = 100
+
+    /** Max characters of a full rendered diagram/diff. With up to ~3 bytes per character in modified UTF-8
+      * this stays under the 65535-byte `writeUTF` limit the Scala Native test interface uses to ship
+      * results back to the JVM, so no failing leaf can ever crash that RPC channel.
+      */
+    private[internal] val MaxDiagram = 16384
+
+    /** Truncate `s` to at most `max` characters, appending a marker with the original length. Newlines are
+      * preserved (this is used for the intentionally multi-line `==` string diff); single-line inline
+      * placement goes through [[render]] instead.
+      */
+    private[internal] def boundedString(s: String, max: Int): String =
+        if s.length <= max then s
+        else s.substring(0, max) + s"...(${s.length} chars total)"
+
+    /** Null-safe, single-line, length-bounded rendering of an arbitrary value for inline placement in a
+      * diagram or diff. `String.valueOf` renders `null` as `"null"` without a NullPointerException (unlike
+      * `value.toString`); control characters are escaped so a multi-line value cannot break the
+      * column-aligned diagram layout.
+      */
+    private[internal] def render(value: Any): String =
+        val s = String.valueOf(value.asInstanceOf[AnyRef])
+        val flat = s
+            .replace("\\", "\\\\")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        if flat.length <= MaxRenderedValue then flat
+        else flat.substring(0, MaxRenderedValue) + s"...(${s.length} chars total)"
+    end render
 
 end Recorder
