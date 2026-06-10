@@ -89,12 +89,13 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
       * closed before the next `f` runs, at most one value's children are alive at a time and no waiter or fiber accumulates across changes.
       *
       * It is designed never to permanently miss the latest value, even under a write that races the observation, and never to tear a
-      * still-current value's `Scope` down on an idle timer. Two layers provide this. Leaf signals (`SignalRef`) and `map` chains over them
-      * register interest before reading the value, so they are exact and never rely on `repairInterval`. Any other signal (a custom `initRaw`,
-      * or a combinator rooted off something other than a `SignalRef`) uses the default loop, which can miss a wakeup in a narrow read/register
-      * window; there `repairInterval` bounds how soon the miss is reconciled by re-reading `current` (the hold re-waits on a still-current
-      * value, so a repair timer never closes its `Scope`). Correctness never depends on `repairInterval` ; only the worst-case reconciliation
-      * latency does, and real changes are always delivered immediately. This variant uses [[Signal.defaultRepairInterval]].
+      * still-current value's `Scope` down on an idle timer. Every signal uses the same repairing loop: it reads `current`, runs `f`, then
+      * re-arms a `nextWith`/`Async.sleep(repairInterval)` race that holds the value's `Scope` open until the next change. A write that lands
+      * in the narrow window between reading `current` and registering `nextWith` is missed by the immediate wakeup and reconciled when the
+      * repair timer next fires and re-reads `current` (the hold re-waits on a still-current value, so a repair timer never closes its `Scope`).
+      * So the final value is always delivered: immediately in the common case, and within `repairInterval` in the worst case when a write
+      * races that window. Correctness never depends on `repairInterval` ; only the worst-case reconciliation latency does. This variant uses
+      * [[Signal.defaultRepairInterval]].
       *
       * @param f
       *   The per-value setup, run inside a fresh `Scope`; it may fork scoped children (`Fiber.init`) and should return once setup is done,
@@ -105,13 +106,12 @@ sealed abstract class Signal[A](using CanEqual[A, A]) extends Serializable:
     final def observe[S](f: A => Unit < (S & Async & Scope))(using Frame): Unit < (S & Async) =
         observe(Signal.defaultRepairInterval)(f)
 
-    /** Like [[observe]] but with an explicit reconciliation interval for the repair path (used only on non-exact signals; leaf and
-      * `map`-over-leaf signals are exact and ignore it).
+    /** Like [[observe]] but with an explicit reconciliation interval.
       *
-      * The default loop is the repairing form: it tracks the last observed value and, while the current value is unchanged, re-arms a
+      * The loop is the repairing form: it tracks the last observed value and, while the current value is unchanged, re-arms a
       * `nextWith`/`Async.sleep(repairInterval)` race so a missed wakeup is reconciled within `repairInterval` WITHOUT tearing the still-current
       * value's `Scope` down. The hold loops until `current` actually differs, so a repair timer firing on a still-current value re-waits and
-      * keeps the per-value `Scope` open. Leaf signals override this with the exact register-before-read loop and ignore `repairInterval`.
+      * keeps the per-value `Scope` open.
       *
       * @param repairInterval
       *   How often a parked observation re-reads `current` to reconcile a missed wakeup on the repair path
@@ -258,9 +258,9 @@ object Signal:
 
     /** Default reconciliation interval used by [[Signal.observe]] when none is given.
       *
-      * It only affects the repair path (non-exact signals): how soon a missed wakeup is reconciled by re-reading
-      * `current`. Exact signals (`SignalRef` and `map` chains over them) ignore it. Real changes are always immediate,
-      * so this can be generous; it exists to bound a rare quiescent miss, not to drive normal updates.
+      * It bounds how soon a missed wakeup is reconciled by re-reading `current`: a write that races the observation's
+      * read/register window is delivered within this interval. Real changes are otherwise immediate, so this can be
+      * generous; it exists to bound that rare race, not to drive normal updates.
       */
     val defaultRepairInterval: Duration = 1.second
 
@@ -493,9 +493,9 @@ object Signal:
         end new
     end _initRaw
 
-    // Like _initRaw but also supplies `observe`, letting structural combinators delegate observation to their sources'
-    // (register-before-read) loops instead of inheriting the default read/register repair loop. This keeps `map`-over-leaf
-    // chains exact (and idle-no-teardown) on the leaf.
+    // Like _initRaw but also supplies `observe`, letting a structural combinator delegate observation to its source's
+    // `observe` loop (applying its transform to each value) rather than running a second repair loop over its own
+    // `currentWith`/`nextWith`. `map` uses this so a `map`-over-leaf chain observes through one loop rooted at the leaf.
     @nowarn("msg=anonymous")
     private inline def _initRawF[A](
         inline _currentWith: [B, S] => (A => B < S) => B < (S & Sync),
@@ -530,19 +530,16 @@ object Signal:
 
         def nextWith[B, S](f: A => B < S)(using Frame) = Sync.Unsafe.defer(unsafe.next().safe.use(f))
 
-        // Exact, register-before-read (capture the next-change promise before reading `current`), so a write racing the
-        // read still wakes us; `repairInterval` is unused. `f(value)` runs in a fresh per-value `Scope.run`, held open by
-        // awaiting the captured promise INSIDE the scope, so it closes (releasing what `f` forked) only on a real change
-        // or interrupt, never an idle timer. The await goes through `Async.race`, not `waiter.safe.use` directly: the
-        // next-promise is masked, and a fiber parked directly on a masked promise is not resumed by its own interrupt
-        // (its `Scope.run` finalizers would not fire); racing behind a fresh result promise restores interruptibility.
-        override def observe[S](repairInterval: Duration)(f: A => Unit < (S & Async & Scope))(using Frame): Unit < (S & Async) =
-            def loop: Unit < (S & Async) =
-                Sync.Unsafe.defer((unsafe.next(), unsafe.get())).map { (waiter, value) =>
-                    Scope.run(f(value).andThen(Async.race(Seq(waiter.safe.use(_ => ()))))).andThen(loop)
-                }
-            loop
-        end observe
+        // `observe` is intentionally NOT overridden here: `SignalRef` uses the trait's repairing `observe`.
+        //
+        // An earlier exact, register-before-read override captured the next-change promise before reading `current` and
+        // held it live across the per-value `Scope.run`/`Async` suspension. That pattern miscompiles on Scala Native
+        // 0.5.10: although it runs correctly in isolation (kyo-core's own native suite passes), its mere presence in a
+        // downstream native binary perturbs whole-program codegen and corrupts the heap, surfacing as an unrecoverable
+        // SIGSEGV/SIGABRT under concurrent load (reproduced in the kyo-browser native suite). The repairing loop never
+        // holds a promise across the suspension, emits no such pattern, and is lossless: a write that races the
+        // read/register window is reconciled within `repairInterval`, never dropped. Do not reintroduce an exact
+        // override without re-validating the full kyo-browser native suite.
 
         /** Retrieves the current value of the reference.
           *

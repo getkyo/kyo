@@ -799,19 +799,24 @@ class SignalTest extends kyo.test.Test[Any]:
             else ref.get.map(v => if v == target then Loop.done(true) else Async.sleep(1.millis).andThen(Loop.continue))
         }
 
-    private def observeExactnessLost(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
+    // Leaf and `map`-over-leaf `observe` use the repairing path (the exact register-before-read override was removed
+    // because it miscompiled on Scala Native; see SignalRef in Signal.scala). The guarantee is that the final value is
+    // never lost: a write that lands in the read/register window is reconciled within `repairInterval`. Drive
+    // back-to-back set(a);set(b) under an explicit short repairInterval (50ms) and require the final value to arrive
+    // within a generous multiple of it (1s); a returned count > 0 means a value was actually lost, not merely late.
+    private def observeNeverLosesFinalValue(useMap: Boolean, iterations: Int)(using Frame): Int < Async =
         for
             ref <- Signal.initRef("")
             sig = if useMap then ref.map(v => v) else ref
             lastSeen <- AtomicRef.init("")
-            fiber    <- Fiber.initUnscoped(sig.observe(lastSeen.set(_)))
+            fiber    <- Fiber.initUnscoped(sig.observe(50.millis)(lastSeen.set(_)))
             misses <- Kyo.foreach(Chunk.from(1 to iterations)) { i =>
                 val a = s"a$i"
                 val b = s"b$i"
                 for
                     _   <- ref.set(a)
                     _   <- ref.set(b)
-                    got <- awaitValue(lastSeen, b, 300)
+                    got <- awaitValue(lastSeen, b, 1000)
                 yield if got then 0 else 1
                 end for
             }
@@ -874,11 +879,11 @@ class SignalTest extends kyo.test.Test[Any]:
         }
 
         "never loses the final value under back-to-back writes (SignalRef leaf)" in {
-            observeExactnessLost(useMap = false, iterations = 5000).map(lost => assert(lost == 0, s"SignalRef lost $lost / 5000"))
+            observeNeverLosesFinalValue(useMap = false, iterations = 5000).map(lost => assert(lost == 0, s"SignalRef lost $lost / 5000"))
         }
 
         "never loses the final value under back-to-back writes (map delegates to leaf)" in {
-            observeExactnessLost(useMap = true, iterations = 5000).map(lost => assert(lost == 0, s"map lost $lost / 5000"))
+            observeNeverLosesFinalValue(useMap = true, iterations = 5000).map(lost => assert(lost == 0, s"map lost $lost / 5000"))
         }
 
         "reconciles a missed wakeup within repairInterval on a non-exact signal" in {
