@@ -328,10 +328,11 @@ class SignalTest extends kyo.test.Test[Any]:
                 _  <- outer.set(1)
                 _  <- f1.get
                 f2 <- Fiber.initUnscoped(sm.next)
-                _  <- assertEventually(outer.waiters.map(_ == 1))
-                _  <- inner0.set(99)
-                _  <- inner1.set(30)
-                v  <- f2.get
+                // sm.next now races outer.next and inner1.next; wait until inner1 (the signal we change) is armed too.
+                _ <- assertEventually(Kyo.zip(outer.waiters, inner1.waiters).map { case (o, i) => o == 1 && i == 1 })
+                _ <- inner0.set(99)
+                _ <- inner1.set(30)
+                v <- f2.get
             yield assert(v == 30)
         }
 
@@ -464,7 +465,9 @@ class SignalTest extends kyo.test.Test[Any]:
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
                 f <- Fiber.initUnscoped(cl.next)
-                _ <- assertEventually(refA.waiters.map(_ == 1))
+                // combineLatest.next races refA.next and refB.next, arming their waiters independently.
+                // Wait until both are armed before changing one; otherwise the set can race the arming.
+                _ <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
                 _ <- refB.set(2)
                 v <- f.get
             yield assert(v == (0, 2))
