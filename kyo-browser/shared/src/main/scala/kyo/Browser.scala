@@ -255,7 +255,7 @@ object Browser:
         val body =
             for
                 wsUrl  <- BrowserLauncher.launch(launch)
-                client <- CdpClient.init(wsUrl, launch)
+                client <- CdpBackend.init(wsUrl, launch)
                 tab    <- BrowserTabSetup.attachAndSetupTab(client)
                 a      <- runOn(tab)(v)
             yield a
@@ -269,8 +269,10 @@ object Browser:
     /** Connects to an existing browser via WebSocket URL and runs the computation. Closes the client when the body completes (success,
       * failure, or interruption). Resource lifetime is bound to this call via an internal `Scope.run`.
       */
-    def run[A, S](wsUrl: String)(v: A < (Browser & S))(using Frame): A < (Async & Abort[BrowserReadException] & S) =
-        Scope.run(CdpClient.init(wsUrl, Browser.LaunchConfig.default).map(client =>
+    def run[A, S](wsUrl: String)(v: A < (Browser & S))(using
+        Frame
+    ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
+        Scope.run(CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map(client =>
             BrowserTabSetup.attachAndSetupTab(client).map(tab => runOn(tab)(v))
         ))
 
@@ -2156,7 +2158,7 @@ object Browser:
 
         private def install[A, S](accept: Boolean, promptText: String)(v: A < S)(using Frame): A < (Browser & S) =
             Env.use[BrowserTab] { tab =>
-                val client = tab.client
+                val client = tab.session
                 // Key the handler map by CDP session ID so concurrent tabs don't clobber each other's entries.
                 val sidKey = tab.sessionId.value
                 client.dialogHandlers.getAndUpdate(m => m.update(sidKey, (accept, promptText))).map { previousMap =>
@@ -2192,7 +2194,7 @@ object Browser:
             Isolate[S, Sync, S]
         ): (Chunk[Browser.DialogEvent], A) < (Browser & Async & Abort[BrowserReadException] & S) =
             Env.use[BrowserTab] { tab =>
-                val client = tab.client
+                val client = tab.session
                 val sidKey = tab.sessionId.value
                 AtomicRef.init(Chunk.empty[Browser.DialogEvent]).map { recorder =>
                     client.dialogRecorders.getAndUpdate(_.update(sidKey, recorder)).map { previousMap =>
@@ -2519,7 +2521,7 @@ object Browser:
         Isolate[S, Sync, S]
     ): A < (Browser & Async & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val client = tab.client
+            val client = tab.session
             val sidKey = tab.sessionId.value
             // Bounded unscoped channel; closed explicitly via `Scope.ensure` inside the inner `Scope.run`. Keeping the channel unscoped
             // lets `onDownload`'s effect row stay free of `Scope` while still binding teardown to the body's lifetime.
@@ -2739,14 +2741,14 @@ object Browser:
     ): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { parent =>
             Scope.run {
-                CdpBackend.getTargets(parent.client).map { before =>
+                CdpBackend.getTargets(parent.session).map { before =>
                     val beforeIds = before.targetInfos.map(_.targetId).toSet
                     Env.run(parent)(trigger).andThen {
                         // Poll for new target
                         configLocal.use { cfg =>
                             val effectiveSchedule = schedule.getOrElse(cfg.retrySchedule)
                             Retry[BrowserReadException](effectiveSchedule) {
-                                CdpBackend.getTargets(parent.client).map { after =>
+                                CdpBackend.getTargets(parent.session).map { after =>
                                     val newTargets = after.targetInfos.filter(t =>
                                         !beforeIds.contains(t.targetId) && t.`type` == "page"
                                     )
@@ -2759,15 +2761,15 @@ object Browser:
                                 }
                             }.map { newTarget =>
                                 Scope.ensure(
-                                    CdpBackend.closeTarget(parent.client, CloseTargetParams(newTarget.targetId))
+                                    CdpBackend.closeTarget(parent.session, CloseTargetParams(newTarget.targetId))
                                 ).andThen {
                                     // Attach to the new target
-                                    CdpBackend.attachToTarget(parent.client, AttachParams(newTarget.targetId, flatten = true)).map {
+                                    CdpBackend.attachToTarget(parent.session, AttachParams(newTarget.targetId, flatten = true)).map {
                                         attached =>
                                             BrowserTabSetup.mkBrowserTab(
                                                 TargetId(newTarget.targetId),
                                                 SessionId(attached.sessionId),
-                                                parent.client,
+                                                parent.session,
                                                 parent.browserContextId
                                             ).map { tab =>
                                                 BrowserTabSetup.installFrameContextTracker(tab).andThen {
@@ -2819,15 +2821,15 @@ object Browser:
             val parentCtx = parent.browserContextId
             Scope.run {
                 for
-                    created <- CdpBackend.createTarget(parent.client, CreateTargetParams("about:blank", parentCtx))
+                    created <- CdpBackend.createTarget(parent.session, CreateTargetParams("about:blank", parentCtx))
                     _ <- Scope.ensure(
-                        CdpBackend.closeTarget(parent.client, CloseTargetParams(created.targetId))
+                        CdpBackend.closeTarget(parent.session, CloseTargetParams(created.targetId))
                     )
-                    attached <- CdpBackend.attachToTarget(parent.client, AttachParams(created.targetId, flatten = true))
+                    attached <- CdpBackend.attachToTarget(parent.session, AttachParams(created.targetId, flatten = true))
                     tab <- BrowserTabSetup.mkBrowserTab(
                         TargetId(created.targetId),
                         SessionId(attached.sessionId),
-                        parent.client,
+                        parent.session,
                         parent.browserContextId
                     )
                     _ <- BrowserTabSetup.installFrameContextTracker(tab)

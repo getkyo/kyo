@@ -249,7 +249,22 @@ private[kyo] object CdpBackend:
         yield backend
 
     // --- Phase 02: Typed companion wrappers (replace CdpBackendOld + forwarders) ---
-    // Each wrapper calls backend.send[P, R] or backend.sendUnit[P] directly. No CdpSender, no decodeOrFail.
+    // Each wrapper calls backend.send[P, R] or backend.sendUnit[P] directly.
+
+    /** Decode a raw CDP wire response to a typed result `A`. On decode failure, raises
+      * `BrowserProtocolErrorException` carrying the method and the diagnostic from the decode.
+      *
+      * Used by call sites that take a raw-JSON `s.send[..., String]` result (e.g. when a
+      * `BrowserEval.translateContextDestroyed` pass is needed before decoding) instead of
+      * `s.send[..., A]` (which would decode internally and bypass the translation step).
+      */
+    private[kyo] def decodeOrFail[A](rawJson: String, method: String)(using
+        s: Schema[A],
+        frame: Frame
+    ): A < Abort[BrowserReadException] =
+        Json.decode[A](rawJson) match
+            case Result.Success(v) => v
+            case other             => Abort.fail(BrowserProtocolErrorException(method, s"decode failed: $other"))
 
     private[kyo] def getNavigationHistory(backend: CdpBackend)(using Frame): NavigationHistory < (Async & Abort[BrowserReadException]) =
         backend.send[CdpNoParams, NavigationHistory]("Page.getNavigationHistory", CdpNoParams())

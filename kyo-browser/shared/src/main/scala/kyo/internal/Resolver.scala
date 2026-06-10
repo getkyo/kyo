@@ -41,7 +41,7 @@ private[kyo] object Resolver:
                 val s      = tab.session
                 val node   = Selector.toNode(selector)
                 val jsExpr = SelectorJs.resolveElementJs(node)
-                s.send(
+                s.send[EvaluateObjectParams, String](
                     CdpBackend.RuntimeEvaluateMethod,
                     EvaluateObjectParams(s"(() => $jsExpr)()", returnByValue = false, awaitPromise = false, contextId = ctxOpt)
                 )
@@ -102,7 +102,7 @@ private[kyo] object Resolver:
                 // objectId. The Absent-objectId branch below short-circuits to Chunk.empty without the extra
                 // DOM.getProperties + Runtime.releaseObject round-trips that a non-null empty array would
                 // require, shaving ~2 CDP messages per probe on the common zero-match retry path.
-                s.send(
+                s.send[EvaluateObjectParams, String](
                     CdpBackend.RuntimeEvaluateMethod,
                     EvaluateObjectParams(
                         s"(() => { const _r = $jsExpr; return _r.length ? _r : null; })()",
@@ -209,7 +209,7 @@ private[kyo] object Resolver:
       * `requestNode` returns `0`, call `getDocument` once and retry. Once the agent's `m_document` is set, subsequent resolves go straight
       * through without bootstrap, so the bootstrap cost is paid at most once per navigation per session.
       */
-    private def describeByObjectId(s: CdpClient, objectId: String)(using
+    private def describeByObjectId(s: CdpBackend, objectId: String)(using
         Frame
     ): Int < (Async & Abort[BrowserReadException]) =
         requestAndDescribe(s, objectId).map {
@@ -220,7 +220,7 @@ private[kyo] object Resolver:
     /** Single-pass `requestNode → describeNode(nodeId)`. Returns the `backendNodeId` on success, or `0` if `requestNode` returned `nodeId:
       * 0` (agent has no document; caller is expected to bootstrap and retry).
       */
-    private def requestAndDescribe(s: CdpClient, objectId: String)(using
+    private def requestAndDescribe(s: CdpBackend, objectId: String)(using
         Frame
     ): Int < (Async & Abort[BrowserReadException]) =
         CdpBackend.requestNode(s, RequestNodeParams(objectId)).map { req =>
@@ -236,7 +236,7 @@ private[kyo] object Resolver:
       * to wait out its full grace period. Any release failure is swallowed via `Abort.run` because a stale handle past tab close is
       * harmless (Chrome GCs the JS object on execution-context teardown anyway).
       */
-    private def releaseObjectQuiet(s: CdpClient, objectId: String)(using Frame): Unit < Async =
+    private def releaseObjectQuiet(s: CdpBackend, objectId: String)(using Frame): Unit < Async =
         Abort.run(s.sendUnit("Runtime.releaseObject", ReleaseObjectParams(objectId))).unit
 
 end Resolver
