@@ -116,10 +116,9 @@ object SiteApp:
                 ),
                 UI.nav.cssClass("links")(
                     // Docs opens the overview (the root-README intro at the intro route): clicking it
-                    // lands on the overview, which auto-opens as the active rail item. Modules also
-                    // targets the overview route, whose sidebar IS the module list.
+                    // lands on the overview, which auto-opens as the active rail item, with the module
+                    // list in the sidebar.
                     UI.a("Docs").href(Href.Path(overviewHome)),
-                    UI.a("Modules").href(Href.Path(overviewHome)),
                     UI.a("API")
                         .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
                         .target(Target.Blank),

@@ -82,19 +82,20 @@ class SiteAppTest extends Test:
         }
     }
 
-    "Docs and Modules target the overview intro route; Get started targets the first module" in run {
+    "Docs targets the overview intro route, with no separate Modules link; Get started targets the first module" in run {
         render(versions2, home).map { html =>
             // Get started targets docsHome (the first module).
             val homeRefCount = countOccurrences(html, s"""href="$home"""")
             assert(homeRefCount >= 1, s"expected Get started to target $home, found $homeRefCount: $html")
-            // Docs AND Modules both target the overview/intro route /latest/ (the overview auto-opens).
+            // Docs targets the overview/intro route /latest/ (the overview auto-opens, its sidebar IS the
+            // module list, so a separate Modules link is redundant and was removed).
             val overviewHome     = "/latest/"
             val overviewRefCount = countOccurrences(html, s"""href="$overviewHome"""")
-            assert(overviewRefCount >= 2, s"expected Docs + Modules to target $overviewHome, found $overviewRefCount: $html")
+            assert(overviewRefCount >= 1, s"expected Docs to target $overviewHome, found $overviewRefCount: $html")
             // Get started (docsHome) and the overview route must differ for the test to be meaningful.
             assert(home != overviewHome, "docsHome and the overview route must differ for the test to be meaningful")
             assert(html.contains("Docs"), s"Docs link text missing: $html")
-            assert(html.contains("Modules"), s"Modules link text missing: $html")
+            assert(!html.contains("Modules"), s"Modules link should be removed from the header: $html")
             assert(html.contains("Get started"), s"Get started button missing: $html")
         }
     }

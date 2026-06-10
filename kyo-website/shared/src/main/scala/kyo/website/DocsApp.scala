@@ -126,7 +126,7 @@ object DocsApp:
             UI.nav.cssClass("sidebar-nav")(
                 (overviewItem(route, prefix, tocSignal) +: content.groups.toSeq.map { group =>
                     UI.div.cssClass("sidebar-group")(
-                        UI.div.cssClass("sidebar-group-name")(UI.span(group.name)),
+                        UI.div.cssClass("sidebar-group-name")(UI.span(groupLabel(group.name))),
                         UI.ul(
                             group.modules.toSeq.map { mod =>
                                 val href         = s"/$prefix/${mod.slug}/"
@@ -167,6 +167,16 @@ object DocsApp:
             )
         })
     end sidebar
+
+    // Shorten the longest module-group headings for the sidebar rail only. The README headings the
+    // groups are parsed from stay verbatim; this abbreviates the few verbose multi-word names so the
+    // left rail does not wrap or crowd. Any group name not listed renders unchanged.
+    private def groupLabel(name: String): String = name match
+        case "Concurrent primitives"                  => "Concurrency"
+        case "Direct style and combinators"           => "Syntax"
+        case "Interop with other effect stacks"       => "Interop"
+        case "Scheduler embedding for other runtimes" => "Scheduler bridges"
+        case other                                    => other
 
     // The overview/home entry: the FIRST rail item, above the module groups, linking to the intro
     // route `/<prefix>/` (the root-README overview article). It mirrors the module-item mechanism: keyed
