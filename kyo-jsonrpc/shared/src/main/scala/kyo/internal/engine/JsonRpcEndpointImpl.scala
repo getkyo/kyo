@@ -902,17 +902,27 @@ object JsonRpcEndpointImpl:
                                                                         case Absent =>
                                                                             Exchange.Message.Skip
                                                                         case Present(token) =>
-                                                                            // Unsafe: offer to progress channel inside Exchange decode callback
+                                                                            // Unsafe: enqueue progress value into the channel inside the
+                                                                            // Sync-only Exchange decode callback. Pattern-match the
+                                                                            // Result to surface the buffer-full case loudly (would
+                                                                            // otherwise be a silent drop) while still allowing the
+                                                                            // legitimate channel-closed race to pass silently when the
+                                                                            // call has just completed and the consumer is gone.
                                                                             Sync.Unsafe.defer {
                                                                                 Maybe(progressStreams.get(token)) match
-                                                                                    case Absent      => ()
+                                                                                    case Absent => ()
                                                                                     case Present(ch) =>
-                                                                                        // Unsafe: non-blocking offer; backpressure not applied here
-                                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                                        discard(ch.unsafe.offer(paramsVal)(using
+                                                                                        ch.unsafe.offer(paramsVal)(using
                                                                                             AllowUnsafe.embrace.danger,
                                                                                             frame
-                                                                                        ))
+                                                                                        ) match
+                                                                                            case Result.Success(true) => ()
+                                                                                            case Result.Success(false) =>
+                                                                                                bug(
+                                                                                                    s"progress channel offer returned false for token=$token; buffer full or queue race ; the value was silently dropped"
+                                                                                                )
+                                                                                            case Result.Failure(_) => ()
+                                                                                            case Result.Panic(t)   => throw t
                                                                                 end match
                                                                                 // Unsafe: update deadline AtomicLong to reset the requestTimeout clock when progressResetsTimeout = true
                                                                                 if config.progressResetsTimeout then
@@ -1037,72 +1047,112 @@ object JsonRpcEndpointImpl:
                                                                     extras,
                                                                     progressSinkOpt
                                                                 )
-                                                            val handlerEffect =
-                                                                m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
-                                                            Fiber.initUnscoped(handlerEffect).map { fiber =>
-                                                                // Unsafe: register pendingInbound entry and attach onComplete hook inside Exchange decode callback
-                                                                Sync.Unsafe.defer {
-                                                                    val entry = InboundEntry.Running(method, fiber, cancelledUnsafe.safe)
-                                                                    pendingInbound.put(id, entry)
-                                                                    // Attach completion hook AFTER putting in pendingInbound
-                                                                    // fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
-                                                                    fiber.unsafe.onComplete { result =>
-                                                                        val responseEnvelope = result match
-                                                                            case Result.Success(sv) =>
-                                                                                JsonRpcResponse(
-                                                                                    id,
-                                                                                    Present(sv.eval(using frame)),
-                                                                                    Absent,
-                                                                                    extras
-                                                                                )
-                                                                            case Result.Failure(halt: JsonRpcResponse.Halt) =>
-                                                                                // Handler short-circuited with Halt; emit the wrapped response directly.
-                                                                                halt.response
-                                                                            case Result.Failure(e: JsonRpcError) =>
-                                                                                JsonRpcResponse(id, Absent, Present(e), extras)
-                                                                            case Result.Panic(t) =>
-                                                                                JsonRpcResponse(
-                                                                                    id,
-                                                                                    Absent,
-                                                                                    Present(
-                                                                                        JsonRpcHandlerPanicError(method, t)(using frame)
-                                                                                    ),
-                                                                                    extras
-                                                                                )
-                                                                        // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
-                                                                        pendingInbound.get(id) match
-                                                                            case running: InboundEntry.Running =>
-                                                                                // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
-                                                                                val suppressUnsafe = AtomicBoolean.Unsafe.init(false)(using
-                                                                                    AllowUnsafe.embrace.danger
-                                                                                )
-                                                                                val replying =
-                                                                                    InboundEntry.Replying(method, suppressUnsafe.safe)
-                                                                                if pendingInbound.replace(id, running, replying) then
-                                                                                    // Unsafe: writer-channel offer from Sync-only onComplete callback
-                                                                                    // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                                    discard(writerChannel.unsafe.offer(
-                                                                                        WriterMsg.SuppressIfCancelled(id, responseEnvelope)
-                                                                                    )(using AllowUnsafe.embrace.danger, frame))
-                                                                                end if
-                                                                            case _: InboundEntry.Cancelled =>
-                                                                                // Cancel won the CAS. If the policy demands a reply for cancelled
-                                                                                // requests, send the response anyway; otherwise the handler was
-                                                                                // interrupted and produces no reply.
-                                                                                val mustReply = config.cancellation match
-                                                                                    case Present(p) => p.expectReplyForCancelledRequest
-                                                                                    case Absent     => false
-                                                                                if mustReply then
-                                                                                    // Unsafe: SendEnvelope bypasses suppress check because the policy demands a reply.
-                                                                                    // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
-                                                                                    discard(writerChannel.unsafe.offer(
-                                                                                        WriterMsg.SendEnvelope(responseEnvelope)
-                                                                                    )(using AllowUnsafe.embrace.danger, frame))
-                                                                                    discard(pendingInbound.remove(id))
-                                                                                end if
-                                                                            case _ => ()
-                                                                        end match
-                                                                    }(using AllowUnsafe.embrace.danger)
+                                                            // Synchronous pre-registration: pendingInbound MUST be populated before
+                                                            // the next dispatcher frame is processed. Without this, two races break
+                                                            // the BidiTest scenarios:
+                                                            //
+                                                            //  (a) Progress race: the forked handler may run on another thread and
+                                                            //      call ctx.progress(v1) BEFORE the .map continuation reaches
+                                                            //      pendingInbound.put. The progress sink reads pendingInbound.get(id),
+                                                            //      sees Absent, and silently drops the value. 'begin' (and sometimes
+                                                            //      'report') would be missing from the consumer's collected chunk.
+                                                            //
+                                                            //  (b) Cancellation race: a cancel notification can arrive on the wire
+                                                            //      right after the request. CancellationEngine.handleInboundCancel
+                                                            //      reads pendingInbound.get(id); if the .map continuation has not yet
+                                                            //      written the Running entry, the cancel is logged-and-dropped, the
+                                                            //      handler's ctx.cancelled is never completed, and the handler hangs.
+                                                            //
+                                                            // Both are eliminated by registering INSIDE this Sync.Unsafe.defer (which
+                                                            // runs to completion before decodeCallback returns Skip to Exchange) with
+                                                            // a Promise standing in for the not-yet-forked handler fiber. The Promise
+                                                            // is later linked to the real fiber via `become`, which forwards completion
+                                                            // from the fiber to the promise and propagates interrupts the other way ;
+                                                            // so handleInboundCancel's `running.handler.unsafe.interruptDiscard` still
+                                                            // reaches the actual handler fiber for the !expectReplyForCancelledRequest
+                                                            // path.
+                                                            Sync.Unsafe.defer {
+                                                                // Unsafe: Promise.Unsafe.init for the proxy-fiber handle that lives in
+                                                                // pendingInbound before the real fiber is forked.
+                                                                val handlerProxy =
+                                                                    Promise.Unsafe.init[
+                                                                        Structure.Value,
+                                                                        Abort[JsonRpcError | JsonRpcResponse.Halt]
+                                                                    ]()(using AllowUnsafe.embrace.danger)
+                                                                val entry =
+                                                                    InboundEntry.Running(method, handlerProxy.safe, cancelledUnsafe.safe)
+                                                                pendingInbound.put(id, entry)
+                                                                val handlerEffect =
+                                                                    m.handle(params.getOrElse(Structure.Value.Null), ctx)(using frame)
+                                                                Fiber.initUnscoped(handlerEffect).map { fiber =>
+                                                                    // Link the proxy to the real fiber so completions mirror and
+                                                                    // interrupts propagate.
+                                                                    Sync.Unsafe.defer {
+                                                                        handlerProxy.becomeDiscard(fiber)(using AllowUnsafe.embrace.danger)
+                                                                        // Attach completion hook AFTER putting in pendingInbound
+                                                                        // fiber onComplete attaches cleanup hook from outside the fiber; no safe equivalent in Fiber public API
+                                                                        fiber.unsafe.onComplete { result =>
+                                                                            val responseEnvelope = result match
+                                                                                case Result.Success(sv) =>
+                                                                                    JsonRpcResponse(
+                                                                                        id,
+                                                                                        Present(sv.eval(using frame)),
+                                                                                        Absent,
+                                                                                        extras
+                                                                                    )
+                                                                                case Result.Failure(halt: JsonRpcResponse.Halt) =>
+                                                                                    // Handler short-circuited with Halt; emit the wrapped response directly.
+                                                                                    halt.response
+                                                                                case Result.Failure(e: JsonRpcError) =>
+                                                                                    JsonRpcResponse(id, Absent, Present(e), extras)
+                                                                                case Result.Panic(t) =>
+                                                                                    JsonRpcResponse(
+                                                                                        id,
+                                                                                        Absent,
+                                                                                        Present(
+                                                                                            JsonRpcHandlerPanicError(method, t)(using frame)
+                                                                                        ),
+                                                                                        extras
+                                                                                    )
+                                                                            // CAS: Running -> Replying (fails if cancel moved it to Cancelled)
+                                                                            pendingInbound.get(id) match
+                                                                                case running: InboundEntry.Running =>
+                                                                                    // Unsafe: AtomicBoolean.Unsafe.init for suppress flag
+                                                                                    val suppressUnsafe =
+                                                                                        AtomicBoolean.Unsafe.init(false)(using
+                                                                                            AllowUnsafe.embrace.danger
+                                                                                        )
+                                                                                    val replying =
+                                                                                        InboundEntry.Replying(method, suppressUnsafe.safe)
+                                                                                    if pendingInbound.replace(id, running, replying) then
+                                                                                        // Unsafe: writer-channel offer from Sync-only onComplete callback
+                                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
+                                                                                        discard(writerChannel.unsafe.offer(
+                                                                                            WriterMsg.SuppressIfCancelled(
+                                                                                                id,
+                                                                                                responseEnvelope
+                                                                                            )
+                                                                                        )(using AllowUnsafe.embrace.danger, frame))
+                                                                                    end if
+                                                                                case _: InboundEntry.Cancelled =>
+                                                                                    // Cancel won the CAS. If the policy demands a reply for cancelled
+                                                                                    // requests, send the response anyway; otherwise the handler was
+                                                                                    // interrupted and produces no reply.
+                                                                                    val mustReply = config.cancellation match
+                                                                                        case Present(p) => p.expectReplyForCancelledRequest
+                                                                                        case Absent     => false
+                                                                                    if mustReply then
+                                                                                        // Unsafe: SendEnvelope bypasses suppress check because the policy demands a reply.
+                                                                                        // channel offer from Sync-only Exchange callback (no Frame in scope); no safe Channel equivalent
+                                                                                        discard(writerChannel.unsafe.offer(
+                                                                                            WriterMsg.SendEnvelope(responseEnvelope)
+                                                                                        )(using AllowUnsafe.embrace.danger, frame))
+                                                                                        discard(pendingInbound.remove(id))
+                                                                                    end if
+                                                                                case _ => ()
+                                                                            end match
+                                                                        }(using AllowUnsafe.embrace.danger)
+                                                                    }
                                                                 }.andThen(Exchange.Message.Skip)
                                                             }
                                                         case None =>
