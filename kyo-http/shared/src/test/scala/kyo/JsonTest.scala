@@ -93,17 +93,8 @@ class JsonTest extends BaseHttpTest:
             assert(Json.decode[Unit]("   ").isFailure)
         }
 
-        "decode empty object" in {
-            // Unit serializes as `{}` (kyo-schema's empty-object convention; `null` is reserved for absent
-            // Maybe / None Option). The HTTP routing layer still short-circuits empty body and `null` body
-            // to Unit via RouteUtil.decodeBufferedBodyValue's Unit detection (see RouteUtil.scala); the
-            // raw Schema-level decode requires the canonical empty-object shape.
-            assert(Json.decode[Unit]("{}") == Result.succeed(()))
-        }
-
-        "decode null is failure (use {} for Unit)" in {
-            // Sanity: post-Unit-as-empty-object, `null` is no longer accepted as Unit at the Schema layer.
-            assert(Json.decode[Unit]("null").isFailure)
+        "decode null" in {
+            assert(Json.decode[Unit]("null") == Result.succeed(()))
         }
 
         "decode invalid value returns failure" in {

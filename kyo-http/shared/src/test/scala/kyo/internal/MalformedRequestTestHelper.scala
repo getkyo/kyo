@@ -11,7 +11,7 @@ private[kyo] object MalformedRequestTestHelper:
         Sync.Unsafe.defer {
             val transport = HttpPlatformTransport.transport
             val fiber     = transport.connect(host, port)
-            Abort.run[HttpException](fiber.safe.get).map {
+            Abort.run[Closed](fiber.safe.get).map {
                 case Result.Success(conn3) =>
                     val garbage = Span.fromUnsafe("GARBAGE\r\nNOT HTTP\r\n\r\n".getBytes("UTF-8"))
                     Abort.run[Closed](conn3.outbound.safe.put(garbage)).unit
