@@ -26,28 +26,28 @@ class McpHandshakeGateTest extends Test:
     private val arbitraryReq: JsonRpcEnvelope =
         JsonRpcRequest(JsonRpcId(4L), "arbitrary/method", Absent, Absent)
 
-    "pre-handshake: initialize request is admitted" in run {
+    "pre-handshake: initialize request is admitted" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(initReq).map { dec =>
             assert(dec == JsonRpcMessageGate.Decision.Allow)
         }
     }
 
-    "pre-handshake: notifications/initialized notification is admitted (sets flag)" in run {
+    "pre-handshake: notifications/initialized notification is admitted (sets flag)" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(initNotif).map { dec =>
             assert(dec == JsonRpcMessageGate.Decision.Allow)
         }
     }
 
-    "pre-handshake: ping request is always admitted" in run {
+    "pre-handshake: ping request is always admitted" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(pingReq).map { dec =>
             assert(dec == JsonRpcMessageGate.Decision.Allow)
         }
     }
 
-    "pre-handshake: tools/list request is rejected before initialize" in run {
+    "pre-handshake: tools/list request is rejected before initialize" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(toolsReq).map {
             case JsonRpcMessageGate.Decision.Reject(resp) =>
@@ -56,14 +56,14 @@ class McpHandshakeGateTest extends Test:
         }
     }
 
-    "pre-handshake: notifications/cancelled is admitted (notifications never rejected)" in run {
+    "pre-handshake: notifications/cancelled is admitted (notifications never rejected)" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(cancelNotif).map { dec =>
             assert(dec == JsonRpcMessageGate.Decision.Allow)
         }
     }
 
-    "pre-handshake: arbitrary request is rejected before initialize" in run {
+    "pre-handshake: arbitrary request is rejected before initialize" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(arbitraryReq).map {
             case JsonRpcMessageGate.Decision.Reject(_) => assert(true)
@@ -71,7 +71,7 @@ class McpHandshakeGateTest extends Test:
         }
     }
 
-    "RequireInitializedNotification: after both flags set, all six messages are admitted" in run {
+    "RequireInitializedNotification: after both flags set, all six messages are admitted" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         for
             _  <- gate.beforeDispatch(initReq)
@@ -92,7 +92,7 @@ class McpHandshakeGateTest extends Test:
         end for
     }
 
-    "RequireInitializedNotification: tools/list rejected after initialize-req but before initialized-notif" in run {
+    "RequireInitializedNotification: tools/list rejected after initialize-req but before initialized-notif" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         gate.beforeDispatch(initReq).flatMap { _ =>
             gate.beforeDispatch(toolsReq).map {
@@ -102,7 +102,7 @@ class McpHandshakeGateTest extends Test:
         }
     }
 
-    "RequireInitializeRequestOnly: tools/list admitted after initialize-req without initialized-notif" in run {
+    "RequireInitializeRequestOnly: tools/list admitted after initialize-req without initialized-notif" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializeRequestOnly)
         gate.beforeDispatch(initReq).flatMap { _ =>
             gate.beforeDispatch(toolsReq).map { dec =>
@@ -111,7 +111,7 @@ class McpHandshakeGateTest extends Test:
         }
     }
 
-    "rejection response carries the correct request id" in run {
+    "rejection response carries the correct request id" in {
         val gate = McpHandshakeGate.server(McpConfig.HandshakeOrder.RequireInitializedNotification)
         val req  = JsonRpcRequest(JsonRpcId(99L), "tools/call", Absent, Absent)
         gate.beforeDispatch(req).map {

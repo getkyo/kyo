@@ -25,7 +25,7 @@ class McpProgressMonotonicTest extends Test:
     // Token-location invariant
     // -------------------------------------------------------------------------
 
-    "extractRequestToken: accepts _meta.progressToken" in run {
+    "extractRequestToken: accepts _meta.progressToken" in {
         val params = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("progressToken" -> Structure.Value.Integer(1L)))
         ))
@@ -35,7 +35,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractRequestToken: rejects top-level progressToken" in run {
+    "extractRequestToken: rejects top-level progressToken" in {
         val params = Structure.Value.Record(Chunk(
             "progressToken" -> Structure.Value.Integer(1L)
         ))
@@ -44,7 +44,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractInboundToken: accepts top-level progressToken (progress notification)" in run {
+    "extractInboundToken: accepts top-level progressToken (progress notification)" in {
         val params = Structure.Value.Record(Chunk(
             "progressToken" -> Structure.Value.Integer(1L)
         ))
@@ -53,7 +53,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractInboundToken: returns Absent for _meta.progressToken" in run {
+    "extractInboundToken: returns Absent for _meta.progressToken" in {
         val params = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("progressToken" -> Structure.Value.Integer(1L)))
         ))
@@ -62,7 +62,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractRequestToken: handles nested _meta with additional fields" in run {
+    "extractRequestToken: handles nested _meta with additional fields" in {
         val params = Structure.Value.Record(Chunk(
             "arg" -> Structure.Value.Str("val"),
             "_meta" -> Structure.Value.Record(Chunk(
@@ -75,7 +75,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractRequestToken: returns Absent when _meta has no progressToken" in run {
+    "extractRequestToken: returns Absent when _meta has no progressToken" in {
         val params = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("unrelated" -> Structure.Value.Str("x")))
         ))
@@ -84,7 +84,7 @@ class McpProgressMonotonicTest extends Test:
         }
     }
 
-    "extractRequestToken: returns Absent for non-Record params" in run {
+    "extractRequestToken: returns Absent for non-Record params" in {
         val params = Structure.Value.Null
         policy.extractRequestToken(params).map { result =>
             assert(result == Absent)

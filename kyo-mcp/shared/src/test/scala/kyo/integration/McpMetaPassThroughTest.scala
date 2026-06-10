@@ -7,7 +7,7 @@ class McpMetaPassThroughTest extends Test:
 
     case class AddIn(a: Int, b: Int) derives Schema, CanEqual
 
-    "ToolOutcome meta field round-trips through the wire" in run {
+    "ToolOutcome meta field round-trips through the wire" in {
         val metaVal = Structure.encode(Map("echo" -> "bar"))
         val toolRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
@@ -33,7 +33,7 @@ class McpMetaPassThroughTest extends Test:
         }
     }
 
-    "ToolOutcome meta defaults to Absent when not set" in run {
+    "ToolOutcome meta defaults to Absent when not set" in {
         val toolRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
                 content = Chunk(McpContent.text(s"${in.a + in.b}")),

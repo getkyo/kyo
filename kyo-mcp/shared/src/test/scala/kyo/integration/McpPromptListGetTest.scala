@@ -16,7 +16,7 @@ class McpPromptListGetTest extends Test:
         )
     }
 
-    "listPrompts returns page with the registered prompt" in run {
+    "listPrompts returns page with the registered prompt" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, promptRoute),
@@ -36,7 +36,7 @@ class McpPromptListGetTest extends Test:
         }
     }
 
-    "getPrompt returns result with correct message content" in run {
+    "getPrompt returns result with correct message content" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, promptRoute),

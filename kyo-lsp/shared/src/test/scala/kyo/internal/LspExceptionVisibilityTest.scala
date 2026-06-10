@@ -16,7 +16,7 @@ package kyo
   */
 class LspExceptionVisibilityTest extends Test:
 
-    "LspException leaves can be constructed from kyo package" in run {
+    "LspException leaves can be constructed from kyo package" in {
         val e1 = LspException.Handshake.NotInitialized("test-method")
         val e2 = LspException.Dispatch.MethodNotFound("test-method")
         val e3 = LspException.Execution.RequestCancelled(JsonRpcId(1L))
@@ -25,7 +25,7 @@ class LspExceptionVisibilityTest extends Test:
         assert(e3.isInstanceOf[LspException])
     }
 
-    "LspException leaves extend the correct stage base" in run {
+    "LspException leaves extend the correct stage base" in {
         val handshake   = LspException.Handshake.NotInitialized("x")
         val dispatch    = LspException.Dispatch.MethodNotFound("x")
         val execution   = LspException.Execution.ContentModified(LspHandler.LspDocument.Uri.parse("file:///Main.scala").get)
@@ -42,7 +42,7 @@ class LspExceptionVisibilityTest extends Test:
         assert(panic.isInstanceOf[LspException.Execution])
     }
 
-    "LspException stage hierarchy is sealed (compile check)" in run {
+    "LspException stage hierarchy is sealed (compile check)" in {
         // The sealed modifier prevents extension outside the file. This assertion
         // verifies the closed hierarchy at runtime via exhaustive pattern matching.
         val exceptions: Chunk[LspException] = Chunk(

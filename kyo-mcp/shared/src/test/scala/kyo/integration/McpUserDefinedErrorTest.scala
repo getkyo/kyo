@@ -12,7 +12,7 @@ class McpUserDefinedErrorTest extends Test:
     case class FsError(reason: String, path: String) derives Schema, CanEqual
     case class ReadReq(path: String) derives Schema, CanEqual
 
-    "tool handler aborts with user-defined error type via .error[E2]" in run {
+    "tool handler aborts with user-defined error type via .error[E2]" in {
         val readTool = McpHandler
             .tool[ReadReq](name = "read", description = "Read a file") { req =>
                 if req.path.startsWith("/") then
@@ -50,7 +50,7 @@ class McpUserDefinedErrorTest extends Test:
         }
     }
 
-    "tool handler happy path still works alongside .error[E2]" in run {
+    "tool handler happy path still works alongside .error[E2]" in {
         val readTool = McpHandler
             .tool[ReadReq](name = "read", description = "Read a file") { req =>
                 if req.path.startsWith("/") then

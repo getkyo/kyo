@@ -1,25 +1,11 @@
 package kyo
 
-import kyo.internal.BaseKyoCoreTest
-import kyo.internal.Platform
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.ExecutionContext
+class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
 
-class JsonRpcHttpTransportTest extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
-
-    type Assertion = org.scalatest.Assertion
-    def assertionSuccess              = succeed
-    def assertionFailure(msg: String) = fail(msg)
-
-    override def timeout = 60.seconds
-
-    override given executionContext: ExecutionContext = Platform.executionContext
-
-    override def run(v: scala.concurrent.Future[Assertion] < (Abort[Any] & Async & Scope))(using
-        Frame
-    ): scala.concurrent.Future[Assertion] =
-        super.run(HttpClient.withConfig(_.timeout(60.seconds))(v))
+    // Linux Native CI HTTP server bring-up + per-request latency can exceed the production 5-second HttpClient
+    // default. Wrap every leaf so test requests get a 60s client request timeout (mirrors BaseHttpTest).
+    override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
+        HttpClient.withConfig(_.timeout(60.seconds))(body)
 
     // ==================== Test helpers ====================
 
@@ -78,7 +64,7 @@ class JsonRpcHttpTransportTest extends AsyncFreeSpec with NonImplicitAssertions 
 
     // ==================== Tests ====================
 
-    "webSocket connects to a local kyo-http server" in runNotNative {
+    "webSocket connects to a local kyo-http server".notNative in {
         withEchoWsServer { url =>
             Scope.run {
                 val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/echo").getOrThrow
@@ -99,7 +85,7 @@ class JsonRpcHttpTransportTest extends AsyncFreeSpec with NonImplicitAssertions 
         }
     }
 
-    "webSocket drops binary frames with warn" in runNotNative {
+    "webSocket drops binary frames with warn".notNative in {
         withBinaryWsServer { url =>
             Scope.run {
                 val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/binary").getOrThrow
@@ -121,7 +107,7 @@ class JsonRpcHttpTransportTest extends AsyncFreeSpec with NonImplicitAssertions 
         }
     }
 
-    "Scope.ensure closes the WS on scope exit" in runNotNative {
+    "Scope.ensure closes the WS on scope exit".notNative in {
         withCloseTrackingWsServer { (url, closes) =>
             val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/close").getOrThrow
             Scope.run {
@@ -141,7 +127,7 @@ class JsonRpcHttpTransportTest extends AsyncFreeSpec with NonImplicitAssertions 
         }
     }
 
-    "codec failure on malformed text frame surfaces as Malformed envelope" in runNotNative {
+    "codec failure on malformed text frame surfaces as Malformed envelope".notNative in {
         withGarbageWsServer { url =>
             Scope.run {
                 val wsUrl = HttpUrl.parse(s"ws://${url.host}:${url.port}/ws/garbage").getOrThrow

@@ -12,7 +12,7 @@ class McpCancellationFireAndForgetTest extends Test:
 
     case class SlowReq(n: Int) derives Schema, CanEqual
 
-    "interrupting in-flight tool call completes without error" in run {
+    "interrupting in-flight tool call completes without error" in {
         // AllowUnsafe: AtomicBoolean used as a signal flag to detect when the handler has started.
         val handlerReady = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
@@ -31,7 +31,7 @@ class McpCancellationFireAndForgetTest extends Test:
                     Abort.run[McpException | Closed](client.callTool[SlowReq]("slow", SlowReq(1)))
                 ).flatMap { reqFiber =>
                     // Poll until the handler has set the flag, then interrupt.
-                    untilTrue(Sync.defer(handlerReady.get()(using AllowUnsafe.embrace.danger)))
+                    assertEventually(Sync.defer(handlerReady.get()(using AllowUnsafe.embrace.danger)))
                         .andThen(reqFiber.interrupt)
                         .andThen(srv.closeNow)
                         .andThen(client.closeNow)
@@ -41,7 +41,7 @@ class McpCancellationFireAndForgetTest extends Test:
         }
     }
 
-    "cancellation policy wire behavior verified at integration level" in run {
+    "cancellation policy wire behavior verified at integration level" in {
         // The unit-level pin of expectReplyForCancelledRequest=false lives in McpCancellationPolicyTest.
         // This integration test verifies the wire-level behavior; no direct access to internals.
         succeed

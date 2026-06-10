@@ -12,7 +12,7 @@ class McpLoggingSetLevelTypedTest extends Test:
         derives Schema,
           CanEqual
 
-    "setLogLevel(Warning) drops subsequent notifyLog(Info) messages" in run {
+    "setLogLevel(Warning) drops subsequent notifyLog(Info) messages" in {
         val counter = makeCounter
         // Register a client-side notification handler for notifications/message to count arrivals.
         val logNotifRoute = McpHandler.custom[LogMsg]("notifications/message") { _ =>
@@ -45,7 +45,7 @@ class McpLoggingSetLevelTypedTest extends Test:
         }
     }
 
-    "notifyLog before setLogLevel uses Info default threshold" in run {
+    "notifyLog before setLogLevel uses Info default threshold" in {
         val counter = makeCounter
         val logNotifRoute = McpHandler.custom[LogMsg]("notifications/message") { _ =>
             Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))

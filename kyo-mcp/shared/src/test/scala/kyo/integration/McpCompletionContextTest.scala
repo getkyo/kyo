@@ -9,7 +9,7 @@ class McpCompletionContextTest extends Test:
     private def makeContextRef =
         AtomicRef.Unsafe.init[Maybe[McpHandler.CompletionArg.Context]](Absent)(using AllowUnsafe.embrace.danger).safe
 
-    "completion handler receives Maybe[CompletionArg.Context] from CompleteParams" in run {
+    "completion handler receives Maybe[CompletionArg.Context] from CompleteParams" in {
         val capturedContext = makeContextRef
         val ref             = McpHandler.CompletionRef.Prompt("myPrompt")
         val completionRoute = McpHandler.completionWith(ref) { (arg, ctx) =>

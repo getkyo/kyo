@@ -15,7 +15,7 @@ class McpResourceListReadTest extends Test:
         Chunk(McpHandler.ResourceContents.Text(uri, Absent, "content-tmpl"))
     }
 
-    "listResources returns page with the registered resource URI" in run {
+    "listResources returns page with the registered resource URI" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, resRoute, tmplRoute),
@@ -36,7 +36,7 @@ class McpResourceListReadTest extends Test:
         }
     }
 
-    "listResourceTemplates returns page with the registered template" in run {
+    "listResourceTemplates returns page with the registered template" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, resRoute, tmplRoute),
@@ -55,7 +55,7 @@ class McpResourceListReadTest extends Test:
         }
     }
 
-    "readResource returns Text contents for the registered URI" in run {
+    "readResource returns Text contents for the registered URI" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, resRoute, tmplRoute),

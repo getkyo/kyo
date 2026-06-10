@@ -7,7 +7,7 @@ import kyo.*
   */
 class McpPingTest extends Test:
 
-    "client.ping returns Unit without error" in run {
+    "client.ping returns Unit without error" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
@@ -24,7 +24,7 @@ class McpPingTest extends Test:
         }
     }
 
-    "client.ping can be called multiple times" in run {
+    "client.ping can be called multiple times" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
@@ -45,7 +45,7 @@ class McpPingTest extends Test:
         }
     }
 
-    "client.unsafe.ping returns Unit without error" in run {
+    "client.unsafe.ping returns Unit without error" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),

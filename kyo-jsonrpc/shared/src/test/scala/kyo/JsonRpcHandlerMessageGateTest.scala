@@ -8,7 +8,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
 
     private val sentinelId = JsonRpcId.Num(1L)
 
-    "Decision values are CanEqual-distinguishable across Allow / Reject / Drop" in run {
+    "Decision values are CanEqual-distinguishable across Allow / Reject / Drop" in {
         val a: JsonRpcMessageGate.Decision = JsonRpcMessageGate.Decision.Allow
         val d: JsonRpcMessageGate.Decision = JsonRpcMessageGate.Decision.Drop
         val r: JsonRpcMessageGate.Decision =
@@ -20,7 +20,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         assert(d != r)
     }
 
-    "Reject decision carries the supplied JsonRpcResponse" in run {
+    "Reject decision carries the supplied JsonRpcResponse" in {
         val err                              = JsonRpcInvalidRequestError(Structure.Value.Str("nope"), Chunk.empty)
         val resp                             = JsonRpcResponse.failure(sentinelId, err)
         val dec: JsonRpcMessageGate.Decision = JsonRpcMessageGate.Decision.Reject(resp)
@@ -29,7 +29,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
             case other                                        => fail(s"expected Reject, got $other")
     }
 
-    "a test-double gate returning Drop reports Drop for any envelope" in run {
+    "a test-double gate returning Drop reports Drop for any envelope" in {
         val gate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 Sync.defer(JsonRpcMessageGate.Decision.Drop)
@@ -38,7 +38,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
             assert(dec == JsonRpcMessageGate.Decision.Drop)
     }
 
-    "a test-double gate returning Allow reports Allow for any envelope" in run {
+    "a test-double gate returning Allow reports Allow for any envelope" in {
         val gate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 Sync.defer(JsonRpcMessageGate.Decision.Allow)
@@ -47,7 +47,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
             assert(dec == JsonRpcMessageGate.Decision.Allow)
     }
 
-    "Reject and Drop are structurally distinct from Allow under pattern matching" in run {
+    "Reject and Drop are structurally distinct from Allow under pattern matching" in {
         val cases: Seq[JsonRpcMessageGate.Decision] = Seq(
             JsonRpcMessageGate.Decision.Allow,
             JsonRpcMessageGate.Decision.Drop,
@@ -62,7 +62,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         assert(tags == Seq("A", "D", "R"))
     }
 
-    "noop gate always returns Allow" in run {
+    "noop gate always returns Allow" in {
         val env1 = JsonRpcNotification("ping", Absent, Absent)
         val env2 = JsonRpcRequest(JsonRpcId.Num(2L), "call", Absent, Absent)
         JsonRpcMessageGate.noop.beforeDispatch(env1).map { d1 =>
@@ -73,7 +73,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         }
     }
 
-    "requireHandshake: handshake method is allowed before handshake completes" in run {
+    "requireHandshake: handshake method is allowed before handshake completes" in {
         val rejection    = JsonRpcResponse.failure(sentinelId, JsonRpcImplementationError(-32002, "not ready"))
         val gate         = JsonRpcMessageGate.server.requireHandshake("begin", rejection)
         val handshakeEnv = JsonRpcRequest(JsonRpcId.Num(1L), "begin", Absent, Absent)
@@ -82,7 +82,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         }
     }
 
-    "requireHandshake: non-handshake request before handshake is rejected with supplied response" in run {
+    "requireHandshake: non-handshake request before handshake is rejected with supplied response" in {
         val rejection    = JsonRpcResponse.failure(sentinelId, JsonRpcImplementationError(-32002, "not ready"))
         val gate         = JsonRpcMessageGate.server.requireHandshake("begin", rejection)
         val nonHandshake = JsonRpcRequest(JsonRpcId.Num(2L), "doWork", Absent, Absent)
@@ -93,7 +93,7 @@ class JsonRpcHandlerMessageGateTest extends JsonRpcTest:
         }
     }
 
-    "requireHandshake: requests allowed after handshake method observed" in run {
+    "requireHandshake: requests allowed after handshake method observed" in {
         val rejection    = JsonRpcResponse.failure(sentinelId, JsonRpcImplementationError(-32002, "not ready"))
         val gate         = JsonRpcMessageGate.server.requireHandshake("handshake", rejection)
         val handshakeEnv = JsonRpcRequest(JsonRpcId.Num(1L), "handshake", Absent, Absent)

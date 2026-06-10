@@ -2,14 +2,14 @@ package kyo
 
 class JsonRpcTransportFramerTest extends JsonRpcTest:
 
-    "lineDelimited.frame appends LF" in run {
+    "lineDelimited.frame appends LF" in {
         val payload = Chunk.from("abc".getBytes("UTF-8"))
         JsonRpcFramer.lineDelimited.frame(payload).map { result =>
             assert(result == Chunk.from("abc\n".getBytes("UTF-8")))
         }
     }
 
-    "lineDelimited.parse splits multi-line buffer" in run {
+    "lineDelimited.parse splits multi-line buffer" in {
         val input  = Chunk.from("a\nb\nc\n".getBytes("UTF-8"))
         val stream = Stream.init[Chunk[Byte], Any](Seq(input))
         JsonRpcFramer.lineDelimited.parse(stream).run.map { frames =>
@@ -18,7 +18,7 @@ class JsonRpcTransportFramerTest extends JsonRpcTest:
         }
     }
 
-    "lineDelimited.parse strips CR before LF" in run {
+    "lineDelimited.parse strips CR before LF" in {
         val input  = Chunk.from("a\r\nb\r\n".getBytes("UTF-8"))
         val stream = Stream.init[Chunk[Byte], Any](Seq(input))
         JsonRpcFramer.lineDelimited.parse(stream).run.map { frames =>
@@ -28,7 +28,7 @@ class JsonRpcTransportFramerTest extends JsonRpcTest:
         }
     }
 
-    "lineDelimited.parse skips empty lines" in run {
+    "lineDelimited.parse skips empty lines" in {
         val input  = Chunk.from("a\n\n\nb\n".getBytes("UTF-8"))
         val stream = Stream.init[Chunk[Byte], Any](Seq(input))
         JsonRpcFramer.lineDelimited.parse(stream).run.map { frames =>
@@ -37,7 +37,7 @@ class JsonRpcTransportFramerTest extends JsonRpcTest:
         }
     }
 
-    "contentLength.frame prepends header with strict CRLF" in run {
+    "contentLength.frame prepends header with strict CRLF" in {
         val payload = Chunk.from("{}".getBytes("UTF-8"))
         JsonRpcFramer.contentLength.frame(payload).map { result =>
             val expected = Chunk.from("Content-Length: 2\r\n\r\n{}".getBytes("UTF-8"))
@@ -45,7 +45,7 @@ class JsonRpcTransportFramerTest extends JsonRpcTest:
         }
     }
 
-    "contentLength.parse extracts one frame" in run {
+    "contentLength.parse extracts one frame" in {
         val input  = Chunk.from("Content-Length: 5\r\n\r\nhello".getBytes("UTF-8"))
         val stream = Stream.init[Chunk[Byte], Any](Seq(input))
         JsonRpcFramer.contentLength.parse(stream).run.map { frames =>
@@ -54,7 +54,7 @@ class JsonRpcTransportFramerTest extends JsonRpcTest:
         }
     }
 
-    "contentLength.parse tolerates double-LF header terminator" in run {
+    "contentLength.parse tolerates double-LF header terminator" in {
         val input  = Chunk.from("Content-Length: 2\n\n{}".getBytes("UTF-8"))
         val stream = Stream.init[Chunk[Byte], Any](Seq(input))
         JsonRpcFramer.contentLength.parse(stream).run.map { frames =>

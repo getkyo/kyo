@@ -7,7 +7,7 @@ class LspServerTest extends Test:
     // Init quartet: basic smoke tests
     // =========================================================================
 
-    "initUnscoped with no handlers produces a live server" in run {
+    "initUnscoped with no handlers produces a live server" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.closeNow.andThen(succeed)
@@ -15,7 +15,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "initUnscoped with default config smoke test" in run {
+    "initUnscoped with default config smoke test" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta, LspConfig.default)().flatMap { server =>
                 server.closeNow.andThen(succeed)
@@ -23,7 +23,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "initUnscoped with Seq overload produces a live server" in run {
+    "initUnscoped with Seq overload produces a live server" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta, Seq.empty, LspConfig.default).flatMap { server =>
                 server.closeNow.andThen(succeed)
@@ -31,7 +31,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "initUnscopedWith applies function to the server and returns result" in run {
+    "initUnscopedWith applies function to the server and returns result" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscopedWith(ta) { server =>
                 server.specVersion
@@ -41,7 +41,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "initUnscopedWith with config applies function to the server" in run {
+    "initUnscopedWith with config applies function to the server" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscopedWith(ta, LspConfig.default)() { server =>
                 server.specVersion
@@ -55,7 +55,7 @@ class LspServerTest extends Test:
     // Scoped init quartet
     // =========================================================================
 
-    "init (scoped) releases server when Scope exits" in run {
+    "init (scoped) releases server when Scope exits" in {
         JsonRpcTransport.inMemory.flatMap { (ta, _) =>
             Scope.run {
                 LspServer.init(ta).map { server =>
@@ -65,7 +65,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "init (scoped) with config releases server when Scope exits" in run {
+    "init (scoped) with config releases server when Scope exits" in {
         JsonRpcTransport.inMemory.flatMap { (ta, _) =>
             Scope.run {
                 LspServer.init(ta, LspConfig.default)().map { server =>
@@ -75,7 +75,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "initWith applies function and server is live inside the function" in run {
+    "initWith applies function and server is live inside the function" in {
         JsonRpcTransport.inMemory.flatMap { (ta, _) =>
             Scope.run {
                 LspServer.initWith(ta) { server =>
@@ -87,7 +87,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "initWith with config applies function to the server" in run {
+    "initWith with config applies function to the server" in {
         JsonRpcTransport.inMemory.flatMap { (ta, _) =>
             Scope.run {
                 LspServer.initWith(ta, LspConfig.default)() { server =>
@@ -103,7 +103,7 @@ class LspServerTest extends Test:
     // Accessors before handshake
     // =========================================================================
 
-    "specVersion returns 3.17 before handshake" in run {
+    "specVersion returns 3.17 before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val ver = server.specVersion
@@ -114,7 +114,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "clientCapabilities returns Absent before handshake" in run {
+    "clientCapabilities returns Absent before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val caps = server.clientCapabilities
@@ -125,7 +125,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "clientInfo returns Absent before handshake" in run {
+    "clientInfo returns Absent before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val info = server.clientInfo
@@ -136,7 +136,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "workspaceFolders returns Absent before handshake" in run {
+    "workspaceFolders returns Absent before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val folders = server.workspaceFolders
@@ -147,7 +147,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "positionEncoding returns UTF16 as default before handshake" in run {
+    "positionEncoding returns UTF16 as default before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val enc = server.positionEncoding
@@ -158,7 +158,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "underlying returns a JsonRpcHandler instance" in run {
+    "underlying returns a JsonRpcHandler instance" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _ = server.underlying
@@ -167,7 +167,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "unsafe returns the Unsafe handle (opaque identity)" in run {
+    "unsafe returns the Unsafe handle (opaque identity)" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val unsafe = server.unsafe
@@ -184,7 +184,7 @@ class LspServerTest extends Test:
     // close / closeNow / awaitDrain
     // =========================================================================
 
-    "close(using Frame) completes without error (30-second grace)" in run {
+    "close(using Frame) completes without error (30-second grace)" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.close.andThen(succeed)
@@ -192,7 +192,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "closeNow completes without error (Duration.Zero grace)" in run {
+    "closeNow completes without error (Duration.Zero grace)" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.closeNow.andThen(succeed)
@@ -200,7 +200,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "close(gracePeriod) with explicit duration completes without error" in run {
+    "close(gracePeriod) with explicit duration completes without error" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.close(1.seconds).andThen(succeed)
@@ -208,7 +208,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "awaitDrain completes without error on idle server" in run {
+    "awaitDrain completes without error on idle server" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 server.awaitDrain.andThen(server.closeNow).andThen(succeed)
@@ -220,7 +220,7 @@ class LspServerTest extends Test:
     // LspConfig.require fires before transport
     // =========================================================================
 
-    "init aborts when positionEncodings is empty" in run {
+    "init aborts when positionEncodings is empty" in {
         val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
         val result    = scala.util.Try(LspConfig.require(badConfig))
         assert(result.isFailure)
@@ -231,7 +231,7 @@ class LspServerTest extends Test:
     // Direction filtering at init time
     // =========================================================================
 
-    "initUnscoped rejects a ClientHandled handler at init time" in run {
+    "initUnscoped rejects a ClientHandled handler at init time" in {
         val wrongHandler = LspHandler.initNotification[LspHandler.ShowMessageParams, Nothing](
             "window/showMessage",
             LspHandler.Kind.ShowMessage,
@@ -250,7 +250,7 @@ class LspServerTest extends Test:
     // Reverse-direction extension method types
     // =========================================================================
 
-    "showMessage return type is Unit < (Async & Abort[Closed])" in run {
+    "showMessage return type is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                                 = LspHandler.ShowMessageParams(LspHandler.MessageType.Info, "hello")
@@ -260,7 +260,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "logMessage return type is Unit < (Async & Abort[Closed])" in run {
+    "logMessage return type is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                                 = LspHandler.LogMessageParams(LspHandler.MessageType.Log, "debug info")
@@ -270,7 +270,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "publishDiagnostics return type is Unit < (Async & Abort[Closed])" in run {
+    "publishDiagnostics return type is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val uri                                    = LspHandler.LspDocument.Uri.parse("file:///Main.scala").get
@@ -281,7 +281,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "telemetry return type is Unit < (Async & Abort[Closed])" in run {
+    "telemetry return type is Unit < (Async & Abort[Closed])" in {
         case class Payload(msg: String) derives Schema
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -291,7 +291,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "logTrace return type is Unit < (Async & Abort[Closed])" in run {
+    "logTrace return type is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val effect: Unit < (Async & Abort[Closed]) = server.logTrace("trace message")
@@ -300,7 +300,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "applyEdit return type compiles as ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed])" in run {
+    "applyEdit return type compiles as ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed])" in {
         // Compile-time type check only; the method signature must accept the return type annotation.
         // Not awaited: reverse-direction requests need a connected client peer.
         JsonRpcTransport.inMemory.map { (ta, _) =>
@@ -313,7 +313,7 @@ class LspServerTest extends Test:
         }
     }
 
-    "showMessageRequest return type compiles as Maybe[MessageActionItem] < (Async & Abort[LspException | Closed])" in run {
+    "showMessageRequest return type compiles as Maybe[MessageActionItem] < (Async & Abort[LspException | Closed])" in {
         // Compile-time type check only; not awaited (needs a connected client peer).
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>

@@ -29,7 +29,7 @@ class BidiTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
-    "both endpoints register methods; simultaneous A.call(B) and B.call(A) resolve without id collision" in run {
+    "both endpoints register methods; simultaneous A.call(B) and B.call(A) resolve without id collision" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -52,7 +52,7 @@ class BidiTest extends JsonRpcTest:
         }
     }
 
-    "bidi cancel with expectReply: A cancels call to B; B handler observes cancelled; reply carries -32800; response IS on transport" in run {
+    "bidi cancel with expectReply: A cancels call to B; B handler observes cancelled; reply carries -32800; response IS on transport" in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
 
@@ -93,14 +93,14 @@ class BidiTest extends JsonRpcTest:
                             endpointA.call[EchoReq, EchoResp]("echo", EchoReq("test"), idEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                        assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                             Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     endpointA.cancel(id, Absent).andThen {
                                         callFib.get.map {
                                             case Result.Failure(e: JsonRpcError) =>
                                                 assert(e.code == -32800, s"expected -32800, got ${e.code}")
-                                                untilTrue(Sync.defer {
+                                                assertEventually(Sync.defer {
                                                     capB.sentList.exists {
                                                         case JsonRpcResponse(rid, _, _, _) => rid == id
                                                         case _                             => false
@@ -118,7 +118,7 @@ class BidiTest extends JsonRpcTest:
         }
     }
 
-    "bidi cancel without expectReply: A cancels call to B; B handler is interrupted; NO response frame on transport" in run {
+    "bidi cancel without expectReply: A cancels call to B; B handler is interrupted; NO response frame on transport" in {
         // Unsafe: AtomicRef.Unsafe.init for id and promise capture across fibers
         val capturedId   = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val handlerReady = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
@@ -175,17 +175,19 @@ class BidiTest extends JsonRpcTest:
                             endpointA.call[EchoReq, EchoResp]("echo", EchoReq("cancel-test"), idEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined && handlerReady.get()(using
+                        assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined && handlerReady.get()(using
                             AllowUnsafe.embrace.danger
                         ).isDefined)).andThen {
                             Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     endpointA.cancel(id, Absent).andThen {
                                         callFib.get.andThen {
-                                            untilTrue(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                                            assertEventually(Sync.defer(handlerDone.get()(using
+                                                AllowUnsafe.embrace.danger
+                                            ).isDefined)).andThen {
                                                 Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger)).map {
                                                     case Present(doneP) =>
-                                                        untilTrue(doneP.done).andThen {
+                                                        assertEventually(doneP.done).andThen {
                                                             Sync.defer {
                                                                 val noReply = capB.sentList.forall {
                                                                     case JsonRpcResponse(rid, _, _, _) => rid != id
@@ -211,7 +213,7 @@ class BidiTest extends JsonRpcTest:
         }
     }
 
-    "progress round-trip via callWithProgress: handler emits 3 values; caller observes them; result arrives" in run {
+    "progress round-trip via callWithProgress: handler emits 3 values; caller observes them; result arrives" in {
         // Unsafe: AtomicRef.Unsafe.init for progress value accumulation across fibers
         val progressValues = AtomicRef.Unsafe.init(List.empty[Structure.Value])(using AllowUnsafe.embrace.danger)
 

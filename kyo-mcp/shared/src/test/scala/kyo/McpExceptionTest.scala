@@ -34,13 +34,16 @@ class McpExceptionTest extends Test:
     // the implementation-defined range (-32000 to -32099) where fromWire decodes
     // as JsonRpcImplementationError and passes the original message through.
     // -------------------------------------------------------------------------
-    private def codeRoundtrip(err: McpException, expectedCode: Int): Boolean =
+    private def codeRoundtrip(err: McpException, expectedCode: Int)(using kyo.test.AssertScope, Frame): Boolean =
         val encoded = Structure.encode[JsonRpcError](err)
         val decoded = Structure.decode[JsonRpcError](encoded).getOrElse(fail("Schema[JsonRpcError] decode failed"))
         decoded.code == expectedCode
     end codeRoundtrip
 
-    private def messageRoundtrip(err: McpException, expectedCode: Int, messageFragment: String): Boolean =
+    private def messageRoundtrip(err: McpException, expectedCode: Int, messageFragment: String)(using
+        kyo.test.AssertScope,
+        Frame
+    ): Boolean =
         val encoded = Structure.encode[JsonRpcError](err)
         val decoded = Structure.decode[JsonRpcError](encoded).getOrElse(fail("Schema[JsonRpcError] decode failed"))
         decoded.code == expectedCode && decoded.message.contains(messageFragment)
@@ -50,7 +53,7 @@ class McpExceptionTest extends Test:
     // Handshake-failure leaves
     // =========================================================================
 
-    "McpHandshakeNotInitializedException" in run {
+    "McpHandshakeNotInitializedException" in {
         val e = McpHandshakeNotInitializedException("tools/call")
         assert(e.code == -32002)
         assert(e.message.contains("initialize request"))
@@ -61,7 +64,7 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32002, "initialize request"))
     }
 
-    "McpHandshakeAlreadyInitializedException" in run {
+    "McpHandshakeAlreadyInitializedException" in {
         val e = McpHandshakeAlreadyInitializedException("initialize")
         assert(e.code == -32002)
         assert(e.message.contains("already completed"))
@@ -70,7 +73,7 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32002, "already completed"))
     }
 
-    "McpProtocolVersionMismatchException" in run {
+    "McpProtocolVersionMismatchException" in {
         val clientVer  = McpConfig.ProtocolVersion.fromWire("2024-01-01")
         val supportedV = McpConfig.ProtocolVersion.fromWire("2025-06-18")
         val e          = McpProtocolVersionMismatchException(clientVer, Chunk(supportedV))
@@ -86,7 +89,7 @@ class McpExceptionTest extends Test:
         assert(codeRoundtrip(e, -32602))
     }
 
-    "McpProtocolVersionMismatchException sorted supported list" in run {
+    "McpProtocolVersionMismatchException sorted supported list" in {
         // Two supported versions: ensure message contains them in sorted order
         val clientVer = McpConfig.ProtocolVersion.fromWire("2024-01-01")
         val v1        = McpConfig.ProtocolVersion.fromWire("2025-06-18")
@@ -105,7 +108,7 @@ class McpExceptionTest extends Test:
     // Dispatch-failure leaves
     // =========================================================================
 
-    "McpUnknownToolException" in run {
+    "McpUnknownToolException" in {
         val e = McpUnknownToolException("add", Chunk("subtract", "multiply"))
         assert(e.code == -32602)
         assert(e.message.contains("add"))
@@ -115,12 +118,12 @@ class McpExceptionTest extends Test:
         assert(codeRoundtrip(e, -32602))
     }
 
-    "McpUnknownToolException empty registered list" in run {
+    "McpUnknownToolException empty registered list" in {
         val e = McpUnknownToolException("missing", Chunk.empty)
         assert(e.message.contains("(none)"))
     }
 
-    "McpUnknownResourceException" in run {
+    "McpUnknownResourceException" in {
         val uri    = McpResourceUri.parse("file:///missing").get
         val regUri = McpResourceUri.parse("file:///known").get
         val e      = McpUnknownResourceException(uri, Chunk(regUri))
@@ -131,13 +134,13 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32002, "file:///missing"))
     }
 
-    "McpUnknownResourceException empty registered list" in run {
+    "McpUnknownResourceException empty registered list" in {
         val uri = McpResourceUri.parse("file:///missing").get
         val e   = McpUnknownResourceException(uri, Chunk.empty)
         assert(e.message.contains("(none)"))
     }
 
-    "McpUnknownPromptException" in run {
+    "McpUnknownPromptException" in {
         val e = McpUnknownPromptException("summarize", Chunk("translate", "format"))
         assert(e.code == -32602)
         assert(e.message.contains("summarize"))
@@ -146,12 +149,12 @@ class McpExceptionTest extends Test:
         assert(codeRoundtrip(e, -32602))
     }
 
-    "McpUnknownPromptException empty registered list" in run {
+    "McpUnknownPromptException empty registered list" in {
         val e = McpUnknownPromptException("missing", Chunk.empty)
         assert(e.message.contains("(none)"))
     }
 
-    "McpCapabilityNotAdvertisedException - server peer" in run {
+    "McpCapabilityNotAdvertisedException - server peer" in {
         val e = McpCapabilityNotAdvertisedException(
             "tools/call",
             McpCapabilities.Name.Tools,
@@ -165,7 +168,7 @@ class McpExceptionTest extends Test:
         assert(codeRoundtrip(e, -32601))
     }
 
-    "McpCapabilityNotAdvertisedException - client peer" in run {
+    "McpCapabilityNotAdvertisedException - client peer" in {
         val e = McpCapabilityNotAdvertisedException(
             "sampling/createMessage",
             McpCapabilities.Name.Sampling,
@@ -176,12 +179,12 @@ class McpExceptionTest extends Test:
         assert(e.message.contains("sampling"))
     }
 
-    "McpCapabilityNotAdvertisedException.Peer.describe is lowercase" in run {
+    "McpCapabilityNotAdvertisedException.Peer.describe is lowercase" in {
         assert(McpCapabilityNotAdvertisedException.Peer.Server.describe == "server")
         assert(McpCapabilityNotAdvertisedException.Peer.Client.describe == "client")
     }
 
-    "McpInvalidArgumentException" in run {
+    "McpInvalidArgumentException" in {
         val e = McpInvalidArgumentException("tools/call", "name", "must not be empty")
         assert(e.code == -32602)
         assert(e.message.contains("tools/call"))
@@ -195,7 +198,7 @@ class McpExceptionTest extends Test:
     // Execution-failure leaves
     // =========================================================================
 
-    "McpToolStructuredMissingException" in run {
+    "McpToolStructuredMissingException" in {
         val e = McpToolStructuredMissingException("add")
         assert(e.code == -32603)
         assert(e.message.contains("add"))
@@ -204,7 +207,7 @@ class McpExceptionTest extends Test:
         assert(codeRoundtrip(e, -32603))
     }
 
-    "McpSamplingRejectedException" in run {
+    "McpSamplingRejectedException" in {
         val e = McpSamplingRejectedException("model unavailable")
         assert(e.code == -32603)
         assert(e.message.contains("model unavailable"))
@@ -212,7 +215,7 @@ class McpExceptionTest extends Test:
         assert(codeRoundtrip(e, -32603))
     }
 
-    "McpElicitationDeclinedException" in run {
+    "McpElicitationDeclinedException" in {
         val e = McpElicitationDeclinedException("user cancelled")
         assert(e.code == -32603)
         assert(e.message.contains("user cancelled"))
@@ -224,7 +227,7 @@ class McpExceptionTest extends Test:
     // Application-error leaves
     // =========================================================================
 
-    "McpToolExecutionException with default cause" in run {
+    "McpToolExecutionException with default cause" in {
         val e = McpToolExecutionException("add", "div-by-zero")
         assert(e.code == -32000)
         assert(e.message.contains("add"))
@@ -239,7 +242,7 @@ class McpExceptionTest extends Test:
         assert(decoded.message.contains("div-by-zero"))
     }
 
-    "McpToolExecutionException with Throwable cause" in run {
+    "McpToolExecutionException with Throwable cause" in {
         val cause = new RuntimeException("/ by zero")
         val e     = McpToolExecutionException("add", "division by zero", cause = cause)
         assert(e.code == -32000)
@@ -247,13 +250,13 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32000, "division by zero"))
     }
 
-    "McpToolExecutionException with String cause" in run {
+    "McpToolExecutionException with String cause" in {
         val e = McpToolExecutionException("add", "overflow", cause = "integer overflow")
         assert(e.code == -32000)
         assert(messageRoundtrip(e, -32000, "overflow"))
     }
 
-    "McpResourceReadException" in run {
+    "McpResourceReadException" in {
         val uri = McpResourceUri.parse("file:///data.txt").get
         val e   = McpResourceReadException(uri, "permission denied")
         assert(e.code == -32001)
@@ -263,7 +266,7 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32001, "permission denied"))
     }
 
-    "McpResourceReadException with Throwable cause" in run {
+    "McpResourceReadException with Throwable cause" in {
         val uri   = McpResourceUri.parse("file:///data.txt").get
         val cause = new RuntimeException("file not found")
         val e     = McpResourceReadException(uri, "read failed", cause = cause)
@@ -272,7 +275,7 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32001, "read failed"))
     }
 
-    "McpPromptRenderException" in run {
+    "McpPromptRenderException" in {
         val e = McpPromptRenderException("summarize", "template syntax error")
         assert(e.code == -32003)
         assert(e.message.contains("summarize"))
@@ -281,7 +284,7 @@ class McpExceptionTest extends Test:
         assert(messageRoundtrip(e, -32003, "template syntax error"))
     }
 
-    "McpPromptRenderException with Throwable cause" in run {
+    "McpPromptRenderException with Throwable cause" in {
         val cause = new RuntimeException("parse error")
         val e     = McpPromptRenderException("format", "render failed", cause = cause)
         assert(e.code == -32003)
@@ -292,7 +295,7 @@ class McpExceptionTest extends Test:
     // Category trait compile evidence
     // =========================================================================
 
-    "category trait compile evidence: McpHandshakeException" in run {
+    "category trait compile evidence: McpHandshakeException" in {
         val e: McpHandshakeException = McpHandshakeNotInitializedException("tools/call")
         val asError: McpException    = e
         val asJsonRpc: JsonRpcError  = e
@@ -300,7 +303,7 @@ class McpExceptionTest extends Test:
         assert(asJsonRpc.code == -32002)
     }
 
-    "category trait compile evidence: McpDispatchException" in run {
+    "category trait compile evidence: McpDispatchException" in {
         val e: McpDispatchException = McpUnknownToolException("x", Chunk.empty)
         val asError: McpException   = e
         val asJsonRpc: JsonRpcError = e
@@ -308,7 +311,7 @@ class McpExceptionTest extends Test:
         assert(asJsonRpc.code == -32602)
     }
 
-    "category trait compile evidence: McpExecutionException" in run {
+    "category trait compile evidence: McpExecutionException" in {
         val e: McpExecutionException = McpToolStructuredMissingException("x")
         val asError: McpException    = e
         val asJsonRpc: JsonRpcError  = e
@@ -316,7 +319,7 @@ class McpExceptionTest extends Test:
         assert(asJsonRpc.code == -32603)
     }
 
-    "category trait compile evidence: McpApplicationException" in run {
+    "category trait compile evidence: McpApplicationException" in {
         val e: McpApplicationException       = McpToolExecutionException("x", "y")
         val asError: McpException            = e
         val asJsonRpc: JsonRpcError          = e
@@ -326,7 +329,7 @@ class McpExceptionTest extends Test:
         assert(asApp.code == -32000)
     }
 
-    "McpResourceUri fields are typed McpResourceUri not String" in run {
+    "McpResourceUri fields are typed McpResourceUri not String" in {
         val uri1 = McpResourceUri.parse("file:///a").get
         val uri2 = McpResourceUri.parse("file:///b").get
         val e    = McpUnknownResourceException(uri1, Chunk(uri2))
@@ -337,7 +340,7 @@ class McpExceptionTest extends Test:
         assert(e.registered.head.asString == "file:///b")
     }
 
-    "no leaf carries detail: String field" in run {
+    "no leaf carries detail: String field" in {
         // This is a compile-time invariant enforced by the sealed hierarchy.
         // Construct every leaf and confirm none has a 'detail' field in the message
         // (the message is constructed from typed fields, not a free-form detail).

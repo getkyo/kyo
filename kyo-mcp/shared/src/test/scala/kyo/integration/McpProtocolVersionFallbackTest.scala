@@ -7,7 +7,7 @@ import kyo.*
   */
 class McpProtocolVersionFallbackTest extends Test:
 
-    "server returns highest supported version when client version is not in supported set" in run {
+    "server returns highest supported version when client version is not in supported set" in {
         // Configure a server that supports a version the client does not send.
         // The client always sends McpConfig.ProtocolVersion.current ("2025-06-18").
         // Using a lexicographically later version string to guarantee a mismatch.
@@ -32,7 +32,7 @@ class McpProtocolVersionFallbackTest extends Test:
         }
     }
 
-    "server returns current version when client version matches" in run {
+    "server returns current version when client version matches" in {
         // Server supports only McpConfig.ProtocolVersion.current. Client sends current. They match.
         val serverConfig = McpConfig.default.supportedProtocolVersions(Set(McpConfig.ProtocolVersion.current))
 

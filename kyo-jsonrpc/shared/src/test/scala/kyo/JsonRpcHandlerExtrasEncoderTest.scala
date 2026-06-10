@@ -7,7 +7,7 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
-    "empty.resolve always yields Absent regardless of id" in run {
+    "empty.resolve always yields Absent regardless of id" in {
         for
             a <- JsonRpcExtrasEncoder.empty.resolve(JsonRpcId.Num(1L))
             b <- JsonRpcExtrasEncoder.empty.resolve(JsonRpcId.Str("x"))
@@ -16,7 +16,7 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
             assert(b == Absent)
     }
 
-    "const(v).resolve always yields Present(v) regardless of id" in run {
+    "const(v).resolve always yields Present(v) regardless of id" in {
         val v   = Structure.Value.Str("payload")
         val enc = JsonRpcExtrasEncoder.const(v)
         for
@@ -28,7 +28,7 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
         end for
     }
 
-    "apply(f).resolve forwards id to f" in run {
+    "apply(f).resolve forwards id to f" in {
         val enc = JsonRpcExtrasEncoder { id =>
             Sync.defer(Present(Structure.Value.Str(id.toString)))
         }
@@ -37,7 +37,7 @@ class JsonRpcHandlerExtrasEncoderTest extends JsonRpcTest:
         yield assert(a == Present(Structure.Value.Str(JsonRpcId.Num(7L).toString)))
     }
 
-    "apply(f) lifts a Sync-effectful body through .resolve" in run {
+    "apply(f) lifts a Sync-effectful body through .resolve" in {
         // Unsafe: AtomicLong.Unsafe.init for in-test counter outside effect context
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
         val enc = JsonRpcExtrasEncoder { _ =>

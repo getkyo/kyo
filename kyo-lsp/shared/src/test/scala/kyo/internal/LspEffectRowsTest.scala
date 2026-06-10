@@ -13,7 +13,7 @@ import kyo.*
 class LspEffectRowsTest extends Test:
 
     // Safe-tier notify methods: Unit < (Async & Abort[Closed]).
-    "showMessage safe row is Unit < (Async & Abort[Closed])" in run {
+    "showMessage safe row is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                            = LspHandler.ShowMessageParams(LspHandler.MessageType.Info, "hello")
@@ -23,7 +23,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "logMessage safe row is Unit < (Async & Abort[Closed])" in run {
+    "logMessage safe row is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                            = LspHandler.LogMessageParams(LspHandler.MessageType.Log, "log")
@@ -33,7 +33,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "publishDiagnostics safe row is Unit < (Async & Abort[Closed])" in run {
+    "publishDiagnostics safe row is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val uri                               = LspHandler.LspDocument.Uri.parse("file:///Main.scala").get
@@ -44,7 +44,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "telemetry safe row is Unit < (Async & Abort[Closed])" in run {
+    "telemetry safe row is Unit < (Async & Abort[Closed])" in {
         case class Event(name: String) derives Schema
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -54,7 +54,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "logTrace safe row is Unit < (Async & Abort[Closed])" in run {
+    "logTrace safe row is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val e: Unit < (Async & Abort[Closed]) = server.logTrace("msg")
@@ -63,7 +63,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "workDoneProgress safe row is Unit < (Async & Abort[Closed])" in run {
+    "workDoneProgress safe row is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val token                             = LspHandler.ProgressToken.StringToken("t")
@@ -74,7 +74,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "cancel safe row is Unit < (Async & Abort[Closed])" in run {
+    "cancel safe row is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val e: Unit < (Async & Abort[Closed]) = server.cancel(JsonRpcId(1L))
@@ -85,7 +85,7 @@ class LspEffectRowsTest extends Test:
 
     // Safe-tier request methods: T < (Async & Abort[LspException | Closed]).
     // Type-check only; not awaited (reverse-direction requests need a connected client peer).
-    "showMessageRequest safe row is Maybe[MessageActionItem] < (Async & Abort[LspException | Closed]) (type check only)" in run {
+    "showMessageRequest safe row is Maybe[MessageActionItem] < (Async & Abort[LspException | Closed]) (type check only)" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params = LspHandler.ShowMessageRequestParams(LspHandler.MessageType.Info, "choose", Chunk.empty)
@@ -96,7 +96,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "applyEdit safe row is ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed]) (type check only)" in run {
+    "applyEdit safe row is ApplyWorkspaceEditResult < (Async & Abort[LspException | Closed]) (type check only)" in {
         // Compile-time type check; not awaited (reverse-direction request needs a connected client).
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -107,7 +107,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "getWorkspaceFolders safe row is Maybe[Chunk[WorkspaceFolder]] < (Async & Abort[LspException | Closed]) (type check only)" in run {
+    "getWorkspaceFolders safe row is Maybe[Chunk[WorkspaceFolder]] < (Async & Abort[LspException | Closed]) (type check only)" in {
         // Compile-time type check; not awaited (reverse-direction request needs a connected client).
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -118,7 +118,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "refreshSemanticTokens safe row is Unit < (Async & Abort[LspException | Closed]) (type check only)" in run {
+    "refreshSemanticTokens safe row is Unit < (Async & Abort[LspException | Closed]) (type check only)" in {
         // Compile-time type check; not awaited (reverse-direction request needs a connected client).
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -129,7 +129,7 @@ class LspEffectRowsTest extends Test:
     }
 
     // Lifecycle rows.
-    "awaitDrain safe row is Unit < Async" in run {
+    "awaitDrain safe row is Unit < Async" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val e: Unit < Async = server.awaitDrain
@@ -138,7 +138,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "close safe row is Unit < Async" in run {
+    "close safe row is Unit < Async" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val e: Unit < Async = server.close
@@ -147,7 +147,7 @@ class LspEffectRowsTest extends Test:
         }
     }
 
-    "closeNow safe row is Unit < Async" in run {
+    "closeNow safe row is Unit < Async" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val e: Unit < Async = server.closeNow

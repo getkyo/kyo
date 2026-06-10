@@ -8,7 +8,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
     val ping2 = JsonRpcRequest(JsonRpcId.Num(2L), "ping", Absent, Absent)
     val ping3 = JsonRpcRequest(JsonRpcId.Num(3L), "ping", Absent, Absent)
 
-    "a send on transport A is received via incoming on transport B" in run {
+    "a send on transport A is received via incoming on transport B" in {
         for
             (a, b) <- JsonRpcTransport.inMemory
             recv   <- Fiber.initUnscoped(b.incoming.take(1).run)
@@ -17,7 +17,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         yield assert(result == Chunk(ping1))
     }
 
-    "a send on transport B is received via incoming on transport A" in run {
+    "a send on transport B is received via incoming on transport A" in {
         for
             (a, b) <- JsonRpcTransport.inMemory
             recv   <- Fiber.initUnscoped(a.incoming.take(1).run)
@@ -26,7 +26,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         yield assert(result == Chunk(ping1))
     }
 
-    "a send on a closed transport fails with Abort[Closed]" in run {
+    "a send on a closed transport fails with Abort[Closed]" in {
         for
             (a, _) <- JsonRpcTransport.inMemory
             _      <- a.close
@@ -34,7 +34,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         yield assert(result.isFailure)
     }
 
-    "the incoming stream on B terminates when A closes" in run {
+    "the incoming stream on B terminates when A closes" in {
         for
             (a, b)    <- JsonRpcTransport.inMemory
             collector <- Fiber.initUnscoped(b.incoming.run)
@@ -43,7 +43,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         yield assert(result.isEmpty)
     }
 
-    "a send parks when the consumer of incoming is slow" in run {
+    "a send parks when the consumer of incoming is slow" in {
         for
             (a, b)    <- JsonRpcTransport.inMemory(2)
             _         <- a.send(ping1)
@@ -52,12 +52,12 @@ class JsonRpcTransportTest extends JsonRpcTest:
             _         <- Async.sleep(10.millis)
             notDone   <- putFiber.done
             collector <- Fiber.initUnscoped(b.incoming.take(3).run)
-            _         <- untilTrue(putFiber.done)
+            _         <- assertEventually(putFiber.done)
             result    <- collector.get
         yield assert(!notDone && result == Chunk(ping1, ping2, ping3))
     }
 
-    "a parked send unblocks with Abort[Closed] when the transport closes" in run {
+    "a parked send unblocks with Abort[Closed] when the transport closes" in {
         for
             (a, _)  <- JsonRpcTransport.inMemory(2)
             _       <- a.send(ping1)
@@ -70,7 +70,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         yield assert(!notDone && result.isFailure)
     }
 
-    "stdio transport sends one line per envelope" in run {
+    "stdio transport sends one line per envelope" in {
         Scope.run {
             Console.withOut {
                 for
@@ -91,7 +91,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         }
     }
 
-    "stdio transport reads one envelope per stdin line" in run {
+    "stdio transport reads one envelope per stdin line" in {
         val inputLine = """{"jsonrpc":"2.0","method":"ping"}"""
         Console.withIn(List(inputLine)) {
             Scope.run {
@@ -115,7 +115,7 @@ class JsonRpcTransportTest extends JsonRpcTest:
         }
     }
 
-    "stdio transport EOF closes incoming" in run {
+    "stdio transport EOF closes incoming" in {
         Console.withIn(Seq.empty[String]) {
             Abort.run[Timeout](Async.timeout(2.seconds) {
                 Scope.run {

@@ -30,7 +30,7 @@ class McpReverseDispatchTest extends Test:
         }
 
     // notifyRootsListChanged: client sends "notifications/roots/list_changed" to server.
-    "client.notifyRootsListChanged sends notification without error" in run {
+    "client.notifyRootsListChanged sends notification without error" in {
         withPair(Seq.empty, Seq.empty) { (_, client) =>
             Abort.run[Closed](client.notifyRootsListChanged).map { result =>
                 assert(result.isSuccess, s"expected success, got $result")
@@ -39,7 +39,7 @@ class McpReverseDispatchTest extends Test:
     }
 
     // requestRoots: server calls roots/list on client; default handler returns empty chunk.
-    "server.requestRoots returns empty Chunk when client has no roots handler" in run {
+    "server.requestRoots returns empty Chunk when client has no roots handler" in {
         withPair(Seq.empty, Seq.empty) { (server, _) =>
             Abort.run[McpException | Closed](server.requestRoots).map {
                 case Result.Success(roots) =>
@@ -53,7 +53,7 @@ class McpReverseDispatchTest extends Test:
     }
 
     // requestSampling: server calls sampling/createMessage on client; no client handler returns rejection.
-    "server.requestSampling aborts when no client sampling handler" in run {
+    "server.requestSampling aborts when no client sampling handler" in {
         val req = McpServer.SamplingRequest(
             messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("hello"))),
             maxTokens = 128
@@ -72,7 +72,7 @@ class McpReverseDispatchTest extends Test:
     }
 
     // requestElicitation: server calls elicitation/create on client; no client handler returns rejection.
-    "server.requestElicitation aborts when no client elicitation handler" in run {
+    "server.requestElicitation aborts when no client elicitation handler" in {
         val elicitReq = McpServer.ElicitationRequest(
             message = "Please provide your name.",
             requestedSchema = Json.JsonSchema.Null
@@ -91,7 +91,7 @@ class McpReverseDispatchTest extends Test:
     }
 
     // McpServer.notifyToolsListChanged: typed end-to-end; return type is Unit < (Async & Abort[Closed]).
-    "server.notifyToolsListChanged return type is Unit < (Async & Abort[Closed])" in run {
+    "server.notifyToolsListChanged return type is Unit < (Async & Abort[Closed])" in {
         val emptyCaps = McpCapabilities.Server(tools = Present(McpCapabilities.ToolsCapability(listChanged = true)))
         val config    = McpConfig.default.declaredCapabilities(emptyCaps)
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
@@ -105,7 +105,7 @@ class McpReverseDispatchTest extends Test:
     }
 
     // McpServer reverse-direction extension methods are typed end-to-end (no Structure.Value escape).
-    "requestSampling return type is McpServer.SamplingResponse < ... (typed, no Structure.Value)" in run {
+    "requestSampling return type is McpServer.SamplingResponse < ... (typed, no Structure.Value)" in {
         withPair(Seq.empty, Seq.empty) { (server, _) =>
             val req = McpServer.SamplingRequest(
                 messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("q"))),
@@ -116,7 +116,7 @@ class McpReverseDispatchTest extends Test:
         }
     }
 
-    "requestRoots return type is Chunk[McpServer.Root] < ... (typed, no Structure.Value)" in run {
+    "requestRoots return type is Chunk[McpServer.Root] < ... (typed, no Structure.Value)" in {
         withPair(Seq.empty, Seq.empty) { (server, _) =>
             val _: Chunk[McpServer.Root] < (Async & Abort[McpException | Closed]) = server.requestRoots
             succeed
@@ -130,7 +130,7 @@ class McpReverseDispatchTest extends Test:
     // rather than panicking with "McpServer not initialized". The test verifies the dispatch hop
     // (user route overrides default-reject) by asserting that the response is the one returned by
     // the user handler.
-    "user-registered sampling route is reached instead of default reject" in run {
+    "user-registered sampling route is reached instead of default reject" in {
         val req = McpServer.SamplingRequest(
             messages = Chunk(McpServer.SamplingRequest.Message(McpContent.Role.User, McpServer.SamplingContent.Text("ping"))),
             maxTokens = 8

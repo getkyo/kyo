@@ -26,7 +26,7 @@ class McpClientTest extends Test:
 
     // callToolTyped[In, Out] returns the decoded Out when structuredContent = Present;
     // the typed overload decodes structuredContent.
-    "callToolTyped[In, Out] returns typed Out when structuredContent = Present" in run {
+    "callToolTyped[In, Out] returns typed Out when structuredContent = Present" in {
         val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
@@ -43,7 +43,7 @@ class McpClientTest extends Test:
 
     // callToolTyped[In, Out] aborts with McpToolStructuredMissingException when structuredContent = Absent;
     // the typed overload must abort when structured content is absent.
-    "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent" in run {
+    "callToolTyped[In, Out] aborts McpToolStructuredMissingException when structuredContent = Absent" in {
         val addUntypedRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
@@ -64,7 +64,7 @@ class McpClientTest extends Test:
     }
 
     // Untyped callTool[In] (one type param) returns raw ToolOutcome without aborting.
-    "callTool with one type param (untyped) returns raw ToolOutcome when structuredContent = Absent" in run {
+    "callTool with one type param (untyped) returns raw ToolOutcome when structuredContent = Absent" in {
         val addRoute = McpHandler.toolMulti[AddIn]("add") { in =>
             McpHandler.ToolOutcome(
                 content = Chunk(McpContent.Text(s"${in.a + in.b}")),
@@ -81,7 +81,7 @@ class McpClientTest extends Test:
     }
 
     // McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*).
-    "McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*)" in run {
+    "McpClient.init positional parameter order is (transport, clientInfo, capabilities, handlers*)" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             // The following must compile with this exact parameter order.
             // Swapping clientInfo and capabilities would fail because McpInfo != McpCapabilities.Client.
@@ -92,7 +92,7 @@ class McpClientTest extends Test:
     }
 
     // listTools returns McpClient.Page[ToolMeta] with .items and .nextCursor fields.
-    "listTools returns McpClient.Page with .items and .nextCursor" in run {
+    "listTools returns McpClient.Page with .items and .nextCursor" in {
         val toolRoute = McpHandler.tool[AddIn]("add") { in =>
             McpContent.Text(s"${in.a + in.b}")
         }
@@ -107,7 +107,7 @@ class McpClientTest extends Test:
     }
 
     // McpClient.Page is a named record; verify listResources also returns McpClient.Page.
-    "listResources returns McpClient.Page with .items and .nextCursor" in run {
+    "listResources returns McpClient.Page with .items and .nextCursor" in {
         val uri           = McpResourceUri.parse("file:///data").get
         val resourceRoute = McpHandler.resource(uri, "data")(Chunk.empty)
         withPair(Seq(resourceRoute), Seq.empty) { (_, client) =>
@@ -119,7 +119,7 @@ class McpClientTest extends Test:
     }
 
     // Verify close and closeNow type-check correctly.
-    "client.close defaults to 30s grace; closeNow is the immediate variant" in run {
+    "client.close defaults to 30s grace; closeNow is the immediate variant" in {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps).flatMap { client =>
@@ -134,7 +134,7 @@ class McpClientTest extends Test:
     }
 
     // Verify the underlying handler is accessible.
-    "client.underlying returns a JsonRpcHandler instance" in run {
+    "client.underlying returns a JsonRpcHandler instance" in {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps).flatMap { client =>
@@ -146,7 +146,7 @@ class McpClientTest extends Test:
     }
 
     // Verify server state is populated after handshake.
-    "serverCapabilities is Present after handshake" in run {
+    "serverCapabilities is Present after handshake" in {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps).flatMap { client =>
@@ -157,7 +157,7 @@ class McpClientTest extends Test:
         }
     }
 
-    "serverInfo is Present after handshake" in run {
+    "serverInfo is Present after handshake" in {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps).flatMap { client =>
@@ -168,7 +168,7 @@ class McpClientTest extends Test:
         }
     }
 
-    "protocolVersion is Present after handshake" in run {
+    "protocolVersion is Present after handshake" in {
         JsonRpcTransport.inMemory.flatMap { (ta, tb) =>
             McpServer.init(ta).flatMap { server =>
                 McpClient.init(tb, clientInfo, clientCaps).flatMap { client =>
@@ -180,7 +180,7 @@ class McpClientTest extends Test:
     }
 
     // Curried overload must compile.
-    "McpClient.initUnscoped curried overload compiles" in run {
+    "McpClient.initUnscoped curried overload compiles" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             val _: McpClient < (Async & Abort[McpException | Closed]) =
                 McpClient.initUnscoped(ta, clientInfo, clientCaps, McpConfig.default)()
@@ -188,7 +188,7 @@ class McpClientTest extends Test:
         }
     }
 
-    "McpClient.init curried overload compiles" in run {
+    "McpClient.init curried overload compiles" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             val _: McpClient < (Async & Scope & Abort[McpException | Closed]) =
                 McpClient.init(ta, clientInfo, clientCaps, McpConfig.default)()

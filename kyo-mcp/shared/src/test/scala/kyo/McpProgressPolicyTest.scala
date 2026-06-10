@@ -32,7 +32,7 @@ class McpProgressPolicyTest extends Test:
     // extractRequestToken reads from _meta.progressToken only
     // -------------------------------------------------------------------------
 
-    "extractRequestToken: extracts token from _meta.progressToken" in run {
+    "extractRequestToken: extracts token from _meta.progressToken" in {
         val paramsA = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("progressToken" -> Structure.Value.Integer(1L)))
         ))
@@ -41,7 +41,7 @@ class McpProgressPolicyTest extends Test:
         }
     }
 
-    "extractRequestToken: returns Absent for top-level progressToken (wrong location)" in run {
+    "extractRequestToken: returns Absent for top-level progressToken (wrong location)" in {
         val paramsB = Structure.Value.Record(Chunk(
             "progressToken" -> Structure.Value.Integer(1L)
         ))
@@ -50,7 +50,7 @@ class McpProgressPolicyTest extends Test:
         }
     }
 
-    "extractRequestToken: returns Absent for missing _meta field" in run {
+    "extractRequestToken: returns Absent for missing _meta field" in {
         val paramsC = Structure.Value.Record(Chunk(
             "method" -> Structure.Value.Str("tools/call")
         ))
@@ -59,7 +59,7 @@ class McpProgressPolicyTest extends Test:
         }
     }
 
-    "extractRequestToken: returns Absent for _meta without progressToken" in run {
+    "extractRequestToken: returns Absent for _meta without progressToken" in {
         val paramsD = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("other" -> Structure.Value.Str("x")))
         ))
@@ -68,7 +68,7 @@ class McpProgressPolicyTest extends Test:
         }
     }
 
-    "extractRequestToken: handles string token" in run {
+    "extractRequestToken: handles string token" in {
         val paramsE = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("progressToken" -> Structure.Value.Str("tok-abc")))
         ))
@@ -81,7 +81,7 @@ class McpProgressPolicyTest extends Test:
     // extractInboundToken: reads from top-level params.progressToken
     // -------------------------------------------------------------------------
 
-    "extractInboundToken: extracts token from top-level progressToken" in run {
+    "extractInboundToken: extracts token from top-level progressToken" in {
         val paramsB = Structure.Value.Record(Chunk(
             "progressToken" -> Structure.Value.Integer(1L)
         ))
@@ -90,7 +90,7 @@ class McpProgressPolicyTest extends Test:
         }
     }
 
-    "extractInboundToken: returns Absent for _meta.progressToken (wrong location)" in run {
+    "extractInboundToken: returns Absent for _meta.progressToken (wrong location)" in {
         val paramsA = Structure.Value.Record(Chunk(
             "_meta" -> Structure.Value.Record(Chunk("progressToken" -> Structure.Value.Integer(1L)))
         ))
@@ -103,7 +103,7 @@ class McpProgressPolicyTest extends Test:
     // stampOutboundToken: injects token into params._meta.progressToken
     // -------------------------------------------------------------------------
 
-    "stampOutboundToken: injects progressToken into _meta for Record params" in run {
+    "stampOutboundToken: injects progressToken into _meta for Record params" in {
         val params = Structure.Value.Record(Chunk("arg" -> Structure.Value.Str("val")))
         val token  = Structure.Value.Integer(42L)
         policy.stampOutboundToken(params, token).map { result =>
@@ -125,7 +125,7 @@ class McpProgressPolicyTest extends Test:
     // encodeProgressParams: builds progress notification params
     // -------------------------------------------------------------------------
 
-    "encodeProgressParams: wraps token and value into a Record" in run {
+    "encodeProgressParams: wraps token and value into a Record" in {
         val token = Structure.Value.Integer(7L)
         val value = Structure.Value.Record(Chunk("progress" -> Structure.Value.Integer(50L)))
         policy.encodeProgressParams(token, value).map { result =>
@@ -141,7 +141,7 @@ class McpProgressPolicyTest extends Test:
     // extractProgressValue: strips progressToken field from notification params
     // -------------------------------------------------------------------------
 
-    "extractProgressValue: returns Record without progressToken field" in run {
+    "extractProgressValue: returns Record without progressToken field" in {
         val params = Structure.Value.Record(Chunk(
             "progressToken" -> Structure.Value.Integer(7L),
             "progress"      -> Structure.Value.Integer(50L)
@@ -155,7 +155,7 @@ class McpProgressPolicyTest extends Test:
         }
     }
 
-    "extractProgressValue: returns Absent for non-Record params" in run {
+    "extractProgressValue: returns Absent for non-Record params" in {
         val params = Structure.Value.Str("not-a-record")
         policy.extractProgressValue(params).map { result =>
             assert(result == Absent)

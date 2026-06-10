@@ -11,7 +11,7 @@ class McpCompletionRefWireTest extends Test:
 
     private def encodedJson[A: Schema](value: A): String = Json.encode[A](value)
 
-    private def roundtrip[A: Schema](value: A): A =
+    private def roundtrip[A: Schema](value: A)(using kyo.test.AssertScope, Frame): A =
         val encoded = Structure.encode[A](value)
         Structure.decode[A](encoded).getOrElse(fail(s"decode failed for $value"))
 

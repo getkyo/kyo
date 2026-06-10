@@ -117,7 +117,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
-    "callWithProgress with workDoneToken policy: handler calls ctx.progress three times, caller observes three progress values" in run {
+    "callWithProgress with workDoneToken policy: handler calls ctx.progress three times, caller observes three progress values" in {
         val longTask = JsonRpcRoute.request[TaskReq, TaskResp]("longTask") {
             (_, ctx) =>
                 sendProgress(ctx, mkBegin).andThen {
@@ -143,7 +143,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callWithProgress with workDoneToken policy: stampOutboundToken attaches workDoneToken to params, handler reads token" in run {
+    "callWithProgress with workDoneToken policy: stampOutboundToken attaches workDoneToken to params, handler reads token" in {
         // Unsafe: AtomicRef.Unsafe.init for token capture across fibers
         val capturedToken = AtomicRef.Unsafe.init[Maybe[String]](Absent)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcRoute.request[TaskReqWithToken, TaskResp]("task") {
@@ -166,7 +166,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callPartialResults with workDoneToken policy: handler sends three progress notifications then null final response, stream emits three strings" in run {
+    "callPartialResults with workDoneToken policy: handler sends three progress notifications then null final response, stream emits three strings" in {
         val searchMethod = JsonRpcRoute.request[SearchReq, Structure.Value]("search") {
             (_, ctx) =>
                 sendProgress(ctx, Structure.Value.Str("result1")).andThen {
@@ -188,7 +188,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callWithProgress with metaToken policy: outbound params carry _meta.progressToken, handler receives it" in run {
+    "callWithProgress with metaToken policy: outbound params carry _meta.progressToken, handler receives it" in {
         // Unsafe: AtomicRef.Unsafe.init for meta capture across fibers
         val capturedMeta = AtomicRef.Unsafe.init[Maybe[ProgressMeta]](Absent)(using AllowUnsafe.embrace.danger)
         val taskMethod = JsonRpcRoute.request[TaskReqWithMeta, TaskResp]("run") {
@@ -211,7 +211,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "subscribeProgress returns a stream; subsequent progress notification with that token delivers a value" in run {
+    "subscribeProgress returns a stream; subsequent progress notification with that token delivers a value" in {
         val tokenStr = "oob-token-1"
         val token    = Structure.Value.Str(tokenStr)
         // Unsafe: AtomicBoolean.Unsafe.init for received flag across fibers
@@ -235,7 +235,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                                 ProgressNotifParams(tokenStr, "ping")
                             ).andThen {
                                 // Wait until A's reader has delivered the value to the stream consumer.
-                                untilTrue(Sync.defer(received.get()(using AllowUnsafe.embrace.danger))).andThen {
+                                assertEventually(Sync.defer(received.get()(using AllowUnsafe.embrace.danger))).andThen {
                                     endpointA.unsubscribeProgress(token).andThen {
                                         streamFiber.get.map { chunks =>
                                             assert(chunks.nonEmpty, "expected at least one progress value on stream")
@@ -250,7 +250,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "unsubscribeProgress: stream closes and subsequent notifications for that token are dropped" in run {
+    "unsubscribeProgress: stream closes and subsequent notifications for that token are dropped" in {
         val tokenStr = "oob-token-close"
         val token    = Structure.Value.Str(tokenStr)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -273,7 +273,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "ctx.progress with progress = Absent returns Unit without sending any progress wire notification" in run {
+    "ctx.progress with progress = Absent returns Unit without sending any progress wire notification" in {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) => sendProgress(ctx, mkBegin).andThen(TaskResp(true))
         }
@@ -294,7 +294,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "enforceMonotonic=true: non-monotonic progress value 5.0 between 10.0 and 20.0 is dropped" in run {
+    "enforceMonotonic=true: non-monotonic progress value 5.0 between 10.0 and 20.0 is dropped" in {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 sendProgress(ctx, mkProgress(10.0)).andThen {
@@ -329,7 +329,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "enforceMonotonic=false: all three progress values pass through in order" in run {
+    "enforceMonotonic=false: all three progress values pass through in order" in {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 sendProgress(ctx, mkProgress(10.0)).andThen {
@@ -355,7 +355,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "ctx.progress called after handler has returned is a no-op: no extra wire notification sent" in run {
+    "ctx.progress called after handler has returned is a no-op: no extra wire notification sent" in {
         // Unsafe: AtomicRef.Unsafe.init for sink capture across fibers
         val sinkRef =
             AtomicRef.Unsafe.init[Maybe[Structure.Value => Unit < (Async & Abort[Closed])]](Absent)(using AllowUnsafe.embrace.danger)
@@ -375,7 +375,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 JsonRpcHandler.init(tb, Seq(taskMethod), workDoneTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            untilTrue(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger))).andThen {
+                            assertEventually(Sync.defer(handlerDone.get()(using AllowUnsafe.embrace.danger))).andThen {
                                 val notifsBefore = capA.sentList.count {
                                     case n: JsonRpcNotification if n.method == "$/progress" => true
                                     case _                                                  => false
@@ -402,7 +402,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "out-of-band progress notification with unknown token is silently dropped without error" in run {
+    "out-of-band progress notification with unknown token is silently dropped without error" in {
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty, workDoneTokenConfig).map { endpointA =>
                 JsonRpcHandler.init(tb, Seq.empty, workDoneTokenConfig).map { endpointB =>
@@ -418,7 +418,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "callPartialResults where final response has non-absent result: it is decoded as the last chunk" in run {
+    "callPartialResults where final response has non-absent result: it is decoded as the last chunk" in {
         val searchMethod = JsonRpcRoute.request[SearchReq, String]("search") {
             (_, ctx) =>
                 sendProgress(ctx, Structure.Value.Str("partial1")).andThen {
@@ -436,7 +436,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "ctx.progress extras: progress notification is built with extras captured from the inbound request" in run {
+    "ctx.progress extras: progress notification is built with extras captured from the inbound request" in {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) => sendProgress(ctx, mkBegin).andThen(TaskResp(true))
         }
@@ -458,7 +458,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "enforceMonotonic=true concurrent: two concurrent progress calls emit only the one with the larger value" in run {
+    "enforceMonotonic=true concurrent: two concurrent progress calls emit only the one with the larger value" in {
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 Async.zip[JsonRpcError, Unit, Unit, Any](
@@ -485,7 +485,7 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "progress-token allocator regenerates on collision" in run {
+    "progress-token allocator regenerates on collision" in {
         val map  = new java.util.concurrent.ConcurrentHashMap[Structure.Value, Channel[Structure.Value]]()
         val seed = Structure.Value.Str("seed-token")
         Channel.initUnscoped[Structure.Value](1).map { ch0 =>

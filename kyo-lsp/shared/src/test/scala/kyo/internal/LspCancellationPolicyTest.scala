@@ -23,7 +23,7 @@ class LspCancellationPolicyTest extends Test:
             assert(LspCancellationPolicy.default.cancelledError == Absent)
         }
 
-        "encodeParams produces { id: <integer> } for integer id" in run {
+        "encodeParams produces { id: <integer> } for integer id" in {
             LspCancellationPolicy.default.encodeParams(JsonRpcId(42), Absent).map { sv =>
                 sv match
                     case Structure.Value.Record(fields) =>
@@ -33,7 +33,7 @@ class LspCancellationPolicyTest extends Test:
             }
         }
 
-        "encodeParams produces { id: <string> } for string id" in run {
+        "encodeParams produces { id: <string> } for string id" in {
             LspCancellationPolicy.default.encodeParams(JsonRpcId("req-1"), Absent).map { sv =>
                 sv match
                     case Structure.Value.Record(fields) =>
@@ -43,7 +43,7 @@ class LspCancellationPolicyTest extends Test:
             }
         }
 
-        "encodeParams includes reason when Present" in run {
+        "encodeParams includes reason when Present" in {
             LspCancellationPolicy.default.encodeParams(JsonRpcId(1), Present("timeout")).map { sv =>
                 sv match
                     case Structure.Value.Record(fields) =>
@@ -53,21 +53,21 @@ class LspCancellationPolicyTest extends Test:
             }
         }
 
-        "decodeParams extracts integer id" in run {
+        "decodeParams extracts integer id" in {
             val sv = Structure.Value.Record(Chunk("id" -> Structure.Value.Integer(99)))
             LspCancellationPolicy.default.decodeParams(sv).map { id =>
                 assert(id == Present(JsonRpcId(99)))
             }
         }
 
-        "decodeParams extracts string id" in run {
+        "decodeParams extracts string id" in {
             val sv = Structure.Value.Record(Chunk("id" -> Structure.Value.Str("abc")))
             LspCancellationPolicy.default.decodeParams(sv).map { id =>
                 assert(id == Present(JsonRpcId("abc")))
             }
         }
 
-        "decodeParams returns Absent for non-Record" in run {
+        "decodeParams returns Absent for non-Record" in {
             LspCancellationPolicy.default.decodeParams(Structure.Value.Null).map { id =>
                 assert(id == Absent)
             }

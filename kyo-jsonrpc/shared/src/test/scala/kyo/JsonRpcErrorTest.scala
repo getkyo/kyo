@@ -7,7 +7,7 @@ class JsonRpcErrorTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
-    "leaf codes match the JSON-RPC 2.0 spec" in run {
+    "leaf codes match the JSON-RPC 2.0 spec" in {
         assert(JsonRpcParseError("[input]", 0, JsonRpcParseError.Reason.TrailingContent).code == -32700)
         assert(JsonRpcInvalidRequestError(Structure.Value.Null, Chunk.empty).code == -32600)
         assert(JsonRpcMethodNotFoundError("m", Chunk.empty).code == -32601)
@@ -21,7 +21,7 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(JsonRpcCustomError(409, "Conflict").code == 409)
     }
 
-    "JsonRpcParseError.Reason.describe" in run {
+    "JsonRpcParseError.Reason.describe" in {
         import JsonRpcParseError.Reason.*
         assert(UnexpectedEof.describe == "unexpected end of input")
         assert(UnexpectedChar('x', "y").describe == "unexpected 'x', expected y")
@@ -30,18 +30,18 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(TrailingContent.describe == "trailing content after JSON value")
     }
 
-    "JsonRpcLifecycleError.Stage.describe" in run {
+    "JsonRpcLifecycleError.Stage.describe" in {
         assert(JsonRpcLifecycleError.Stage.Close.describe == "close")
         assert(JsonRpcLifecycleError.Stage.Init.describe == "init")
     }
 
-    "JsonRpcInternalError.Operation.describe" in run {
+    "JsonRpcInternalError.Operation.describe" in {
         assert(JsonRpcInternalError.Operation.DecodeResult.describe == "result decode")
         assert(JsonRpcInternalError.Operation.EncodeResponse.describe == "response encode")
         assert(JsonRpcInternalError.Operation.Other.describe == "internal operation")
     }
 
-    "JsonRpcInvalidParamsError.ParamError.describe" in run {
+    "JsonRpcInvalidParamsError.ParamError.describe" in {
         import JsonRpcInvalidParamsError.*
         val e = ParamError("field", Problem.Missing)
         assert(e.describe == "'field': missing required field")
@@ -51,14 +51,14 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(e3.describe == "'y': constraint violated: must be positive")
     }
 
-    "JsonRpcImplementationError rejects out-of-range codes" in run {
+    "JsonRpcImplementationError rejects out-of-range codes" in {
         val result = Result.catching[IllegalArgumentException](JsonRpcImplementationError(-32200, "bad"))
         assert(result.isFailure)
         val ok = JsonRpcImplementationError(-32050, "label")
         assert(ok.code == -32050)
     }
 
-    "JsonRpcError.fromWire maps standard codes to typed leaves" in run {
+    "JsonRpcError.fromWire maps standard codes to typed leaves" in {
         val p = JsonRpcError.fromWire(-32700, "Parse error", Absent)
         assert(p.isInstanceOf[JsonRpcParseError])
         assert(p.code == -32700)
@@ -77,7 +77,7 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(custom.code == 409)
     }
 
-    "subcategory traits are correctly assigned" in run {
+    "subcategory traits are correctly assigned" in {
         assert(JsonRpcParseError("[input]", 0, JsonRpcParseError.Reason.TrailingContent).isInstanceOf[JsonRpcParseFailure])
         assert(JsonRpcInvalidRequestError(Structure.Value.Null, Chunk.empty).isInstanceOf[JsonRpcParseFailure])
         assert(JsonRpcMethodNotFoundError("m", Chunk.empty).isInstanceOf[JsonRpcDispatchFailure])
@@ -93,7 +93,7 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(JsonRpcCustomError(409, "Conflict").isInstanceOf[JsonRpcApplicationFailure])
     }
 
-    "Schema[JsonRpcError] wire round-trip via fromWire" in run {
+    "Schema[JsonRpcError] wire round-trip via fromWire" in {
         val err     = JsonRpcMethodNotFoundError("subscribe", Chunk.empty)
         val encoded = Structure.encode[JsonRpcError](err)
         val decoded = Structure.decode[JsonRpcError](encoded).getOrElse(fail("decode failed"))
@@ -101,7 +101,7 @@ class JsonRpcErrorTest extends JsonRpcTest:
         assert(decoded.isInstanceOf[JsonRpcMethodNotFoundError])
     }
 
-    "Schema[JsonRpcError] round-trips code/message/data triple" in run {
+    "Schema[JsonRpcError] round-trips code/message/data triple" in {
         val err     = JsonRpcCustomError(409, "Conflict", Present(Structure.Value.Str("details")))
         val encoded = Structure.encode[JsonRpcError](err)
         val decoded = Structure.decode[JsonRpcError](encoded).getOrElse(fail("decode failed"))

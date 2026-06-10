@@ -48,7 +48,7 @@ class McpProgressNotificationWireTest extends Test:
         end match
     }
 
-    "integration: tool handler emitting ctx.progress completes without error" in run {
+    "integration: tool handler emitting ctx.progress completes without error" in {
         val workerRoute = McpHandler.tool[WorkReq]("work") { req =>
             Abort.run[Closed](
                 Mcp.progress(0.5, Present(1.0), Absent)

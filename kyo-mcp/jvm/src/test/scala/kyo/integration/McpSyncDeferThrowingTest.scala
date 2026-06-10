@@ -15,7 +15,7 @@ class McpSyncDeferThrowingTest extends Test:
 
     case class ReadReq(path: String) derives Schema, CanEqual
 
-    "uncaught throwable in Sync.defer surfaces as panic (-32603 InternalError)" in run {
+    "uncaught throwable in Sync.defer surfaces as panic (-32603 InternalError)" in {
         val throwingTool = McpHandler.tool[ReadReq](name = "read", description = "Read a file") { req =>
             Sync.defer(java.nio.file.Files.readString(java.nio.file.Paths.get(req.path)))
                 .map(s => McpContent.text(s))
@@ -43,7 +43,7 @@ class McpSyncDeferThrowingTest extends Test:
         }
     }
 
-    "Abort.catching[IOException] converts throwable into typed Abort row" in run {
+    "Abort.catching[IOException] converts throwable into typed Abort row" in {
         case class FileNotFound(path: String) derives Schema, CanEqual
 
         val catchingTool = McpHandler

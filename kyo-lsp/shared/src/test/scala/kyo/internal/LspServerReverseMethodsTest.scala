@@ -9,7 +9,7 @@ import kyo.*
   */
 class LspServerReverseMethodsTest extends Test:
 
-    "showMessage is defined on LspServer" in run {
+    "showMessage is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 // Verify the method is callable with the correct param type.
@@ -20,7 +20,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "showMessageRequest is defined on LspServer" in run {
+    "showMessageRequest is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params = LspHandler.ShowMessageRequestParams(LspHandler.MessageType.Info, "test", Chunk.empty)
@@ -31,7 +31,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "showDocument is defined on LspServer" in run {
+    "showDocument is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params = LspHandler.ShowDocumentParams(uri = "file:///Main.scala")
@@ -41,7 +41,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "logMessage is defined on LspServer" in run {
+    "logMessage is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                            = LspHandler.LogMessageParams(LspHandler.MessageType.Log, "debug")
@@ -51,7 +51,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "createWorkDoneProgress is defined on LspServer" in run {
+    "createWorkDoneProgress is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val token                                            = LspHandler.ProgressToken.StringToken("test-token")
@@ -62,7 +62,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "telemetry is defined on LspServer" in run {
+    "telemetry is defined on LspServer" in {
         case class TelemetryData(event: String) derives Schema
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -72,7 +72,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "applyEdit is defined on LspServer" in run {
+    "applyEdit is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params = LspHandler.ApplyWorkspaceEditParams(edit = LspHandler.WorkspaceEdit())
@@ -82,7 +82,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "getConfiguration is defined on LspServer" in run {
+    "getConfiguration is defined on LspServer" in {
         case class MyConfig(value: String) derives Schema
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
@@ -94,7 +94,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "getWorkspaceFolders is defined on LspServer" in run {
+    "getWorkspaceFolders is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Maybe[Chunk[LspHandler.WorkspaceFolder]] < (Async & Abort[LspException | Closed]) =
@@ -104,7 +104,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "refreshSemanticTokens is defined on LspServer" in run {
+    "refreshSemanticTokens is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[LspException | Closed]) = server.refreshSemanticTokens
@@ -113,7 +113,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "refreshInlineValue is defined on LspServer" in run {
+    "refreshInlineValue is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[LspException | Closed]) = server.refreshInlineValue
@@ -122,7 +122,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "refreshInlayHint is defined on LspServer" in run {
+    "refreshInlayHint is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[LspException | Closed]) = server.refreshInlayHint
@@ -131,7 +131,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "refreshDiagnostic is defined on LspServer" in run {
+    "refreshDiagnostic is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[LspException | Closed]) = server.refreshDiagnostic
@@ -140,7 +140,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "refreshCodeLens is defined on LspServer" in run {
+    "refreshCodeLens is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[LspException | Closed]) = server.refreshCodeLens
@@ -149,7 +149,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "registerCapability is defined on LspServer" in run {
+    "registerCapability is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                                           = LspHandler.RegistrationParams(Chunk.empty)
@@ -159,7 +159,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "unregisterCapability is defined on LspServer" in run {
+    "unregisterCapability is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val params                                           = LspHandler.UnregistrationParams(Chunk.empty)
@@ -169,7 +169,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "publishDiagnostics is defined on LspServer" in run {
+    "publishDiagnostics is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val uri                               = LspHandler.LspDocument.Uri.parse("file:///Main.scala").get
@@ -180,7 +180,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "logTrace is defined on LspServer" in run {
+    "logTrace is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[Closed]) = server.logTrace("trace msg")
@@ -189,7 +189,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "workDoneProgress is defined on LspServer" in run {
+    "workDoneProgress is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val token                             = LspHandler.ProgressToken.StringToken("wdp-token")
@@ -200,7 +200,7 @@ class LspServerReverseMethodsTest extends Test:
         }
     }
 
-    "cancel is defined on LspServer" in run {
+    "cancel is defined on LspServer" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val _: Unit < (Async & Abort[Closed]) = server.cancel(JsonRpcId(1L))

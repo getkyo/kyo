@@ -101,7 +101,7 @@ class LspBuiltInRoutesTest extends Test:
             assert(route.name == "notebookDocument/didChange")
         }
 
-        "notebookDocumentDidChange inserts newly opened cells into registry" in run {
+        "notebookDocumentDidChange inserts newly opened cells into registry" in {
             val registry = mkRegistry()
             val route    = LspBuiltInRoutes.notebookDocumentDidChange(registry)
             makeTestCtx.flatMap { ctx =>
@@ -133,21 +133,21 @@ class LspBuiltInRoutesTest extends Test:
             }
         }
 
-        "notebookDocumentDidChange removes closed cells from registry" in run {
+        "notebookDocumentDidChange removes closed cells from registry" in {
             val registry = mkRegistry()
             val cellUri  = uri("notebook-cell:///nb.ipynb#cell2")
             val cellItem = LspHandler.TextDocumentItem(cellUri, "scala", 1, "val x = 1")
             registry.insert(cellItem).flatMap { _ =>
                 registry.remove(cellUri).flatMap { _ =>
                     registry.get(cellUri).map {
-                        case Absent     => assertionSuccess
+                        case Absent     => succeed
                         case Present(_) => fail("Cell document should have been removed")
                     }
                 }
             }
         }
 
-        "notebookDocumentDidChange applies text content changes to existing cells" in run {
+        "notebookDocumentDidChange applies text content changes to existing cells" in {
             val registry = mkRegistry()
             val cellUri  = uri("notebook-cell:///nb.ipynb#cell3")
             val cellItem = LspHandler.TextDocumentItem(cellUri, "python", 1, "x = 1")

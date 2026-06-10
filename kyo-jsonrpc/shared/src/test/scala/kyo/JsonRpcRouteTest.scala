@@ -28,7 +28,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         Fiber.Promise.init[Unit, Sync].map: p =>
             JsonRpcRoute.Context.forTest(p, requestId, extras, progressSink)
 
-    "handler returns Out and result is encoded as Structure.Value" in run {
+    "handler returns Out and result is encoded as Structure.Value" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val method = JsonRpcRoute.request[Int, String]("greet") {
                 (n, _) => s"$n done"
@@ -38,7 +38,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 assert(result == Result.Success(Structure.Value.Str("42 done")))
     }
 
-    "handler Abort.fail propagates the failure without transformation" in run {
+    "handler Abort.fail propagates the failure without transformation" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val err = JsonRpcInvalidParamsError("fail", Absent, Chunk.empty)
             val method = JsonRpcRoute.request[Int, String]("fail") {
@@ -49,7 +49,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 assert(result == Result.Failure(err))
     }
 
-    "handler panic produces InternalError with panic message in data" in run {
+    "handler panic produces InternalError with panic message in data" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val method = JsonRpcRoute.request[Int, String]("boom") {
                 (_, _) => Sync.defer(throw new RuntimeException("boom"))
@@ -64,7 +64,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                         fail(s"Expected Failure, got: $other")
     }
 
-    "params decode failure produces invalidParams before the handler body runs" in run {
+    "params decode failure produces invalidParams before the handler body runs" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             var handlerCalled = false
             val method = JsonRpcRoute.request[Int, String]("typed") {
@@ -82,7 +82,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                         fail(s"Expected Failure, got: $other")
     }
 
-    "notification method has Kind.Notification and handle returns Structure.Value.Null" in run {
+    "notification method has Kind.Notification and handle returns Structure.Value.Null" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val method = JsonRpcRoute.notification[Int]("ping") {
                 (_, _) => ()
@@ -93,7 +93,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 assert(result == Result.Success(Structure.Value.Null))
     }
 
-    "JsonRpcRoute.Context.extras is forwarded verbatim to the handler" in run {
+    "JsonRpcRoute.Context.extras is forwarded verbatim to the handler" in {
         val extrasValue = Structure.Value.Record(Chunk("k" -> Structure.Value.Str("v")))
         makeCtx(Absent, Present(extrasValue), Absent).flatMap: ctx =>
             var observed: Maybe[Structure.Value] = Absent
@@ -105,13 +105,13 @@ class JsonRpcRouteTest extends JsonRpcTest:
                 assert(observed == Present(extrasValue))
     }
 
-    "ctx.progress with progressSink = Absent is a no-op" in run {
+    "ctx.progress with progressSink = Absent is a no-op" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             Abort.run[Closed](ctx.progress(Structure.Value.Null)).map: result =>
                 assert(result == Result.Success(()))
     }
 
-    "two routes with same logic produce identical encoded output" in run {
+    "two routes with same logic produce identical encoded output" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             def handler(n: Int): String < (Async & Abort[JsonRpcError]) = s"result $n"
             val route1                                                  = JsonRpcRoute.request[Int, String]("m")((n, _) => handler(n))
@@ -124,7 +124,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
             end for
     }
 
-    "dispatch known request returns Present" in run {
+    "dispatch known request returns Present" in {
         val addM = JsonRpcRoute.request[AddReq, AddResp]("add") { (req, _) => AddResp(req.a + req.b) }
         Sync.defer(Structure.encode(AddReq(2, 3))).map { params =>
             val ctx =
@@ -149,7 +149,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         }
     }
 
-    "dispatch unknown name returns Absent" in run {
+    "dispatch unknown name returns Absent" in {
         val addM = JsonRpcRoute.request[AddReq, AddResp]("add") { (r, _) => AddResp(r.a + r.b) }
         val ctx = JsonRpcRoute.Context.forTest(
             Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe,
@@ -161,7 +161,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         assert(result == Absent)
     }
 
-    "dispatch known notification returns Present Null" in run {
+    "dispatch known notification returns Present Null" in {
         val counter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val logM = JsonRpcRoute.notification[LogMsg]("log") {
             (_, _) => Sync.defer(discard(counter.incrementAndGet()(using AllowUnsafe.embrace.danger)))
@@ -188,7 +188,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
         }
     }
 
-    "dispatch propagates handler Abort" in run {
+    "dispatch propagates handler Abort" in {
         val m = JsonRpcRoute.request[Unit, Unit]("err") { (_, _) =>
             Abort.fail(JsonRpcInvalidParamsError("err", Absent, Chunk.empty))
         }
@@ -212,7 +212,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
     }
 
     // Halt short-circuit propagates the wrapped response instead of panicking.
-    "JsonRpcResponse.Halt aborts with the wrapped response directly" in run {
+    "JsonRpcResponse.Halt aborts with the wrapped response directly" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val id       = JsonRpcId(1L)
             val response = JsonRpcResponse.success(id, Structure.Value.Str("early"))
@@ -228,7 +228,7 @@ class JsonRpcRouteTest extends JsonRpcTest:
                         fail(s"Expected Halt with wrapped response, got: $other")
     }
 
-    ".error accumulates error mappings on the route" in run {
+    ".error accumulates error mappings on the route" in {
         makeCtx(Absent, Absent, Absent).flatMap: ctx =>
             val base      = JsonRpcRoute.request[AddReq, AddResp]("add") { (req, _) => AddResp(req.a + req.b) }
             val withError = base.error[AddReq](-32001, "Bad request")

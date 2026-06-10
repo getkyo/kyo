@@ -19,7 +19,7 @@ class McpUnknownMethodStrictRejectTest extends Test:
         McpContent.Text("c")
     }
 
-    "unknown method foo/bar is rejected with JsonRpcError code -32601" in run {
+    "unknown method foo/bar is rejected with JsonRpcError code -32601" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, tool1, tool2, tool3),

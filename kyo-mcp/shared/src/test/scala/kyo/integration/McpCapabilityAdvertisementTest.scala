@@ -11,7 +11,7 @@ class McpCapabilityAdvertisementTest extends Test:
         McpContent.Text(s"${in.a + in.b}")
     }
 
-    "tool call aborts with McpCapabilityNotAdvertisedException when tools capability is absent" in run {
+    "tool call aborts with McpCapabilityNotAdvertisedException when tools capability is absent" in {
         // McpCapabilities.Server() has all fields Absent, so tools capability is not advertised.
         val cfg = McpConfig.default.declaredCapabilities(McpCapabilities.Server())
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
@@ -33,7 +33,7 @@ class McpCapabilityAdvertisementTest extends Test:
         }
     }
 
-    "server advertises tools capability when route is registered and declaredCapabilities is Absent" in run {
+    "server advertises tools capability when route is registered and declaredCapabilities is Absent" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, toolRoute),

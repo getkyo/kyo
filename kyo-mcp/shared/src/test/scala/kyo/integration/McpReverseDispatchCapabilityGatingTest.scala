@@ -5,7 +5,7 @@ import kyo.*
 /** Tests for -32601 capability gating on reverse-direction methods (§3.11). */
 class McpReverseDispatchCapabilityGatingTest extends Test:
 
-    "requestSampling without client sampling capability returns -32601 error" in run {
+    "requestSampling without client sampling capability returns -32601 error" in {
         // Client does NOT declare sampling capability.
         // The client-side reverse dispatch returns McpCapabilityNotAdvertisedException (-32601).
         // The server wraps the received JSON-RPC error as McpSamplingRejectedException, preserving
@@ -48,7 +48,7 @@ class McpReverseDispatchCapabilityGatingTest extends Test:
         }
     }
 
-    "requestSampling with client sampling capability does not return -32601" in run {
+    "requestSampling with client sampling capability does not return -32601" in {
         // Client declares sampling capability; default handler rejects with a different error (not -32601).
         val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>

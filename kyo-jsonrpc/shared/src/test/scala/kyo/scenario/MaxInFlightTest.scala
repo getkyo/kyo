@@ -26,7 +26,7 @@ class MaxInFlightTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
-    "maxInFlight = 2 parks the third concurrent call until a slot is freed" in run {
+    "maxInFlight = 2 parks the third concurrent call until a slot is freed" in {
         // Unsafe: AtomicInt.Unsafe.init used for concurrent counter in synchronous handler scope
         val handlerEntered = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicRef.Unsafe.init used for concurrent promise accumulation outside effect context
@@ -60,7 +60,7 @@ class MaxInFlightTest extends JsonRpcTest:
                                 Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(3)))
                             ).map { fib3 =>
                                 // Wait until exactly 2 handlers have entered (two slots acquired)
-                                untilTrue(Sync.defer(handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2)).andThen {
+                                assertEventually(Sync.defer(handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2)).andThen {
                                     Sync.defer(assert(
                                         handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2,
                                         "third call should be parked"
@@ -74,7 +74,9 @@ class MaxInFlightTest extends JsonRpcTest:
                                             }
                                         }.andThen {
                                             // Wait for all three handlers to have entered
-                                            untilTrue(Sync.defer(handlerEntered.get()(using AllowUnsafe.embrace.danger) == 3)).andThen {
+                                            assertEventually(Sync.defer(handlerEntered.get()(using
+                                                AllowUnsafe.embrace.danger
+                                            ) == 3)).andThen {
                                                 // Release remaining slots
                                                 Sync.defer {
                                                     handlerPromises.get()(using AllowUnsafe.embrace.danger).foreach { p =>
@@ -97,7 +99,7 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "notify is NOT rate-limited by maxInFlight" in run {
+    "notify is NOT rate-limited by maxInFlight" in {
         // Unsafe: AtomicInt.Unsafe.init for concurrent counter in handler scope
         val notifyReceived = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
@@ -125,11 +127,11 @@ class MaxInFlightTest extends JsonRpcTest:
                         Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(0)))
                     ).andThen {
                         // Wait for the handler to have acquired the slot and blocked
-                        untilTrue(Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                        assertEventually(Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                             // Send a notification while the slot is full; notify should go through immediately
                             endpointA.notify[LogMsg]("log", LogMsg("hi")).andThen {
                                 // Verify notification was received on the server
-                                untilTrue(Sync.defer(notifyReceived.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
+                                assertEventually(Sync.defer(notifyReceived.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
                                     // Release the blocked call
                                     Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger)).map {
                                         case Present(p) =>
@@ -145,7 +147,7 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "requestTimeout fires and caller receives JsonRpcError.cancelled" in run {
+    "requestTimeout fires and caller receives JsonRpcError.cancelled" in {
         // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
         val blocked = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
 
@@ -175,7 +177,7 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "requestTimeout fires and $/cancelRequest appears on transport with expectReply policy" in run {
+    "requestTimeout fires and $/cancelRequest appears on transport with expectReply policy" in {
         val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
             Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
@@ -215,7 +217,7 @@ class MaxInFlightTest extends JsonRpcTest:
                     }.andThen {
                         // The cancel notification is enqueued before the call fails, but the writer fiber
                         // delivers it asynchronously; wait until it appears in the capturing transport.
-                        untilTrue(Sync.defer {
+                        assertEventually(Sync.defer {
                             capA.sentList.exists {
                                 case JsonRpcNotification("$/cancelRequest", _, _) => true
                                 case _                                            => false
@@ -227,7 +229,7 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "requestTimeout fires with cancellation = Absent: no cancel notification sent" in run {
+    "requestTimeout fires with cancellation = Absent: no cancel notification sent" in {
         val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
             // Block forever; timeout is the only exit
             Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
@@ -264,7 +266,7 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "semaphore slot released after call failure: next call proceeds" in run {
+    "semaphore slot released after call failure: next call proceeds" in {
         // Unsafe: AtomicInt.Unsafe.init for call counter in handler scope
         val callCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
@@ -302,7 +304,7 @@ class MaxInFlightTest extends JsonRpcTest:
         }
     }
 
-    "progressResetsTimeout = true: progress notifications reset the deadline" in run {
+    "progressResetsTimeout = true: progress notifications reset the deadline" in {
         case class ProgressMsg(pct: Int) derives Schema, CanEqual
 
         // A 1-second timeout: without resets it would fire before the handler completes.

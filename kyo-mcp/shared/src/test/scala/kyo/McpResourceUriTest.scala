@@ -8,7 +8,7 @@ class McpResourceUriTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
-    private def roundtrip(uri: McpResourceUri): McpResourceUri =
+    private def roundtrip(uri: McpResourceUri)(using kyo.test.AssertScope, Frame): McpResourceUri =
         val encoded = Structure.encode[McpResourceUri](uri)
         Structure.decode[McpResourceUri](encoded).getOrElse(fail(s"decode failed for $uri"))
 

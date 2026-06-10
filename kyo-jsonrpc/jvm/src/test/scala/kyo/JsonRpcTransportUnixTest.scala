@@ -7,7 +7,7 @@ import java.nio.file.Files
 
 class JsonRpcTransportUnixTest extends JsonRpcTest:
 
-    "unixDomain binds and accepts a connection" in run {
+    "unixDomain binds and accepts a connection" in {
         val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
         val sock    = tempDir.resolve("test.sock")
         Scope.run {
@@ -24,7 +24,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
     }
 
-    "unixDomain round-trips one envelope" in run {
+    "unixDomain round-trips one envelope" in {
         val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
         val sock    = tempDir.resolve("test.sock")
         Scope.run {
@@ -49,7 +49,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
     }
 
-    "unixDomain Scope cleanup deletes socket file" in run {
+    "unixDomain Scope cleanup deletes socket file" in {
         val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
         val sock    = tempDir.resolve("test.sock")
         Scope.run {
@@ -59,7 +59,7 @@ class JsonRpcTransportUnixTest extends JsonRpcTest:
         }
     }
 
-    "unixDomain framer override changes wire shape" in run {
+    "unixDomain framer override changes wire shape" in {
         val tempDir = Files.createTempDirectory("kyo-jsonrpc-uds-")
         val sock    = tempDir.resolve("test.sock")
         Scope.run {

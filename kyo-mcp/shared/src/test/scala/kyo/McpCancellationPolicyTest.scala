@@ -29,7 +29,7 @@ class McpCancellationPolicyTest extends Test:
         assert(policy.protectedMethods.contains("initialize"))
     }
 
-    "encodeParams: numeric id encodes to requestId Integer field" in run {
+    "encodeParams: numeric id encodes to requestId Integer field" in {
         val id = JsonRpcId(42L)
         policy.encodeParams(id, Absent).map { result =>
             result match
@@ -40,7 +40,7 @@ class McpCancellationPolicyTest extends Test:
         }
     }
 
-    "encodeParams: string id encodes to requestId Str field" in run {
+    "encodeParams: string id encodes to requestId Str field" in {
         val id = JsonRpcId("req-abc")
         policy.encodeParams(id, Absent).map { result =>
             result match
@@ -51,7 +51,7 @@ class McpCancellationPolicyTest extends Test:
         }
     }
 
-    "encodeParams: includes reason field when Present" in run {
+    "encodeParams: includes reason field when Present" in {
         val id = JsonRpcId(1L)
         policy.encodeParams(id, Present("user cancelled")).map { result =>
             result match
@@ -62,7 +62,7 @@ class McpCancellationPolicyTest extends Test:
         }
     }
 
-    "encodeParams: no reason field when Absent" in run {
+    "encodeParams: no reason field when Absent" in {
         val id = JsonRpcId(1L)
         policy.encodeParams(id, Absent).map { result =>
             result match
@@ -73,42 +73,42 @@ class McpCancellationPolicyTest extends Test:
         }
     }
 
-    "decodeParams: numeric requestId decodes to Present(JsonRpcId(n))" in run {
+    "decodeParams: numeric requestId decodes to Present(JsonRpcId(n))" in {
         val params = Structure.Value.Record(Chunk("requestId" -> Structure.Value.Integer(7L)))
         policy.decodeParams(params).map { result =>
             assert(result == Present(JsonRpcId(7L)))
         }
     }
 
-    "decodeParams: string requestId decodes to Present(JsonRpcId(s))" in run {
+    "decodeParams: string requestId decodes to Present(JsonRpcId(s))" in {
         val params = Structure.Value.Record(Chunk("requestId" -> Structure.Value.Str("req-xyz")))
         policy.decodeParams(params).map { result =>
             assert(result == Present(JsonRpcId("req-xyz")))
         }
     }
 
-    "decodeParams: missing requestId field returns Absent" in run {
+    "decodeParams: missing requestId field returns Absent" in {
         val params = Structure.Value.Record(Chunk("other" -> Structure.Value.Str("x")))
         policy.decodeParams(params).map { result =>
             assert(result == Absent)
         }
     }
 
-    "decodeParams: non-Record returns Absent" in run {
+    "decodeParams: non-Record returns Absent" in {
         val params = Structure.Value.Str("not-a-record")
         policy.decodeParams(params).map { result =>
             assert(result == Absent)
         }
     }
 
-    "decodeParams: requestId with unsupported type returns Absent" in run {
+    "decodeParams: requestId with unsupported type returns Absent" in {
         val params = Structure.Value.Record(Chunk("requestId" -> Structure.Value.Bool(true)))
         policy.decodeParams(params).map { result =>
             assert(result == Absent)
         }
     }
 
-    "encodeParams then decodeParams round-trips a numeric id" in run {
+    "encodeParams then decodeParams round-trips a numeric id" in {
         val id = JsonRpcId(99L)
         policy.encodeParams(id, Absent).flatMap { encoded =>
             policy.decodeParams(encoded).map { decoded =>
@@ -117,7 +117,7 @@ class McpCancellationPolicyTest extends Test:
         }
     }
 
-    "encodeParams then decodeParams round-trips a string id" in run {
+    "encodeParams then decodeParams round-trips a string id" in {
         val id = JsonRpcId("round-trip")
         policy.encodeParams(id, Absent).flatMap { encoded =>
             policy.decodeParams(encoded).map { decoded =>

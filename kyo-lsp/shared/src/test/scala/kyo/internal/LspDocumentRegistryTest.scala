@@ -20,7 +20,7 @@ class LspDocumentRegistryTest extends Test:
 
     "LspDocumentRegistryTest" - {
 
-        "insert stamps session encoding on document" in run {
+        "insert stamps session encoding on document" in {
             val reg = mkRegistry(LspHandler.PositionEncodingKind.UTF8)
             reg.insert(item("file:///a.txt")).flatMap { _ =>
                 reg.get(uri("file:///a.txt")).map {
@@ -32,7 +32,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "insert and get round-trip" in run {
+        "insert and get round-trip" in {
             val reg = mkRegistry()
             reg.insert(item("file:///b.txt", "world")).flatMap { _ =>
                 reg.get(uri("file:///b.txt")).map {
@@ -45,7 +45,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "applyChanges for unknown URI is a no-op" in run {
+        "applyChanges for unknown URI is a no-op" in {
             val reg = mkRegistry()
             reg.applyChanges(
                 uri("file:///unknown.txt"),
@@ -53,13 +53,13 @@ class LspDocumentRegistryTest extends Test:
                 Chunk(LspHandler.TextDocumentContentChangeEvent.Full("new content"))
             ).flatMap { _ =>
                 reg.get(uri("file:///unknown.txt")).map {
-                    case Absent     => assertionSuccess
+                    case Absent     => succeed
                     case Present(_) => fail("Should have been a no-op for unknown URI")
                 }
             }
         }
 
-        "duplicate didOpen (same URI) replaces document" in run {
+        "duplicate didOpen (same URI) replaces document" in {
             val reg = mkRegistry()
             reg.insert(item("file:///c.txt", "original")).flatMap { _ =>
                 reg.insert(item("file:///c.txt", "re-opened")).flatMap { _ =>
@@ -73,7 +73,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "applyChanges updates text and version" in run {
+        "applyChanges updates text and version" in {
             val reg = mkRegistry()
             reg.insert(item("file:///d.txt", "hello world")).flatMap { _ =>
                 reg.applyChanges(
@@ -92,29 +92,29 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "remove for unknown URI is a no-op" in run {
+        "remove for unknown URI is a no-op" in {
             val reg = mkRegistry()
             reg.remove(uri("file:///nonexistent.txt")).flatMap { _ =>
                 reg.get(uri("file:///nonexistent.txt")).map {
-                    case Absent     => assertionSuccess
+                    case Absent     => succeed
                     case Present(_) => fail("Should be absent")
                 }
             }
         }
 
-        "remove existing document succeeds" in run {
+        "remove existing document succeeds" in {
             val reg = mkRegistry()
             reg.insert(item("file:///e.txt")).flatMap { _ =>
                 reg.remove(uri("file:///e.txt")).flatMap { _ =>
                     reg.get(uri("file:///e.txt")).map {
-                        case Absent     => assertionSuccess
+                        case Absent     => succeed
                         case Present(_) => fail("Should be removed")
                     }
                 }
             }
         }
 
-        "isOpen reflects insertion and removal" in run {
+        "isOpen reflects insertion and removal" in {
             val reg = mkRegistry()
             reg.insert(item("file:///f.txt")).flatMap { _ =>
                 reg.isOpen(uri("file:///f.txt")).flatMap { open =>
@@ -128,7 +128,7 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "listOpenUris returns all inserted URIs" in run {
+        "listOpenUris returns all inserted URIs" in {
             val reg = mkRegistry()
             reg.insert(item("file:///g.txt")).flatMap { _ =>
                 reg.insert(item("file:///h.txt")).flatMap { _ =>
@@ -141,14 +141,14 @@ class LspDocumentRegistryTest extends Test:
             }
         }
 
-        "version returns Absent for unknown URI" in run {
+        "version returns Absent for unknown URI" in {
             val reg = mkRegistry()
             reg.version(uri("file:///missing.txt")).map { v =>
                 assert(v == Absent)
             }
         }
 
-        "insertNotebookCell stamps session encoding" in run {
+        "insertNotebookCell stamps session encoding" in {
             val reg = mkRegistry(LspHandler.PositionEncodingKind.UTF8)
             reg.insertNotebookCell(uri("file:///cell1.py"), "python", "print('hello')", 1).flatMap { _ =>
                 reg.get(uri("file:///cell1.py")).map {

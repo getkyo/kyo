@@ -23,7 +23,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
             }
         }
 
-    "dollar-slash ignore policy: unknown request returns MethodNotFound code -32601" in run {
+    "dollar-slash ignore policy: unknown request returns MethodNotFound code -32601" in {
         val dollarSlashConfig = JsonRpcHandler.Config(
             unknownMethod = JsonRpcUnknownMethodPolicy.minimal.copy(ignoreUnknownNotification = _.startsWith("$/"))
         )
@@ -35,7 +35,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "dollar-slash ignore policy: unknown notification starting with dollar-slash is silently dropped" in run {
+    "dollar-slash ignore policy: unknown notification starting with dollar-slash is silently dropped" in {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val dollarMethod = JsonRpcRoute.request[Empty, Unit]("$/setTrace") {
@@ -57,7 +57,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "dollar-slash ignore policy: unknown notification not starting with dollar-slash is silently dropped" in run {
+    "dollar-slash ignore policy: unknown notification not starting with dollar-slash is silently dropped" in {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val dollarSlashConfig = JsonRpcHandler.Config(
@@ -76,13 +76,13 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "strict policy: unknown notification Reject closes engine" in run {
+    "strict policy: unknown notification Reject closes engine" in {
         val strictConfig = JsonRpcHandler.Config(unknownMethod = JsonRpcUnknownMethodPolicy.strict)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty, strictConfig).map { b =>
                     a.notify[Empty]("unknown/event", Empty()).andThen {
-                        untilTrue(Sync.defer(b.unsafe.asInstanceOf[
+                        assertEventually(Sync.defer(b.unsafe.asInstanceOf[
                             internal.engine.JsonRpcEndpointImpl
                         ].config.unknownMethod == JsonRpcUnknownMethodPolicy.strict)).andThen {
                             Async.sleep(150.millis).andThen {
@@ -99,7 +99,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "ignoreUnknownNotification predicate: matching notifications are silently dropped" in run {
+    "ignoreUnknownNotification predicate: matching notifications are silently dropped" in {
         // Unsafe: AtomicInt.Unsafe.init for handler invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         // Custom predicate: silently ignore notifications whose method starts with "internal/"
@@ -120,7 +120,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "ignoreUnknownNotification predicate: non-matching notifications go through onUnknownNotification" in run {
+    "ignoreUnknownNotification predicate: non-matching notifications go through onUnknownNotification" in {
         // Unsafe: AtomicInt.Unsafe.init for invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         // Predicate only matches "internal/" prefix; "external/" should fall through to Drop (silent)
@@ -146,7 +146,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "ignoreUnknownNotification predicate: always-true predicate drops all unknown notifications silently" in run {
+    "ignoreUnknownNotification predicate: always-true predicate drops all unknown notifications silently" in {
         // Unsafe: AtomicInt.Unsafe.init for invocation counter
         val handlerInvoked = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val alwaysIgnorePolicy = JsonRpcUnknownMethodPolicy.strict.copy(
@@ -171,7 +171,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "gate Allow: request reaches registered handler normally" in run {
+    "gate Allow: request reaches registered handler normally" in {
         val allowGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 JsonRpcMessageGate.Decision.Allow
@@ -187,7 +187,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "gate Reject for Request: caller sees error reply with gate error code" in run {
+    "gate Reject for Request: caller sees error reply with gate error code" in {
         val gateError = JsonRpcImplementationError(-32099, "gate blocked")
         val rejectGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
@@ -213,7 +213,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "gate Reject for Notification: notification dropped, engine does not close" in run {
+    "gate Reject for Notification: notification dropped, engine does not close" in {
         val rejectGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 env match
@@ -251,7 +251,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "gate Drop for Request: call hangs until timeout with JsonRpcError" in run {
+    "gate Drop for Request: call hangs until timeout with JsonRpcError" in {
         val dropGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =
                 JsonRpcMessageGate.Decision.Drop
@@ -271,7 +271,7 @@ class JsonRpcHandlerUnknownMethodPolicyTest extends JsonRpcTest:
         }
     }
 
-    "gate initialize pattern: allows initialize, rejects others with ServerNotInitialized" in run {
+    "gate initialize pattern: allows initialize, rejects others with ServerNotInitialized" in {
         val serverNotInitialized = JsonRpcImplementationError(-32002, "ServerNotInitialized")
         val initGate: JsonRpcMessageGate = new JsonRpcMessageGate:
             def beforeDispatch(env: JsonRpcEnvelope)(using Frame): JsonRpcMessageGate.Decision < Sync =

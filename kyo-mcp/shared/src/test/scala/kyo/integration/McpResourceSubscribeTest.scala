@@ -13,7 +13,7 @@ class McpResourceSubscribeTest extends Test:
 
     case class ResUpdated(uri: String) derives Schema, CanEqual
 
-    "subscribed URI receives notifyResourceUpdated; non-subscribed URI does not" in run {
+    "subscribed URI receives notifyResourceUpdated; non-subscribed URI does not" in {
         val subscribedCounter    = makeCounter
         val notSubscribedCounter = makeCounter
 
@@ -53,7 +53,7 @@ class McpResourceSubscribeTest extends Test:
         }
     }
 
-    "after unsubscribeResource, no further notifications for the URI" in run {
+    "after unsubscribeResource, no further notifications for the URI" in {
         val counter = makeCounter
 
         val updatedRoute = McpHandler.custom[ResUpdated]("notifications/resources/updated") { _ =>
@@ -87,7 +87,7 @@ class McpResourceSubscribeTest extends Test:
         }
     }
 
-    "subscribe=false resource does not gate on subscriptions; always sends updates" in run {
+    "subscribe=false resource does not gate on subscriptions; always sends updates" in {
         val counter = makeCounter
 
         val updatedRoute = McpHandler.custom[ResUpdated]("notifications/resources/updated") { _ =>

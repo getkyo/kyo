@@ -16,7 +16,7 @@ class McpHandshakeRoundtripTest extends Test:
     private val clientInfo = McpInfo("calc")
     private val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
 
-    "server.protocolVersion is Present(current) and clientInfo matches after handshake" in run {
+    "server.protocolVersion is Present(current) and clientInfo matches after handshake" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, route1, route2),
@@ -35,7 +35,7 @@ class McpHandshakeRoundtripTest extends Test:
         }
     }
 
-    "client.serverInfo and protocolVersion are Present after handshake" in run {
+    "client.serverInfo and protocolVersion are Present after handshake" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts, route1, route2),

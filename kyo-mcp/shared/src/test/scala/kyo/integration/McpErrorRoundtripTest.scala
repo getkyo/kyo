@@ -14,7 +14,7 @@ class McpErrorRoundtripTest extends Test:
 
     private val failUri = McpResourceUri.parse("file:///fail").get
 
-    "tool call aborts with McpException when server handler fails" in run {
+    "tool call aborts with McpException when server handler fails" in {
         val errRoute = McpHandler.tool[FailReq]("fail") { _ =>
             Abort.fail(McpToolExecutionException(tool = "fail", reason = "intentional", cause = ""))
         }
@@ -40,7 +40,7 @@ class McpErrorRoundtripTest extends Test:
         }
     }
 
-    "resource read aborts with McpException when server handler fails" in run {
+    "resource read aborts with McpException when server handler fails" in {
         val resRoute = McpHandler.resource(failUri, "fail-resource") {
             Abort.fail(McpResourceReadException(uri = failUri, reason = "read error", cause = ""))
         }
@@ -66,7 +66,7 @@ class McpErrorRoundtripTest extends Test:
         }
     }
 
-    "tool call for non-existent tool aborts with McpException code -32601" in run {
+    "tool call for non-existent tool aborts with McpException code -32601" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),

@@ -9,18 +9,18 @@ class LspDocumentTest extends Test:
     // LspDocument.Uri
     // =========================================================================
 
-    "LspDocument.Uri.parse accepts non-empty string" in run {
+    "LspDocument.Uri.parse accepts non-empty string" in {
         val result = LspDocument.Uri.parse("file:///workspace/Main.scala")
         assert(result.isDefined)
         assert(result.get.asString == "file:///workspace/Main.scala")
     }
 
-    "LspDocument.Uri.parse rejects empty string" in run {
+    "LspDocument.Uri.parse rejects empty string" in {
         val result = LspDocument.Uri.parse("")
         assert(result == Absent)
     }
 
-    "LspDocument.Uri.parse rejects whitespace-only string" in run {
+    "LspDocument.Uri.parse rejects whitespace-only string" in {
         val result = LspDocument.Uri.parse("   ")
         assert(result == Absent)
     }
@@ -29,7 +29,7 @@ class LspDocumentTest extends Test:
     // LspDocument.applyChanges - full replace
     // =========================================================================
 
-    "applyChanges - full replace" in run {
+    "applyChanges - full replace" in {
         val uri     = LspDocument.Uri.parse("file:///test.scala").get
         val doc     = LspDocument(uri = uri, languageId = "scala", version = 1, text = "old content")
         val change  = TextDocumentContentChangeEvent.Full("new content")
@@ -42,7 +42,7 @@ class LspDocumentTest extends Test:
     // LspDocument.applyChanges - incremental
     // =========================================================================
 
-    "applyChanges - incremental at start of first line" in run {
+    "applyChanges - incremental at start of first line" in {
         val uri     = LspDocument.Uri.parse("file:///test.scala").get
         val doc     = LspDocument(uri = uri, languageId = "scala", version = 1, text = "hello world")
         val range   = Range(Position(0, 0), Position(0, 5))
@@ -52,7 +52,7 @@ class LspDocumentTest extends Test:
         assert(updated.version == 2)
     }
 
-    "applyChanges - incremental at end of first line" in run {
+    "applyChanges - incremental at end of first line" in {
         val uri     = LspDocument.Uri.parse("file:///test.scala").get
         val doc     = LspDocument(uri = uri, languageId = "scala", version = 1, text = "hello world")
         val range   = Range(Position(0, 6), Position(0, 11))
@@ -61,7 +61,7 @@ class LspDocumentTest extends Test:
         assert(updated.text == "hello scala")
     }
 
-    "applyChanges - multiple sequential changes" in run {
+    "applyChanges - multiple sequential changes" in {
         val uri     = LspDocument.Uri.parse("file:///test.scala").get
         val doc     = LspDocument(uri = uri, languageId = "scala", version = 1, text = "aaa")
         val change1 = TextDocumentContentChangeEvent.Full("bbb")
@@ -75,7 +75,7 @@ class LspDocumentTest extends Test:
     // LspDocument construction
     // =========================================================================
 
-    "LspDocument construction with defaults" in run {
+    "LspDocument construction with defaults" in {
         val uri = LspDocument.Uri.parse("file:///Main.scala").get
         val doc = LspDocument(uri = uri, languageId = "scala", version = 1, text = "object Main")
         assert(doc.uri == uri)
@@ -85,7 +85,7 @@ class LspDocumentTest extends Test:
         assert(doc.encoding == PositionEncodingKind.UTF16) // default private field
     }
 
-    "LspDocument equality ignores encoding" in run {
+    "LspDocument equality ignores encoding" in {
         val uri  = LspDocument.Uri.parse("file:///Main.scala").get
         val doc1 = LspDocument(uri = uri, languageId = "scala", version = 1, text = "hello")
         val doc2 = LspDocument(uri = uri, languageId = "scala", version = 1, text = "hello", encoding = PositionEncodingKind.UTF8)

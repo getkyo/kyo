@@ -7,50 +7,50 @@ package kyo
   */
 class OpaqueIdentityTest extends Test:
 
-    "LspDocument.Uri round-trips as String" in run {
+    "LspDocument.Uri round-trips as String" in {
         val uri = LspHandler.LspDocument.Uri.parse("file:///Main.scala").get
         assert(uri.asString == "file:///Main.scala")
     }
 
-    "CodeActionKind round-trips as String" in run {
+    "CodeActionKind round-trips as String" in {
         val k = LspHandler.CodeActionKind.QuickFix
         assert(k.asString == "quickfix")
         val custom = LspHandler.CodeActionKind("custom.action")
         assert(custom.asString == "custom.action")
     }
 
-    "FoldingRangeKind round-trips as String" in run {
+    "FoldingRangeKind round-trips as String" in {
         val k = LspHandler.FoldingRangeKind.Comment
         assert(k.asString == "comment")
         val custom = LspHandler.FoldingRangeKind("custom.kind")
         assert(custom.asString == "custom.kind")
     }
 
-    "SemanticTokenTypes round-trips as String" in run {
+    "SemanticTokenTypes round-trips as String" in {
         val t = LspHandler.SemanticTokenTypes.Class
         assert(t.asString == "class")
         val custom = LspHandler.SemanticTokenTypes("custom")
         assert(custom.asString == "custom")
     }
 
-    "SemanticTokenModifiers round-trips as String" in run {
+    "SemanticTokenModifiers round-trips as String" in {
         val m = LspHandler.SemanticTokenModifiers.Readonly
         assert(m.asString == "readonly")
         val custom = LspHandler.SemanticTokenModifiers("custom")
         assert(custom.asString == "custom")
     }
 
-    "PositionEncodingKind round-trips as String" in run {
+    "PositionEncodingKind round-trips as String" in {
         val k = LspHandler.PositionEncodingKind.UTF16
         assert(k.asString == "utf-16")
     }
 
-    "TraceValue round-trips as String" in run {
+    "TraceValue round-trips as String" in {
         val v = LspHandler.TraceValue.Off
         assert(v.asString == "off")
     }
 
-    "LspServer round-trips through safe/unsafe bridge" in run {
+    "LspServer round-trips through safe/unsafe bridge" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             LspServer.initUnscoped(ta).flatMap { server =>
                 val back = server.unsafe.safe

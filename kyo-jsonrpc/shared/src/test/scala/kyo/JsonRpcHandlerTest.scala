@@ -35,7 +35,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             inner.close
     end CountingTransport
 
-    "call add handler returns correct result" in run {
+    "call add handler returns correct result" in {
         val addMethod = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -46,7 +46,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "notify sends notification and handler runs without reply" in run {
+    "notify sends notification and handler runs without reply" in {
         // Unsafe: AtomicInt.Unsafe.init for concurrent counter in synchronous handler scope
         val seen = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val logMethod = JsonRpcRoute.request[LogMsg, Unit]("log") {
@@ -54,12 +54,12 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
         mkEndpoints(Seq.empty, Seq(logMethod)).map { (a, _) =>
             a.notify[LogMsg]("log", LogMsg("hello")).andThen {
-                untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger) == 1)).andThen(succeed)
+                assertEventually(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger) == 1)).andThen(succeed)
             }
         }
     }
 
-    "bidirectional simultaneous calls resolve without cross-wiring" in run {
+    "bidirectional simultaneous calls resolve without cross-wiring" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -76,7 +76,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "multiple concurrent calls resolve independently" in run {
+    "multiple concurrent calls resolve independently" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -91,7 +91,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "unknown method request fails with MethodNotFound code -32601" in run {
+    "unknown method request fails with MethodNotFound code -32601" in {
         mkEndpoints(Seq.empty, Seq.empty).map { (a, _) =>
             Abort.run[JsonRpcError | Closed](a.call[AddReq, AddResp]("nonexistent", AddReq(0, 0))).map {
                 case Result.Failure(e: JsonRpcError) => assert(e.code == -32601)
@@ -100,7 +100,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "Scope exit closes Exchange and fails in-flight calls" in run {
+    "Scope exit closes Exchange and fails in-flight calls" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => Async.sleep(2.seconds).andThen(AddResp(req.a + req.b))
         }
@@ -119,7 +119,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         ).unit
                     }
                 }.andThen {
-                    untilTrue(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                    assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                         Sync.defer {
                             resultRef.get()(using AllowUnsafe.embrace.danger) match
                                 case Present(Result.Failure(_: Closed)) => succeed
@@ -134,7 +134,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "callerRegistry drain on close fails pending calls" in run {
+    "callerRegistry drain on close fails pending calls" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => Async.sleep(3.seconds).andThen(AddResp(req.a + req.b))
         }
@@ -152,7 +152,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         ).andThen(Async.sleep(50.millis))
                     }
                 }.andThen {
-                    untilTrue(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                    assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                         Sync.defer {
                             resultRef.get()(using AllowUnsafe.embrace.danger) match
                                 case Present(Result.Failure(e: JsonRpcError)) =>
@@ -172,7 +172,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "callerRegistry is empty after a call completes normally" in run {
+    "callerRegistry is empty after a call completes normally" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -185,7 +185,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "callerRegistry is empty after a call fiber is interrupted externally" in run {
+    "callerRegistry is empty after a call fiber is interrupted externally" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => Async.sleep(5.seconds).andThen(AddResp(req.a + req.b))
         }
@@ -195,7 +195,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             ).map { fib =>
                 Async.sleep(30.millis).andThen {
                     fib.interrupt.andThen {
-                        untilTrue(
+                        assertEventually(
                             Sync.defer(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].callerRegistry.isEmpty)
                         ).andThen(succeed)
                     }
@@ -204,7 +204,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "call returns error when transport closes mid-call" in run {
+    "call returns error when transport closes mid-call" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => Async.sleep(2.seconds).andThen(AddResp(req.a + req.b))
         }
@@ -225,7 +225,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "awaitDrain returns after all pending calls resolve" in run {
+    "awaitDrain returns after all pending calls resolve" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => Async.sleep(30.millis).andThen(AddResp(req.a + req.b))
         }
@@ -236,7 +236,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     // Wait until both call fibers have incremented inFlight before invoking awaitDrain.
                     // Without this, the call fibers may not have started executing by the time awaitDrain
                     // reads inFlight, causing awaitDrain to observe 0 and return immediately.
-                    untilTrue(Sync.Unsafe.defer(impl.inFlight.unsafe.get() >= 2)).andThen {
+                    assertEventually(Sync.Unsafe.defer(impl.inFlight.unsafe.get() >= 2)).andThen {
                         a.awaitDrain.andThen {
                             Sync.Unsafe.defer {
                                 assert(impl.inFlight.unsafe.get() <= 0)
@@ -248,7 +248,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "cancel with no CancellationPolicy fails call locally with cancelled error" in run {
+    "cancel with no CancellationPolicy fails call locally with cancelled error" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => Async.sleep(3.seconds).andThen(AddResp(req.a + req.b))
         }
@@ -269,7 +269,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                             a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                        assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                             Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     a.cancel(id, Absent).andThen {
@@ -287,7 +287,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "late reply for cancelled outbound call is silently dropped" in run {
+    "late reply for cancelled outbound call is silently dropped" in {
         // Unsafe: AtomicRef.Unsafe.init for id capture across fibers
         val capturedId = AtomicRef.Unsafe.init[Maybe[JsonRpcId]](Absent)(using AllowUnsafe.embrace.danger)
         val captureEncoder = JsonRpcExtrasEncoder(id =>
@@ -311,7 +311,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                             a.call[AddReq, AddResp]("add", AddReq(1, 2), captureEncoder)
                         )
                     ).map { callFib =>
-                        untilTrue(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                        assertEventually(Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                             Sync.defer(capturedId.get()(using AllowUnsafe.embrace.danger)).map {
                                 case Present(id) =>
                                     a.cancel(id, Absent).andThen {
@@ -344,7 +344,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "JsonRpcExtrasEncoder.const causes extras value to appear in handler ctx" in run {
+    "JsonRpcExtrasEncoder.const causes extras value to appear in handler ctx" in {
         val extrasValue = Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("my-token")))
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val seen = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
@@ -367,7 +367,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "IdStrategy.SequentialLong produces ids Num(1), Num(2), Num(3)" in run {
+    "IdStrategy.SequentialLong produces ids Num(1), Num(2), Num(3)" in {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
         val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
         val capture = JsonRpcExtrasEncoder(id =>
@@ -388,7 +388,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "IdStrategy.SequentialInt produces ids Num(1), Num(2), Num(3)" in run {
+    "IdStrategy.SequentialInt produces ids Num(1), Num(2), Num(3)" in {
         // Unsafe: AtomicRef.Unsafe.init for id accumulation across fibers
         val ids = AtomicRef.Unsafe.init(List.empty[JsonRpcId])(using AllowUnsafe.embrace.danger)
         val capture = JsonRpcExtrasEncoder(id =>
@@ -415,7 +415,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "close prevents further call success" in run {
+    "close prevents further call success" in {
         val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -444,7 +444,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "IdStrategy.Custom with 100 concurrent calls produces 100 distinct ids" in run {
+    "IdStrategy.Custom with 100 concurrent calls produces 100 distinct ids" in {
         // Unsafe: AtomicLong.Unsafe.init for id generation
         val counter = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
         val customStrategy = JsonRpcIdStrategy.Custom(() =>
@@ -469,7 +469,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "default Config() has cancellation Absent" in run {
+    "default Config() has cancellation Absent" in {
         val cfg = JsonRpcHandler.Config()
         assert(cfg.cancellation == Absent)
         assert(cfg.codec eq JsonRpcCodec.Strict2_0)
@@ -477,32 +477,32 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         assert(cfg.unknownMethod == JsonRpcUnknownMethodPolicy.minimal)
     }
 
-    "Config.default equals Config()" in run {
+    "Config.default equals Config()" in {
         assert(JsonRpcHandler.Config.default == JsonRpcHandler.Config())
     }
 
-    "Config.default == Config.default (CanEqual derivation)" in run {
+    "Config.default == Config.default (CanEqual derivation)" in {
         val a = JsonRpcHandler.Config.default
         val b = JsonRpcHandler.Config.default
         assert(a == b)
     }
 
-    "Config fluent setter codec round-trips" in run {
+    "Config fluent setter codec round-trips" in {
         val cfg = JsonRpcHandler.Config.default.codec(JsonRpcCodec.Lenient)
         assert(cfg.codec eq JsonRpcCodec.Lenient)
     }
 
-    "Config fluent setter idStrategy round-trips" in run {
+    "Config fluent setter idStrategy round-trips" in {
         val cfg = JsonRpcHandler.Config.default.idStrategy(JsonRpcIdStrategy.SequentialInt)
         assert(cfg.idStrategy == JsonRpcIdStrategy.SequentialInt)
     }
 
-    "Config fluent setter maxInFlight wraps in Present" in run {
+    "Config fluent setter maxInFlight wraps in Present" in {
         val cfg = JsonRpcHandler.Config.default.maxInFlight(10)
         assert(cfg.maxInFlight == Present(10))
     }
 
-    "Config.require throws on maxInFlight <= 0" in run {
+    "Config.require throws on maxInFlight <= 0" in {
         assert(
             try
                 JsonRpcHandler.Config.require(JsonRpcHandler.Config.default.maxInFlight(0)); false
@@ -510,17 +510,17 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         )
     }
 
-    "Config.require accepts Duration.Zero requestTimeout" in run {
+    "Config.require accepts Duration.Zero requestTimeout" in {
         JsonRpcHandler.Config.require(JsonRpcHandler.Config.default.requestTimeout(Duration.Zero))
         succeed
     }
 
-    "Config.require accepts Duration.Infinity requestTimeout" in run {
+    "Config.require accepts Duration.Infinity requestTimeout" in {
         JsonRpcHandler.Config.require(JsonRpcHandler.Config.default.requestTimeout(Duration.Infinity))
         succeed
     }
 
-    "Config() default plus timeout emits no cancel" in run {
+    "Config() default plus timeout emits no cancel" in {
         val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
         val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => Async.sleep(2.seconds) }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
@@ -548,7 +548,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "malformed response with id fails caller fast" in run {
+    "malformed response with id fails caller fast" in {
         // Use a custom codec that encodes Response(Present(result), Present(error)) with both fields
         // on the wire. Strict2_0.decode then classifies that wire JSON as Malformed-with-id, routing
         // through the Malformed(Present(id), reason, _) branch in JsonRpcEndpointImpl.
@@ -572,7 +572,9 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                 // Wait until callerRegistry is non-empty (id registered) before sending the malformed wire.
                 // This ensures the Malformed-with-id branch finds the caller on all schedulers (JVM, JS, Native).
                 Fiber.initUnscoped(Abort.run[JsonRpcError | Closed](a.call[Unit, Unit]("noop", ()))).map { callFiber =>
-                    untilTrue(Sync.defer(!a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].callerRegistry.isEmpty)).andThen {
+                    assertEventually(
+                        Sync.defer(!a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].callerRegistry.isEmpty)
+                    ).andThen {
                         // tb.send triggers ta.incoming; bothFieldsCodec encodes both result+error on the wire;
                         // Strict2_0.decode sees both fields and emits Malformed(Present(Num(1)), ...).
                         // The Malformed-with-id branch completes abortSignal with invalidRequest("malformed response: ...").
@@ -598,7 +600,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "close(0) is equivalent to closeNow" in run {
+    "close(0) is equivalent to closeNow" in {
         val slow = JsonRpcRoute.request[Unit, Unit]("slow") { (_, _) => Async.sleep(5.seconds) }
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
@@ -616,7 +618,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "close(gracePeriod) drains before forcing" in run {
+    "close(gracePeriod) drains before forcing" in {
         val done = Fiber.Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger).safe
         val q = JsonRpcRoute.request[Unit, Unit]("q") { (_, _) =>
             Async.sleep(200.millis).andThen(done.completeUnit.unit)
@@ -628,7 +630,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         // Yield until the call fiber has registered in inFlight. On Native's single-threaded
                         // scheduler, Fiber.initUnscoped does not transfer control immediately, so close()
                         // can observe inFlight == 0 and skip draining without this guard.
-                        untilTrue(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].inFlight.get.map(_ > 0)).andThen {
+                        assertEventually(a.unsafe.asInstanceOf[internal.engine.JsonRpcEndpointImpl].inFlight.get.map(_ > 0)).andThen {
                             val start = java.lang.System.currentTimeMillis
                             a.close(1.second).map { _ =>
                                 val elapsed = java.lang.System.currentTimeMillis - start
@@ -642,7 +644,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "sendUnmatched emits request envelope with id" in run {
+    "sendUnmatched emits request envelope with id" in {
         val seen = AtomicRef.Unsafe.init[Chunk[JsonRpcEnvelope]](Chunk.empty)(using AllowUnsafe.embrace.danger)
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             val tbWrap = new JsonRpcTransport:
@@ -655,7 +657,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tbWrap, Seq.empty).map { _ =>
                     a.sendUnmatched("Page.handleJavaScriptDialog", DialogParams(true), JsonRpcId.Num(-1)).andThen {
-                        untilTrue(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger).exists {
+                        assertEventually(Sync.defer(seen.get()(using AllowUnsafe.embrace.danger).exists {
                             case JsonRpcRequest(JsonRpcId.Num(-1), "Page.handleJavaScriptDialog", _, _) => true
                             case _                                                                      => false
                         })).andThen(succeed)
@@ -665,7 +667,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "sendUnmatched registers no pending caller" in run {
+    "sendUnmatched registers no pending caller" in {
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty).map { _ =>
@@ -679,7 +681,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "sendUnmatched does not block waiting for response" in run {
+    "sendUnmatched does not block waiting for response" in {
         JsonRpcTransport.inMemory.map { (ta, tb) =>
             JsonRpcHandler.init(ta, Seq.empty).map { a =>
                 JsonRpcHandler.init(tb, Seq.empty).map { _ =>
@@ -694,7 +696,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     }
 
     // Domain errors registered with .error produce the declared code and message on the wire.
-    "route .error[E2] maps domain error abort to declared wire code and message" in run {
+    "route .error[E2] maps domain error abort to declared wire code and message" in {
         // JsonRpcCustomError is the concrete catchall application error type.
         // We provide an explicit Schema[JsonRpcCustomError] by delegating to the Schema[JsonRpcError] since
         // JsonRpcCustomError extends JsonRpcError and the hand-rolled schema projects to (code, message, data).
@@ -721,7 +723,7 @@ class JsonRpcHandlerTest extends JsonRpcTest:
     }
 
     // JsonRpcResponse.Halt short-circuit: the wire response IS the wrapped response.
-    "handler Abort.fail(JsonRpcResponse.halt(resp)) sends resp directly over the wire" in run {
+    "handler Abort.fail(JsonRpcResponse.halt(resp)) sends resp directly over the wire" in {
         val haltError = JsonRpcCustomError(-32777, "short-circuited")
         val route = JsonRpcRoute.request[AddReq, AddResp]("haltMethod") { (_, ctx) =>
             ctx.requestId match

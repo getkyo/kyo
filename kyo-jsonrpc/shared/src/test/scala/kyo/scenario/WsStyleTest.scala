@@ -28,7 +28,7 @@ class WsStyleTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
-    "WebSocket-style: B interleaves unsolicited notifications back to A; A's handler fires without cross-wiring" in run {
+    "WebSocket-style: B interleaves unsolicited notifications back to A; A's handler fires without cross-wiring" in {
         // Unsafe: AtomicRef.Unsafe.init for event accumulation across fibers
         val receivedEvents = AtomicRef.Unsafe.init(List.empty[String])(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicInt.Unsafe.init as countdown latch (init=2, decrements to 0)
@@ -55,7 +55,7 @@ class WsStyleTest extends JsonRpcTest:
                             endpointB.notify[EventMsg]("server/event", EventMsg("beta")).andThen {
                                 endpointA.call[CmdReq, CmdResp]("execute", CmdReq("stop")).map { resp2 =>
                                     assert(resp2 == CmdResp("executed:stop"))
-                                    untilTrue(Sync.defer(notifLatch.get()(using AllowUnsafe.embrace.danger) == 0)).andThen {
+                                    assertEventually(Sync.defer(notifLatch.get()(using AllowUnsafe.embrace.danger) == 0)).andThen {
                                         Sync.defer {
                                             val events = receivedEvents.get()(using AllowUnsafe.embrace.danger).sorted
                                             assert(events == List("alpha", "beta"), s"expected [alpha, beta], got $events")
@@ -70,7 +70,7 @@ class WsStyleTest extends JsonRpcTest:
         }
     }
 
-    "Lenient maxInFlight=8: 9th call parks until one of the first 8 is manually completed" in run {
+    "Lenient maxInFlight=8: 9th call parks until one of the first 8 is manually completed" in {
         // Unsafe: AtomicRef.Unsafe.init for promise accumulation across fibers
         val entryPromises = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
         // Unsafe: AtomicRef.Unsafe.init for first-slot promise capture
@@ -107,7 +107,7 @@ class WsStyleTest extends JsonRpcTest:
                             Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(n)))
                         )
                     }.map { _ =>
-                        untilTrue(Sync.defer(entryPromises.get()(using AllowUnsafe.embrace.danger).size == 8)).andThen {
+                        assertEventually(Sync.defer(entryPromises.get()(using AllowUnsafe.embrace.danger).size == 8)).andThen {
                             Fiber.initUnscoped(
                                 Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(9)))
                             ).map { fib9 =>
@@ -121,14 +121,16 @@ class WsStyleTest extends JsonRpcTest:
                                                 p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                                             case Absent => ()
                                     }.andThen {
-                                        untilTrue(Sync.defer(entryPromises.get()(using AllowUnsafe.embrace.danger).size == 9)).andThen {
+                                        assertEventually(Sync.defer(entryPromises.get()(using
+                                            AllowUnsafe.embrace.danger
+                                        ).size == 9)).andThen {
                                             Sync.defer {
                                                 slotRest.get()(using AllowUnsafe.embrace.danger).foreach { p =>
                                                     // Unsafe: Promise.Unsafe.completeUnitDiscard from synchronous test scope; no parking required and the promise is constructed locally just above.
                                                     p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
                                                 }
                                             }.andThen {
-                                                untilTrue(fib9.done).andThen {
+                                                assertEventually(fib9.done).andThen {
                                                     fib9.get.map {
                                                         case Result.Success(r) => assert(r == PingResp(9))
                                                         case other             => fail(s"9th call failed: $other")
@@ -146,7 +148,7 @@ class WsStyleTest extends JsonRpcTest:
         }
     }
 
-    "Lenient extras: JsonRpcExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in run {
+    "Lenient extras: JsonRpcExtrasEncoder.const with sessionId; B receives extras with sessionId at top level" in {
         // Unsafe: AtomicRef.Unsafe.init for extras capture across fibers
         val capturedExtras = AtomicRef.Unsafe.init[Maybe[Structure.Value]](Absent)(using AllowUnsafe.embrace.danger)
 

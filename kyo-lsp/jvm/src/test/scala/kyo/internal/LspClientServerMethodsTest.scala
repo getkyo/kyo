@@ -15,255 +15,255 @@ class LspClientServerMethodsTest extends Test:
 
     // textDocument request methods
 
-    "Unsafe has completion" in run {
+    "Unsafe has completion" in {
         assert(unsafeMethods.contains("completion"))
     }
 
-    "Unsafe has completionItemResolve" in run {
+    "Unsafe has completionItemResolve" in {
         assert(unsafeMethods.contains("completionItemResolve"))
     }
 
-    "Unsafe has hover" in run {
+    "Unsafe has hover" in {
         assert(unsafeMethods.contains("hover"))
     }
 
-    "Unsafe has signatureHelp" in run {
+    "Unsafe has signatureHelp" in {
         assert(unsafeMethods.contains("signatureHelp"))
     }
 
-    "Unsafe has declaration" in run {
+    "Unsafe has declaration" in {
         assert(unsafeMethods.contains("declaration"))
     }
 
-    "Unsafe has definition" in run {
+    "Unsafe has definition" in {
         assert(unsafeMethods.contains("definition"))
     }
 
-    "Unsafe has typeDefinition" in run {
+    "Unsafe has typeDefinition" in {
         assert(unsafeMethods.contains("typeDefinition"))
     }
 
-    "Unsafe has implementation" in run {
+    "Unsafe has implementation" in {
         assert(unsafeMethods.contains("implementation"))
     }
 
-    "Unsafe has references" in run {
+    "Unsafe has references" in {
         assert(unsafeMethods.contains("references"))
     }
 
-    "Unsafe has documentHighlight" in run {
+    "Unsafe has documentHighlight" in {
         assert(unsafeMethods.contains("documentHighlight"))
     }
 
-    "Unsafe has documentSymbol" in run {
+    "Unsafe has documentSymbol" in {
         assert(unsafeMethods.contains("documentSymbol"))
     }
 
-    "Unsafe has codeAction" in run {
+    "Unsafe has codeAction" in {
         assert(unsafeMethods.contains("codeAction"))
     }
 
-    "Unsafe has codeActionResolve" in run {
+    "Unsafe has codeActionResolve" in {
         assert(unsafeMethods.contains("codeActionResolve"))
     }
 
-    "Unsafe has codeLens" in run {
+    "Unsafe has codeLens" in {
         assert(unsafeMethods.contains("codeLens"))
     }
 
-    "Unsafe has codeLensResolve" in run {
+    "Unsafe has codeLensResolve" in {
         assert(unsafeMethods.contains("codeLensResolve"))
     }
 
-    "Unsafe has documentLink" in run {
+    "Unsafe has documentLink" in {
         assert(unsafeMethods.contains("documentLink"))
     }
 
-    "Unsafe has documentLinkResolve" in run {
+    "Unsafe has documentLinkResolve" in {
         assert(unsafeMethods.contains("documentLinkResolve"))
     }
 
-    "Unsafe has documentColor" in run {
+    "Unsafe has documentColor" in {
         assert(unsafeMethods.contains("documentColor"))
     }
 
-    "Unsafe has colorPresentation" in run {
+    "Unsafe has colorPresentation" in {
         assert(unsafeMethods.contains("colorPresentation"))
     }
 
-    "Unsafe has formatting" in run {
+    "Unsafe has formatting" in {
         assert(unsafeMethods.contains("formatting"))
     }
 
-    "Unsafe has rangeFormatting" in run {
+    "Unsafe has rangeFormatting" in {
         assert(unsafeMethods.contains("rangeFormatting"))
     }
 
-    "Unsafe has onTypeFormatting" in run {
+    "Unsafe has onTypeFormatting" in {
         assert(unsafeMethods.contains("onTypeFormatting"))
     }
 
-    "Unsafe has rename" in run {
+    "Unsafe has rename" in {
         assert(unsafeMethods.contains("rename"))
     }
 
-    "Unsafe has prepareRename" in run {
+    "Unsafe has prepareRename" in {
         assert(unsafeMethods.contains("prepareRename"))
     }
 
-    "Unsafe has foldingRange" in run {
+    "Unsafe has foldingRange" in {
         assert(unsafeMethods.contains("foldingRange"))
     }
 
-    "Unsafe has selectionRange" in run {
+    "Unsafe has selectionRange" in {
         assert(unsafeMethods.contains("selectionRange"))
     }
 
-    "Unsafe has linkedEditingRange" in run {
+    "Unsafe has linkedEditingRange" in {
         assert(unsafeMethods.contains("linkedEditingRange"))
     }
 
-    "Unsafe has prepareCallHierarchy" in run {
+    "Unsafe has prepareCallHierarchy" in {
         assert(unsafeMethods.contains("prepareCallHierarchy"))
     }
 
-    "Unsafe has callHierarchyIncomingCalls" in run {
+    "Unsafe has callHierarchyIncomingCalls" in {
         assert(unsafeMethods.contains("callHierarchyIncomingCalls"))
     }
 
-    "Unsafe has callHierarchyOutgoingCalls" in run {
+    "Unsafe has callHierarchyOutgoingCalls" in {
         assert(unsafeMethods.contains("callHierarchyOutgoingCalls"))
     }
 
-    "Unsafe has prepareTypeHierarchy" in run {
+    "Unsafe has prepareTypeHierarchy" in {
         assert(unsafeMethods.contains("prepareTypeHierarchy"))
     }
 
-    "Unsafe has typeHierarchySupertypes" in run {
+    "Unsafe has typeHierarchySupertypes" in {
         assert(unsafeMethods.contains("typeHierarchySupertypes"))
     }
 
-    "Unsafe has typeHierarchySubtypes" in run {
+    "Unsafe has typeHierarchySubtypes" in {
         assert(unsafeMethods.contains("typeHierarchySubtypes"))
     }
 
-    "Unsafe has semanticTokensFull" in run {
+    "Unsafe has semanticTokensFull" in {
         assert(unsafeMethods.contains("semanticTokensFull"))
     }
 
-    "Unsafe has semanticTokensFullDelta" in run {
+    "Unsafe has semanticTokensFullDelta" in {
         assert(unsafeMethods.contains("semanticTokensFullDelta"))
     }
 
-    "Unsafe has semanticTokensRange" in run {
+    "Unsafe has semanticTokensRange" in {
         assert(unsafeMethods.contains("semanticTokensRange"))
     }
 
-    "Unsafe has moniker" in run {
+    "Unsafe has moniker" in {
         assert(unsafeMethods.contains("moniker"))
     }
 
-    "Unsafe has inlayHint" in run {
+    "Unsafe has inlayHint" in {
         assert(unsafeMethods.contains("inlayHint"))
     }
 
-    "Unsafe has inlayHintResolve" in run {
+    "Unsafe has inlayHintResolve" in {
         assert(unsafeMethods.contains("inlayHintResolve"))
     }
 
-    "Unsafe has inlineValue" in run {
+    "Unsafe has inlineValue" in {
         assert(unsafeMethods.contains("inlineValue"))
     }
 
-    "Unsafe has documentDiagnostic" in run {
+    "Unsafe has documentDiagnostic" in {
         assert(unsafeMethods.contains("documentDiagnostic"))
     }
 
-    "Unsafe has willSaveWaitUntil" in run {
+    "Unsafe has willSaveWaitUntil" in {
         assert(unsafeMethods.contains("willSaveWaitUntil"))
     }
 
     // textDocument notification methods
 
-    "Unsafe has didOpen" in run {
+    "Unsafe has didOpen" in {
         assert(unsafeMethods.contains("didOpen"))
     }
 
-    "Unsafe has didChange" in run {
+    "Unsafe has didChange" in {
         assert(unsafeMethods.contains("didChange"))
     }
 
-    "Unsafe has didSave" in run {
+    "Unsafe has didSave" in {
         assert(unsafeMethods.contains("didSave"))
     }
 
-    "Unsafe has didClose" in run {
+    "Unsafe has didClose" in {
         assert(unsafeMethods.contains("didClose"))
     }
 
-    "Unsafe has willSave" in run {
+    "Unsafe has willSave" in {
         assert(unsafeMethods.contains("willSave"))
     }
 
     // workspace request methods
 
-    "Unsafe has workspaceSymbol" in run {
+    "Unsafe has workspaceSymbol" in {
         assert(unsafeMethods.contains("workspaceSymbol"))
     }
 
-    "Unsafe has executeCommand (typed-only)" in run {
+    "Unsafe has executeCommand (typed-only)" in {
         assert(unsafeMethods.contains("executeCommand"))
     }
 
-    "Unsafe has workspaceDiagnostic" in run {
+    "Unsafe has workspaceDiagnostic" in {
         assert(unsafeMethods.contains("workspaceDiagnostic"))
     }
 
     // lifecycle
 
-    "Unsafe has workDoneProgressCancel" in run {
+    "Unsafe has workDoneProgressCancel" in {
         assert(unsafeMethods.contains("workDoneProgressCancel"))
     }
 
-    "Unsafe has setTrace" in run {
+    "Unsafe has setTrace" in {
         assert(unsafeMethods.contains("setTrace"))
     }
 
-    "Unsafe has cancel" in run {
+    "Unsafe has cancel" in {
         assert(unsafeMethods.contains("cancel"))
     }
 
     // session properties
 
-    "Unsafe has specVersion" in run {
+    "Unsafe has specVersion" in {
         assert(unsafeMethods.contains("specVersion"))
     }
 
-    "Unsafe has positionEncoding" in run {
+    "Unsafe has positionEncoding" in {
         assert(unsafeMethods.contains("positionEncoding"))
     }
 
-    "Unsafe has serverCapabilities" in run {
+    "Unsafe has serverCapabilities" in {
         assert(unsafeMethods.contains("serverCapabilities"))
     }
 
-    "Unsafe has serverInfo" in run {
+    "Unsafe has serverInfo" in {
         assert(unsafeMethods.contains("serverInfo"))
     }
 
-    "Unsafe has underlying" in run {
+    "Unsafe has underlying" in {
         assert(unsafeMethods.contains("underlying"))
     }
 
-    "Unsafe has awaitDrain" in run {
+    "Unsafe has awaitDrain" in {
         assert(unsafeMethods.contains("awaitDrain"))
     }
 
-    "Unsafe has close" in run {
+    "Unsafe has close" in {
         assert(unsafeMethods.contains("close"))
     }
 
-    "Unsafe has safe (opaque bridge)" in run {
+    "Unsafe has safe (opaque bridge)" in {
         // final def safe: LspClient = this
         val finalMethods = classOf[LspClient.Unsafe].getMethods.map(_.getName).toSet
         assert(finalMethods.contains("safe"))
@@ -271,7 +271,7 @@ class LspClientServerMethodsTest extends Test:
 
     // Verify no untyped executeCommand sibling exists.
     // The typed [T] variant is the only one; no raw Structure.Value overload.
-    "executeCommand has no untyped sibling returning Structure.Value" in run {
+    "executeCommand has no untyped sibling returning Structure.Value" in {
         val execMethods = classOf[LspClient.Unsafe].getDeclaredMethods.toSeq
             .filter(_.getName == "executeCommand")
         // All overloads of executeCommand must have a Schema type param (i.e. take Schema in context).

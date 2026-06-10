@@ -60,9 +60,10 @@ class LspConfigTest extends Test:
         }
         "throws when positionEncodings is empty" in {
             val bad = LspConfig.default.withPositionEncodings(Chunk.empty)
-            assertThrows[IllegalArgumentException] {
+            intercept[IllegalArgumentException] {
                 LspConfig.require(bad)
             }
+            succeed
         }
         "error message mentions positionEncodings" in {
             val bad = LspConfig.default.withPositionEncodings(Chunk.empty)

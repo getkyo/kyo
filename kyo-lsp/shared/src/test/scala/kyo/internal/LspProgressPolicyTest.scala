@@ -11,7 +11,7 @@ class LspProgressPolicyTest extends Test:
             assert(LspProgressPolicy.default.progressMethod == "$/progress")
         }
 
-        "extractInboundToken reads params.token" in run {
+        "extractInboundToken reads params.token" in {
             val sv = Structure.Value.Record(Chunk(
                 "token" -> Structure.Value.Str("my-token"),
                 "value" -> Structure.Value.Record(Chunk.empty)
@@ -21,7 +21,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "extractRequestToken reads workDoneToken first" in run {
+        "extractRequestToken reads workDoneToken first" in {
             val sv = Structure.Value.Record(Chunk(
                 "textDocument"       -> Structure.Value.Record(Chunk.empty),
                 "workDoneToken"      -> Structure.Value.Str("wdt-1"),
@@ -32,7 +32,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "extractRequestToken falls back to partialResultToken" in run {
+        "extractRequestToken falls back to partialResultToken" in {
             val sv = Structure.Value.Record(Chunk(
                 "textDocument"       -> Structure.Value.Record(Chunk.empty),
                 "partialResultToken" -> Structure.Value.Str("prt-1")
@@ -42,7 +42,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "extractRequestToken returns Absent when neither token present" in run {
+        "extractRequestToken returns Absent when neither token present" in {
             val sv = Structure.Value.Record(Chunk(
                 "textDocument" -> Structure.Value.Record(Chunk.empty)
             ))
@@ -51,7 +51,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "encodeProgressParams builds { token, ...fields }" in run {
+        "encodeProgressParams builds { token, ...fields }" in {
             val token = Structure.Value.Str("tok-1")
             val value = Structure.Value.Record(Chunk("kind" -> Structure.Value.Str("begin")))
             LspProgressPolicy.default.encodeProgressParams(token, value).map { encoded =>
@@ -64,7 +64,7 @@ class LspProgressPolicyTest extends Test:
             }
         }
 
-        "extractProgressValue strips token field" in run {
+        "extractProgressValue strips token field" in {
             val sv = Structure.Value.Record(Chunk(
                 "token" -> Structure.Value.Str("tok-1"),
                 "kind"  -> Structure.Value.Str("report")

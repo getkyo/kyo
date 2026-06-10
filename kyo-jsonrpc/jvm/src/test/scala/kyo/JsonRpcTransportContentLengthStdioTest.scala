@@ -18,7 +18,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
 
     private val pingNotification = JsonRpcNotification("ping", Absent, Absent)
 
-    "incoming parses single Content-Length frame" in run {
+    "incoming parses single Content-Length frame" in {
         val body     = """{"jsonrpc":"2.0","method":"ping"}"""
         val raw      = s"Content-Length: ${body.length}\r\n\r\n$body"
         val inStream = frameInput(raw)
@@ -35,7 +35,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
         }
     }
 
-    "incoming parses three Content-Length frames back-to-back" in run {
+    "incoming parses three Content-Length frames back-to-back" in {
         val b1 = """{"jsonrpc":"2.0","method":"one"}"""
         val b2 = """{"jsonrpc":"2.0","method":"two"}"""
         val b3 = """{"jsonrpc":"2.0","method":"three"}"""
@@ -59,7 +59,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
         }
     }
 
-    "incoming skips Content-Type header and parses Content-Length correctly" in run {
+    "incoming skips Content-Type header and parses Content-Length correctly" in {
         val body     = """{"jsonrpc":"2.0","method":"hello"}"""
         val raw      = s"Content-Length: ${body.length}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n$body"
         val inStream = frameInput(raw)
@@ -76,7 +76,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
         }
     }
 
-    "send emits correct Content-Length wire bytes" in run {
+    "send emits correct Content-Length wire bytes" in {
         val inStream = frameInput("")
         val outSink  = new ByteArrayOutputStream()
         Scope.run {
@@ -99,7 +99,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
         }
     }
 
-    "Content-Length: 0 frame yields a malformed-message envelope without panic" in run {
+    "Content-Length: 0 frame yields a malformed-message envelope without panic" in {
         val raw      = "Content-Length: 0\r\n\r\n"
         val inStream = frameInput(raw)
         val outSink  = new ByteArrayOutputStream()
@@ -114,7 +114,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
         }
     }
 
-    "EOF on input closes the incoming stream without hanging" in run {
+    "EOF on input closes the incoming stream without hanging" in {
         val inStream = frameInput("")
         val outSink  = new ByteArrayOutputStream()
         Scope.run {
@@ -128,7 +128,7 @@ class JsonRpcTransportContentLengthStdioTest extends JsonRpcTest:
         }
     }
 
-    "round-trip send then parse via ByteArrayOutputStream->ByteArrayInputStream" in run {
+    "round-trip send then parse via ByteArrayOutputStream->ByteArrayInputStream" in {
         val captureSink = new ByteArrayOutputStream()
         val emptyIn     = frameInput("")
         Scope.run {

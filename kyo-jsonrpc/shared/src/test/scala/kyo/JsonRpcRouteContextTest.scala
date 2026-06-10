@@ -7,7 +7,7 @@ class JsonRpcRouteContextTest extends JsonRpcTest:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
-    "progress with a Present sink invokes the captured callback" in run {
+    "progress with a Present sink invokes the captured callback" in {
         // Unsafe: AtomicRef.Unsafe.init for thread-safe capture outside effect context
         val captured = AtomicRef.Unsafe.init(List.empty[Structure.Value])(using AllowUnsafe.embrace.danger)
         val sink: Structure.Value => Unit < (Async & Abort[Closed]) =
@@ -25,7 +25,7 @@ class JsonRpcRouteContextTest extends JsonRpcTest:
         end for
     }
 
-    "progress with an Absent sink is a no-op" in run {
+    "progress with an Absent sink is a no-op" in {
         for
             promise <- Fiber.Promise.init[Unit, Sync]
             ctx = JsonRpcRoute.Context.forTest(promise, Absent, Absent, Absent)
@@ -33,7 +33,7 @@ class JsonRpcRouteContextTest extends JsonRpcTest:
         yield succeed
     }
 
-    "extras and requestId are surfaced verbatim from forTest" in run {
+    "extras and requestId are surfaced verbatim from forTest" in {
         val extras = Structure.Value.Str("opaque")
         for
             promise <- Fiber.Promise.init[Unit, Sync]
@@ -44,7 +44,7 @@ class JsonRpcRouteContextTest extends JsonRpcTest:
         end for
     }
 
-    "cancelled Promise is constructible and not yet completed at forTest exit" in run {
+    "cancelled Promise is constructible and not yet completed at forTest exit" in {
         for
             promise <- Fiber.Promise.init[Unit, Sync]
             ctx = JsonRpcRoute.Context.forTest(promise, Absent, Absent, Absent)

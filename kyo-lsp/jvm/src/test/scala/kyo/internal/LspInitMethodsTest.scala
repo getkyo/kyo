@@ -9,7 +9,7 @@ import kyo.*
   */
 class LspInitMethodsTest extends Test:
 
-    "LspServer has exactly 10 init-family methods" in run {
+    "LspServer has exactly 10 init-family methods" in {
         val companionMethods = classOf[LspServer.type].getMethods.toSeq
         val initMethods      = companionMethods.filter(m => m.getName.startsWith("init"))
         // Count by name.
@@ -25,7 +25,7 @@ class LspInitMethodsTest extends Test:
         assert(total == 10, s"Expected 10 init-family methods total, got $total")
     }
 
-    "Every LspServer init method name is in the allowed set" in run {
+    "Every LspServer init method name is in the allowed set" in {
         val allowed          = Set("init", "initWith", "initUnscoped", "initUnscopedWith")
         val companionMethods = classOf[LspServer.type].getMethods.map(_.getName).toSet
         // Filter out Scala-generated default-parameter accessors (e.g. init$default$3).

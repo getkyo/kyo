@@ -13,12 +13,12 @@ class LspConfigRequireTest extends Test:
     // Valid configurations
     // =========================================================================
 
-    "require passes for default config" in run {
+    "require passes for default config" in {
         val result = scala.util.Try(LspConfig.require(LspConfig.default))
         assert(result.isSuccess)
     }
 
-    "require passes for config with multiple encodings" in run {
+    "require passes for config with multiple encodings" in {
         val config = LspConfig.default.withPositionEncodings(
             Chunk(LspHandler.PositionEncodingKind.UTF8, LspHandler.PositionEncodingKind.UTF16)
         )
@@ -30,7 +30,7 @@ class LspConfigRequireTest extends Test:
     // Invalid configurations
     // =========================================================================
 
-    "require fails when positionEncodings is empty" in run {
+    "require fails when positionEncodings is empty" in {
         val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
         val result    = scala.util.Try(LspConfig.require(badConfig))
         assert(result.isFailure)
@@ -42,7 +42,7 @@ class LspConfigRequireTest extends Test:
     // require fires before transport in init
     // =========================================================================
 
-    "LspConfig.require fires before transport bytes are consumed" in run {
+    "LspConfig.require fires before transport bytes are consumed" in {
         // Use an invalid config and confirm the error precedes any server init work.
         val badConfig = LspConfig.default.withPositionEncodings(Chunk.empty)
         // The require() call inside initUnscoped must throw before LspEngine.initServer is called.
@@ -51,19 +51,19 @@ class LspConfigRequireTest extends Test:
         assert(result.failed.get.getMessage.contains("positionEncodings"))
     }
 
-    "LspConfig.SpecVersion is 3.17" in run {
+    "LspConfig.SpecVersion is 3.17" in {
         assert(LspConfig.SpecVersion == "3.17")
     }
 
-    "LspConfig.default.enforceCapabilities is true" in run {
+    "LspConfig.default.enforceCapabilities is true" in {
         assert(LspConfig.default.enforceCapabilities)
     }
 
-    "LspConfig.default.positionEncodings contains UTF16" in run {
+    "LspConfig.default.positionEncodings contains UTF16" in {
         assert(LspConfig.default.positionEncodings.contains(LspHandler.PositionEncodingKind.UTF16))
     }
 
-    "LspConfig.default.documentSync is Incremental" in run {
+    "LspConfig.default.documentSync is Incremental" in {
         assert(LspConfig.default.documentSync == LspHandler.TextDocumentSyncKind.Incremental)
     }
 

@@ -19,7 +19,7 @@ class McpSamplingReverseTest extends Test:
 
     private val clientCaps = McpCapabilities.Client(sampling = Present(McpCapabilities.SamplingCapability()))
 
-    "server.requestSampling returns the client-provided response" in run {
+    "server.requestSampling returns the client-provided response" in {
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](
                 McpServer.initUnscoped(ts),
@@ -44,7 +44,7 @@ class McpSamplingReverseTest extends Test:
         }
     }
 
-    "sampling request without client handler aborts with McpSamplingRejectedException" in run {
+    "sampling request without client handler aborts with McpSamplingRejectedException" in {
         // No sampling route registered on the client; default handler rejects.
         JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
             Async.zip[McpException | Closed, McpServer, McpClient, Any](

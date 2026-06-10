@@ -121,9 +121,10 @@ class McpConfigPresetTest extends Test:
 
     "require throws for empty supportedProtocolVersions" in {
         val bad = McpConfig.default.supportedProtocolVersions(Set.empty)
-        assertThrows[IllegalArgumentException] {
+        intercept[IllegalArgumentException] {
             McpConfig.require(bad)
         }
+        succeed
     }
 
     // -------------------------------------------------------------------------

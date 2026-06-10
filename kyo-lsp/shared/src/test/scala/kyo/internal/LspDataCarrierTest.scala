@@ -5,13 +5,13 @@ package kyo
   */
 class LspDataCarrierTest extends Test:
 
-    "CompletionItem has _rawData field" in run {
+    "CompletionItem has _rawData field" in {
         val item = LspHandler.CompletionItem(label = "foo")
         assert(item._rawData == Absent)
         succeed
     }
 
-    "CompletionItem.withData stores encoded JSON" in run {
+    "CompletionItem.withData stores encoded JSON" in {
         val item    = LspHandler.CompletionItem(label = "foo")
         val data    = Map("key" -> "value")
         val updated = item.withData(data)
@@ -19,25 +19,25 @@ class LspDataCarrierTest extends Test:
         succeed
     }
 
-    "CodeAction has _rawData field" in run {
+    "CodeAction has _rawData field" in {
         val action = LspHandler.CodeAction(title = "fix")
         assert(action._rawData == Absent)
         succeed
     }
 
-    "CodeLens has _rawData field" in run {
+    "CodeLens has _rawData field" in {
         val lens = LspHandler.CodeLens(range = LspHandler.Range(LspHandler.Position(0, 0), LspHandler.Position(0, 0)))
         assert(lens._rawData == Absent)
         succeed
     }
 
-    "DocumentLink has _rawData field" in run {
+    "DocumentLink has _rawData field" in {
         val link = LspHandler.DocumentLink(range = LspHandler.Range(LspHandler.Position(0, 0), LspHandler.Position(0, 0)))
         assert(link._rawData == Absent)
         succeed
     }
 
-    "InlayHint has _rawData field" in run {
+    "InlayHint has _rawData field" in {
         val hint = LspHandler.InlayHint(
             position = LspHandler.Position(0, 0),
             label = LspHandler.InlayHintLabel.PlainString("type: Int")
@@ -46,7 +46,7 @@ class LspDataCarrierTest extends Test:
         succeed
     }
 
-    "WorkspaceSymbol has _rawData field" in run {
+    "WorkspaceSymbol has _rawData field" in {
         val sym = LspHandler.WorkspaceSymbol(
             name = "MyClass",
             kind = LspHandler.SymbolKind.Class,
@@ -56,7 +56,7 @@ class LspDataCarrierTest extends Test:
         succeed
     }
 
-    "CallHierarchyItem has _rawData field" in run {
+    "CallHierarchyItem has _rawData field" in {
         val item = LspHandler.CallHierarchyItem(
             name = "myMethod",
             kind = LspHandler.SymbolKind.Method,
@@ -68,7 +68,7 @@ class LspDataCarrierTest extends Test:
         succeed
     }
 
-    "TypeHierarchyItem has _rawData field" in run {
+    "TypeHierarchyItem has _rawData field" in {
         val item = LspHandler.TypeHierarchyItem(
             name = "MyTrait",
             kind = LspHandler.SymbolKind.Interface,

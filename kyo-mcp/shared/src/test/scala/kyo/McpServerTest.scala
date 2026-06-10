@@ -14,7 +14,7 @@ class McpServerTest extends Test:
     private val resourceRoute = McpHandler.resource(resourceUri, "data")(Chunk.empty)
 
     // McpServer.init prepends engine-owned initialize route at index 0.
-    "init with two user routes: initialize route is registered in the handler" in run {
+    "init with two user routes: initialize route is registered in the handler" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute, resourceRoute).flatMap { server =>
                 Fiber.Promise.init[Unit, Sync].map { promise =>
@@ -29,7 +29,7 @@ class McpServerTest extends Test:
     }
 
     // close(using Frame) completes without error (behavioral test for 30s grace delegation).
-    "close completes without error on a live server" in run {
+    "close completes without error on a live server" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 server.close.andThen(succeed)
@@ -37,7 +37,7 @@ class McpServerTest extends Test:
         }
     }
 
-    "closeNow completes without error on a live server" in run {
+    "closeNow completes without error on a live server" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 server.closeNow.andThen(succeed)
@@ -46,7 +46,7 @@ class McpServerTest extends Test:
     }
 
     // notifyToolsListChanged with listChanged=false must not send any notification.
-    "notifyToolsListChanged with listChanged=false emits no notification (silent drop)" in run {
+    "notifyToolsListChanged with listChanged=false emits no notification (silent drop)" in {
         val emptyCaps = McpCapabilities.Server(tools = Present(McpCapabilities.ToolsCapability(listChanged = false)))
         val config    = McpConfig.default.declaredCapabilities(emptyCaps)
 
@@ -75,7 +75,7 @@ class McpServerTest extends Test:
     }
 
     // notify* methods must type-check as Unit < (Async & Abort[Closed]) with no McpException.
-    "notifyToolsListChanged return type is Unit < (Async & Abort[Closed])" in run {
+    "notifyToolsListChanged return type is Unit < (Async & Abort[Closed])" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 val effect: Unit < (Async & Abort[Closed]) = server.notifyToolsListChanged
@@ -84,7 +84,7 @@ class McpServerTest extends Test:
         }
     }
 
-    "protocolVersion returns Absent before handshake" in run {
+    "protocolVersion returns Absent before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta).flatMap { server =>
                 val ver = server.protocolVersion
@@ -95,7 +95,7 @@ class McpServerTest extends Test:
         }
     }
 
-    "clientCapabilities returns Absent before handshake" in run {
+    "clientCapabilities returns Absent before handshake" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 val caps = server.clientCapabilities
@@ -106,7 +106,7 @@ class McpServerTest extends Test:
         }
     }
 
-    "underlying returns a JsonRpcHandler instance (access does not throw)" in run {
+    "underlying returns a JsonRpcHandler instance (access does not throw)" in {
         JsonRpcTransport.inMemory.map { (ta, _) =>
             McpServer.initUnscoped(ta, toolRoute).flatMap { server =>
                 // Access the underlying handler to confirm it is accessible.
@@ -117,7 +117,7 @@ class McpServerTest extends Test:
     }
 
     // Dispatch-path test: completion/complete routes the request to the registered handler and returns non-empty values.
-    "completion/complete dispatches to registered handler and returns handler values (not Chunk.empty)" in run {
+    "completion/complete dispatches to registered handler and returns handler values (not Chunk.empty)" in {
         val ref = McpHandler.CompletionRef.Prompt("myPrompt")
         val completionRoute = McpHandler.completion(ref) { arg =>
             McpHandler.CompletionOutcome(Chunk(arg.value + "-completed"), Absent, Absent)

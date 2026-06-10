@@ -32,7 +32,7 @@ class HttpStyleTest extends JsonRpcTest:
         def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
     end CapturingTransport
 
-    "single server endpoint with add and greet: two sequential calls return correct typed results" in run {
+    "single server endpoint with add and greet: two sequential calls return correct typed results" in {
         val addMethod = JsonRpcRoute.request[AddReq, AddResp]("add") {
             (req, _) => AddResp(req.a + req.b)
         }
@@ -53,7 +53,7 @@ class HttpStyleTest extends JsonRpcTest:
         }
     }
 
-    "notification triggers handler and no reply frame arrives on wire" in run {
+    "notification triggers handler and no reply frame arrives on wire" in {
         // Unsafe: AtomicInt.Unsafe.init for handler run counter
         val handlerRan = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
         val logMethod = JsonRpcRoute.request[LogMsg, Unit]("log") {
@@ -66,7 +66,7 @@ class HttpStyleTest extends JsonRpcTest:
                     val framesBefore = Sync.defer(capA.sentList.size)
                     framesBefore.map { before =>
                         client.notify[LogMsg]("log", LogMsg("event occurred")).andThen {
-                            untilTrue(Sync.defer(handlerRan.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
+                            assertEventually(Sync.defer(handlerRan.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
                                 Sync.defer {
                                     val responses = capA.sentList.collect {
                                         case r: JsonRpcResponse => r
@@ -82,7 +82,7 @@ class HttpStyleTest extends JsonRpcTest:
         }
     }
 
-    "pre-init gate: requests before initialize return -32002; after initialize, methods succeed" in run {
+    "pre-init gate: requests before initialize return -32002; after initialize, methods succeed" in {
         val serverNotInitialized = JsonRpcImplementationError(-32002, "Server not initialized")
         var initialized          = false
 

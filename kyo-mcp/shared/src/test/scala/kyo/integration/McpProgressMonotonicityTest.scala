@@ -13,7 +13,7 @@ class McpProgressMonotonicityTest extends Test:
 
     case class WorkReq(n: Int) derives Schema, CanEqual
 
-    "progress notifications emitted from tool handler complete without error" in run {
+    "progress notifications emitted from tool handler complete without error" in {
         // AllowUnsafe: AtomicInt.Unsafe.init for thread-safe invocation counter across fibers.
         val invocationCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
@@ -48,7 +48,7 @@ class McpProgressMonotonicityTest extends Test:
         }
     }
 
-    "progress policy monotonic flag verified at integration level" in run {
+    "progress policy monotonic flag verified at integration level" in {
         // The unit-level pin of enforceMonotonic=true lives in McpProgressMonotonicTest.
         // This integration test verifies the wire-level behavior; no direct access to internals.
         succeed

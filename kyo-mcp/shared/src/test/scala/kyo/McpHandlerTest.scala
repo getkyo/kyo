@@ -7,7 +7,7 @@ class McpHandlerTest extends Test:
     case class SumOut(result: Int) derives Schema, CanEqual
 
     // tool and toolMulti are separate factories with distinct Out types.
-    "tool factory produces a route with Kind.Tool" in run {
+    "tool factory produces a route with Kind.Tool" in {
         val r = McpHandler.tool[AddIn]("add") { in =>
             McpContent.Text(s"${in.a + in.b}")
         }
@@ -15,7 +15,7 @@ class McpHandlerTest extends Test:
         assert(r.name == "add")
     }
 
-    "toolMulti factory produces a route with Kind.Tool and ToolOutcome Out" in run {
+    "toolMulti factory produces a route with Kind.Tool and ToolOutcome Out" in {
         val r = McpHandler.toolMulti[AddIn]("addMulti") { in =>
             McpHandler.ToolOutcome(Chunk(McpContent.Text(s"${in.a + in.b}")), isError = false, structuredContent = Absent)
         }
@@ -24,7 +24,7 @@ class McpHandlerTest extends Test:
     }
 
     // Mcp.server returns the safe opaque McpServer, not McpServer.Unsafe.
-    "Mcp.server returns McpServer" in run {
+    "Mcp.server returns McpServer" in {
         // The compile-time assertion is: the value from Mcp.server must be assignable to McpServer.
         val r = McpHandler.tool[Unit]("probe") { _ =>
             Mcp.server.map { srv =>
@@ -41,13 +41,13 @@ class McpHandlerTest extends Test:
     }
 
     // CompletionArg is a named record with name and value fields.
-    "CompletionArg is a named record with name and value" in run {
+    "CompletionArg is a named record with name and value" in {
         val arg = McpHandler.CompletionArg(name = "color", value = "red")
         assert(arg.name == "color")
         assert(arg.value == "red")
     }
 
-    "completion factory produces a route with Kind.Custom" in run {
+    "completion factory produces a route with Kind.Custom" in {
         val ref = McpHandler.CompletionRef.Prompt("myPrompt")
         val r = McpHandler.completion(ref) { arg =>
             McpHandler.CompletionOutcome(Chunk(arg.value), Absent, Absent)
@@ -55,26 +55,26 @@ class McpHandlerTest extends Test:
         assert(r.kind == McpHandler.Kind.Custom)
     }
 
-    "resource factory produces a route with Kind.Resource" in run {
+    "resource factory produces a route with Kind.Resource" in {
         val uri = McpResourceUri.parse("file:///x").get
         val r   = McpHandler.resource(uri, "myRes")(Chunk.empty)
         assert(r.kind == McpHandler.Kind.Resource)
         assert(r.name == "myRes")
     }
 
-    "prompt factory produces a route with Kind.Prompt" in run {
+    "prompt factory produces a route with Kind.Prompt" in {
         val r = McpHandler.prompt("myPrompt")((_) => McpHandler.PromptOutcome(Absent, Chunk.empty))
         assert(r.kind == McpHandler.Kind.Prompt)
         assert(r.name == "myPrompt")
     }
 
-    "custom factory produces a route with Kind.Custom" in run {
+    "custom factory produces a route with Kind.Custom" in {
         val r = McpHandler.custom[Unit]("myMethod")((_) => ())
         assert(r.kind == McpHandler.Kind.Custom)
         assert(r.name == "myMethod")
     }
 
-    "tool handler name matches tool name" in run {
+    "tool handler name matches tool name" in {
         val r = McpHandler.tool[Unit]("myTool")((_) => McpContent.Text(""))
         assert(r.name == "myTool")
     }

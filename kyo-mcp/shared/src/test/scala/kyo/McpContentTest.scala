@@ -9,7 +9,7 @@ class McpContentTest extends Test:
 
     given CanEqual[Any, Any] = CanEqual.canEqualAny
 
-    private def roundtrip[A: Schema](value: A): A =
+    private def roundtrip[A: Schema](value: A)(using kyo.test.AssertScope, Frame): A =
         val encoded = Structure.encode[A](value)
         Structure.decode[A](encoded).getOrElse(fail(s"decode failed for $value"))
 

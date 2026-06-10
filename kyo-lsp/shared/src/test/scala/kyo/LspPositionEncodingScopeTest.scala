@@ -7,7 +7,7 @@ package kyo
   */
 class LspPositionEncodingScopeTest extends Test:
 
-    "Lsp.DocumentRegistry compile-time API shape" in run {
+    "Lsp.DocumentRegistry compile-time API shape" in {
         // Verify the DocumentRegistry API shape at compile time:
         // the trait must define get, version, listOpen, listOpenUris, isOpen
         // and must NOT define a public encoding accessor.
@@ -33,7 +33,7 @@ class LspPositionEncodingScopeTest extends Test:
         succeed
     }
 
-    "PositionEncodingKind constants are accessible" in run {
+    "PositionEncodingKind constants are accessible" in {
         import LspHandler.PositionEncodingKind
         assert(PositionEncodingKind.UTF8.asString == "utf-8", s"Expected 'utf-8', got ${PositionEncodingKind.UTF8.asString}")
         assert(PositionEncodingKind.UTF16.asString == "utf-16", s"Expected 'utf-16', got ${PositionEncodingKind.UTF16.asString}")

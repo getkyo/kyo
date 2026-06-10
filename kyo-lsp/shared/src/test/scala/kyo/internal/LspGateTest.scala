@@ -7,7 +7,7 @@ class LspGateTest extends Test:
 
     "LspHandshakeGate" - {
 
-        "permits initialize before handshake" in run {
+        "permits initialize before handshake" in {
             val gate = LspHandshakeGate.server()
             val env  = JsonRpcRequest(JsonRpcId(1), "initialize", Absent, Absent)
             gate.beforeDispatch(env).map { d =>
@@ -15,7 +15,7 @@ class LspGateTest extends Test:
             }
         }
 
-        "rejects other requests before initialize" in run {
+        "rejects other requests before initialize" in {
             val gate = LspHandshakeGate.server()
             val env  = JsonRpcRequest(JsonRpcId(1), "textDocument/completion", Absent, Absent)
             gate.beforeDispatch(env).map { d =>
@@ -23,7 +23,7 @@ class LspGateTest extends Test:
             }
         }
 
-        "permits requests after initialize" in run {
+        "permits requests after initialize" in {
             val gate  = LspHandshakeGate.server()
             val init  = JsonRpcRequest(JsonRpcId(1), "initialize", Absent, Absent)
             val other = JsonRpcRequest(JsonRpcId(2), "textDocument/completion", Absent, Absent)
@@ -34,7 +34,7 @@ class LspGateTest extends Test:
             end for
         }
 
-        "permits initialized notification before and after initialize" in run {
+        "permits initialized notification before and after initialize" in {
             val gate  = LspHandshakeGate.server()
             val notif = JsonRpcNotification("initialized", Absent, Absent)
             gate.beforeDispatch(notif).map { d =>
@@ -42,7 +42,7 @@ class LspGateTest extends Test:
             }
         }
 
-        "permits other notifications before initialize (fire-and-forget)" in run {
+        "permits other notifications before initialize (fire-and-forget)" in {
             val gate  = LspHandshakeGate.server()
             val notif = JsonRpcNotification("$/cancelRequest", Absent, Absent)
             gate.beforeDispatch(notif).map { d =>
@@ -54,7 +54,7 @@ class LspGateTest extends Test:
 
     "LspCapabilityGate" - {
 
-        "rejects method whose capability is not advertised" in run {
+        "rejects method whose capability is not advertised" in {
             val caps = LspCapabilities.Server.empty
             val gate = LspCapabilityGate.server(caps, enforce = true)
             val env  = JsonRpcRequest(JsonRpcId(1), "textDocument/completion", Absent, Absent)
@@ -63,7 +63,7 @@ class LspGateTest extends Test:
             }
         }
 
-        "permits method whose capability is advertised" in run {
+        "permits method whose capability is advertised" in {
             val caps = LspCapabilities.Server.empty.copy(completionProvider = Present(LspHandler.CompletionOptions()))
             val gate = LspCapabilityGate.server(caps, enforce = true)
             val env  = JsonRpcRequest(JsonRpcId(1), "textDocument/completion", Absent, Absent)
@@ -72,7 +72,7 @@ class LspGateTest extends Test:
             }
         }
 
-        "capability gate off: always admits" in run {
+        "capability gate off: always admits" in {
             val caps = LspCapabilities.Server.empty
             val gate = LspCapabilityGate.server(caps, enforce = false)
             val env  = JsonRpcRequest(JsonRpcId(1), "textDocument/completion", Absent, Absent)
@@ -81,7 +81,7 @@ class LspGateTest extends Test:
             }
         }
 
-        "capability gate: permits notifications unconditionally" in run {
+        "capability gate: permits notifications unconditionally" in {
             val caps  = LspCapabilities.Server.empty
             val gate  = LspCapabilityGate.server(caps, enforce = true)
             val notif = JsonRpcNotification("textDocument/didOpen", Absent, Absent)
@@ -94,7 +94,7 @@ class LspGateTest extends Test:
 
     "LspGate.compose" - {
 
-        "handshake gate is checked first (not-initialized returns NotInitialized)" in run {
+        "handshake gate is checked first (not-initialized returns NotInitialized)" in {
             val caps       = LspCapabilities.Server.empty
             val handshake  = LspHandshakeGate.server()
             val handlerRef = AtomicRef.Unsafe.init[Maybe[JsonRpcHandler]](Absent)(using AllowUnsafe.embrace.danger).safe

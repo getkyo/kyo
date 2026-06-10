@@ -4,7 +4,7 @@ import kyo.Maybe.Absent
 
 class JsonRpcTransportWireTransportTest extends JsonRpcTest:
 
-    "empty wire transport produces no bytes" in run {
+    "empty wire transport produces no bytes" in {
         val wire   = JsonRpcWireTransport.empty
         val result = wire.incoming.run
         result.map { chunks =>
@@ -12,7 +12,7 @@ class JsonRpcTransportWireTransportTest extends JsonRpcTest:
         }
     }
 
-    "fromWire round-trips one envelope over in-memory channel pair" in run {
+    "fromWire round-trips one envelope over in-memory channel pair" in {
         for
             aToBChan <- Channel.initUnscoped[Chunk[Byte]](64)
             bToAChan <- Channel.initUnscoped[Chunk[Byte]](64)
