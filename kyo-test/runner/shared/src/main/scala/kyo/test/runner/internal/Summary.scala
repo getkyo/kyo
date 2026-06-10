@@ -83,17 +83,32 @@ private[internal] object Summary:
             case _: TestResult.Cancelled => "[CANCELLED]"
             case _                       => ""
 
+    /** Upper bound on a single failure-reason line in the summary. The summary is the string
+      * `Runner.done()` returns; on Scala Native sbt ships it back over the test-interface RPC via
+      * `DataOutputStream.writeUTF` (65535-byte cap). A failing leaf whose diagram is a single very long
+      * line (e.g. a rendered SVG with no newlines) would otherwise carry the whole value into the
+      * summary and overflow that RPC, crashing the suite's transport. The full diagram is still
+      * available per-leaf via the reporters; the summary only needs a short identifying preview.
+      */
+    private val MaxReasonChars = 200
+
+    private def boundedFirstLine(s: String): String =
+        val line = s.linesIterator.nextOption().getOrElse("")
+        if line.length <= MaxReasonChars then line
+        else line.substring(0, MaxReasonChars) + s"... (${line.length} chars total)"
+    end boundedFirstLine
+
     private def oneLineReason(r: TestResult): String =
         r match
             case TestResult.Failed(diagram, cause, _, _) =>
                 if diagram.nonEmpty then
-                    diagram.linesIterator.next()
+                    boundedFirstLine(diagram)
                 else
-                    cause.fold("")(t => t.getClass.getName + ": " + t.getMessage)
+                    boundedFirstLine(cause.fold("")(t => t.getClass.getName + ": " + t.getMessage))
             case TestResult.TimedOut(limit) =>
                 "limit: " + formatDuration(limit)
             case TestResult.Cancelled(reason, _) =>
-                reason
+                boundedFirstLine(reason)
             case _ =>
                 ""
 
