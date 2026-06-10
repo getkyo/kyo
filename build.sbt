@@ -871,10 +871,12 @@ lazy val `kyo-mcp` =
         .dependsOn(`kyo-jsonrpc`)
         // Test-only dep so `demo.HttpFetch` (under jvm/src/test) can drive `HttpClient.getText`.
         // Keeping it test-scoped avoids leaking kyo-http into kyo-mcp's runtime artifact.
+        // The dep is cross-platform, so the Native test build also links kyo-http;
+        // pull in `openssl-native-settings` so the kyo_tls.c symbols resolve.
         .dependsOn(`kyo-http` % "test->compile")
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
         .jsSettings(`js-settings`)
 
