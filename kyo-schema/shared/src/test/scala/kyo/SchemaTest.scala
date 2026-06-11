@@ -6241,4 +6241,100 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "primitive structure" - {
+        "stringSchema" in {
+            val s = summon[Schema[String]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]))
+        }
+        "booleanSchema" in {
+            val s = summon[Schema[Boolean]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Boolean, Tag[Boolean].asInstanceOf[Tag[Any]]))
+        }
+        "intSchema" in {
+            val s = summon[Schema[Int]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]]))
+        }
+        "longSchema" in {
+            val s = summon[Schema[Long]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]]))
+        }
+        "floatSchema" in {
+            val s = summon[Schema[Float]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Float, Tag[Float].asInstanceOf[Tag[Any]]))
+        }
+        "doubleSchema" in {
+            val s = summon[Schema[Double]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Double, Tag[Double].asInstanceOf[Tag[Any]]))
+        }
+        "shortSchema" in {
+            val s = summon[Schema[Short]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Short, Tag[Short].asInstanceOf[Tag[Any]]))
+        }
+        "byteSchema" in {
+            val s = summon[Schema[Byte]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Byte, Tag[Byte].asInstanceOf[Tag[Any]]))
+        }
+        "charSchema" in {
+            val s = summon[Schema[Char]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Char, Tag[Char].asInstanceOf[Tag[Any]]))
+        }
+        "bigDecimalSchema" in {
+            val s = summon[Schema[BigDecimal]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.BigDecimal, Tag[BigDecimal].asInstanceOf[Tag[Any]]))
+        }
+        "bigIntSchema" in {
+            val s = summon[Schema[BigInt]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.BigInt, Tag[BigInt].asInstanceOf[Tag[Any]]))
+        }
+        "instantSchema" in {
+            val s = summon[Schema[java.time.Instant]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
+        }
+        "durationSchema" in {
+            val s = summon[Schema[java.time.Duration]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]]))
+        }
+        "spanByteSchema" in {
+            val s = summon[Schema[Span[Byte]]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]]))
+        }
+        "frameSchema" in {
+            val s = summon[Schema[Frame]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Frame].asInstanceOf[Tag[Any]]))
+        }
+        "tagSchema" in {
+            val s = summon[Schema[Tag[String]]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Tag[String]].asInstanceOf[Tag[Any]]))
+        }
+        "localDateSchema" in {
+            val s = summon[Schema[java.time.LocalDate]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalDate].asInstanceOf[Tag[Any]]))
+        }
+        "localTimeSchema" in {
+            val s = summon[Schema[java.time.LocalTime]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalTime].asInstanceOf[Tag[Any]]))
+        }
+        "localDateTimeSchema" in {
+            val s = summon[Schema[java.time.LocalDateTime]]
+            s.structure match
+                case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                case other                                                       => fail(s"Expected Primitive(String, _) but got $other")
+        }
+        "uuidSchema" in {
+            val s = summon[Schema[java.util.UUID]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.util.UUID].asInstanceOf[Tag[Any]]))
+        }
+        "unitSchema" in {
+            val s = summon[Schema[Unit]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Unit, Tag[Unit].asInstanceOf[Tag[Any]]))
+        }
+    }
+
+    "primitive structure identity" - {
+        "Schema[String].structure returns same reference on repeated calls" in {
+            val s = summon[Schema[String]]
+            assert(s.structure eq s.structure)
+        }
+    }
+
 end SchemaTest

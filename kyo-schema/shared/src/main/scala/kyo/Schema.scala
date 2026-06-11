@@ -1188,6 +1188,56 @@ object Schema:
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
 
+    /** Variant of `Schema.init` that also supplies the resulting Schema's `structure: Structure.Type`.
+      *
+      * Internal scaffolding used by primitive and container givens to populate `structure` without yet changing the locked `Schema.init`
+      * signature. The anonymous class overrides `def structure` with the supplied value.
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def initWithStructure[A](
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A,
+        structure: Structure.Type,
+        inline getterFn: A => Maybe[Any] = (a: A) => Maybe(a).asInstanceOf[Maybe[Any]],
+        inline setterFn: (A, Any) => A = (_: A, v: Any) => v.asInstanceOf[A],
+        segments: Seq[String] = Seq.empty,
+        examples: Chunk[A] = Chunk.empty,
+        fieldDocs: Map[Seq[String], String] = Map.empty,
+        fieldDeprecated: Map[Seq[String], String] = Map.empty,
+        constraints: Seq[Schema.Constraint] = Seq.empty,
+        droppedFields: Set[String] = Set.empty,
+        renamedFields: Chunk[(String, String)] = Chunk.empty,
+        computedFields: Chunk[(String, A => Any)] = Chunk.empty,
+        sourceFields: Seq[Field[?, ?]] = Seq.empty,
+        checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
+        documentation: Maybe[String] = Maybe.empty,
+        fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
+        discriminatorField: Maybe[String] = Maybe.empty
+    ): Schema[A] =
+        val _structure = structure
+        new Schema[A](
+            segments,
+            examples,
+            fieldDocs,
+            fieldDeprecated,
+            constraints,
+            droppedFields,
+            renamedFields,
+            computedFields,
+            sourceFields,
+            checks,
+            documentation,
+            fieldIdOverrides,
+            discriminatorField
+        ):
+            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
+            @publicInBinary def serializeRead(reader: Reader): A               = readFn(reader)
+            @publicInBinary def getter(value: A): Maybe[Any]                   = getterFn(value)
+            @publicInBinary def setter(value: A, next: Any): A                 = setterFn(value, next)
+            override def structure: Structure.Type                             = _structure
+        end new
+    end initWithStructure
+
     // --- Factory methods ---
 
     /** Creates a Schema[A] where Focused is the structural expansion of A.
@@ -1235,46 +1285,98 @@ object Schema:
     // --- Primitive Schema givens ---
 
     /** Schema for String values. */
-    given stringSchema: Schema[String] = Schema.init[String](writeFn = (v, w) => w.string(v), readFn = _.string())
+    given stringSchema: Schema[String] = Schema.initWithStructure[String](
+        writeFn = (v, w) => w.string(v),
+        readFn = _.string(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Boolean values. */
-    given booleanSchema: Schema[Boolean] = Schema.init[Boolean](writeFn = (v, w) => w.boolean(v), readFn = _.boolean())
+    given booleanSchema: Schema[Boolean] = Schema.initWithStructure[Boolean](
+        writeFn = (v, w) => w.boolean(v),
+        readFn = _.boolean(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Boolean, Tag[Boolean].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Int values. */
-    given intSchema: Schema[Int] = Schema.init[Int](writeFn = (v, w) => w.int(v), readFn = _.int())
+    given intSchema: Schema[Int] = Schema.initWithStructure[Int](
+        writeFn = (v, w) => w.int(v),
+        readFn = _.int(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Long values. */
-    given longSchema: Schema[Long] = Schema.init[Long](writeFn = (v, w) => w.long(v), readFn = _.long())
+    given longSchema: Schema[Long] = Schema.initWithStructure[Long](
+        writeFn = (v, w) => w.long(v),
+        readFn = _.long(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Float values. */
-    given floatSchema: Schema[Float] = Schema.init[Float](writeFn = (v, w) => w.float(v), readFn = _.float())
+    given floatSchema: Schema[Float] = Schema.initWithStructure[Float](
+        writeFn = (v, w) => w.float(v),
+        readFn = _.float(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Float, Tag[Float].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Double values. */
-    given doubleSchema: Schema[Double] = Schema.init[Double](writeFn = (v, w) => w.double(v), readFn = _.double())
+    given doubleSchema: Schema[Double] = Schema.initWithStructure[Double](
+        writeFn = (v, w) => w.double(v),
+        readFn = _.double(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Double, Tag[Double].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Short values. */
-    given shortSchema: Schema[Short] = Schema.init[Short](writeFn = (v, w) => w.short(v), readFn = _.short())
+    given shortSchema: Schema[Short] = Schema.initWithStructure[Short](
+        writeFn = (v, w) => w.short(v),
+        readFn = _.short(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Short, Tag[Short].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Byte values. */
-    given byteSchema: Schema[Byte] = Schema.init[Byte](writeFn = (v, w) => w.byte(v), readFn = _.byte())
+    given byteSchema: Schema[Byte] = Schema.initWithStructure[Byte](
+        writeFn = (v, w) => w.byte(v),
+        readFn = _.byte(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Byte, Tag[Byte].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for Char values. */
-    given charSchema: Schema[Char] = Schema.init[Char](writeFn = (v, w) => w.char(v), readFn = _.char())
+    given charSchema: Schema[Char] = Schema.initWithStructure[Char](
+        writeFn = (v, w) => w.char(v),
+        readFn = _.char(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Char, Tag[Char].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for BigDecimal values. */
     given bigDecimalSchema: Schema[BigDecimal] =
-        Schema.init[BigDecimal](writeFn = (v, w) => w.bigDecimal(v), readFn = _.bigDecimal())
+        Schema.initWithStructure[BigDecimal](
+            writeFn = (v, w) => w.bigDecimal(v),
+            readFn = _.bigDecimal(),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigDecimal, Tag[BigDecimal].asInstanceOf[Tag[Any]])
+        )
 
     /** Schema for BigInt values. */
-    given bigIntSchema: Schema[BigInt] = Schema.init[BigInt](writeFn = (v, w) => w.bigInt(v), readFn = _.bigInt())
+    given bigIntSchema: Schema[BigInt] = Schema.initWithStructure[BigInt](
+        writeFn = (v, w) => w.bigInt(v),
+        readFn = _.bigInt(),
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.BigInt, Tag[BigInt].asInstanceOf[Tag[Any]])
+    )
 
     /** Schema for java.time.Instant values. */
     given instantSchema: Schema[java.time.Instant] =
-        Schema.init[java.time.Instant](writeFn = (v, w) => w.instant(v), readFn = _.instant())
+        Schema.initWithStructure[java.time.Instant](
+            writeFn = (v, w) => w.instant(v),
+            readFn = _.instant(),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]])
+        )
 
     /** Schema for java.time.Duration values. */
     given durationSchema: Schema[java.time.Duration] =
-        Schema.init[java.time.Duration](writeFn = (v, w) => w.duration(v), readFn = _.duration())
+        Schema.initWithStructure[java.time.Duration](
+            writeFn = (v, w) => w.duration(v),
+            readFn = _.duration(),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]])
+        )
 
     /** Schema for kyo.Instant values. */
     given kyoInstantSchema: Schema[kyo.Instant] =
@@ -1286,54 +1388,63 @@ object Schema:
 
     /** Schema for Span[Byte] values. */
     given spanByteSchema: Schema[Span[Byte]] =
-        Schema.init[Span[Byte]](writeFn = (v, w) => w.bytes(v), readFn = _.bytes())
+        Schema.initWithStructure[Span[Byte]](
+            writeFn = (v, w) => w.bytes(v),
+            readFn = _.bytes(),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
+        )
 
     /** Frame schema — serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
       */
-    given frameSchema: Schema[Frame] = Schema.init[Frame](
+    given frameSchema: Schema[Frame] = Schema.initWithStructure[Frame](
         writeFn = (v, w) => w.string(v.toString),
-        readFn = reader => reader.string().asInstanceOf[Frame]
+        readFn = reader => reader.string().asInstanceOf[Frame],
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Frame].asInstanceOf[Tag[Any]])
     )
 
     /** Tag schema — serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
       */
-    given tagSchema[A]: Schema[Tag[A]] = Schema.init[Tag[A]](
+    given tagSchema[A]: Schema[Tag[A]] = Schema.initWithStructure[Tag[A]](
         writeFn = (v, w) =>
             v match
                 case s: String => w.string(s)
                 case _         => w.string(v.show),
-        readFn = reader => reader.string().asInstanceOf[Tag[A]]
+        readFn = reader => reader.string().asInstanceOf[Tag[A]],
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Tag[A]].asInstanceOf[Tag[Any]])
     )
 
     /** Schema for java.time.LocalDate values. Serializes as ISO-8601 string. */
     given localDateSchema: Schema[java.time.LocalDate] =
-        Schema.init[java.time.LocalDate](
+        Schema.initWithStructure[java.time.LocalDate](
             writeFn = (v, w) => w.string(v.toString),
-            readFn = r => java.time.LocalDate.parse(r.string())
+            readFn = r => java.time.LocalDate.parse(r.string()),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalDate].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for java.time.LocalTime values. Serializes as ISO-8601 string. */
     given localTimeSchema: Schema[java.time.LocalTime] =
-        Schema.init[java.time.LocalTime](
+        Schema.initWithStructure[java.time.LocalTime](
             writeFn = (v, w) => w.string(v.toString),
-            readFn = r => java.time.LocalTime.parse(r.string())
+            readFn = r => java.time.LocalTime.parse(r.string()),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalTime].asInstanceOf[Tag[Any]])
         )
 
     /** Schema for java.time.LocalDateTime values. Serializes as ISO-8601 string. */
     given localDateTimeSchema: Schema[java.time.LocalDateTime] =
-        Schema.init[java.time.LocalDateTime](
+        Schema.initWithStructure[java.time.LocalDateTime](
             writeFn = (v, w) => w.string(v.toString),
-            readFn = r => java.time.LocalDateTime.parse(r.string())
+            readFn = r => java.time.LocalDateTime.parse(r.string()),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Any])
         )
 
     /** Schema for java.util.UUID values. Serializes as string. */
     given uuidSchema: Schema[java.util.UUID] =
-        Schema.init[java.util.UUID](
+        Schema.initWithStructure[java.util.UUID](
             writeFn = (v, w) => w.string(v.toString),
-            readFn = r => java.util.UUID.fromString(r.string())
+            readFn = r => java.util.UUID.fromString(r.string()),
+            structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.util.UUID].asInstanceOf[Tag[Any]])
         )
 
-    /** Schema for Unit values. */
     /** Schema for Unit values.
       *
       * Unit serializes as an empty JSON object `{}`, not as `null`. The reasoning: Scala's `Unit` carries no
@@ -1347,7 +1458,7 @@ object Schema:
       * bodies for Unit-typed endpoints (e.g. HTTP) should short-circuit at the boundary, not rely on
       * `Schema[Unit]` to tolerate the wire-incorrect shape.
       */
-    given unitSchema: Schema[Unit] = Schema.init[Unit](
+    given unitSchema: Schema[Unit] = Schema.initWithStructure[Unit](
         writeFn = (_, w) =>
             w.objectStart("", 0)
             w.objectEnd()
@@ -1356,6 +1467,8 @@ object Schema:
             discard(r.objectStart())
             r.objectEnd()
             ()
+        ,
+        structure = Structure.Type.Primitive(Structure.PrimitiveKind.Unit, Tag[Unit].asInstanceOf[Tag[Any]])
     )
 
     // --- Collection Schema givens ---
