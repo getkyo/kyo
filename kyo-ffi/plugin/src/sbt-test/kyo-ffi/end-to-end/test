@@ -1,0 +1,8 @@
+# End-to-end test: compile C, generate JVM impl, run main and verify output.
+# Single-pass compile: the plugin's ffiGenerate eagerly materializes TASTy via the
+# bundled Scala 3 compiler when no class-directory TASTy exists yet, so a single
+# `compile` produces a runnable build.
+> ffiCompile
+> ffiPackage
+> compile
+> run

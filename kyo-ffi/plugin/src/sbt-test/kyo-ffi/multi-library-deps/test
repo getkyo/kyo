@@ -1,0 +1,8 @@
+# #37 — multi-library mode with `dependsOn`. The plugin must topo-sort and
+# compile `a` before `b`, even though the build.sbt declares b first.
+> assertCcOrder
+> ffiCompile
+$ exists target/ffi
+> ffiPackage
+$ exec sh -c 'find target/scala-3.8.3/resource_managed/main/META-INF/native -name "liba.*" -o -name "a.dll" | grep -q .'
+$ exec sh -c 'find target/scala-3.8.3/resource_managed/main/META-INF/native -name "libb.*" -o -name "b.dll" | grep -q .'

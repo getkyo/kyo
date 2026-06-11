@@ -1,0 +1,7 @@
+# Multi-library mode: verify both libraries compile and land in META-INF/native/.
+> ffiCompile
+$ exists target/ffi
+> ffiPackage
+# Each library's packaged artifact must exist under META-INF/native/{os-arch}/.
+$ exec sh -c 'find target/scala-3.8.3/resource_managed/main/META-INF/native -name "libalpha.*" -o -name "alpha.dll" | grep -q .'
+$ exec sh -c 'find target/scala-3.8.3/resource_managed/main/META-INF/native -name "libbeta.*"  -o -name "beta.dll"  | grep -q .'

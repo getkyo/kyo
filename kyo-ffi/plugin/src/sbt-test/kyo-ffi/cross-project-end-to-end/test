@@ -1,0 +1,12 @@
+# Cross-project end-to-end: same shared source compiles + runs on JVM, Native, and JS.
+# Ffi.load now uses scala.{scalajs,scalanative}.reflect.Reflect + @EnableReflectiveInstantiation on the generated impl, so nativeLink and fastLinkJS link cleanly.
+> e2eJVM/run
+> e2eNative/nativeLink
+$ exec sh -c 'set -eu; bin=$(find e2e/native/target/scala-3.8.3 -maxdepth 4 -type f -perm -u+x \( -name "*-out" -o -name "*.Main" \) 2>/dev/null | grep -v "nativelib" | head -n1); [ -n "$bin" ] || { echo "no Native binary under e2e/native/target/scala-3.8.3/" >&2; find e2e/native/target/scala-3.8.3 -type f -perm -u+x >&2; exit 1; }; echo "running native: $bin"; "$bin" 2>&1 | tee /tmp/cpe_native_out.txt; grep -q "OK: add=5 sub=6 mul=3000000000" /tmp/cpe_native_out.txt'
+# koffi pinned to the `^2.7` range — kyo-ffi's runtime probe rejects releases outside the range.
+$ exec sh -c 'npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund --silent koffi@^2.7 >/dev/null 2>&1'
+> e2eJS/ffiCompile
+> e2eJS/ffiPackage
+> e2eJS/compile
+> e2eJS/fastLinkJS
+$ exec sh -c 'set -eu; libpath=$(find e2e/js/target/scala-3.8.3/resource_managed/main/kyo-ffi/native -maxdepth 2 -type f \( -name "libcpe_lib.*" -o -name "cpe_lib.dll" \) | head -n1); [ -n "$libpath" ] || { echo "cpe_lib shared library not found under e2e/js/...resource_managed" >&2; find e2e/js/target/scala-3.8.3/resource_managed -type f >&2; exit 1; }; libabs=$(cd "$(dirname "$libpath")" && pwd)/$(basename "$libpath"); js=$(find e2e/js/target/scala-3.8.3 -maxdepth 3 -name main.js -type f | head -n1); [ -n "$js" ] || { echo "fastLinkJS main.js not found under e2e/js/target/scala-3.8.3/" >&2; find e2e/js/target/scala-3.8.3 -name "*.js" >&2; exit 1; }; KYO_FFI_CPE_LIB_PATH="$libabs" node "$js" 2>&1 | tee /tmp/cpe_js_out.txt; grep -q "OK: add=5 sub=6 mul=3000000000" /tmp/cpe_js_out.txt'

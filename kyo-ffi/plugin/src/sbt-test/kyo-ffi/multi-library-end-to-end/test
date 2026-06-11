@@ -1,0 +1,6 @@
+# Multi-library end-to-end: two C libraries built and packaged, two traits loaded
+# from the same Main. Asserts both libraries are callable.
+> ffiCompile
+> ffiPackage
+> compile
+> run

@@ -1,0 +1,4 @@
+# #10 — ffiGenerate must fail when a binding's `library` literal is not in
+# the declared `ffiLibraries` list. ValiBindings declares library = "missing"
+# but ffiLibraries only has "actual". The `->` prefix asserts the task FAILS.
+-> ffiGenerate

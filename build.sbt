@@ -220,6 +220,11 @@ lazy val kyoJVM: Project = project
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
         `kyo-offheap`.jvm,
+        `kyo-ffi`.jvm,
+        `kyo-ffi-codegen`,
+        `kyo-ffi-plugin`,
+        `kyo-ffi-bench`,
+        `kyo-ffi-it`.jvm,
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
@@ -274,6 +279,8 @@ lazy val kyoJS = project
         `kyo-prelude`.js,
         `kyo-parse`.js,
         `kyo-core`.js,
+        `kyo-ffi`.js,
+        `kyo-ffi-it`.js,
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
@@ -319,6 +326,8 @@ lazy val kyoNative = project
         `kyo-scheduler`.native,
         `kyo-core`.native,
         `kyo-offheap`.native,
+        `kyo-ffi`.native,
+        `kyo-ffi-it`.native,
         `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-case-app`.native,
@@ -619,6 +628,284 @@ lazy val `kyo-offheap` =
         .nativeSettings(
             `native-settings`,
             Compile / doc / sources := Seq.empty
+        )
+
+lazy val `kyo-ffi` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ffi"))
+        .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
+            // Hint to module-path consumers that this JAR uses java.lang.foreign.
+            Compile / packageBin / packageOptions +=
+                Package.ManifestAttributes("Enable-Native-Access" -> "ALL-UNNAMED")
+        )
+        .nativeSettings(
+            `native-settings`,
+            Compile / doc / sources := Seq.empty,
+            // Generate the Native retained-callback shape catalog from `project/CallbackShapesGen.scala`.
+            Compile / sourceGenerators += Def.task {
+                CallbackShapesGen.generate((Compile / sourceManaged).value)
+            }.taskValue
+        )
+        .jsSettings(`js-settings`)
+
+// Declared at top level so the key resolves in the crossProject's native sub-project scope.
+lazy val buildKyoItBundled =
+    taskKey[File]("Compile kyo-ffi-it bundled C sources into libkyo_it_bundled.{so,dylib,dll} and return its directory.")
+
+lazy val `kyo-ffi-it` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ffi/it"))
+        .enablePlugins(KyoFfiPlugin)
+        .dependsOn(`kyo-ffi`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            // In-repo bootstrap: hand the plugin the codegen project's own classpath so a cold
+            // `kyo-ffi-it/test` builds the codegen first and generates the impls directly, with no
+            // bundled plugin resource and no reload. External consumers leave this at its default
+            // (Nil) and the plugin uses its bundled codegen resource instead.
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            // Bundled C sources live under the shared cross-project directory; system bindings
+            // (LibC/LibM/Posix) bypass the plugin and resolve to OS libraries directly.
+            ffiLibraries := Seq(
+                FfiLibrary(
+                    id = "kyo_it_bundled",
+                    cSources = (baseDirectory.value / ".." / "shared" / "src" / "main" / "c" ** "*.c").get
+                )
+            )
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            Test / javaOptions += "--enable-native-access=ALL-UNNAMED"
+        )
+        .nativeSettings(
+            `native-settings`,
+            // The plugin's ffiCompile is a no-op on Native: the Scala Native linker handles C.
+            // Build libkyo_it_bundled here and surface its directory via nativeConfig so
+            // `@link("kyo_it_bundled")` bindings resolve at link time.
+            buildKyoItBundled := {
+                val log    = streams.value.log
+                val cDir   = baseDirectory.value / ".." / "shared" / "src" / "main" / "c"
+                val cSrcs  = (cDir ** "*.c").get
+                val outDir = target.value / "nativelib"
+                IO.createDirectory(outDir)
+                val osName = sys.props.getOrElse("os.name", "").toLowerCase
+                val (ext, flag) =
+                    if (osName.contains("mac")) ("dylib", "-dynamiclib")
+                    else if (osName.contains("win")) ("dll", "-shared")
+                    else ("so", "-shared")
+                val outLib = outDir / s"libkyo_it_bundled.$ext"
+                val newest = cSrcs.map(_.lastModified()).foldLeft(0L)(math.max)
+                if (!outLib.exists() || outLib.lastModified() < newest) {
+                    val cc  = sys.env.getOrElse("CC", "cc")
+                    val cmd = Seq(cc, flag, "-fPIC", "-O2", "-o", outLib.getAbsolutePath) ++ cSrcs.map(_.getAbsolutePath)
+                    log.info(s"[kyo-ffi-it Native] ${cmd.mkString(" ")}")
+                    val rc = scala.sys.process.Process(cmd).!
+                    if (rc != 0) sys.error(s"cc failed with exit code $rc building libkyo_it_bundled")
+                }
+                outDir
+            },
+            nativeConfig := {
+                val base   = nativeConfig.value
+                val libDir = buildKyoItBundled.value.getAbsolutePath
+                base.withLinkingOptions(base.linkingOptions ++ Seq(s"-L$libDir", s"-Wl,-rpath,$libDir"))
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            // koffi is loaded via CommonJS `require` at runtime, so align the linker.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Point the JS runtime at the plugin-compiled library via KYO_FFI_<LIBID>_PATH.
+            Test / jsEnv := {
+                val targetDir = target.value
+                val ffiOut    = targetDir / "ffi"
+                val os        = sys.props.getOrElse("os.name", "").toLowerCase
+                val ext =
+                    if (os.contains("mac")) "dylib"
+                    else if (os.contains("win")) "dll"
+                    else "so"
+                val arch =
+                    sys.props.getOrElse("os.arch", "") match {
+                        case "x86_64" | "amd64"  => "x86_64"
+                        case "aarch64" | "arm64" => "aarch64"
+                        case other               => other
+                    }
+                val osDetect =
+                    if (os.contains("mac")) "darwin"
+                    else if (os.contains("win")) "windows"
+                    else if (os.contains("linux")) "linux"
+                    else os
+                val bundled = ffiOut / s"libkyo_it_bundled-$osDetect-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List("--max_old_space_size=5120"))
+                        .withEnv(Map("KYO_FFI_KYO_IT_BUNDLED_PATH" -> bundled.getAbsolutePath))
+                )
+            },
+            // Bootstrap koffi into Node's resolver before tests run. Hooked on Test / compile (not
+            // Test / test) so test, testOnly, and testQuick all trigger it, and it re-runs after a
+            // clean wipes node_modules. Idempotent on the marker file.
+            Test / compile := (Test / compile).dependsOn(Def.task {
+                val log        = streams.value.log
+                val targetBase = target.value
+                val nodeMods   = targetBase / "node_modules"
+                val marker     = nodeMods / "koffi" / "package.json"
+                // Must match `kyo.ffi.internal.FfiErrors.KoffiSupportedRange`.
+                val koffiRange = "^2.7"
+                val pjContent =
+                    s"""{"name":"kyo-ffi-it-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+                val pj = targetBase / "package.json"
+                if (!pj.exists() || IO.read(pj) != pjContent) {
+                    IO.createDirectory(targetBase)
+                    IO.write(pj, pjContent)
+                }
+                if (!marker.exists()) {
+                    log.info(s"[kyo-ffi-it JS] installing koffi@$koffiRange into $targetBase ...")
+                    val rc = scala.sys.process.Process(
+                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        targetBase
+                    ).!
+                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+                }
+            }).value
+        )
+
+lazy val `kyo-ffi-codegen` =
+    project
+        .in(file("kyo-ffi/codegen"))
+        .dependsOn(`kyo-ffi`.jvm % Test)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.scala-lang" %% "scala3-tasty-inspector" % scalaVersion.value,
+            libraryDependencies += "org.scala-lang" %% "scala3-compiler"        % scalaVersion.value % Test,
+            // kyo-test framework wiring (the JVM-only equivalent of .withKyoTest, which only applies to crossProjects).
+            Test / unmanagedClasspath ++=
+                (LocalProject("kyo-test-runner") / Test / fullClasspath).value,
+            Test / testFrameworks +=
+                new TestFramework("kyo.test.runner.SbtFramework"),
+            Test / javaOptions += s"-Dkyo.ffi.codegen.test.classes=${(Test / classDirectory).value.getAbsolutePath}",
+            Test / javaOptions += s"-Dkyo.ffi.codegen.test.classpath=${(Test / fullClasspath).value.map(_.data.getAbsolutePath).mkString(java.io.File.pathSeparator)}"
+        )
+
+lazy val `kyo-ffi-plugin` =
+    project
+        .in(file("kyo-ffi/plugin"))
+        .enablePlugins(SbtPlugin)
+        // Scala 2.12 sbt plugin: kyo-doctest's Scala 3 CLI cannot run on this module
+        // (same as kyo-compat-plugin and kyo-doctest-plugin).
+        .disablePlugins(KyoDoctestPlugin)
+        .settings(
+            scalaVersion       := "2.12.20",
+            crossScalaVersions := Seq("2.12.20"),
+            name               := "kyo-ffi-plugin",
+            sbtPlugin          := true,
+            // Bundle the Scala 3 codegen JAR + its runtime deps as plugin resources so the
+            // 2.12 plugin can load them reflectively at task time.
+            Compile / resourceGenerators += Def.task {
+                val codegenJar = (LocalProject("kyo-ffi-codegen") / Compile / packageBin).value
+                val codegenCp = (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value
+                    .map(_.data)
+                val outDir = (Compile / resourceManaged).value / "kyo-ffi-plugin"
+                IO.createDirectory(outDir)
+                // Names of JARs we must bundle to make the codegen self-sufficient at runtime.
+                val names = Set(
+                    "scala3-tasty-inspector_3",
+                    "tasty-core_3",
+                    "scala3-compiler_3",
+                    "scala3-interfaces",
+                    "scala-asm",
+                    "compiler-interface",
+                    "util-interface",
+                    s"scala-library" // the REAL Scala 3 stdlib is published as `scala-library` at scala3 version
+                )
+                val bundledJars = codegenCp.filter { f =>
+                    val n = f.getName
+                    names.exists(prefix => n.startsWith(prefix + "-"))
+                }
+                val results = Seq(codegenJar -> "kyo-ffi-codegen.jar") ++
+                    bundledJars.map(j => j -> j.getName)
+                val copied = results.map { case (src, name) =>
+                    val dest = outDir / name
+                    IO.copyFile(src, dest)
+                    dest
+                }
+                // Write a manifest of bundled JAR names so the plugin can enumerate at runtime.
+                val manifest = outDir / "bundled.txt"
+                IO.write(manifest, results.map(_._2).mkString("\n"))
+                copied :+ manifest
+            }.taskValue,
+            scriptedLaunchOpts := {
+                scriptedLaunchOpts.value ++
+                    Seq(
+                        "-Xmx1024M",
+                        "-Dplugin.version=" + version.value,
+                        "-Dkyo.version=" + version.value
+                    )
+            },
+            scriptedBufferLog                      := false,
+            libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
+            // Publish kyo-ffi + transitive deps locally across all three platforms before
+            // scripted runs: scripted tests resolve `"io.getkyo" %% "kyo-ffi"` from Ivy.
+            // kyo-ffi depends on kyo-core, so the full closure must be published or Ivy
+            // resolution of kyo-ffi fails:
+            //   kyo-config -> kyo-stats-registry -> kyo-data -> kyo-kernel -> kyo-prelude
+            //   -> kyo-scheduler -> kyo-core -> kyo-ffi
+            scriptedDependencies := {
+                val a0 = (`kyo-config`.jvm / publishLocal).value
+                val a1 = (`kyo-stats-registry`.jvm / publishLocal).value
+                val a2 = (`kyo-data`.jvm / publishLocal).value
+                val a3 = (`kyo-kernel`.jvm / publishLocal).value
+                val a4 = (`kyo-prelude`.jvm / publishLocal).value
+                val a5 = (`kyo-scheduler`.jvm / publishLocal).value
+                val a6 = (`kyo-core`.jvm / publishLocal).value
+                val a7 = (`kyo-ffi`.jvm / publishLocal).value
+                val b0 = (`kyo-config`.native / publishLocal).value
+                val b1 = (`kyo-stats-registry`.native / publishLocal).value
+                val b2 = (`kyo-data`.native / publishLocal).value
+                val b3 = (`kyo-kernel`.native / publishLocal).value
+                val b4 = (`kyo-prelude`.native / publishLocal).value
+                val b5 = (`kyo-scheduler`.native / publishLocal).value
+                val b6 = (`kyo-core`.native / publishLocal).value
+                val b7 = (`kyo-ffi`.native / publishLocal).value
+                val c0 = (`kyo-config`.js / publishLocal).value
+                val c1 = (`kyo-stats-registry`.js / publishLocal).value
+                val c2 = (`kyo-data`.js / publishLocal).value
+                val c3 = (`kyo-kernel`.js / publishLocal).value
+                val c4 = (`kyo-prelude`.js / publishLocal).value
+                val c5 = (`kyo-scheduler`.js / publishLocal).value
+                val c6 = (`kyo-core`.js / publishLocal).value
+                val c7 = (`kyo-ffi`.js / publishLocal).value
+                scriptedDependencies.value
+            },
+            publish   := {},
+            publishM2 := {}
+        )
+
+// JMH benchmarks for kyo-ffi. Separate from kyo-bench because Panama requires
+// `--enable-native-access`. Not part of routine CI; see kyo-ffi-bench/README.md for recipes.
+lazy val `kyo-ffi-bench` =
+    project
+        .in(file("kyo-ffi/bench"))
+        .enablePlugins(JmhPlugin)
+        .dependsOn(`kyo-ffi`.jvm)
+        .disablePlugins(MimaPlugin)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
+            Test / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
+            run / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
+            run / fork := true
         )
 
 lazy val `kyo-direct` =

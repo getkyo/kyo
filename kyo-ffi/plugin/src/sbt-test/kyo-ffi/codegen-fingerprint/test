@@ -1,0 +1,5 @@
+# Asserts ffiGenerate's cache key includes a codegen fingerprint (#255). Without it, a plugin/codegen
+# change with unchanged binding sources is a stale cache hit. assertCodegenFingerprint inspects the
+# config.hash sentinel and fails if it omits the `codegen=<sha256>` segment.
+> compile
+> assertCodegenFingerprint
