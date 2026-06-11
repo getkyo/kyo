@@ -60,44 +60,112 @@ object LandingApp:
     private def hero(docsHome: String)(using Frame): UI =
         UI.section.cssClass("hero").id("top").data("section", "hero")(
             UI.div.cssClass("wrap")(
-                UI.h1(
-                    "Build something that ",
-                    UI.span.cssClass("accent").cssClass("serif")("holds"),
-                    "."
-                ),
-                UI.p.cssClass("lead")(
-                    "Software is easier to write than it has ever been. Making it hold up under real use is the part that has not changed. Kyo is a foundation with layered safety, from the first line of code to crash recovery, so what you build survives errors, restarts, and real traffic."
-                ),
-                UI.div.cssClass("hero-cta")(
-                    UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(docsHome))("Start building"),
-                    UI.a.cssClass("btn").href(Href.Fragment("ladder"))("How it works")
-                ),
-                UI.div.cssClass("trust")(
-                    UI.span("Open source"),
-                    UI.span("Apache-2.0"),
-                    UI.span("Scala 3"),
-                    UI.span("One codebase: server, browser, and native")
+                UI.div.cssClass("hero-grid")(
+                    UI.div.cssClass("hero-text")(
+                        UI.h1(
+                            "Build something that ",
+                            UI.span.cssClass("accent").cssClass("serif")("holds"),
+                            "."
+                        ),
+                        UI.p.cssClass("lead")(
+                            "Software is easier to write than it has ever been. Making it hold up under real use is the part that has not changed. Kyo is a foundation with layered safety, from the first line of code to crash recovery, so what you build survives errors, restarts, and real traffic."
+                        ),
+                        UI.div.cssClass("hero-cta")(
+                            UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(docsHome))("Start building"),
+                            UI.a.cssClass("btn").href(Href.Fragment("ladder"))("How it works")
+                        ),
+                        UI.div.cssClass("trust")(
+                            UI.span("Open source"),
+                            UI.span("Apache-2.0"),
+                            UI.span("Scala 3"),
+                            UI.span("Server, browser, and native")
+                        )
+                    ),
+                    heroCode
                 )
             )
         )
     end hero
+
+    // A real, type-checked Kyo program in the hero: the pending type lists every effect, handlers
+    // discharge them in any order, and `.eval` yields a Result. Same `tok-*` palette as the docs.
+    private def heroCode(using Frame): UI =
+        UI.div.cssClass("code").cssClass("hero-code")(
+            UI.pre(
+                UI.code(
+                    tCom("// effects and failures are part of the type"),
+                    UI.br,
+                    tKey("val"),
+                    " program: ",
+                    tType("Int"),
+                    " ",
+                    tOp("<"),
+                    " (",
+                    tType("Abort"),
+                    "[",
+                    tType("String"),
+                    "] ",
+                    tOp("&"),
+                    " ",
+                    tType("Env"),
+                    "[",
+                    tType("Int"),
+                    "]) =",
+                    UI.br,
+                    "  ",
+                    tType("Env"),
+                    ".get[",
+                    tType("Int"),
+                    "].map(n =>",
+                    UI.br,
+                    "    ",
+                    tKey("if"),
+                    " n > 0 ",
+                    tKey("then"),
+                    " n ",
+                    tKey("else"),
+                    " ",
+                    tType("Abort"),
+                    ".fail(",
+                    tStr("\"oops\""),
+                    "))",
+                    UI.br,
+                    UI.br,
+                    tCom("// handlers discharge them, in any order"),
+                    UI.br,
+                    "program.handle(",
+                    tType("Abort"),
+                    ".run, ",
+                    tType("Env"),
+                    ".run(",
+                    tNum("10"),
+                    ")).eval",
+                    UI.br,
+                    tCom("// Result[String, Int]")
+                )
+            )
+        )
 
     // ---- 2. The gap ----
 
     private def gap(using Frame): UI =
         UI.section.cssClass("band").cssClass("problem").id("gap").data("section", "gap")(
             UI.div.cssClass("wrap")(
-                UI.div.cssClass("sec-head").cssClass("center")(
-                    UI.div.cssClass("eyebrow")("The gap"),
-                    UI.h2("From \"it works\" to \"you can depend on it.\"")
-                ),
-                UI.p(
-                    "The demo works. Then an error slips through unnoticed, a restart wipes the night's work, or a little real traffic shows up and the whole thing buckles. The distance between software that works once and software you can depend on is the gap most projects fall into, and the less of the code you wrote yourself, the more the ground underneath has to hold."
-                ),
-                UI.div.cssClass("stat")(
-                    UI.div.cssClass("big")("1", UI.span(" in 5")),
-                    UI.div.cssClass("stat-txt")(
-                        "Chain ten steps that each work 85% of the time, a model call, a tool, a flaky external API, and the whole run finishes correctly about one time in five. Small unreliabilities compound fast, which is why software that demos perfectly comes apart in real use."
+                UI.div.cssClass("gap-grid")(
+                    UI.div.cssClass("gap-text")(
+                        UI.div.cssClass("sec-head")(
+                            UI.div.cssClass("eyebrow")("The gap"),
+                            UI.h2("From \"it works\" to \"you can depend on it.\"")
+                        ),
+                        UI.p(
+                            "The demo works. Then an error slips through unnoticed, a restart wipes the night's work, or a little real traffic shows up and the whole thing buckles. The distance between software that works once and software you can depend on is the gap most projects fall into, and the less of the code you wrote yourself, the more the ground underneath has to hold."
+                        )
+                    ),
+                    UI.div.cssClass("stat")(
+                        UI.div.cssClass("big")("1 in 5"),
+                        UI.div.cssClass("stat-txt")(
+                            "Chain ten steps that each work 85% of the time, a model call, a tool, a flaky external API, and the whole run finishes correctly about one time in five. Small unreliabilities compound fast, which is why software that demos perfectly comes apart in real use."
+                        )
                     )
                 )
             )
@@ -257,6 +325,7 @@ object LandingApp:
     private def tStr(s: String)(using Frame): UI  = UI.span.cssClass("tok-string")(s)
     private def tCom(s: String)(using Frame): UI  = UI.span.cssClass("tok-comment")(s)
     private def tOp(s: String)(using Frame): UI   = UI.span.cssClass("tok-operator")(s)
+    private def tNum(s: String)(using Frame): UI  = UI.span.cssClass("tok-number")(s)
 
     // ---- 4. One foundation ----
 

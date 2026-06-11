@@ -817,6 +817,7 @@ object WebsiteStyles:
                 "code",
                 Style.bg(hex("#0E0D14")).border(1.px, whiteBorder12).rounded(10.px)
                     .padding(15.px, 17.px).margin(14.px, 0.px, 0.px, 0.px).overflow(_.auto)
+                    .shadow(0.px, 14.px, 34.px, 0.px, Color.rgba(10, 10, 14, 0.26))
             )
             .rule(
                 Selector.cls("code").descendant(Selector.tag("pre")),
@@ -874,10 +875,56 @@ object WebsiteStyles:
             // drop it and the trailing period onto their own lines)
             .rule("whyx-link", Style.inline.color(_.variable("accent")).fontWeight(_.w500))
             // feature categories are links now: drop the underline, add a hover wash
+            // feature categories: gapped, equal-width bordered cards (the seamless line-grid left the
+            // 3-over-2 bottom row uneven). A fixed basis keeps all five on one column track, so the last
+            // row is two cards left-aligned under the first two, not two stretched half-width cards.
+            .rule(
+                "feat-grid",
+                Style.row.flexWrap(_.wrap).gap(16.px).margin(44.px, 0.px, 0.px, 0.px)
+                    .bg(Color.transparent).border(0.px, Color.transparent).rounded(0.px).overflow(_.visible)
+            )
             .rule(
                 "fcat",
                 Style.textDecoration(_.none).color(_.variable("ink")).cursor(_.pointer)
-                    .hover(_.bg(_.variable("accent-ghost")))
+                    .flexGrow(0.0).flexBasis(Length.Pct(31.5)).minWidth(220.px)
+                    .bg(_.variable("surface")).border(1.px, _.variable("line")).rounded(14.px)
+                    .hover(_.bg(_.variable("accent-ghost")).borderColor(_.variable("accent-line")))
+            )
+            // the hero code sits in a narrower column than the docs panels, so a slightly smaller size
+            // keeps the longest type line inside the panel with even padding (no right-edge clip).
+            .rule(
+                Selector.cls("hero-code").descendant(Selector.tag("pre")),
+                Style.fontSize(12.5.px).lineHeight(1.6)
+            )
+            // ---- hero + gap as two-column compositions that use the full content width (the page used
+            // to be a thin centered ribbon). The hero pairs left-aligned text with a real code sample;
+            // the gap pairs the argument with the stat. Both stack to one column on narrow viewports. ----
+            .rule("hero-grid", Style.row.flexWrap(_.wrap).gap(48.px).align(_.center))
+            .rule("hero-text", Style.column.flexGrow(1.0).flexBasis(440.px).minWidth(0.px).textAlign(_.left))
+            .rule(
+                Selector.cls("hero-text").descendant(Selector.tag("h1")),
+                Style.textAlign(_.left).margin(0.px, 0.px, 0.px, 0.px).fontSize(54.px).maxWidth(Length.Pct(100))
+            )
+            .rule(
+                Selector.cls("hero-text").descendant(Selector.cls("lead")),
+                Style.textAlign(_.left).margin(22.px, 0.px, 0.px, 0.px).maxWidth(540.px)
+            )
+            .rule(Selector.cls("hero-text").descendant(Selector.cls("hero-cta")), Style.justify(_.start))
+            .rule(Selector.cls("hero-text").descendant(Selector.cls("trust")), Style.justify(_.start))
+            .rule(
+                "hero-code",
+                Style.flexGrow(1.0).flexBasis(420.px).minWidth(0.px).margin(0.px)
+            )
+            .rule("gap-grid", Style.row.flexWrap(_.wrap).gap(44.px).align(_.start))
+            .rule("gap-text", Style.column.flexGrow(1.0).flexBasis(440.px).minWidth(0.px))
+            .rule(Selector.cls("gap-text").descendant(Selector.cls("sec-head")), Style.maxWidth(Length.Pct(100)))
+            .rule(
+                Selector.cls("gap-text").descendant(Selector.tag("p")),
+                Style.margin(20.px, 0.px, 0.px, 0.px).color(_.variable("dim")).fontSize(17.px).lineHeight(1.65).textWrap(_.pretty)
+            )
+            .rule(
+                Selector.cls("gap-grid").descendant(Selector.cls("stat")),
+                Style.flexGrow(1.0).flexBasis(340.px).minWidth(0.px).margin(0.px)
             )
     end landingLadder
 
