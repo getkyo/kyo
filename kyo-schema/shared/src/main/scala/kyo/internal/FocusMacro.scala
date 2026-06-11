@@ -2083,7 +2083,7 @@ import scala.quoted.*
 
     /** Summons `Tag[A].asInstanceOf[Tag[Any]]`, falling back to `Tag[Any]` for abstract or tag-less types.
       *
-      * Mirrors StructureMacro.summonTag to handle generic type parameters (e.g. `Changeset[A]`) that have a `Schema[A]` constraint but not
+      * Mirrors the summonTag helper in StructureMacro to handle generic type parameters (e.g. `Changeset[A]`) that have a `Schema[A]` constraint but not
       * necessarily `Tag[A]`.
       */
     private def summonStructureTag[A: Type](using Quotes): Expr[Tag[Any]] =
@@ -2098,7 +2098,7 @@ import scala.quoted.*
       * Returns true if `tpe` is `target`, or if `tpe`'s case-class field graph (including via containers/maps/tuples
       * and sealed trait children) transitively contains `target`. Used as a gate before deciding whether to summon
       * `Schema[ft].structure` (no cycle, preserves INV-6 reference equality) or to inline the structure via
-      * `StructureMacro.deriveType` (cycle, breaks the runtime loop with an empty Product/Sum placeholder).
+      * `deriveTypeFallback` (cycle, breaks the runtime loop with an empty Product/Sum placeholder).
       *
       * `seen` accumulates the fully-qualified names of types already visited on the current walk to prevent
       * an infinite loop in the cycle-detection itself.
@@ -2142,13 +2142,238 @@ import scala.quoted.*
         end if
     end cyclesBackTo
 
+    /** Walks the type tree at compile time to produce a `Structure.Type` literal.
+      *
+      * This is the inlined fallback used for cyclic fields: it carries the compile-time
+      * type-tree-walk logic formerly in StructureMacro so that Phase 11 can delete
+      * that object without leaving any callers behind.
+      *
+      * The four symbol sets (extendedPrimitiveSymbols, optionalSymbols,
+      * collectionSymbols, mapSymbols) are inlined as local vals because Phase 11
+      * will delete them from MacroUtils.
+      */
+    private def deriveTypeFallback(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        seen: Set[String]
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+
+        val extendedPrimitiveSymbolsLocal: Set[Symbol] = Set(
+            TypeRepr.of[Int].typeSymbol,
+            TypeRepr.of[String].typeSymbol,
+            TypeRepr.of[Boolean].typeSymbol,
+            TypeRepr.of[Double].typeSymbol,
+            TypeRepr.of[Float].typeSymbol,
+            TypeRepr.of[Long].typeSymbol,
+            TypeRepr.of[Short].typeSymbol,
+            TypeRepr.of[Byte].typeSymbol,
+            TypeRepr.of[Char].typeSymbol,
+            TypeRepr.of[Unit].typeSymbol,
+            TypeRepr.of[BigDecimal].typeSymbol,
+            TypeRepr.of[BigInt].typeSymbol,
+            TypeRepr.of[java.math.BigDecimal].typeSymbol,
+            TypeRepr.of[java.math.BigInteger].typeSymbol
+        )
+        val optionalSymbolsLocal: Set[Symbol] = Set(
+            TypeRepr.of[Option].typeSymbol,
+            TypeRepr.of[kyo.Maybe].typeSymbol
+        )
+        val collectionSymbolsLocal: Set[Symbol] = Set(
+            TypeRepr.of[List].typeSymbol,
+            TypeRepr.of[Seq].typeSymbol,
+            TypeRepr.of[Vector].typeSymbol,
+            TypeRepr.of[Set].typeSymbol,
+            TypeRepr.of[kyo.Chunk].typeSymbol
+        )
+        val mapSymbolsLocal: Set[Symbol] = Set(TypeRepr.of[Map].typeSymbol)
+
+        def isPrimLocal(t: TypeRepr): Boolean =
+            extendedPrimitiveSymbolsLocal.contains(t.dealias.typeSymbol)
+
+        def isOptLocal(tycon: TypeRepr): Boolean =
+            optionalSymbolsLocal.contains(tycon.typeSymbol)
+
+        def isColLocal(tycon: TypeRepr): Boolean =
+            collectionSymbolsLocal.contains(tycon.typeSymbol)
+
+        def isMapLocal(tycon: TypeRepr): Boolean =
+            mapSymbolsLocal.contains(tycon.typeSymbol)
+
+        def summonTagLocal[A: Type]: Expr[Tag[Any]] =
+            Expr.summon[Tag[A]] match
+                case Some(tagExpr) => '{ $tagExpr.asInstanceOf[Tag[Any]] }
+                case None          => '{ Tag[Any] }
+
+        def primitiveKindExprLocal(t: TypeRepr): Expr[Structure.PrimitiveKind] =
+            val sym = t.dealias.typeSymbol
+            if sym == TypeRepr.of[Int].typeSymbol then '{ Structure.PrimitiveKind.Int }
+            else if sym == TypeRepr.of[Long].typeSymbol then '{ Structure.PrimitiveKind.Long }
+            else if sym == TypeRepr.of[Short].typeSymbol then '{ Structure.PrimitiveKind.Short }
+            else if sym == TypeRepr.of[Byte].typeSymbol then '{ Structure.PrimitiveKind.Byte }
+            else if sym == TypeRepr.of[Char].typeSymbol then '{ Structure.PrimitiveKind.Char }
+            else if sym == TypeRepr.of[Float].typeSymbol then '{ Structure.PrimitiveKind.Float }
+            else if sym == TypeRepr.of[Double].typeSymbol then '{ Structure.PrimitiveKind.Double }
+            else if sym == TypeRepr.of[String].typeSymbol then '{ Structure.PrimitiveKind.String }
+            else if sym == TypeRepr.of[Boolean].typeSymbol then '{ Structure.PrimitiveKind.Boolean }
+            else if sym == TypeRepr.of[BigInt].typeSymbol || sym == TypeRepr.of[java.math.BigInteger].typeSymbol then
+                '{ Structure.PrimitiveKind.BigInt }
+            else if sym == TypeRepr.of[BigDecimal].typeSymbol || sym == TypeRepr.of[java.math.BigDecimal].typeSymbol then
+                '{ Structure.PrimitiveKind.BigDecimal }
+            else if sym == TypeRepr.of[Unit].typeSymbol then '{ Structure.PrimitiveKind.Unit }
+            else
+                report.errorAndAbort(
+                    s"No PrimitiveKind mapping for type: ${t.show}. " +
+                        "Add a case to Structure.PrimitiveKind or remove the type from extended primitives."
+                )
+            end if
+        end primitiveKindExprLocal
+
+        def deriveCaseClassOrFallbackLocal(
+            dealiased: TypeRepr,
+            sym: Symbol,
+            seenInner: Set[String]
+        ): Expr[Structure.Type] =
+            if sym.isClassDef && sym.flags.is(Flags.Case) then
+                val name    = sym.name
+                val newSeen = seenInner + sym.fullName
+                val fieldExprs = sym.caseFields.zipWithIndex.map { (field, idx) =>
+                    val fieldName = field.name
+                    val fieldType = dealiased.memberType(field)
+                    val fieldRef  = go(fieldType, newSeen)
+                    val defaultExpr: Expr[Maybe[Structure.Value]] = MacroUtils.getDefault(dealiased, idx) match
+                        case Some(defVal) =>
+                            fieldType.asType match
+                                case '[t] =>
+                                    Expr.summon[Tag[t]] match
+                                        case Some(tagExpr) =>
+                                            '{ Maybe(Structure.Value.primitive[t]($defVal.asInstanceOf[t])(using $tagExpr)) }
+                                        case None =>
+                                            '{ Maybe.empty[Structure.Value] }
+                        case None =>
+                            '{ Maybe.empty[Structure.Value] }
+                    val isOptional = isOptLocal(fieldType.dealias match
+                        case AppliedType(tycon, _) => tycon
+                        case _                     => fieldType)
+                    '{ Structure.Field(${ Expr(fieldName) }, $fieldRef, Maybe.empty[String], $defaultExpr, ${ Expr(isOptional) }) }
+                }
+                val fieldsSeqExpr = Expr.ofSeq(fieldExprs)
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.from($fieldsSeqExpr)) }
+                end match
+            else
+                val name = dealiased.typeSymbol.name
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.empty) }
+                end match
+            end if
+        end deriveCaseClassOrFallbackLocal
+
+        def go(t: TypeRepr, seenInner: Set[String]): Expr[Structure.Type] =
+            val dealiased = t.dealias
+            val typeName  = dealiased.typeSymbol.fullName
+            if seenInner.contains(typeName) && typeName.nonEmpty then
+                val name = dealiased.typeSymbol.name
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.empty) }
+                end match
+            else if isPrimLocal(dealiased) then
+                val kindExpr = primitiveKindExprLocal(dealiased)
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Primitive($kindExpr, $tagExpr) }
+                end match
+            else
+                dealiased match
+                    case AppliedType(tycon, List(inner)) if isOptLocal(tycon) =>
+                        val name     = dealiased.typeSymbol.name
+                        val innerRef = go(inner, seenInner)
+                        dealiased.asType match
+                            case '[a] =>
+                                val tagExpr = summonTagLocal[a]
+                                '{ Structure.Type.Optional(${ Expr(name) }, $tagExpr, $innerRef) }
+                        end match
+                    case AppliedType(tycon, List(k, v)) if isMapLocal(tycon) =>
+                        val name     = dealiased.typeSymbol.name
+                        val keyRef   = go(k, seenInner)
+                        val valueRef = go(v, seenInner)
+                        dealiased.asType match
+                            case '[a] =>
+                                val tagExpr = summonTagLocal[a]
+                                '{ Structure.Type.Mapping(${ Expr(name) }, $tagExpr, $keyRef, $valueRef) }
+                        end match
+                    case AppliedType(tycon, List(elem)) if isColLocal(tycon) =>
+                        val name    = dealiased.typeSymbol.name
+                        val elemRef = go(elem, seenInner)
+                        dealiased.asType match
+                            case '[a] =>
+                                val tagExpr = summonTagLocal[a]
+                                '{ Structure.Type.Collection(${ Expr(name) }, $tagExpr, $elemRef) }
+                        end match
+                    case _ =>
+                        val sym = dealiased.typeSymbol
+                        if sym.isClassDef && sym.flags.is(Flags.Sealed) then
+                            val children = sym.children
+                            if children.nonEmpty then
+                                val name    = sym.name
+                                val newSeen = seenInner + sym.fullName
+                                val enumValues = children.collect {
+                                    case child if child.flags.is(Flags.Module) || !child.isClassDef =>
+                                        child.name.stripSuffix("$")
+                                }
+                                val variantExprs = children.map { child =>
+                                    val childName = child.name.stripSuffix("$")
+                                    val childType =
+                                        if child.isType then child.typeRef
+                                        else if child.flags.is(Flags.Module) then child.termRef.widen
+                                        else child.typeRef
+                                    val variantRef = go(childType, newSeen)
+                                    '{ Structure.Variant(${ Expr(childName) }, $variantRef) }
+                                }
+                                val variantsSeqExpr = Expr.ofSeq(variantExprs)
+                                val enumValuesExpr  = Expr.ofSeq(enumValues.map(Expr(_)))
+                                dealiased.asType match
+                                    case '[a] =>
+                                        val tagExpr = summonTagLocal[a]
+                                        '{
+                                            Structure.Type.Sum(
+                                                ${ Expr(name) },
+                                                $tagExpr,
+                                                kyo.Chunk.empty,
+                                                kyo.Chunk.from($variantsSeqExpr),
+                                                kyo.Chunk.from($enumValuesExpr)
+                                            )
+                                        }
+                                end match
+                            else
+                                deriveCaseClassOrFallbackLocal(dealiased, sym, seenInner)
+                            end if
+                        else
+                            deriveCaseClassOrFallbackLocal(dealiased, sym, seenInner)
+                        end if
+                end match
+            end if
+        end go
+
+        go(tpe, seen)
+    end deriveTypeFallback
+
     /** Builds a `Structure.Type` expression for a field type.
       *
       * For non-recursive types: emits `${Schema[ft]}.structure` (the runtime value). This preserves
       * reference equality (INV-6): `Schema[Parent].structure.fields(i).fieldType eq Schema[FieldType].structure`.
       *
       * For recursive types (direct or mutual cycles back to `parentType`): emits a compile-time inlined
-      * `Structure.Type` via `StructureMacro.deriveType`. The inline tree contains empty Product/Sum placeholders
+      * `Structure.Type` via `deriveTypeFallback`. The inline tree contains empty Product/Sum placeholders
       * at the recursion point, breaking the runtime cycle. INV-6 cannot hold inside a cycle (the inline tree
       * is a fresh allocation), but the cycle would otherwise infinite-recurse.
       */
@@ -2164,7 +2389,7 @@ import scala.quoted.*
         val seen           = if parentFullName.nonEmpty then Set(parentFullName) else Set.empty[String]
         if cyclesBackTo(ft, parentType, seen) then
             // Cycle: walk the type tree inline at compile time with cycle protection.
-            StructureMacro.deriveType(ft, seen)
+            deriveTypeFallback(ft, seen)
         else
             // Non-cyclic: use Schema[ft].structure (preserves reference equality per INV-6).
             ft.asType match
@@ -2183,7 +2408,7 @@ import scala.quoted.*
       *
       * Each field's `fieldType` is obtained by summoning `Schema[FieldType].structure`. Recursive fields (where the field type equals the
       * parent type) receive `Structure.Type.Open(Tag[A])` as a cycle-safe placeholder.
-      * Mirrors StructureMacro.scala field handling: captures default values via MacroUtils.getDefault
+      * Captures default values via MacroUtils.getDefault
       * and marks Option/Maybe fields as optional.
       */
     private def buildCaseClassStructureExpr[A: Type](using
@@ -2201,7 +2426,7 @@ import scala.quoted.*
 
         val fieldExprs: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (field, idx) =>
             val rawFieldType = tpe.memberType(field)
-            // For Maybe[T] fields: resolve the inner type T for the structure, matching StructureMacro behaviour.
+            // For Maybe[T] fields: resolve the inner type T for the structure.
             val resolvedType =
                 if maybeFields.contains(idx) then
                     rawFieldType.dealias match
@@ -2209,7 +2434,7 @@ import scala.quoted.*
                         case _                           => rawFieldType
                 else rawFieldType
             val fieldStructureExpr = summonFieldStructure[A](resolvedType, tpe, typeName)
-            // Mark both Maybe and Option fields as optional (matches StructureMacro.isOptionalType).
+            // Mark both Maybe and Option fields as optional.
             val isOptional = maybeFields.contains(idx) || optionFields.contains(idx)
             // Capture default values for fields that have them (matches StructureMacro default handling).
             val defaultExpr: Expr[kyo.Maybe[Structure.Value]] = MacroUtils.getDefault(tpe, idx) match
@@ -2271,7 +2496,7 @@ import scala.quoted.*
             '{ Structure.Variant(${ Expr(childName) }, $variantStructureExpr) }
         }
 
-        // Collect enum singleton names (matches StructureMacro pattern at Structure.scala:78-81)
+        // Collect enum singleton names
         val enumValues: List[String] = children.collect {
             case child if child.flags.is(Flags.Module) || !child.isClassDef =>
                 child.name.stripSuffix("$")

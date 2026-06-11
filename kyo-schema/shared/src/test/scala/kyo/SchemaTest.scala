@@ -7169,4 +7169,27 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     }
 
+    "macro consumers Schema-driven" - {
+
+        // Regression: ExpandMacro now classifies fields via MacroSchemaClassifier (INV-33).
+        // The JSON round-trip must behave identically to the symbol-set era.
+        case class MacroClassifierRegressionFixture(
+            id: Int,
+            name: String,
+            tags: List[String],
+            maybeAge: Maybe[Int]
+        ) derives CanEqual
+
+        "JSON round-trip of a mixed primitive/container/optional case class" in {
+            val schema = summon[Schema[MacroClassifierRegressionFixture]]
+            val value  = MacroClassifierRegressionFixture(42, "Alice", List("admin", "user"), Maybe(30))
+            val w      = JsonWriter()
+            schema.writeTo(value, w)
+            val reader = JsonReader(w.resultString)
+            val result = schema.readFrom(reader)
+            assert(result == value)
+        }
+
+    }
+
 end SchemaTest
