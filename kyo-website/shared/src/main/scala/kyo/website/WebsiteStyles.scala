@@ -165,7 +165,9 @@ object WebsiteStyles:
             ++ docsTokens
             ++ themeToggle
             // Polished custom scrollbars on the three scroll surfaces: the page, the docs rail, and a
-            // fenced code panel that scrolls a long line horizontally.
+            // fenced code panel that scrolls a long line horizontally. The landing `.code` panels get a
+            // dedicated light-thumb scrollbar (see landingLadder) because they are a fixed dark surface
+            // on which the page-theme `--scroll-thumb` would be invisible.
             ++ polishedScrollbar(Selector.tag("html"))
             ++ polishedScrollbar(Selector.cls("docs-sidebar"))
             ++ polishedScrollbar(Selector.cls("docs-content").descendant(Selector.tag("pre")))
@@ -821,8 +823,14 @@ object WebsiteStyles:
             // reads left-to-right with the <br> break, the same fix the docs prose applies.
             .rule(
                 "code",
+                // minWidth 0 + maxWidth 100% let the panel shrink to its flex/column container instead
+                // of being forced as wide as its longest non-wrapping code line (a flex item defaults to
+                // min-width:auto = min-content). The box then tracks the viewport and `overflow:auto`
+                // scrolls the long line horizontally inside it, with a visible scrollbar (see
+                // `polishedScrollbar(.code)` in `buildSheet`).
                 Style.bg(hex("#0E0D14")).border(1.px, whiteBorder12).rounded(10.px)
                     .padding(15.px, 17.px).margin(14.px, 0.px, 0.px, 0.px).overflow(_.auto)
+                    .minWidth(0.px).maxWidth(Length.Pct(100))
                     .shadow(0.px, 14.px, 34.px, 0.px, Color.rgba(10, 10, 14, 0.26))
             )
             .rule(
@@ -832,6 +840,18 @@ object WebsiteStyles:
             )
             .rule(Selector.cls("code").descendant(Selector.tag("code")), Style.inline)
             .rule(Selector.cls("code").descendant(Selector.tag("span")), Style.inline)
+            // The code panel is a fixed dark surface in both themes, so its scrollbar thumb is a fixed
+            // light color: the page-theme `--scroll-thumb` is a near-black `rgba(0,0,0,.18)` in light
+            // mode, invisible against the #0E0D14 panel. A persistent, clearly visible horizontal thumb
+            // makes the off-screen code obvious on a narrow screen instead of silently cropped.
+            .rule(Selector.cls("code").pseudoElement("-webkit-scrollbar"), Style.height(10.px).width(10.px))
+            .rule(Selector.cls("code").pseudoElement("-webkit-scrollbar-track"), Style.bg(Color.transparent))
+            .rule(
+                Selector.cls("code").pseudoElement("-webkit-scrollbar-thumb"),
+                Style.bg(Color.rgba(255, 255, 255, 0.34)).rounded(99.px)
+                    .border(2.px, Color.transparent).backgroundClip(_.paddingBox)
+                    .hover(_.bg(Color.rgba(255, 255, 255, 0.55)))
+            )
             // agent block: a bordered callout closing the ladder
             .rule(
                 "agent",
