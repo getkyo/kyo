@@ -885,6 +885,18 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(s.toCss == "display: inline-block;")
         }
 
+        "flex" in {
+            val s = Style.display(Display.flex)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.flex))
+            assert(s.toCss == "display: flex;")
+        }
+
+        "inlineFlex" in {
+            val s = Style.display(Display.inlineFlex)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inlineFlex))
+            assert(s.toCss == "display: inline-flex;")
+        }
+
         "listItem" in {
             val s = Style.display(Display.listItem)
             assert(s.props(0) == Style.Prop.DisplayProp(Display.listItem))

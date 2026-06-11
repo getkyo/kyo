@@ -245,6 +245,8 @@ private[kyo] object CssStyleRenderer:
                 case Display.block       => "display: block;"
                 case Display.inline      => "display: inline;"
                 case Display.inlineBlock => "display: inline-block;"
+                case Display.flex        => "display: flex;"
+                case Display.inlineFlex  => "display: inline-flex;"
                 case Display.listItem    => "display: list-item;"
                 case Display.table       => "display: table;"
                 case Display.tableRow    => "display: table-row;"

@@ -974,9 +974,13 @@ object Style:
       *   - `tableRow`: a table row (`display: table-row`), the row box inside a `table`.
       *   - `tableCell`: a table cell (`display: table-cell`) that participates in the shared column
       *     widths and border grid of its `table`.
+      *   - `flex` / `inlineFlex`: a flex container (`display: flex` / `display: inline-flex`). The
+      *     `Style.row`/`Style.column` direction helpers only set `flex-direction` and rely on an element
+      *     already being a flex box; use `flex` to force it where a more specific rule (e.g. a prose
+      *     `a { display: inline }`) would otherwise win the cascade.
       */
     enum Display derives CanEqual:
-        case block, inline, inlineBlock, listItem, table, tableRow, tableCell
+        case block, inline, inlineBlock, flex, inlineFlex, listItem, table, tableRow, tableCell
 
     /** Maps to the CSS `list-style-type` property: the marker a `list-item` renders. `disc` is the
       * filled bullet for unordered lists, `decimal` the number for ordered lists, `none` suppresses
