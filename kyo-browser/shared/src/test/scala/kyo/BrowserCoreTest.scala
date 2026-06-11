@@ -1651,16 +1651,10 @@ class BrowserCoreTest extends BrowserTest:
 
     // Browser.run(wsUrl) with an invalid wsUrl; the underlying WebSocket connect must fail,
     // which surfaces as an Abort. We point at 127.0.0.1:0 (always-fails fast per anti-slow rule #5).
-<<<<<<< HEAD
     // On some systems port-0 connects succeed (the OS may redirect), so we accept both
     // BrowserConnectionException (connect refused at the transport layer) and BrowserSetupException
     // (connection accepted but the CDP probe handshake immediately failed).
-    "Browser.run(wsUrl) with an invalid wsUrl fails fast with Abort" in run {
-        // 127.0.0.1:0 fails the OS connect call immediately with ECONNREFUSED on most systems.
-=======
     "Browser.run(wsUrl) with an invalid wsUrl fails fast with Abort" in {
-        // 127.0.0.1:0 fails the OS connect call immediately with ECONNREFUSED; no timeout needed.
->>>>>>> origin/main
         // Wrap in Scope.run because Browser.run requires Scope.
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserSetupException] {
@@ -1669,11 +1663,7 @@ class BrowserCoreTest extends BrowserTest:
                 }
             }
         }.map {
-<<<<<<< HEAD
-            case Result.Failure(_: BrowserConnectionException | _: BrowserSetupException) => succeed
-=======
-            case Result.Failure(_: BrowserConnectionException) => ()
->>>>>>> origin/main
+            case Result.Failure(_: BrowserConnectionException | _: BrowserSetupException) => ()
             case other =>
                 fail(s"Expected Abort.Failure(BrowserConnectionException or BrowserSetupException) but got $other")
         }

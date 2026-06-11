@@ -13,7 +13,7 @@ import kyo.internal.cdp.PageDownload
   *
   * Test cases 1-10 per 05-plan.md Phase 01 Tests section.
   */
-class CdpBackendSmokeTest extends Test:
+class CdpBackendSmokeTest extends BrowserTest:
 
     private val testLaunchCfg = Browser.LaunchConfig.default.copy(
         requestTimeout = 5.seconds,
@@ -63,7 +63,7 @@ class CdpBackendSmokeTest extends Test:
 
     // --- Tests ---
 
-    "init via inMemory transport returns live backend" in run {
+    "init via inMemory transport returns live backend" in {
         Scope.run {
             mkBackendWithServer().map { (backend, _) =>
                 assert(backend.sessionId == Absent)
@@ -74,7 +74,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "init fails fast with BrowserSetupFailedException when probe returns Closed" in run {
+    "init fails fast with BrowserSetupFailedException when probe returns Closed" in {
         JsonRpcTransport.inMemory.map { (client, server) =>
             server.close.andThen {
                 Abort.run[BrowserReadException | BrowserSetupException](
@@ -87,7 +87,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "send writes wire bytes that match legacy CDP envelope shape" in run {
+    "send writes wire bytes that match legacy CDP envelope shape" in {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
             val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                 "Page.navigate"
@@ -112,7 +112,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "session-scoped backend stamps sessionId via JsonRpcExtrasEncoder" in run {
+    "session-scoped backend stamps sessionId via JsonRpcExtrasEncoder" in {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
             val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
                 "Page.navigate"
@@ -141,7 +141,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "Page.javascriptDialogOpening routes via ctx.extras to the per-session handler" in run {
+    "Page.javascriptDialogOpening routes via ctx.extras to the per-session handler" in {
         Scope.run {
             mkBackendWithServer().map { (backend, serverEndpoint) =>
                 AtomicRef.init(Chunk.empty[Browser.DialogEvent]).map { recorder =>
@@ -154,7 +154,7 @@ class CdpBackendSmokeTest extends Test:
                                     JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("s1"))))
                                 )
                             ).andThen {
-                                untilTrue(recorder.get.map(_.nonEmpty)).andThen {
+                                assertEventually(recorder.get.map(_.nonEmpty)).andThen {
                                     recorder.get.map { events =>
                                         assert(events.size == 1)
                                         assert(events.head.kind == Browser.DialogType.Alert)
@@ -169,7 +169,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "Page.javascriptDialogOpening auto-dismisses when no handler is registered" in run {
+    "Page.javascriptDialogOpening auto-dismisses when no handler is registered" in {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedDismissId =>
             val handleDialogMethod = JsonRpcRoute.request[HandleJavaScriptDialogParams, Unit](
                 "Page.handleJavaScriptDialog"
@@ -188,7 +188,7 @@ class CdpBackendSmokeTest extends Test:
                             JsonRpcExtrasEncoder.const(Structure.Value.Record(Chunk("sessionId" -> Structure.Value.Str("unknown"))))
                         )
                     ).andThen {
-                        untilTrue(capturedDismissId.get.map(_.isDefined)).andThen {
+                        assertEventually(capturedDismissId.get.map(_.isDefined)).andThen {
                             capturedDismissId.get.map {
                                 case Present(n) => assert(n < 0)
                                 case Absent     => fail("dialog drainer never sent auto-dismiss")
@@ -200,7 +200,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "Runtime.executionContextCreated routes via ctx.extras to frame-event dispatcher" in run {
+    "Runtime.executionContextCreated routes via ctx.extras to frame-event dispatcher" in {
         Scope.run {
             mkBackendWithServer().map { (backend, serverEndpoint) =>
                 AtomicRef.init(Chunk.empty[CdpEvent.Generic]).map { capture =>
@@ -224,7 +224,7 @@ class CdpBackendSmokeTest extends Test:
                                 extras
                             )
                         )).andThen {
-                            untilTrue(capture.get.map(_.size >= 2)).andThen {
+                            assertEventually(capture.get.map(_.size >= 2)).andThen {
                                 capture.get.map { events =>
                                     assert(events.size == 2)
                                     assert(events.forall(_.method == "Runtime.executionContextCreated"))
@@ -238,7 +238,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "Page.downloadWillBegin routes via ctx.extras to download-event dispatcher" in run {
+    "Page.downloadWillBegin routes via ctx.extras to download-event dispatcher" in {
         Scope.run {
             mkBackendWithServer().map { (backend, serverEndpoint) =>
                 AtomicRef.init(Chunk.empty[CdpEvent.Generic]).map { capture =>
@@ -258,7 +258,7 @@ class CdpBackendSmokeTest extends Test:
                                 extras
                             )
                         ).andThen {
-                            untilTrue(capture.get.map(_.nonEmpty)).andThen {
+                            assertEventually(capture.get.map(_.nonEmpty)).andThen {
                                 capture.get.map { events =>
                                     assert(events.size == 1)
                                     assert(events.head.method == "Page.downloadWillBegin")
@@ -272,7 +272,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "close(gracePeriod) sequences endpoint.close, dialogQueue.close, dialogDrainer.interrupt" in run {
+    "close(gracePeriod) sequences endpoint.close, dialogQueue.close, dialogDrainer.interrupt" in {
         Scope.run {
             mkBackendWithServer().map { (backend, _) =>
                 backend.close(500.millis).andThen {
@@ -288,7 +288,7 @@ class CdpBackendSmokeTest extends Test:
         }
     }
 
-    "dialog drainer issues sendUnmatched with negative JsonRpcId.Num" in run {
+    "dialog drainer issues sendUnmatched with negative JsonRpcId.Num" in {
         AtomicRef.init[Maybe[Long]](Absent).map { capturedIdRef =>
             val handleDialogMethod = JsonRpcRoute.request[HandleJavaScriptDialogParams, Unit](
                 "Page.handleJavaScriptDialog"
@@ -303,7 +303,7 @@ class CdpBackendSmokeTest extends Test:
                     Abort.run[Closed](
                         backend.dialogQueue.put((true, "answer", Present(sid)))
                     ).andThen {
-                        untilTrue(capturedIdRef.get.map(_.isDefined)).andThen {
+                        assertEventually(capturedIdRef.get.map(_.isDefined)).andThen {
                             capturedIdRef.get.map {
                                 case Present(n) =>
                                     assert(n < 0)

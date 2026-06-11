@@ -12,11 +12,11 @@ final case class CloseTargetResult(success: Maybe[Boolean] = Absent) derives Sch
   * Mechanical rename of the former `CdpClientTest`: `CdpClient.init` -> `CdpBackend.init`, `CdpClient.initUnscoped` ->
   * `CdpBackend.initUnscoped`, raw-string sends replaced with typed [[CdpBackend]] wrappers.
   */
-class CdpBackendIntegrationTest extends Test:
+class CdpBackendIntegrationTest extends BrowserTest:
 
     override def timeout = 2.minutes
 
-    private def withBackend[A](f: CdpBackend => A < (Async & Abort[BrowserReadException]))(using Frame): A < Async =
+    private def withBackend[A](f: CdpBackend => A < (Async & Abort[BrowserReadException]))(using Frame, kyo.test.AssertScope): A < Async =
         Abort.run[BrowserReadException | BrowserSetupException](
             SharedChrome.init.map(url => Scope.run(CdpBackend.init(url, Browser.LaunchConfig.default).map(f)))
         ).map {
@@ -26,7 +26,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     end withBackend
 
-    "Target.getTargets returns targets" in run {
+    "Target.getTargets returns targets" in {
         // chrome-headless-shell launches with an empty target list (no auto-opened about:blank tab).
         // Create a target explicitly first so the test verifies the `Target.getTargets` decode path.
         withBackend { backend =>
@@ -41,7 +41,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "Target.createTarget creates a new target" in run {
+    "Target.createTarget creates a new target" in {
         withBackend { backend =>
             CdpBackend.createTarget(backend, CreateTargetParams("about:blank")).map { created =>
                 assert(created.targetId.nonEmpty, s"got $created")
@@ -49,7 +49,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "Target.attachToTarget returns sessionId" in run {
+    "Target.attachToTarget returns sessionId" in {
         withBackend { backend =>
             CdpBackend.createTarget(backend, CreateTargetParams("about:blank")).map { created =>
                 CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true)).map { attached =>
@@ -59,7 +59,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "session-scoped Page.navigate succeeds" in run {
+    "session-scoped Page.navigate succeeds" in {
         withBackend { backend =>
             CdpBackend.createTarget(backend, CreateTargetParams("about:blank")).map { created =>
                 CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true)).map { attached =>
@@ -74,7 +74,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "session-scoped Runtime.evaluate returns result" in run {
+    "session-scoped Runtime.evaluate returns result" in {
         withBackend { backend =>
             CdpBackend.createTarget(backend, CreateTargetParams("about:blank")).map { created =>
                 CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true)).map { attached =>
@@ -91,7 +91,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "Target.closeTarget succeeds" in run {
+    "Target.closeTarget succeeds" in {
         withBackend { backend =>
             CdpBackend.createTarget(backend, CreateTargetParams("about:blank")).map { created =>
                 CdpBackend.closeTarget(backend, CloseTargetParams(created.targetId)).map { _ =>
@@ -101,7 +101,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "concurrent sends all complete correctly" in run {
+    "concurrent sends all complete correctly" in {
         withBackend { backend =>
             CdpBackend.createTarget(backend, CreateTargetParams("about:blank")).map { created =>
                 CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true)).map { attached =>
@@ -127,7 +127,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "close then send fails with ConnectionLost" in run {
+    "close then send fails with ConnectionLost" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
@@ -150,7 +150,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "init closes the backend on scope exit" in run {
+    "init closes the backend on scope exit" in {
         val probe: CdpBackend => Unit < (Async & Abort[BrowserReadException]) =
             backend => CdpBackend.getTargets(backend).unit
 
@@ -174,7 +174,7 @@ class CdpBackendIntegrationTest extends Test:
         }
     }
 
-    "initUnscoped survives scope exit and must be closed manually" in run {
+    "initUnscoped survives scope exit and must be closed manually" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -190,7 +190,7 @@ class CdpBackendIntegrationTest extends Test:
         }.orFail("Unexpected")
     }
 
-    "Scope.run(CdpBackend.init(url, ...).map(...)) releases the backend after the body completes" in run {
+    "Scope.run(CdpBackend.init(url, ...).map(...)) releases the backend after the body completes" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -206,7 +206,7 @@ class CdpBackendIntegrationTest extends Test:
         }.orFail("Unexpected")
     }
 
-    "CdpBackend.init(url, ...).map runs the body then closes" in run {
+    "CdpBackend.init(url, ...).map runs the body then closes" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
@@ -223,7 +223,7 @@ class CdpBackendIntegrationTest extends Test:
         }.orFail("Unexpected")
     }
 
-    "CdpBackend.close(gracePeriod = 1.second) returns within the grace period" in run {
+    "CdpBackend.close(gracePeriod = 1.second) returns within the grace period" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
@@ -237,7 +237,7 @@ class CdpBackendIntegrationTest extends Test:
         }.orFail("Unexpected")
     }
 
-    "CdpBackend.closeNow returns in less than 100ms" in run {
+    "CdpBackend.closeNow returns in less than 100ms" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>

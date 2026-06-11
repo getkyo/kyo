@@ -14,7 +14,7 @@ import kyo.JsonRpcUnknownMethodPolicy
   * absence of legacy symbols, em-dash hygiene ; live in the regular code-review and
   * lint pass, not in unit tests.
   */
-class JsonRpcPortInvariantsSpec extends Test:
+class JsonRpcPortInvariantsSpec extends BrowserTest:
 
     private val testLaunchCfg = Browser.LaunchConfig.default.copy(
         requestTimeout = 5.seconds,
@@ -62,7 +62,7 @@ class JsonRpcPortInvariantsSpec extends Test:
 
     // --- INV-015: per-sessionId routing via JsonRpcExtrasEncoder + ctx.extras ---
 
-    "INV-015: round-trip exercises JsonRpcExtrasEncoder and ctx.extras routing" in run {
+    "INV-015: round-trip exercises JsonRpcExtrasEncoder and ctx.extras routing" in {
         AtomicRef.init[Maybe[Maybe[Structure.Value]]](Absent).map { capturedExtrasRef =>
             AtomicRef.init[Maybe[CdpEvent.Generic]](Absent).map { frameEventRef =>
                 val navigateMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
@@ -104,7 +104,7 @@ class JsonRpcPortInvariantsSpec extends Test:
                                         extras
                                     )
                                 ).andThen {
-                                    untilTrue(frameEventRef.get.map(_.isDefined)).andThen {
+                                    assertEventually(frameEventRef.get.map(_.isDefined)).andThen {
                                         frameEventRef.get.map {
                                             case Present(ev) =>
                                                 assert(ev.method == "Runtime.executionContextCreated")
@@ -123,7 +123,7 @@ class JsonRpcPortInvariantsSpec extends Test:
 
     // --- INV-016: Browser.getVersion probe converts Closed to BrowserSetupFailedException ---
 
-    "INV-016: Browser.getVersion probe converts Closed to BrowserSetupFailedException" in run {
+    "INV-016: Browser.getVersion probe converts Closed to BrowserSetupFailedException" in {
         JsonRpcTransport.inMemory.map { (client, server) =>
             server.close.andThen {
                 Abort.run[BrowserReadException | BrowserSetupException](
@@ -140,7 +140,7 @@ class JsonRpcPortInvariantsSpec extends Test:
 
     // --- INV-017: typed Abort recovery for Closed, JsonRpcError, Timeout ---
 
-    "INV-017: Closed at send surfaces as BrowserConnectionLostException" in run {
+    "INV-017: Closed at send surfaces as BrowserConnectionLostException" in {
         Scope.run {
             mkBackendWithServer().map { (backend, serverEndpoint) =>
                 serverEndpoint.closeNow.andThen {
@@ -162,7 +162,7 @@ class JsonRpcPortInvariantsSpec extends Test:
         }
     }
 
-    "INV-017: JsonRpcError at send surfaces as BrowserProtocolErrorException" in run {
+    "INV-017: JsonRpcError at send surfaces as BrowserProtocolErrorException" in {
         val errorMethod = JsonRpcRoute.request[NavigateParams, NavigateResult](
             "Page.navigate"
         ) { (_, _) =>
@@ -182,7 +182,7 @@ class JsonRpcPortInvariantsSpec extends Test:
         }
     }
 
-    "INV-017: Timeout at send surfaces as BrowserConnectionLostException" in run {
+    "INV-017: Timeout at send surfaces as BrowserConnectionLostException" in {
         // Use a very short requestTimeout; server handles getVersion probe but NEVER replies to Page.navigate
         // Server uses Drop policy for unknown requests so no MethodNotFound reply is sent.
         val timeoutCfg = testLaunchCfg.copy(requestTimeout = 200.millis)
@@ -226,7 +226,7 @@ class JsonRpcPortInvariantsSpec extends Test:
 
     // --- INV-018: negative-id sentinel from dialogIdCounter disjoint from SequentialInt ---
 
-    "INV-018: dialogIdCounter starts at Int.MinValue and produces negative ids disjoint from SequentialInt" in run {
+    "INV-018: dialogIdCounter starts at Int.MinValue and produces negative ids disjoint from SequentialInt" in {
         AtomicRef.init[Maybe[Long]](Absent).map { dialogIdRef =>
             AtomicRef.init[Maybe[Long]](Absent).map { regularIdRef =>
                 val handleDialogMethod = JsonRpcRoute.request[HandleJavaScriptDialogParams, Unit](
@@ -249,14 +249,14 @@ class JsonRpcPortInvariantsSpec extends Test:
                         Abort.run[Closed](
                             backend.dialogQueue.put((true, "answer", Absent))
                         ).andThen {
-                            untilTrue(dialogIdRef.get.map(_.isDefined)).andThen {
+                            assertEventually(dialogIdRef.get.map(_.isDefined)).andThen {
                                 Abort.run[BrowserReadException](
                                     backend.send[NavigateParams, NavigateResult](
                                         "Page.navigate",
                                         NavigateParams("https://x.com")
                                     )
                                 ).andThen {
-                                    untilTrue(regularIdRef.get.map(_.isDefined)).andThen {
+                                    assertEventually(regularIdRef.get.map(_.isDefined)).andThen {
                                         dialogIdRef.get.map {
                                             case Present(dialogId) =>
                                                 assert(dialogId < 0)
