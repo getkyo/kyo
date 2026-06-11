@@ -12,19 +12,19 @@ class LandingAppTest extends WebsiteTest:
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
 
-    "all named sections present with data-section hooks and class=feat-grid (INV-012 consumer)" in {
+    "all named sections present with data-section hooks and structural class hooks (INV-012 consumer)" in {
         renderLanding.map { html =>
             assert(html.contains("data-section=\"hero\""))
-            assert(html.contains("data-section=\"problem\""))
-            assert(html.contains("data-section=\"promise\""))
-            assert(html.contains("data-section=\"outcomes\""))
-            assert(html.contains("data-section=\"built-for-ai\""))
+            assert(html.contains("data-section=\"gap\""))
+            assert(html.contains("data-section=\"ladder\""))
             assert(html.contains("data-section=\"one-foundation\""))
-            assert(html.contains("data-section=\"depth\""))
+            assert(html.contains("data-section=\"platforms\""))
+            assert(html.contains("data-section=\"social-proof\""))
+            assert(html.contains("data-section=\"why-exists\""))
             assert(html.contains("data-section=\"final-cta\""))
             assert(html.contains("data-section=\"footer\""))
-            assert(html.contains("class=\"feat-grid\""), "feat-grid class hook must be present (INV-012)")
-            assert(html.contains("class=\"wrap\""), "root must carry class=\"wrap\" (INV-012)")
+            assert(html.contains("class=\"feat-grid\""), "one-foundation feat-grid hook must be present (INV-012)")
+            assert(html.contains("class=\"wrap\""), "sections must carry the layout wrap (INV-012)")
         }
     }
 
@@ -38,61 +38,76 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
-    "hero carries the headline copy" in {
+    "hero carries the headline and the AI lead copy" in {
         renderLanding.map { html =>
-            assert(html.contains("Build with AI."))
-            assert(html.contains("Ship something that "))
+            // The headline is "Build something that <accent>holds</accent>.", so the run before the
+            // accent span and the accent word both appear in the rendered HTML.
+            assert(html.contains("Build something that "), s"hero headline: $html")
             assert(html.contains("holds"))
+            // The lead opens on the AI framing the whole landing is built around.
+            assert(html.contains("AI can write the code"), "hero lead must carry the AI framing")
         }
     }
 
-    "outcomes grid has 6 cards each with module attribution hook" in {
+    "one-foundation feat-grid names the five capability categories" in {
         renderLanding.map { html =>
-            val cellCount = countOccurrences(html, "class=\"cell\"")
-            assert(cellCount == 6, s"expected 6 outcome cells, got $cellCount")
-            assert(html.contains("data-module=\"kyo-prelude\""))
-            assert(html.contains("data-module=\"kyo-flow\""))
-            assert(html.contains("data-module=\"kyo-core\""))
-            assert(html.contains("data-module=\"kyo-scheduler\""))
+            assert(html.contains("Everything you need, on the same ground."), "foundation heading must render")
+            val cards = countOccurrences(html, "class=\"fcat\"")
+            assert(cards == 5, s"expected 5 capability cards, got $cards")
+            // Each card's <h4> title renders as >Title< (the li bullets read ">Web frontends<", etc.,
+            // so the exact >Web< form pins the title, not a bullet).
+            assert(html.contains(">Web<"))
+            assert(html.contains(">Concurrency<"))
+            assert(html.contains(">Reliability<"))
+            assert(html.contains(">Data<"))
+            assert(html.contains(">Operations<"))
         }
     }
 
-    "platforms band names all three platforms" in {
+    "platforms band names all four platforms" in {
         renderLanding.map { html =>
+            assert(html.contains("One codebase. Four platforms."), "platforms heading must render")
+            val cards = countOccurrences(html, "class=\"pf\"")
+            assert(cards == 4, s"expected 4 platform cards, got $cards")
             assert(html.contains("JVM"))
             assert(html.contains("Browser and Node"))
-            assert(html.contains("Native binary") || html.contains("Native"))
+            assert(html.contains("Native binary"))
+            assert(html.contains("WebAssembly"))
+            assert(html.contains("WasmGC"))
         }
     }
 
-    "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io (D2)" in {
+    "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io anchors (D2)" in {
         renderLanding.map { html =>
-            // The hero/depth/final-CTA/footer internal links now route locally to docsHome.
+            // The hero/final-CTA/footer internal links route locally to docsHome.
             assert(html.contains(s"""href="$home""""), s"in-body CTAs must target $home: $html")
-            // No internal getkyo.io anchor links remain in the body CTAs (the Community footer
-            // getkyo.io identity link stays external and is asserted separately below).
-            assert(!html.contains("getkyo.io#getting-started"), "footer Get started must be local, not getkyo.io#getting-started")
-            assert(!html.contains("getkyo.io#modules"), "footer Modules must be local, not getkyo.io#modules")
+            // No internal getkyo.io anchor links remain in the body.
+            assert(!html.contains("getkyo.io#getting-started"), "Get started must be local, not a getkyo.io anchor")
+            assert(!html.contains("getkyo.io#modules"), "Modules must be local, not a getkyo.io anchor")
         }
     }
 
-    "footer keeps the external Community getkyo.io identity link (D2)" in {
+    "footer carries the external GitHub and Discord identity links" in {
         renderLanding.map { html =>
-            // The Community column's getkyo.io link is an external identity link and stays external.
-            assert(html.contains("getkyo.io"), "footer Community getkyo.io identity link must remain")
+            // The footer's external identity is the GitHub repo and the Discord community (the prior
+            // getkyo.io identity link was dropped in the builder-first rewrite).
+            assert(html.contains("github.com/getkyo/kyo"), "footer must link the GitHub repo")
+            assert(html.contains("discord.gg"), "footer must link the Discord community")
         }
     }
 
-    "all content present without JS (INV-002 consumer)" in {
+    "key copy is present without JS (SSR, INV-002 consumer)" in {
         renderLanding.map { html =>
-            // kyo-ui HTML-encodes text: apostrophes become &#39;
-            assert(html.contains("Failures don&#39;t stay hidden"))
-            assert(html.contains("It can resume after a restart"))
-            assert(html.contains("Many things at once, kept orderly"))
-            assert(html.contains("Resources get released, even on failure"))
-            assert(html.contains("It sheds load before it breaks"))
-            assert(html.contains("Flaky calls don&#39;t take you down"))
-            assert(html.contains("algebraic effects"))
+            // Hero lead, the gap framing and its stat, the layered-safety ladder, the platforms heading,
+            // social proof, the manifesto pointer, and the closing line all render server-side (no client
+            // JS), so the page is meaningful with scripting disabled.
+            assert(html.contains("AI can write the code"))
+            assert(html.contains("you can depend on it"))
+            assert(html.contains("1 in 5"))
+            assert(html.contains("As you write. As it compiles. As it runs. When it fails."))
+            assert(html.contains("One codebase. Four platforms."))
+            assert(html.contains("Presented at Scalar"))
+            assert(html.contains("Read the manifesto"))
             assert(html.contains("Build something that holds"))
         }
     }
@@ -107,10 +122,10 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
-    "logo hook present with relative path (footer brand, not raw.githubusercontent URL)" in {
+    "footer logo uses the relative vector path (not a raw.githubusercontent URL)" in {
         renderLanding.map { html =>
             assert(html.contains("/kyo.svg"), "logo src must use the relative vector path /kyo.svg")
-            assert(!html.contains("raw.githubusercontent"), "logo must NOT use raw.githubusercontent URL")
+            assert(!html.contains("raw.githubusercontent"), "logo must NOT use a raw.githubusercontent URL")
         }
     }
 
