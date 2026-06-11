@@ -306,7 +306,8 @@ import scala.quoted.*
                             ${ MacroUtils.identityGetter[A, f] },
                             ${ MacroUtils.identitySetter[A, f] },
                             Seq.empty,
-                            $fieldsExpr.fields
+                            $fieldsExpr.fields,
+                            structure = kyo.Structure.Type.Open(kyo.Tag[Any])
                         )
                     }
                 end if
@@ -362,7 +363,7 @@ import scala.quoted.*
         }
 
         if cannotSerialize then
-            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields)
+            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields, optionFields)
             '{
                 kyo.Schema.create[A, F](
                     ${ MacroUtils.identityGetter[A, F] },
@@ -389,7 +390,7 @@ import scala.quoted.*
             val needsSubSchema: List[Boolean] =
                 computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
 
-            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields)
+            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields, optionFields)
 
             if isRecursive then
                 '{
@@ -746,6 +747,8 @@ import scala.quoted.*
                         ,
                         readFn = r =>
                             kyo.discard(r.objectStart()); r.objectEnd(); $singletonRef
+                        ,
+                        structure = kyo.Structure.Type.Product(${ Expr(child.name) }, kyo.Tag[Any], kyo.Chunk.empty, kyo.Chunk.empty)
                     ).asInstanceOf[Schema[Any]]
                 }
         else
@@ -869,7 +872,8 @@ import scala.quoted.*
                                     '{ _subSchemas },
                                     dummySelf
                                 )
-                            }
+                            },
+                        structure = kyo.Structure.Type.Open(kyo.Tag[Any])
                     ).asInstanceOf[Schema[Any]]
                 }
         end if
@@ -907,32 +911,168 @@ import scala.quoted.*
                 (self: Expr[Schema[A]]) => '{ $self.asInstanceOf[Schema[Any]] }
 
             // Container[RecursiveType] -- e.g. List[Value], Chunk[Value]
-            // Use *NoStructure helpers to avoid the `using frame: Frame` requirement on the public
-            // container givens. Frame.derive is blocked inside the kyo package, so we cannot satisfy
-            // the Frame parameter in a macro-emitted expression.
+            // Use Schema.init with inline structure to avoid the `using frame: Frame` requirement
+            // on the public container givens. Frame.derive is blocked inside the kyo package.
             case AppliedType(tycon, List(arg)) if arg.dealias =:= parentType =>
                 val containerSym = tycon.typeSymbol
                 if containerSym == TypeRepr.of[List].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.listSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[List[A]](
+                                writeFn = (value, writer) =>
+                                    writer.arrayStart(value.size)
+                                    value.foreach($self.asInstanceOf[kyo.Schema[A]].serializeWrite(_, writer))
+                                    writer.arrayEnd()
+                                ,
+                                readFn = reader =>
+                                    import scala.annotation.tailrec
+                                    discard(reader.arrayStart())
+                                    val builder = List.newBuilder[A]
+                                    @tailrec def loop(count: Int): Unit =
+                                        if reader.hasNextElement() then
+                                            reader.checkCollectionSize(count)
+                                            builder += $self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)
+                                            loop(count + 1)
+                                    loop(1)
+                                    reader.arrayEnd()
+                                    builder.result()
+                                ,
+                                structure = kyo.Structure.Type.Collection("List", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.optionSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[Option[A]](
+                                writeFn = (value, writer) =>
+                                    value match
+                                        case Some(v) => $self.asInstanceOf[kyo.Schema[A]].serializeWrite(v, writer)
+                                        case None =>
+                                            writer.nil()
+                                ,
+                                readFn = reader =>
+                                    if reader.isNil() then None
+                                    else Some($self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)),
+                                structure = kyo.Structure.Type.Optional("Option", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.maybeSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[kyo.Maybe[A]](
+                                writeFn = (value, writer) =>
+                                    value match
+                                        case kyo.Maybe.Present(v) => $self.asInstanceOf[kyo.Schema[A]].serializeWrite(v, writer)
+                                        case _ =>
+                                            writer.nil()
+                                ,
+                                readFn = reader =>
+                                    if reader.isNil() then kyo.Maybe.empty
+                                    else kyo.Maybe($self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)),
+                                structure = kyo.Structure.Type.Optional("Maybe", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else if containerSym == TypeRepr.of[kyo.Chunk[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.chunkSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[kyo.Chunk[A]](
+                                writeFn = (value, writer) =>
+                                    writer.arrayStart(value.size)
+                                    value.foreach($self.asInstanceOf[kyo.Schema[A]].serializeWrite(_, writer))
+                                    writer.arrayEnd()
+                                ,
+                                readFn = reader =>
+                                    import scala.annotation.tailrec
+                                    discard(reader.arrayStart())
+                                    val builder = kyo.Chunk.newBuilder[A]
+                                    @tailrec def loop(count: Int): Unit =
+                                        if reader.hasNextElement() then
+                                            reader.checkCollectionSize(count)
+                                            builder += $self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)
+                                            loop(count + 1)
+                                    loop(1)
+                                    reader.arrayEnd()
+                                    builder.result()
+                                ,
+                                structure =
+                                    kyo.Structure.Type.Collection("Chunk", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else if containerSym == TypeRepr.of[Vector[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.vectorSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[Vector[A]](
+                                writeFn = (value, writer) =>
+                                    writer.arrayStart(value.size)
+                                    value.foreach($self.asInstanceOf[kyo.Schema[A]].serializeWrite(_, writer))
+                                    writer.arrayEnd()
+                                ,
+                                readFn = reader =>
+                                    import scala.annotation.tailrec
+                                    discard(reader.arrayStart())
+                                    val builder = Vector.newBuilder[A]
+                                    @tailrec def loop(count: Int): Unit =
+                                        if reader.hasNextElement() then
+                                            reader.checkCollectionSize(count)
+                                            builder += $self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)
+                                            loop(count + 1)
+                                    loop(1)
+                                    reader.arrayEnd()
+                                    builder.result()
+                                ,
+                                structure =
+                                    kyo.Structure.Type.Collection("Vector", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else if containerSym == TypeRepr.of[Set[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.setSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[Set[A]](
+                                writeFn = (value, writer) =>
+                                    writer.arrayStart(value.size)
+                                    value.foreach($self.asInstanceOf[kyo.Schema[A]].serializeWrite(_, writer))
+                                    writer.arrayEnd()
+                                ,
+                                readFn = reader =>
+                                    import scala.annotation.tailrec
+                                    discard(reader.arrayStart())
+                                    val builder = Set.newBuilder[A]
+                                    @tailrec def loop(count: Int): Unit =
+                                        if reader.hasNextElement() then
+                                            reader.checkCollectionSize(count)
+                                            builder += $self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)
+                                            loop(count + 1)
+                                    loop(1)
+                                    reader.arrayEnd()
+                                    builder.result()
+                                ,
+                                structure = kyo.Structure.Type.Collection("Set", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else if containerSym == TypeRepr.of[Seq[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.seqSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
+                        '{
+                            kyo.Schema.init[Seq[A]](
+                                writeFn = (value, writer) =>
+                                    writer.arrayStart(value.size)
+                                    value.foreach($self.asInstanceOf[kyo.Schema[A]].serializeWrite(_, writer))
+                                    writer.arrayEnd()
+                                ,
+                                readFn = reader =>
+                                    import scala.annotation.tailrec
+                                    discard(reader.arrayStart())
+                                    val builder = List.newBuilder[A]
+                                    @tailrec def loop(): Unit =
+                                        if reader.hasNextElement() then
+                                            builder += $self.asInstanceOf[kyo.Schema[A]].serializeRead(reader)
+                                            loop()
+                                    loop()
+                                    reader.arrayEnd()
+                                    builder.result()
+                                ,
+                                structure = kyo.Structure.Type.Collection("Seq", kyo.Tag[Any], $self.asInstanceOf[kyo.Schema[A]].structure)
+                            ).asInstanceOf[Schema[Any]]
+                        }
                 else
                     report.errorAndAbort(
                         s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
@@ -941,7 +1081,7 @@ import scala.quoted.*
                 end if
 
             // Container[Tuple2[X, RecursiveType]] or Option[Map[String, RecursiveType]] etc.
-            // Use *NoStructure helpers (same reason as Category 1: Frame.derive blocked in kyo package).
+            // Use Schema.init with inline structure (same reason as Category 1: Frame.derive blocked in kyo package).
             case AppliedType(tycon, List(inner)) if containsRecursiveType(inner, parentType) =>
                 val containerSym = tycon.typeSymbol
                 // Build the inner schema resolver recursively, then wrap in the container
@@ -952,56 +1092,170 @@ import scala.quoted.*
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.chunkSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[kyo.Chunk[innerT]](
+                                        writeFn = (value, writer) =>
+                                            writer.arrayStart(value.size)
+                                            value.foreach(inner.serializeWrite(_, writer))
+                                            writer.arrayEnd()
+                                        ,
+                                        readFn = reader =>
+                                            import scala.annotation.tailrec
+                                            discard(reader.arrayStart())
+                                            val builder = kyo.Chunk.newBuilder[innerT]
+                                            @tailrec def loop(count: Int): Unit =
+                                                if reader.hasNextElement() then
+                                                    reader.checkCollectionSize(count)
+                                                    builder += inner.serializeRead(reader)
+                                                    loop(count + 1)
+                                            loop(1)
+                                            reader.arrayEnd()
+                                            builder.result()
+                                        ,
+                                        structure = kyo.Structure.Type.Collection("Chunk", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[List].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.listSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[List[innerT]](
+                                        writeFn = (value, writer) =>
+                                            writer.arrayStart(value.size)
+                                            value.foreach(inner.serializeWrite(_, writer))
+                                            writer.arrayEnd()
+                                        ,
+                                        readFn = reader =>
+                                            import scala.annotation.tailrec
+                                            discard(reader.arrayStart())
+                                            val builder = List.newBuilder[innerT]
+                                            @tailrec def loop(count: Int): Unit =
+                                                if reader.hasNextElement() then
+                                                    reader.checkCollectionSize(count)
+                                                    builder += inner.serializeRead(reader)
+                                                    loop(count + 1)
+                                            loop(1)
+                                            reader.arrayEnd()
+                                            builder.result()
+                                        ,
+                                        structure = kyo.Structure.Type.Collection("List", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[Vector[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.vectorSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[Vector[innerT]](
+                                        writeFn = (value, writer) =>
+                                            writer.arrayStart(value.size)
+                                            value.foreach(inner.serializeWrite(_, writer))
+                                            writer.arrayEnd()
+                                        ,
+                                        readFn = reader =>
+                                            import scala.annotation.tailrec
+                                            discard(reader.arrayStart())
+                                            val builder = Vector.newBuilder[innerT]
+                                            @tailrec def loop(count: Int): Unit =
+                                                if reader.hasNextElement() then
+                                                    reader.checkCollectionSize(count)
+                                                    builder += inner.serializeRead(reader)
+                                                    loop(count + 1)
+                                            loop(1)
+                                            reader.arrayEnd()
+                                            builder.result()
+                                        ,
+                                        structure = kyo.Structure.Type.Collection("Vector", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[Set[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.setSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[Set[innerT]](
+                                        writeFn = (value, writer) =>
+                                            writer.arrayStart(value.size)
+                                            value.foreach(inner.serializeWrite(_, writer))
+                                            writer.arrayEnd()
+                                        ,
+                                        readFn = reader =>
+                                            import scala.annotation.tailrec
+                                            discard(reader.arrayStart())
+                                            val builder = Set.newBuilder[innerT]
+                                            @tailrec def loop(count: Int): Unit =
+                                                if reader.hasNextElement() then
+                                                    reader.checkCollectionSize(count)
+                                                    builder += inner.serializeRead(reader)
+                                                    loop(count + 1)
+                                            loop(1)
+                                            reader.arrayEnd()
+                                            builder.result()
+                                        ,
+                                        structure = kyo.Structure.Type.Collection("Set", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[Seq[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.seqSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[Seq[innerT]](
+                                        writeFn = (value, writer) =>
+                                            writer.arrayStart(value.size)
+                                            value.foreach(inner.serializeWrite(_, writer))
+                                            writer.arrayEnd()
+                                        ,
+                                        readFn = reader =>
+                                            import scala.annotation.tailrec
+                                            discard(reader.arrayStart())
+                                            val builder = List.newBuilder[innerT]
+                                            @tailrec def loop(): Unit =
+                                                if reader.hasNextElement() then
+                                                    builder += inner.serializeRead(reader)
+                                                    loop()
+                                            loop()
+                                            reader.arrayEnd()
+                                            builder.result()
+                                        ,
+                                        structure = kyo.Structure.Type.Collection("Seq", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.optionSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[Option[innerT]](
+                                        writeFn = (value, writer) =>
+                                            value match
+                                                case Some(v) => inner.serializeWrite(v, writer)
+                                                case None =>
+                                                    writer.nil()
+                                        ,
+                                        readFn = reader =>
+                                            if reader.isNil() then None
+                                            else Some(inner.serializeRead(reader)),
+                                        structure = kyo.Structure.Type.Optional("Option", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.maybeSchemaNoStructure[innerT](
-                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    val inner = $innerSchema.asInstanceOf[Schema[innerT]]
+                                    kyo.Schema.init[kyo.Maybe[innerT]](
+                                        writeFn = (value, writer) =>
+                                            value match
+                                                case kyo.Maybe.Present(v) => inner.serializeWrite(v, writer)
+                                                case _ =>
+                                                    writer.nil()
+                                        ,
+                                        readFn = reader =>
+                                            if reader.isNil() then kyo.Maybe.empty
+                                            else kyo.Maybe(inner.serializeRead(reader)),
+                                        structure = kyo.Structure.Type.Optional("Maybe", kyo.Tag[Any], inner.structure)
                                     ).asInstanceOf[Schema[Any]]
                                 }
                         else
@@ -1023,7 +1277,41 @@ import scala.quoted.*
                         (self: Expr[Schema[A]]) =>
                             val valueSchema = valueResolver(self)
                             '{
-                                kyo.Schema.stringMapSchemaNoStructure[vt]($valueSchema.asInstanceOf[Schema[vt]]).asInstanceOf[Schema[Any]]
+                                val inner = $valueSchema.asInstanceOf[Schema[vt]]
+                                import scala.annotation.tailrec
+                                kyo.Schema.init[Map[String, vt]](
+                                    writeFn = (value, writer) =>
+                                        writer.mapStart(value.size)
+                                        value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
+                                            writer.field(k, idx)
+                                            inner.serializeWrite(v, writer)
+                                        }
+                                        writer.mapEnd()
+                                    ,
+                                    readFn = reader =>
+                                        discard(reader.mapStart())
+                                        val builder = Map.newBuilder[String, vt]
+                                        @tailrec def loop(count: Int): Unit =
+                                            if reader.hasNextEntry() then
+                                                reader.checkCollectionSize(count)
+                                                val k = reader.field()
+                                                val v = inner.serializeRead(reader)
+                                                builder += (k -> v)
+                                                loop(count + 1)
+                                        loop(1)
+                                        reader.mapEnd()
+                                        builder.result()
+                                    ,
+                                    structure = kyo.Structure.Type.Mapping(
+                                        "Map",
+                                        kyo.Tag[Any],
+                                        kyo.Structure.Type.Primitive(
+                                            kyo.Structure.PrimitiveKind.String,
+                                            kyo.Tag[String].asInstanceOf[kyo.Tag[Any]]
+                                        ),
+                                        inner.structure
+                                    )
+                                ).asInstanceOf[Schema[Any]]
                             }
                 end match
 
@@ -1547,13 +1835,19 @@ import scala.quoted.*
       * `Expr.summon[Schema[Container[X]]]` cannot satisfy the Frame requirement because Frame.derive
       * is blocked inside the kyo package and no ambient Frame exists at compile time.
       *
-      * This helper builds schemas using the `*NoStructure` helpers (which take a plain `inner: Schema[A]`
-      * parameter and call `Schema.init`, the no-structure variant). The resulting schemas are used
-      * only for field serialization in the derived-schema path; their `structure` returns the Phase 02
-      * `Open` default like other derived schemas until Phase 08 populates them via the macro.
+      * This helper builds container schemas using Schema.init with explicit structure arguments.
+      * The resulting schemas are used only for field serialization in the derived-schema path;
+      * their structure reflects the container type (Collection/Optional/Mapping) with the inner
+      * schema's structure as the element type.
       *
       * Returns `Some(expr)` if the type is a recognized single-arg container with a resolvable inner
       * Schema; `None` otherwise.
+      */
+    /** Builds a Schema[Any] for a container type (List, Vector, Set, Seq, Chunk, Maybe, Option) by
+      * constructing the schema inline via Schema.init with an explicit structure parameter.
+      * This avoids the `using frame: Frame` requirement on the public container givens, which cannot
+      * be satisfied from inside a macro expansion in the kyo package.
+      * Returns None if the field type is not a supported container or the inner type has no Schema.
       */
     private def buildContainerSchemaOpt[A](using
         Quotes
@@ -1586,19 +1880,161 @@ import scala.quoted.*
                                 )
                             innerSchemaOpt.map { innerSchema =>
                                 if sym == listSym then
-                                    '{ kyo.Schema.listSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        import scala.annotation.tailrec
+                                        kyo.Schema.init[List[inner]](
+                                            writeFn = (value, writer) =>
+                                                writer.arrayStart(value.size)
+                                                value.foreach(is.serializeWrite(_, writer))
+                                                writer.arrayEnd()
+                                            ,
+                                            readFn = reader =>
+                                                discard(reader.arrayStart())
+                                                val builder = List.newBuilder[inner]
+                                                @tailrec def loop(count: Int): Unit =
+                                                    if reader.hasNextElement() then
+                                                        reader.checkCollectionSize(count)
+                                                        builder += is.serializeRead(reader)
+                                                        loop(count + 1)
+                                                loop(1)
+                                                reader.arrayEnd()
+                                                builder.result()
+                                            ,
+                                            structure = kyo.Structure.Type.Collection("List", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 else if sym == vectorSym then
-                                    '{ kyo.Schema.vectorSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        import scala.annotation.tailrec
+                                        kyo.Schema.init[Vector[inner]](
+                                            writeFn = (value, writer) =>
+                                                writer.arrayStart(value.size)
+                                                value.foreach(is.serializeWrite(_, writer))
+                                                writer.arrayEnd()
+                                            ,
+                                            readFn = reader =>
+                                                discard(reader.arrayStart())
+                                                val builder = Vector.newBuilder[inner]
+                                                @tailrec def loop(count: Int): Unit =
+                                                    if reader.hasNextElement() then
+                                                        reader.checkCollectionSize(count)
+                                                        builder += is.serializeRead(reader)
+                                                        loop(count + 1)
+                                                loop(1)
+                                                reader.arrayEnd()
+                                                builder.result()
+                                            ,
+                                            structure = kyo.Structure.Type.Collection("Vector", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 else if sym == setSym then
-                                    '{ kyo.Schema.setSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        import scala.annotation.tailrec
+                                        kyo.Schema.init[Set[inner]](
+                                            writeFn = (value, writer) =>
+                                                writer.arrayStart(value.size)
+                                                value.foreach(is.serializeWrite(_, writer))
+                                                writer.arrayEnd()
+                                            ,
+                                            readFn = reader =>
+                                                discard(reader.arrayStart())
+                                                val builder = Set.newBuilder[inner]
+                                                @tailrec def loop(count: Int): Unit =
+                                                    if reader.hasNextElement() then
+                                                        reader.checkCollectionSize(count)
+                                                        builder += is.serializeRead(reader)
+                                                        loop(count + 1)
+                                                loop(1)
+                                                reader.arrayEnd()
+                                                builder.result()
+                                            ,
+                                            structure = kyo.Structure.Type.Collection("Set", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 else if sym == seqSym then
-                                    '{ kyo.Schema.seqSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        import scala.annotation.tailrec
+                                        kyo.Schema.init[Seq[inner]](
+                                            writeFn = (value, writer) =>
+                                                writer.arrayStart(value.size)
+                                                value.foreach(is.serializeWrite(_, writer))
+                                                writer.arrayEnd()
+                                            ,
+                                            readFn = reader =>
+                                                discard(reader.arrayStart())
+                                                val builder = List.newBuilder[inner]
+                                                @tailrec def loop(): Unit =
+                                                    if reader.hasNextElement() then
+                                                        builder += is.serializeRead(reader)
+                                                        loop()
+                                                loop()
+                                                reader.arrayEnd()
+                                                builder.result()
+                                            ,
+                                            structure = kyo.Structure.Type.Collection("Seq", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 else if sym == chunkSym then
-                                    '{ kyo.Schema.chunkSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        import scala.annotation.tailrec
+                                        kyo.Schema.init[kyo.Chunk[inner]](
+                                            writeFn = (value, writer) =>
+                                                writer.arrayStart(value.size)
+                                                value.foreach(is.serializeWrite(_, writer))
+                                                writer.arrayEnd()
+                                            ,
+                                            readFn = reader =>
+                                                discard(reader.arrayStart())
+                                                val builder = kyo.Chunk.newBuilder[inner]
+                                                @tailrec def loop(count: Int): Unit =
+                                                    if reader.hasNextElement() then
+                                                        reader.checkCollectionSize(count)
+                                                        builder += is.serializeRead(reader)
+                                                        loop(count + 1)
+                                                loop(1)
+                                                reader.arrayEnd()
+                                                builder.result()
+                                            ,
+                                            structure = kyo.Structure.Type.Collection("Chunk", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 else if sym == maybeSym then
-                                    '{ kyo.Schema.maybeSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        kyo.Schema.init[kyo.Maybe[inner]](
+                                            writeFn = (value, writer) =>
+                                                value match
+                                                    case kyo.Maybe.Present(v) => is.serializeWrite(v, writer)
+                                                    case _ =>
+                                                        writer.nil()
+                                            ,
+                                            readFn = reader =>
+                                                if reader.isNil() then kyo.Maybe.empty
+                                                else kyo.Maybe(is.serializeRead(reader)),
+                                            structure = kyo.Structure.Type.Optional("Maybe", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 else
-                                    '{ kyo.Schema.optionSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                    '{
+                                        val is = $innerSchema
+                                        kyo.Schema.init[Option[inner]](
+                                            writeFn = (value, writer) =>
+                                                value match
+                                                    case Some(v) => is.serializeWrite(v, writer)
+                                                    case None =>
+                                                        writer.nil()
+                                            ,
+                                            readFn = reader =>
+                                                if reader.isNil() then None
+                                                else Some(is.serializeRead(reader)),
+                                            structure = kyo.Structure.Type.Optional("Option", kyo.Tag[Any], is.structure)
+                                        ).asInstanceOf[Schema[Any]]
+                                    }
                                 end if
                             }
                 else None
@@ -1657,14 +2093,64 @@ import scala.quoted.*
             case None          => '{ Tag[Any] }
     end summonStructureTag
 
-    /** Summons `Schema[ft].structure` for a field type.
+    /** Walks a type to detect a transitive cycle back to `target`.
       *
-      * When the field type equals the parent type being derived (recursive field), emits `Structure.Type.Open(Tag[ft])` as a placeholder
-      * to avoid infinite recursion. This matches the StructureMacro `seen: Set[String]` cycle-guard pattern.
+      * Returns true if `tpe` is `target`, or if `tpe`'s case-class field graph (including via containers/maps/tuples
+      * and sealed trait children) transitively contains `target`. Used as a gate before deciding whether to summon
+      * `Schema[ft].structure` (no cycle, preserves INV-6 reference equality) or to inline the structure via
+      * `StructureMacro.deriveType` (cycle, breaks the runtime loop with an empty Product/Sum placeholder).
       *
-      * When no `given Schema[ft]` is available in scope (e.g. types not yet compiled in the same compilation unit, or types that are only
-      * reachable via `inline given derived` which cannot be expanded inside a macro), emits `Structure.Type.Open(Tag[ft])` as a placeholder.
-      * The codec path enforces missing-Schema errors independently (R-035 is satisfied there).
+      * `seen` accumulates the fully-qualified names of types already visited on the current walk to prevent
+      * an infinite loop in the cycle-detection itself.
+      */
+    private def cyclesBackTo(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        target: quotes.reflect.TypeRepr,
+        seen: Set[String]
+    ): Boolean =
+        import quotes.reflect.*
+        val dealiased = tpe.dealias
+        if dealiased =:= target then true
+        else
+            val sym      = dealiased.typeSymbol
+            val fullName = sym.fullName
+            val argsCycle = dealiased match
+                case AppliedType(_, args) => args.exists(a => cyclesBackTo(a, target, seen))
+                case _                    => false
+            if argsCycle then true
+            else if seen.contains(fullName) then false
+            else if sym.isClassDef && (sym.flags.is(Flags.Case) || sym.flags.is(Flags.Sealed)) then
+                val newSeen = seen + fullName
+                if sym.flags.is(Flags.Sealed) then
+                    sym.children.exists { child =>
+                        val childType =
+                            if child.isType then child.typeRef
+                            else if child.flags.is(Flags.Module) then child.termRef.widen
+                            else child.typeRef
+                        cyclesBackTo(childType, target, newSeen)
+                    }
+                else
+                    sym.caseFields.exists { field =>
+                        val fieldType = dealiased.memberType(field)
+                        cyclesBackTo(fieldType, target, newSeen)
+                    }
+                end if
+            else false
+            end if
+        end if
+    end cyclesBackTo
+
+    /** Builds a `Structure.Type` expression for a field type.
+      *
+      * For non-recursive types: emits `${Schema[ft]}.structure` (the runtime value). This preserves
+      * reference equality (INV-6): `Schema[Parent].structure.fields(i).fieldType eq Schema[FieldType].structure`.
+      *
+      * For recursive types (direct or mutual cycles back to `parentType`): emits a compile-time inlined
+      * `Structure.Type` via `StructureMacro.deriveType`. The inline tree contains empty Product/Sum placeholders
+      * at the recursion point, breaking the runtime cycle. INV-6 cannot hold inside a cycle (the inline tree
+      * is a fresh allocation), but the cycle would otherwise infinite-recurse.
       */
     private def summonFieldStructure[A: Type](using
         Quotes
@@ -1674,22 +2160,20 @@ import scala.quoted.*
         typeName: String
     ): Expr[Structure.Type] =
         import quotes.reflect.*
-        // Cycle guard: recursive field type gets an Open placeholder.
-        if ft.dealias =:= parentType then
-            ft.dealias.asType match
-                case '[t] =>
-                    val tagExpr = summonStructureTag[t]
-                    '{ Structure.Type.Open($tagExpr) }
+        val parentFullName = parentType.typeSymbol.fullName
+        val seen           = if parentFullName.nonEmpty then Set(parentFullName) else Set.empty[String]
+        if cyclesBackTo(ft, parentType, seen) then
+            // Cycle: walk the type tree inline at compile time with cycle protection.
+            StructureMacro.deriveType(ft, seen)
         else
+            // Non-cyclic: use Schema[ft].structure (preserves reference equality per INV-6).
             ft.asType match
                 case '[t] =>
                     Expr.summon[Schema[t]] match
                         case Some(schemaExpr) => '{ ${ schemaExpr }.structure }
                         case None             =>
-                            // Soft fallback: emit Open when no explicit Schema is in scope.
-                            // This handles types derived via `inline given derived` (same-file circular
-                            // derivation) and types not yet compiled. The codec path independently
-                            // enforces the missing-Schema compile error (R-035).
+                            // Soft fallback: emit Open when no explicit Schema is in scope (handles
+                            // types derived via `inline given derived` that can't be expanded in a macro).
                             val tagExpr = summonStructureTag[t]
                             '{ Structure.Type.Open($tagExpr) }
         end if
@@ -1699,6 +2183,8 @@ import scala.quoted.*
       *
       * Each field's `fieldType` is obtained by summoning `Schema[FieldType].structure`. Recursive fields (where the field type equals the
       * parent type) receive `Structure.Type.Open(Tag[A])` as a cycle-safe placeholder.
+      * Mirrors StructureMacro.scala field handling: captures default values via MacroUtils.getDefault
+      * and marks Option/Maybe fields as optional.
       */
     private def buildCaseClassStructureExpr[A: Type](using
         Quotes
@@ -1706,7 +2192,8 @@ import scala.quoted.*
         tpe: quotes.reflect.TypeRepr,
         sym: quotes.reflect.Symbol,
         typeName: String,
-        maybeFields: Set[Int]
+        maybeFields: Set[Int],
+        optionFields: Set[Int]
     ): Expr[Structure.Type] =
         import quotes.reflect.*
         val fields      = sym.caseFields
@@ -1722,8 +2209,21 @@ import scala.quoted.*
                         case _                           => rawFieldType
                 else rawFieldType
             val fieldStructureExpr = summonFieldStructure[A](resolvedType, tpe, typeName)
-            val isOptional         = maybeFields.contains(idx)
-            '{ Structure.Field(${ Expr(field.name) }, $fieldStructureExpr, kyo.Maybe.empty, kyo.Maybe.empty, ${ Expr(isOptional) }) }
+            // Mark both Maybe and Option fields as optional (matches StructureMacro.isOptionalType).
+            val isOptional = maybeFields.contains(idx) || optionFields.contains(idx)
+            // Capture default values for fields that have them (matches StructureMacro default handling).
+            val defaultExpr: Expr[kyo.Maybe[Structure.Value]] = MacroUtils.getDefault(tpe, idx) match
+                case Some(defVal) =>
+                    rawFieldType.asType match
+                        case '[t] =>
+                            Expr.summon[kyo.Tag[t]] match
+                                case Some(tagExpr) =>
+                                    '{ kyo.Maybe(Structure.Value.primitive[t]($defVal.asInstanceOf[t])(using $tagExpr)) }
+                                case None =>
+                                    '{ kyo.Maybe.empty[Structure.Value] }
+                case None =>
+                    '{ kyo.Maybe.empty[Structure.Value] }
+            '{ Structure.Field(${ Expr(field.name) }, $fieldStructureExpr, kyo.Maybe.empty, $defaultExpr, ${ Expr(isOptional) }) }
         }
 
         val typeParamExprs: List[Expr[Structure.Type]] = typeParamsT.map { tp =>

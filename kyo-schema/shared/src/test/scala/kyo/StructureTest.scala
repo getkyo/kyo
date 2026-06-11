@@ -320,9 +320,12 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(paths == Chunk(Chunk("lead", "name"), Chunk("lead", "age"), Chunk("size")))
         }
 
-        "Structure.of[A] matches Schema[A].structureViaMacro" in {
+        "Structure.of[A] delegates to Schema[A].structure" in {
+            // Structure.of[MTPerson] calls summon[Schema[MTPerson]].structure.
+            // MTPerson uses auto-derivation (inline given), so two summons yield
+            // different Schema instances; use compatible (structural equality) not eq.
             val fromDirect = Structure.of[MTPerson]
-            val fromSchema = Schema[MTPerson].structureViaMacro
+            val fromSchema = Schema[MTPerson].structure
 
             assert(Structure.Type.compatible(fromDirect, fromSchema))
 
@@ -1485,6 +1488,21 @@ class StructureTest extends kyo.test.Test[Any]:
             val encoded              = Json.encode[Structure.Type](coll)
             val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
             assert(Structure.Type.compatible(coll, decoded))
+        }
+
+    }
+
+    "Structure.of reads Schema.structure (T2)" - {
+
+        "Int: Structure.of[Int] is same instance as Schema[Int].structure" in {
+            // intSchema is a singleton given so structure is the same lazy val instance
+            assert(Structure.of[Int] eq summon[Schema[Int]].structure)
+        }
+
+        "List[String]: Structure.of[List[String]] returns compatible structure to Schema[List[String]].structure" in {
+            // listSchema is a polymorphic given so two summons may yield different instances;
+            // use compatible (structural equality) rather than reference equality
+            assert(Structure.Type.compatible(Structure.of[List[String]], summon[Schema[List[String]]].structure))
         }
 
     }

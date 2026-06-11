@@ -6223,21 +6223,21 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     "structure default" - {
-        "Schema[String].structureViaMacro equals Structure.of[String]" in {
+        "Schema[String].structure equals Structure.of[String]" in {
             val s = summon[Schema[String]]
-            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[String]))
+            assert(Structure.Type.compatible(s.structure, Structure.of[String]))
         }
-        "Schema[Int].structureViaMacro equals Structure.of[Int]" in {
+        "Schema[Int].structure equals Structure.of[Int]" in {
             val s = summon[Schema[Int]]
-            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[Int]))
+            assert(Structure.Type.compatible(s.structure, Structure.of[Int]))
         }
-        "Schema[List[String]].structureViaMacro equals Structure.of[List[String]]" in {
+        "Schema[List[String]].structure equals Structure.of[List[String]]" in {
             val s = summon[Schema[List[String]]]
-            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[List[String]]))
+            assert(Structure.Type.compatible(s.structure, Structure.of[List[String]]))
         }
-        "Schema[Map[String, Int]].structureViaMacro equals Structure.of[Map[String, Int]]" in {
+        "Schema[Map[String, Int]].structure equals Structure.of[Map[String, Int]]" in {
             val s = summon[Schema[Map[String, Int]]]
-            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[Map[String, Int]]))
+            assert(Structure.Type.compatible(s.structure, Structure.of[Map[String, Int]]))
         }
     }
 
@@ -7141,6 +7141,30 @@ class SchemaTest extends kyo.test.Test[Any]:
         "Schema[P08Person].structure eq Schema[P08Person].structure (T6 INV-1)" in {
             val s = summon[Schema[P08Person]]
             assert(s.structure eq s.structure)
+        }
+
+    }
+
+    "Schema.structure abstract gate (T1 INV-9)" - {
+
+        "fails to compile when structure is missing from Schema.init" in {
+            typeCheckFailure("""
+                Schema.init[String](
+                    writeFn = (v, w) => w.string(v),
+                    readFn = _.string()
+                )
+            """)("structure")
+        }
+
+    }
+
+    "localDateTimeSchema structure tag regression (T5)" - {
+
+        "localDateTimeSchema has Primitive(String, _) structure" in {
+            val s = summon[Schema[java.time.LocalDateTime]]
+            assert(s.structure.isInstanceOf[Structure.Type.Primitive])
+            val p = s.structure.asInstanceOf[Structure.Type.Primitive]
+            assert(p.kind == Structure.PrimitiveKind.String)
         }
 
     }

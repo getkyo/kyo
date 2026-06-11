@@ -285,22 +285,67 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
 
         "ProtoSchema Map[Option[K], V] field throws IllegalArgumentException" in {
-            case class MapWithOptionKey(value: Map[Option[String], Int]) derives CanEqual
+            // Construct the Structure directly: Map with Optional key has no Schema instance
+            // (only Map[String,V] and Dict[K,V] have Schema). Test directly via fromStructure.
+            val optionalKeyMapping = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Optional(
+                    "Option",
+                    Tag[Any],
+                    Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+                ),
+                Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            )
+            val productWithOptKey = Structure.Type.Product(
+                "MapWithOptionKey",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("value", optionalKeyMapping, Maybe.empty, Maybe.empty, false))
+            )
             interceptThrown[IllegalArgumentException] {
-                ProtoSchema.fromStructure(Structure.of[MapWithOptionKey])
+                ProtoSchema.fromStructure(productWithOptKey)
             }
         }
 
         "ProtoSchema Map[List[K], V] field throws IllegalArgumentException" in {
-            case class MapWithListKey(value: Map[List[String], Int]) derives CanEqual
+            // Construct the Structure directly: Map with Collection key has no Schema instance
+            val collectionKeyMapping = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Collection(
+                    "List",
+                    Tag[Any],
+                    Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+                ),
+                Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            )
+            val productWithListKey = Structure.Type.Product(
+                "MapWithListKey",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("value", collectionKeyMapping, Maybe.empty, Maybe.empty, false))
+            )
             interceptThrown[IllegalArgumentException] {
-                ProtoSchema.fromStructure(Structure.of[MapWithListKey])
+                ProtoSchema.fromStructure(productWithListKey)
             }
         }
 
         "ProtoSchema Map[K, V] with non-default key types emits map<K, V>" in {
-            case class MapIntToString(values: Map[Long, String]) derives CanEqual
-            val schema = ProtoSchema.fromStructure(Structure.of[MapIntToString])
+            // Construct the Structure directly: Map[Long, String] has no Schema (only Map[String,V] does)
+            val longKeyMapping = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]]),
+                Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            )
+            val productWithLongKey = Structure.Type.Product(
+                "MapIntToString",
+                Tag[Any],
+                Chunk.empty,
+                Chunk(Structure.Field("values", longKeyMapping, Maybe.empty, Maybe.empty, false))
+            )
+            val schema = ProtoSchema.fromStructure(productWithLongKey)
             assert(schema.contains("map<sint64, string>"))
             assert(schema.contains("values"))
         }
@@ -663,6 +708,17 @@ class ProtobufTest extends kyo.test.Test[Any]:
             val open = Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
             val ex   = intercept[SchemaNotSerializableException](Protobuf.ProtoSchema.fromStructure(open))
             assert(!ex.isInstanceOf[IllegalArgumentException])
+        }
+
+    }
+
+    "Protobuf.protoSchema requires Schema in scope (T4 R-028)" - {
+
+        "fails to compile for a type with no Schema" in {
+            typeCheckFailure("""
+                class NoSchemaType2
+                Protobuf.protoSchema[NoSchemaType2]
+            """)("NoSchemaType2")
         }
 
     }

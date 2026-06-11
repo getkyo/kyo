@@ -59,7 +59,7 @@ object Protobuf:
       * @return
       *   a proto3 schema string ready for use as a `.proto` file
       */
-    inline def protoSchema[A]: String = ProtoSchema.from[A]
+    inline def protoSchema[A](using s: Schema[A]): String = ProtoSchema.from[A]
 
     /** Generates Protocol Buffers schema (.proto file content) from Scala types.
       *
@@ -74,10 +74,10 @@ object Protobuf:
       */
     object ProtoSchema:
         /** Generates a `.proto` schema string for type `A`. */
-        inline def from[A]: String = fromStructure(Structure.of[A])
+        inline def from[A](using s: Schema[A]): String = fromStructure(s.structure)
 
         /** Derives a proto schema string from a Structure.Type at runtime. */
-        def fromStructure(rt: Structure.Type): String =
+        private[kyo] def fromStructure(rt: Structure.Type): String =
 
             /** Accumulated state threaded through collection. */
             case class State(seen: Set[String], messages: List[String])

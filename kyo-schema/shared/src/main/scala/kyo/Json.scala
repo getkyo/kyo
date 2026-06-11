@@ -90,30 +90,18 @@ object Json:
         Result.catching[DecodeException](schema.readFrom(reader))
     end decodeBytes
 
-    /** Generates a JSON Schema for type A at compile time.
-      *
-      * This overload does not require a Schema[A] in scope and does not incorporate runtime metadata such as validation constraints,
-      * descriptions, or examples. Use the `Schema[A]`-enriched overload when those are needed.
-      *
-      * @tparam A
-      *   the type to describe
-      * @return
-      *   a JsonSchema derived purely from the compile-time structure of A
-      */
-    inline def jsonSchema[A]: JsonSchema = JsonSchema.from[A]
-
     /** Generates a JSON Schema for type A, enriched with runtime Schema metadata.
       *
-      * When a `Schema[A]` is in scope, the returned schema incorporates documentation, field descriptions, deprecation markers, examples,
+      * Requires a `Schema[A]` in scope. The returned schema incorporates documentation, field descriptions, deprecation markers, examples,
       * validation constraints, dropped fields, and renamed fields registered on the Schema.
       *
       * @param schema
-      *   the Schema[A] providing runtime metadata
+      *   the Schema[A] providing runtime metadata and structure
       * @return
-      *   a JsonSchema enriched with all metadata from the Schema
+      *   a JsonSchema derived from the Schema's structure and enriched with all metadata
       */
     inline def jsonSchema[A](using schema: Schema[A]): JsonSchema =
-        val base = JsonSchema.from[A]
+        val base = JsonSchema.fromStructure(schema.structure)
         base match
             case obj: JsonSchema.Obj =>
                 Schema.enrichObj(
@@ -555,10 +543,10 @@ object Json:
           *   - List, Vector, Set, Seq, Chunk -> Arr
           *   - Option[X] -> Nullable
           */
-        inline def from[A]: JsonSchema = fromStructure(Structure.of[A])
+        inline def from[A](using s: Schema[A]): JsonSchema = fromStructure(s.structure)
 
         /** Derives a JsonSchema from a Structure.Type at runtime. */
-        def fromStructure(rt: Structure.Type): JsonSchema =
+        private[kyo] def fromStructure(rt: Structure.Type): JsonSchema =
             fromStructure(rt, Set.empty)
 
         private def fromStructure(rt: Structure.Type, seen: Set[String]): JsonSchema =

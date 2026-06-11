@@ -29,7 +29,7 @@ object Structure:
       * @return
       *   the compile-time structural type descriptor for A
       */
-    inline def of[A]: Structure.Type = ${ kyo.internal.StructureMacro.deriveImpl[A] }
+    inline def of[A](using s: Schema[A]): Structure.Type = s.structure
 
     /** Converts a typed value to its untyped Structure.Value representation.
       *
@@ -68,7 +68,7 @@ object Structure:
       *   a TypedValue carrying the compile-time type descriptor and the runtime value tree
       */
     inline def typedValue[A](value: A)(using schema: Schema[A], frame: Frame): Structure.TypedValue =
-        Structure.TypedValue(Structure.of[A], schema.toStructureValue(value))
+        Structure.TypedValue(schema.structure, schema.toStructureValue(value))
 
     // --- Type hierarchy ---
 

@@ -14,7 +14,7 @@ object StructureMacro:
         deriveType(TypeRepr.of[A], Set.empty)
     end deriveImpl
 
-    private def deriveType(using Quotes)(tpe: quotes.reflect.TypeRepr, seen: Set[String]): Expr[Structure.Type] =
+    private[internal] def deriveType(using Quotes)(tpe: quotes.reflect.TypeRepr, seen: Set[String]): Expr[Structure.Type] =
         import quotes.reflect.*
 
         val dealiased = tpe.dealias
