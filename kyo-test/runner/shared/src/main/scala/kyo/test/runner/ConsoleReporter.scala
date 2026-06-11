@@ -141,6 +141,10 @@ final class ConsoleReporter(
         end match
     end onLeafComplete
 
+    override def onLeafHeartbeat(info: LeafInfo, elapsed: Duration): Unit =
+        if verbosity != Verbosity.Quiet then
+            out.println(color(s"${indent(info.path)}[STUCK] ${renderPath(info.path)}  ${durationSuffix(elapsed)}", _.yellow))
+
     override def onSuiteComplete(info: SuiteInfo, report: SuiteReport): Unit =
         val passedCount   = report.leafResults.count(_._2.isInstanceOf[TestResult.Passed])
         val failedCount   = report.leafResults.count(_._2.isInstanceOf[TestResult.Failed])

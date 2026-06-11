@@ -1,6 +1,7 @@
 package kyo.test.runner
 
 import kyo.Chunk
+import kyo.Duration
 import kyo.test.LeafInfo
 import kyo.test.RunInfo
 import kyo.test.SuiteInfo
@@ -55,6 +56,9 @@ final class CombinedReporter(
 
     def onLeafComplete(info: LeafInfo, result: TestResult): Unit =
         dispatch(_.onLeafComplete(info, result))
+
+    override def onLeafHeartbeat(info: LeafInfo, elapsed: Duration): Unit =
+        dispatch(_.onLeafHeartbeat(info, elapsed))
 
     def onSuiteComplete(info: SuiteInfo, report: SuiteReport): Unit =
         dispatch(_.onSuiteComplete(info, report))

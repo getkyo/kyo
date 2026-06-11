@@ -61,6 +61,22 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         assert(out.contains("100ms"))
     }
 
+    "onLeafHeartbeat prints [STUCK] with the leaf path and elapsed" in {
+        val out = capture() { r =>
+            r.onLeafHeartbeat(leaf("slow-leaf"), 30L.seconds)
+        }
+        assert(out.contains("[STUCK]"))
+        assert(out.contains("slow-leaf"))
+        assert(out.contains("30s"))
+    }
+
+    "onLeafHeartbeat at Quiet verbosity prints nothing" in {
+        val out = capture(Verbosity.Quiet) { r =>
+            r.onLeafHeartbeat(leaf("slow-leaf"), 30L.seconds)
+        }
+        assert(out.isEmpty)
+    }
+
     "onLeafComplete with Pending with reason" in {
         val out = capture() { r =>
             r.onLeafComplete(leaf("d"), TestResult.Pending("not ready"))
