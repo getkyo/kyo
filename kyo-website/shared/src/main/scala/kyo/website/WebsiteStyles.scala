@@ -1519,6 +1519,16 @@ object WebsiteStyles:
                     .rule("btn", Style.flexShrink(0.0).padding(9.px, 14.px).textWrap(_.noWrap))
                     .rule("btn-ghost", Style.displayNone)
             )
+            // Below 560px the header's second row cannot fit the search input beside the version pill,
+            // the theme toggle, and the Get-started CTA without crushing the search to a few px (it was
+            // 27px at 360px). Give the search its own full row: `.right` wraps and `.search-wrap` takes a
+            // 100% flex-basis so the input spans the row, while the version pill, toggle, and CTA wrap
+            // onto the line below it (they keep their own widths via the 820px block's flexShrink(0)).
+            .media(Stylesheet.MediaQuery.maxWidth(560.px))(
+                Stylesheet.empty
+                    .rule("right", Style.flexWrap(_.wrap))
+                    .rule("search-wrap", Style.flexBasis(Length.Pct(100)))
+            )
             // outcome + feature grids collapse: 2-up at 880px, 1-up at 560px. Cards are flex items
             // sized by flexBasis (B7), so the narrow-viewport overrides set flexBasis too (a width
             // override would be ignored while flexBasis stays at the 3-up 30%).
