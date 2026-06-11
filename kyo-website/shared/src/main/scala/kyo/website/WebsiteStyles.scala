@@ -153,6 +153,10 @@ object WebsiteStyles:
             ++ landingGrids
             ++ landingPlatforms
             ++ landingFooter
+            // landingLadder is appended after the other landing sheets so its `.fcat` link treatment,
+            // `.dark .honest` override, and the ladder/code/tag/pull/floor/proof/whyx rules win the
+            // equal-specificity cascade where they refine an earlier rule.
+            ++ landingLadder
             ++ notFound
             ++ docsShell
             ++ docsSidebar
@@ -369,7 +373,7 @@ object WebsiteStyles:
             .rule(
                 "hero",
                 Style.column.align(_.center).textAlign(_.center)
-                    .padding(96.px, 0.px, 84.px, 0.px)
+                    .padding(74.px, 0.px, 56.px, 0.px)
                     .position(_.flow).overflow(_.hidden)
             )
             .rule(
@@ -435,7 +439,7 @@ object WebsiteStyles:
     // ---- Landing: generic sections, problem, control row, depth ----
     private def landingSections: Stylesheet =
         Stylesheet.empty
-            .rule("band", Style.column.padding(92.px, 0.px))
+            .rule("band", Style.column.padding(66.px, 0.px))
             .rule("build", Style.borderTop(1.px, _.variable("line-soft")))
             .rule(
                 "sec-head",
@@ -761,6 +765,121 @@ object WebsiteStyles:
                     .fontSize(13.px).color(_.variable("faint"))
             )
     end landingFooter
+
+    // ---- Landing: the ladder (dark band), its code receipts, module tags, agent block, pull quote;
+    // the platforms floor paragraph; the quiet social-proof and why-this-exists bands; and the
+    // feature categories as links. Appended last so its cascade refinements win. ----
+    private def landingLadder: Stylesheet =
+        Stylesheet.empty
+            // the dark ladder band shares the promise band's indigo-into-near-black wash
+            .rule(
+                "ladder",
+                Style.position(_.flow).overflow(_.hidden)
+                    .bgGradient(
+                        _.toBottom,
+                        Style.GradientColorSpace.srgb,
+                        (hex("#211D38"), Length.Pct(0)),
+                        (hex("#1A1726"), Length.Pct(34)),
+                        (inkSection, Length.Pct(72))
+                    )
+            )
+            .rule("rungs", Style.column.maxWidth(900.px).margin(40.px, Length.Auto, 0.px, Length.Auto))
+            .rule("rung", Style.row.flexWrap(_.wrap).gap(26.px).padding(30.px, 4.px).borderTop(1.px, whiteBorder12))
+            .rule(
+                "beat",
+                Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(12.px)
+                    .letterSpacing(0.08.em).textTransform(_.uppercase).color(darkAccentTxt)
+                    .flexBasis(150.px).flexShrink(0.0)
+            )
+            .rule("rung-body", Style.column.flexGrow(1.0).flexBasis(380.px).minWidth(0.px))
+            .rule(
+                "rung-lead",
+                Style.fontFamily(Style.FontFamily.Custom("var(--sans)")).fontSize(19.px).fontWeight(_.w600)
+                    .color(_.white).margin(0.px).lineHeight(1.3)
+            )
+            .rule(
+                Selector.cls("rung-body").descendant(Selector.tag("p")),
+                Style.margin(12.px, 0.px, 0.px, 0.px).color(darkDim).fontSize(15.5.px).lineHeight(1.62).textWrap(_.pretty)
+            )
+            // module receipt chips (links)
+            .rule("tags", Style.row.flexWrap(_.wrap).gap(8.px).margin(16.px, 0.px, 0.px, 0.px))
+            .rule(
+                "tag",
+                Style.row.align(_.center).fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(12.px)
+                    .color(darkDim).bg(whiteFill06).border(1.px, whiteBorder12).rounded(7.px)
+                    .padding(4.px, 10.px).textDecoration(_.none)
+                    .hover(_.color(_.white).borderColor(whiteBorder16))
+            )
+            // landing code panel: a darker inset on the dark band; tokens use the shared tok-* palette.
+            // Opt the pre/code/spans back into normal flow (out of the kyo-ui flex reset) so the line
+            // reads left-to-right with the <br> break, the same fix the docs prose applies.
+            .rule(
+                "code",
+                Style.bg(hex("#0E0D14")).border(1.px, whiteBorder12).rounded(10.px)
+                    .padding(15.px, 17.px).margin(14.px, 0.px, 0.px, 0.px).overflow(_.auto)
+            )
+            .rule(
+                Selector.cls("code").descendant(Selector.tag("pre")),
+                Style.block.margin(0.px).fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(13.px)
+                    .lineHeight(1.7).color(darkText)
+            )
+            .rule(Selector.cls("code").descendant(Selector.tag("code")), Style.inline)
+            .rule(Selector.cls("code").descendant(Selector.tag("span")), Style.inline)
+            // agent block: a bordered callout closing the ladder
+            .rule(
+                "agent",
+                Style.column.maxWidth(900.px).margin(36.px, Length.Auto, 0.px, Length.Auto)
+                    .bg(whiteFill06).border(1.px, whiteBorder12).rounded(14.px).padding(26.px, 30.px)
+            )
+            .rule(
+                Selector.cls("agent").descendant(Selector.tag("h3")),
+                Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500).fontSize(22.px)
+                    .color(_.white).margin(0.px).textWrap(_.balance)
+            )
+            .rule(
+                Selector.cls("agent").descendant(Selector.tag("p")),
+                Style.margin(12.px, 0.px, 0.px, 0.px).color(darkDim).fontSize(15.5.px).lineHeight(1.6).textWrap(_.pretty)
+            )
+            // pull quote
+            .rule(
+                "pull",
+                Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontSize(27.px).lineHeight(1.3)
+                    .color(hex("#CFC9FF")).textAlign(_.center).maxWidth(760.px)
+                    .margin(40.px, Length.Auto, 0.px, Length.Auto).textWrap(_.balance)
+            )
+            // closing "honest" line, dark variant
+            .rule(Selector.cls("dark").descendant(Selector.cls("honest")), Style.color(darkDim))
+            // platforms floor paragraph + centered cards (dark band)
+            .rule(
+                "floor",
+                Style.maxWidth(760.px).margin(36.px, Length.Auto, 0.px, Length.Auto).textAlign(_.center)
+                    .color(darkDim).fontSize(16.px).lineHeight(1.7).textWrap(_.pretty)
+            )
+            // social proof + why-this-exists: quiet, tight bands
+            .rule("proof", Style.padding(40.px, 0.px))
+            .rule(
+                "proof-line",
+                Style.maxWidth(720.px).margin(0.px, Length.Auto).textAlign(_.center)
+                    .color(_.variable("dim")).fontSize(15.px).lineHeight(1.6)
+            )
+            .rule("whyx", Style.padding(34.px, 0.px).borderTop(1.px, _.variable("line-soft")))
+            .rule(
+                // block (not the reset's flex-column): the line mixes a text run, the inline manifesto
+                // link, and a trailing period; as a flex column those three stack onto separate lines.
+                "whyx-line",
+                Style.block.maxWidth(640.px).margin(0.px, Length.Auto).textAlign(_.center)
+                    .color(_.variable("dim")).fontSize(16.px).lineHeight(1.6)
+            )
+            // inline so the link sits within the sentence (out of the flex reset that would otherwise
+            // drop it and the trailing period onto their own lines)
+            .rule("whyx-link", Style.inline.color(_.variable("accent")).fontWeight(_.w500))
+            // feature categories are links now: drop the underline, add a hover wash
+            .rule(
+                "fcat",
+                Style.textDecoration(_.none).color(_.variable("ink")).cursor(_.pointer)
+                    .hover(_.bg(_.variable("accent-ghost")))
+            )
+    end landingLadder
 
     // ---- 404 page (B14) ----
     private def notFound: Stylesheet =
