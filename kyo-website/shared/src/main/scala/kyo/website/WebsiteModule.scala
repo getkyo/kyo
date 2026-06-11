@@ -23,6 +23,9 @@ final case class WebsiteModule(
 end WebsiteModule
 
 object WebsiteModule:
-    /** Per-module platform support, mirroring the root README's platform table columns. */
-    final case class Platforms(jvm: Boolean, js: Boolean, native: Boolean) derives CanEqual
+    /** Per-module platform support, mirroring the root README's platform table columns
+      * (`JVM | JS | Native | WASM`). A legacy tag whose table predates the WASM column parses with
+      * `wasm = false`, so older release tags still build (see `WebsiteContent.buildModule`).
+      */
+    final case class Platforms(jvm: Boolean, js: Boolean, native: Boolean, wasm: Boolean) derives CanEqual
 end WebsiteModule

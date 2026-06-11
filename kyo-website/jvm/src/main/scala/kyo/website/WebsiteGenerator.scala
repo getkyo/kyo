@@ -123,7 +123,7 @@ object WebsiteGenerator:
             group = "Manifesto",
             title = "Manifesto",
             readme = manifestoMarkdown,
-            platforms = WebsiteModule.Platforms(jvm = true, js = true, native = true)
+            platforms = WebsiteModule.Platforms(jvm = true, js = true, native = true, wasm = true)
         )
         c.copy(groups = c.groups.append(WebsiteContent.Group("Manifesto", Chunk(module))))
     end withManifestoGroup

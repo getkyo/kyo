@@ -109,7 +109,7 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
         yield html.headMaybe.getOrElse("")
 
     private def docsHtml(using Frame): String < Async =
-        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),

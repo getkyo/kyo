@@ -145,9 +145,13 @@ object WebsiteContent:
     end isSeparatorRow
 
     /** Parse one module table row into a `WebsiteModule`, reading its README, or `Absent` when the row
-      * is a directory-link entry that ships no doc-page README (degrade-not-fail, INV-007). The columns
-      * are `| [slug](target) | JVM | JS | Native | Identity |`. Aborts `MalformedTable` if the row does
-      * not have at least the 5 cells or the link cannot be parsed.
+      * is a directory-link entry that ships no doc-page README (degrade-not-fail, INV-007). The current
+      * columns are `| [slug](target) | JVM | JS | Native | WASM | Identity |`; a legacy tag predating the
+      * WASM column has `| [slug](target) | JVM | JS | Native | Identity |` and parses with `wasm = false`.
+      * The platform flags are read positionally (JVM/JS/Native at cells 1/2/3, WASM at cell 4 when the row
+      * has at least 6 cells), and the trailing Identity column is decorative (not consumed; the title is
+      * the slug). Aborts `MalformedTable` if the row does not have at least the 5 legacy cells or the link
+      * cannot be parsed.
       *
       * A `<slug>/README.md` link (`[kyo-data](kyo-data/README.md)`) is a documentation module: its
       * README is read from `root/<slug>/README.md` and a genuinely-absent file aborts `Missing`. A
@@ -168,10 +172,15 @@ object WebsiteContent:
                         val platforms = WebsiteModule.Platforms(
                             jvm = isSupported(cells(1)),
                             js = isSupported(cells(2)),
-                            native = isSupported(cells(3))
+                            native = isSupported(cells(3)),
+                            // WASM is the 4th platform column, present only on tags whose table carries
+                            // it (>= 6 cells: slug + 4 platforms + Identity). A legacy 5-cell row has no
+                            // WASM column, so cells(4) there is the Identity prose, not a platform flag;
+                            // the size guard keeps it from being misread as WASM support.
+                            wasm = cells.size >= 6 && isSupported(cells(4))
                         )
                         // title = slug by design: the root README module table has no separate title
-                        // column (`| [slug](target) | JVM | JS | Native | Identity |`), and the slug
+                        // column (`| [slug](target) | JVM | JS | Native | WASM | Identity |`), and the slug
                         // (`kyo-core`, `kyo-data`, ...) is the display title for kyo modules.
                         readRequired(root / slug / "README.md").map(readme => Present(WebsiteModule(slug, group, slug, readme, platforms)))
                     end if

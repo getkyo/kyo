@@ -21,8 +21,8 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
     // A minimal island seeded with two known module slugs and a specific version tag.
     private val islandVersion = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", false)
     private val islandModules = Chunk(
-        WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true)),
-        WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true))
+        WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)),
+        WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true, true))
     )
     private val islandContent = WebsiteContent(
         "intro",

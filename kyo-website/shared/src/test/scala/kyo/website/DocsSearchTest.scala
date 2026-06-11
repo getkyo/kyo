@@ -35,8 +35,8 @@ class DocsSearchTest extends WebsiteTest:
 
     "seed builds title-only entries; a module-name query returns the module page" in {
         val modules = Chunk(
-            WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)),
-            WebsiteModule("kyo-stream", "Effects", "kyo-stream", "", WebsiteModule.Platforms(true, true, true))
+            WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)),
+            WebsiteModule("kyo-stream", "Effects", "kyo-stream", "", WebsiteModule.Platforms(true, true, true, true))
         )
         val hits = DocsSearch.filter(DocsSearch.seed("latest", modules), "kyo-stream")
         assert(hits.nonEmpty, "module-name query should match on the seed")

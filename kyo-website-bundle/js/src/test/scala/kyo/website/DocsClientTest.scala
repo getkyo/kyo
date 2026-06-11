@@ -640,7 +640,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
     // not upgraded (i.e. searchIndex.set(idx) was not called on the success arm).
     "refreshSearchIndex upgrades the searchIndex ref on a successful fetch" in {
         // Build the title-only seed: one module, no headings.
-        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)))
         val content       = WebsiteContent("", Chunk(WebsiteContent.Group("Effects", modules)), WebsiteVersion("v0.9.0", "0.9.0", false))
         val titleOnlySeed = DocsSearch.seed("v0.9.0", modules)
         // The stub search-index.json body carries a section heading not present in the title-only seed.
@@ -677,7 +677,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
     // cleared or overwritten with an empty/wrong index instead of retaining the seed).
     "refreshSearchIndex retains the title-only seed when the fetch fails" in {
         // Build the title-only seed: one module, no headings.
-        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+        val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)))
         val titleOnlySeed = DocsSearch.seed("v0.9.0", modules)
         // Empty stub map: any fetch throws, simulating a network or HTTP error.
         withFetch(Map.empty) {

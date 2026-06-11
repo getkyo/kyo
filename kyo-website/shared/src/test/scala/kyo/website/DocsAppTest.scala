@@ -44,15 +44,27 @@ class DocsAppTest extends WebsiteTest:
                 groups = Chunk(
                     WebsiteContent.Group(
                         "Foundation",
-                        Chunk(WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true)))
+                        Chunk(WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true, true)))
                     ),
                     WebsiteContent.Group(
                         "Application runtime",
-                        Chunk(WebsiteModule("kyo-core", "Application runtime", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+                        Chunk(WebsiteModule(
+                            "kyo-core",
+                            "Application runtime",
+                            "kyo-core",
+                            "",
+                            WebsiteModule.Platforms(true, true, true, true)
+                        ))
                     ),
                     WebsiteContent.Group(
                         "HTTP and schema",
-                        Chunk(WebsiteModule("kyo-http", "HTTP and schema", "kyo-http", "", WebsiteModule.Platforms(true, true, false)))
+                        Chunk(WebsiteModule(
+                            "kyo-http",
+                            "HTTP and schema",
+                            "kyo-http",
+                            "",
+                            WebsiteModule.Platforms(true, true, false, false)
+                        ))
                     )
                 ),
                 version = WebsiteVersion("latest", "latest", true)
@@ -80,8 +92,8 @@ class DocsAppTest extends WebsiteTest:
                     WebsiteContent.Group(
                         "Foundation",
                         Chunk(
-                            WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true)),
-                            WebsiteModule("kyo-kernel", "Foundation", "kyo-kernel", "", WebsiteModule.Platforms(true, true, true))
+                            WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true, true)),
+                            WebsiteModule("kyo-kernel", "Foundation", "kyo-kernel", "", WebsiteModule.Platforms(true, true, true, true))
                         )
                     )
                 ),
@@ -100,7 +112,7 @@ class DocsAppTest extends WebsiteTest:
             groups = Chunk(
                 WebsiteContent.Group(
                     "Foundation",
-                    Chunk(WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+                    Chunk(WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)))
                 )
             ),
             version = ver
@@ -140,8 +152,8 @@ class DocsAppTest extends WebsiteTest:
                 WebsiteContent.Group(
                     "Foundation",
                     Chunk(
-                        WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true)),
-                        WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+                        WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true, true)),
+                        WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true))
                     )
                 )
             ),
@@ -248,9 +260,9 @@ class DocsAppTest extends WebsiteTest:
 
     // Leaf 9: prev/next reflect route position
     "prev/next links reflect route position (leaf 9)" in {
-        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
-        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
-        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB, modC))),
@@ -270,9 +282,9 @@ class DocsAppTest extends WebsiteTest:
     // cleared the article for an async content.md fetch) the pager is ABSENT, so it cannot flash at the
     // top of the empty content area (the footer flash). Once content is loaded it renders as in leaf 9.
     "prev/next pager is hidden while content is loading and shown once loaded (leaf 9b)" in {
-        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
-        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
-        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB, modC))),
@@ -298,7 +310,7 @@ class DocsAppTest extends WebsiteTest:
 
     // Leaf 10: sidebar active state matches route
     "sidebar active state matches route (leaf 10)" in {
-        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),
@@ -326,7 +338,7 @@ class DocsAppTest extends WebsiteTest:
 
     // Leaf 15: the Overview is the FIRST rail item, above the module groups, linking to the intro route.
     "Overview is the first rail item above the module groups, linking to the intro route (leaf 15)" in {
-        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),
@@ -358,7 +370,7 @@ class DocsAppTest extends WebsiteTest:
             DocsMarkdown.Heading(3, "Imports", "imports"), // level-3: dropped from the one-level rail
             DocsMarkdown.Heading(2, "Coming from ZIO", "coming-from-zio")
         )
-        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
+        val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),
@@ -387,8 +399,8 @@ class DocsAppTest extends WebsiteTest:
     // Leaf 17: prev/next treats the overview as the FIRST page (no prev; next = first module), and the
     // first module's prev points back to the overview.
     "prev/next: overview is the first page; first module prev points to the overview (leaf 17)" in {
-        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
-        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB))),
@@ -419,9 +431,9 @@ class DocsAppTest extends WebsiteTest:
     // Leaf 13 (Phase-6 BLOCKER-1 regression): a non-latest version's sidebar + prev/next links use
     // the version prefix `/v<X>/...`, not `/latest/...`.
     "non-latest version links use the version prefix not latest (BLOCKER-1 regression)" in {
-        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
-        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
-        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(modA, modB, modC))),
@@ -446,9 +458,9 @@ class DocsAppTest extends WebsiteTest:
     // latest-flagged version links within `/v<X>/...` when served under `v<X>/`, and within `/latest/...`
     // when served under `latest/`.
     "latest version under its own v<X> tree links within v<X> not latest (WARN-1 regression)" in {
-        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
-        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
-        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
+        val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true, true))
+        val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true, true))
+        val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true, true))
         // The version IS latest (latest=true), exactly the case emitVersion renders under v1.2.0/.
         val latestVersion = WebsiteVersion("v1.2.0", "1.2.0", true)
         val content = WebsiteContent(
@@ -480,7 +492,7 @@ class DocsAppTest extends WebsiteTest:
 
     // Leaf 12: all chrome anchors are real HTML (INV-002)
     "all chrome anchors are real HTML not JS placeholders (leaf 12)" in {
-        val mod = WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true))
+        val mod = WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true, true))
         val content = WebsiteContent(
             intro = "",
             groups = Chunk(WebsiteContent.Group("Foundation", Chunk(mod))),

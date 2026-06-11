@@ -169,7 +169,7 @@ class ChromeParityTest extends WebsiteTest:
             groups = Chunk(
                 WebsiteContent.Group(
                     "Foundation",
-                    Chunk(WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
+                    Chunk(WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true, true)))
                 )
             ),
             version = WebsiteVersion("latest", "latest", true)

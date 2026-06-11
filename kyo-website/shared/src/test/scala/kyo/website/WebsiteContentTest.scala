@@ -7,9 +7,10 @@ class WebsiteContentTest extends WebsiteTest:
     val version0 = WebsiteVersion("v0.1.0", "0.1.0", false)
     val version1 = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true)
 
-    val moduleA = WebsiteModule("kyo-data", "Foundation", "kyo-data", "# kyo-data", WebsiteModule.Platforms(true, true, true))
-    val moduleB = WebsiteModule("kyo-kernel", "Foundation", "kyo-kernel", "# kyo-kernel", WebsiteModule.Platforms(true, true, true))
-    val moduleC = WebsiteModule("kyo-core", "Application runtime", "kyo-core", "# kyo-core", WebsiteModule.Platforms(true, true, false))
+    val moduleA = WebsiteModule("kyo-data", "Foundation", "kyo-data", "# kyo-data", WebsiteModule.Platforms(true, true, true, true))
+    val moduleB = WebsiteModule("kyo-kernel", "Foundation", "kyo-kernel", "# kyo-kernel", WebsiteModule.Platforms(true, true, true, true))
+    val moduleC =
+        WebsiteModule("kyo-core", "Application runtime", "kyo-core", "# kyo-core", WebsiteModule.Platforms(true, true, false, false))
 
     "empty-groups WebsiteContent is valid (INV-007 model-shape half)" - {
         "groups.isEmpty is true" in {
@@ -110,7 +111,8 @@ class WebsiteContentTest extends WebsiteTest:
                 val mod = content.groups.head.modules.head
                 assert(mod.slug == "kyo-data", s"slug: ${mod.slug}")
                 assert(mod.readme == "# kyo-data\n\nData types.", s"module readme: ${mod.readme}")
-                assert(mod.platforms == WebsiteModule.Platforms(true, true, true), s"platforms: ${mod.platforms}")
+                // 5-column legacy table (no WASM column), so wasm parses as false.
+                assert(mod.platforms == WebsiteModule.Platforms(true, true, true, false), s"platforms: ${mod.platforms}")
             case other => fail(s"expected Success, got $other")
         end for
     }
@@ -221,7 +223,7 @@ class WebsiteContentTest extends WebsiteTest:
             case Result.Success(content) =>
                 assert(content.groups.map(_.name) == Chunk("Foundation", "Tooling"), s"group order: ${content.groups.map(_.name)}")
                 val bench = content.groups(1).modules.head
-                assert(bench.platforms == WebsiteModule.Platforms(true, false, false), s"bench platforms: ${bench.platforms}")
+                assert(bench.platforms == WebsiteModule.Platforms(true, false, false, false), s"bench platforms: ${bench.platforms}")
             case other => fail(s"expected Success, got $other")
         end for
     }
@@ -270,64 +272,118 @@ class WebsiteContentTest extends WebsiteTest:
     }
 
     // ---- Real-README format regression (locks the actual `## Modules` shape so the parser bugs
-    //      fixed here cannot regress: slug is the DIRECTORY, platform columns are JVM/JS/Native) ----
+    //      fixed here cannot regress: slug is the DIRECTORY, platform columns are JVM/JS/Native/WASM) ----
 
-    /** A VERBATIM copy of the real root README `## Modules` section's `### Foundation` group
-      * (README.md lines 223 to 235): the `## Modules` heading and intro prose, the `### Foundation`
-      * heading and prose, then the GFM table with the real `[kyo-data](kyo-data/README.md)` /
-      * `[kyo-kernel](kyo-kernel/README.md)` / `[kyo-prelude](kyo-prelude/README.md)` rows and the real
-      * `| Module | JVM | JS | Native | Identity |` header. Copied exactly, alignment padding included,
-      * so the parser is tested against the real format, not a fixture written to the code's old
-      * assumptions.
+    /** A copy of the real root README `## Modules` section's `### Core` group (README.md lines 268 to
+      * 284): the `## Modules` heading and intro prose, the `### Core` heading and prose, then the GFM
+      * table with the real `[kyo-core]` / `[kyo-prelude]` / `[kyo-data]` / `[kyo-kernel]` /
+      * `[kyo-scheduler]` rows and the real `| Module | JVM | JS | Native | WASM | Identity |` 6-column
+      * header (alignment padding included). The table rows are copied exactly so the parser is tested
+      * against the current real format (including the WASM column added when WebAssembly became a
+      * published platform), not a fixture written to the code's old three-platform assumptions.
       */
-    private val realFoundationReadme =
+    private val realCoreReadme =
         """# Kyo
           |
           |## Modules
           |
-          |Every module ships its own README. Open the linked README for the full surface, capabilities, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean published artifacts: ✅ = supported, ❌ = not built for that platform.
+          |Every module ships its own README. Open the linked README for the full surface, features, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean published artifacts: ✅ marks the platforms each module is published for.
           |
-          |### Foundation
+          |### Core
           |
-          |The substrate the rest of the ecosystem builds on. Most application code never depends on these directly; they ride in transitively through `kyo-core`.
+          |What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar. `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
           |
-          || Module                                       | JVM | JS  | Native | Identity                                                                                                  |
-          || -------------------------------------------- | --- | --- | ------ | --------------------------------------------------------------------------------------------------------- |
-          || [kyo-data](kyo-data/README.md)               | ✅   | ✅   | ✅      | Low-allocation values: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`  |
-          || [kyo-kernel](kyo-kernel/README.md)           | ✅   | ✅   | ✅      | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations    |
-          || [kyo-prelude](kyo-prelude/README.md)         | ✅   | ✅   | ✅      | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`    |
+          || Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
+          || -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+          || [kyo-core](kyo-core/README.md)               | ✅   | ✅   | ✅      | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path` |
+          || [kyo-prelude](kyo-prelude/README.md)         | ✅   | ✅   | ✅      | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`    |
+          || [kyo-data](kyo-data/README.md)               | ✅   | ✅   | ✅      | ✅   | Low-allocation values: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`  |
+          || [kyo-kernel](kyo-kernel/README.md)           | ✅   | ✅   | ✅      | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations    |
+          || [kyo-scheduler](kyo-scheduler/README.md)     | ✅   | ✅   | ✅      | ✅   | Adaptive work-stealing pool with automatic blocking detection and admission control                       |
           |""".stripMargin
 
-    "fromRepo parses the real README Foundation group: slugs are directories, not link targets" in {
+    "fromRepo parses the real README Core group: slugs are directories, WASM column is read" in {
         for
             result <- fromRepoResult(Seq(
-                "README.md"             -> realFoundationReadme,
-                "kyo-data/README.md"    -> "# kyo-data\n\nLow-allocation values.",
-                "kyo-kernel/README.md"  -> "# kyo-kernel\n\nEffect substrate.",
-                "kyo-prelude/README.md" -> "# kyo-prelude\n\nPure effect layer."
+                "README.md"               -> realCoreReadme,
+                "kyo-core/README.md"      -> "# kyo-core\n\nI/O and concurrency.",
+                "kyo-prelude/README.md"   -> "# kyo-prelude\n\nPure effect layer.",
+                "kyo-data/README.md"      -> "# kyo-data\n\nLow-allocation values.",
+                "kyo-kernel/README.md"    -> "# kyo-kernel\n\nEffect substrate.",
+                "kyo-scheduler/README.md" -> "# kyo-scheduler\n\nWork-stealing pool."
             ))
         yield result match
             case Result.Success(content) =>
                 assert(content.groups.size == 1, s"expected 1 group, got ${content.groups.size}")
-                val foundation = content.groups.head
-                assert(foundation.name == "Foundation", s"group name: ${foundation.name}")
-                val slugs = foundation.modules.map(_.slug)
-                // The slug is the module DIRECTORY, NOT the verbatim link target `kyo-data/README.md`.
-                assert(slugs == Chunk("kyo-data", "kyo-kernel", "kyo-prelude"), s"slugs: $slugs")
+                val core = content.groups.head
+                assert(core.name == "Core", s"group name: ${core.name}")
+                val slugs = core.modules.map(_.slug)
+                // The slug is the module DIRECTORY, NOT the verbatim link target `kyo-core/README.md`.
+                assert(
+                    slugs == Chunk("kyo-core", "kyo-prelude", "kyo-data", "kyo-kernel", "kyo-scheduler"),
+                    s"slugs: $slugs"
+                )
                 assert(!slugs.exists(_.contains("README.md")), s"no slug may carry the README.md suffix: $slugs")
-                // Every Foundation module is ✅ on all three platforms (the real column values).
-                foundation.modules.foreach { m =>
+                // Every Core module is ✅ on all four platforms, WASM included (the real column values):
+                // proves the 6-column table is parsed and the WASM cell is read, not dropped.
+                core.modules.foreach { m =>
                     assert(
-                        m.platforms == WebsiteModule.Platforms(true, true, true),
+                        m.platforms == WebsiteModule.Platforms(true, true, true, true),
                         s"${m.slug} platforms: ${m.platforms}"
                     )
                 }
                 // The module READMEs are read from `root/<slug>/README.md` (no Missing abort).
                 assert(
-                    foundation.modules.map(_.readme.linesIterator.next()) == Chunk("# kyo-data", "# kyo-kernel", "# kyo-prelude"),
+                    core.modules.map(_.readme.linesIterator.next()) ==
+                        Chunk("# kyo-core", "# kyo-prelude", "# kyo-data", "# kyo-kernel", "# kyo-scheduler"),
                     "module READMEs must be read"
                 )
             case other => fail(s"expected Success on the real README format, got $other")
+        end for
+    }
+
+    /** A README mixing a current 6-column group (`JVM | JS | Native | WASM | Identity`) with a legacy
+      * 5-column group (`JVM | JS | Native | Identity`), to lock the WASM-column parse: the 4th platform
+      * cell is read as WASM only when the row carries it, and a legacy Identity cell that happens to hold
+      * a checkmark is never misread as WASM support.
+      */
+    private val wasmColumnReadme =
+        """# Kyo
+          |
+          |## Modules
+          |
+          |### Current
+          || Module | JVM | JS | Native | WASM | Identity |
+          || ------ | --- | -- | ------ | ---- | -------- |
+          || [kyo-everywhere](kyo-everywhere/README.md) | ✅ | ✅ | ✅ | ✅ | All four platforms |
+          || [kyo-nowasm](kyo-nowasm/README.md) | ✅ | ✅ | ✅ | ❌ | Not built for WASM |
+          |
+          |### Legacy
+          || Module | JVM | JS | Native | Identity |
+          || ------ | --- | -- | ------ | -------- |
+          || [kyo-legacy](kyo-legacy/README.md) | ✅ | ✅ | ✅ | Ships a ✅ inside the identity cell |
+          |""".stripMargin
+
+    "fromRepo reads the WASM platform column and never misreads a legacy identity cell as WASM" in {
+        for
+            result <- fromRepoResult(Seq(
+                "README.md"                -> wasmColumnReadme,
+                "kyo-everywhere/README.md" -> "# kyo-everywhere",
+                "kyo-nowasm/README.md"     -> "# kyo-nowasm",
+                "kyo-legacy/README.md"     -> "# kyo-legacy"
+            ))
+        yield result match
+            case Result.Success(content) =>
+                assert(content.groups.map(_.name) == Chunk("Current", "Legacy"), s"groups: ${content.groups.map(_.name)}")
+                val current = content.groups.head.modules
+                val legacy  = content.groups(1).modules.head
+                // 6-column group: WASM is read positionally (cell 4); ✅ -> true, ❌ -> false.
+                assert(current.head.platforms == WebsiteModule.Platforms(true, true, true, true), s"everywhere: ${current.head.platforms}")
+                assert(current(1).platforms == WebsiteModule.Platforms(true, true, true, false), s"nowasm: ${current(1).platforms}")
+                // 5-column legacy group: cell 4 is the Identity prose (with a stray ✅), NOT a platform
+                // column, so the `cells.size >= 6` guard keeps wasm = false instead of misreading it.
+                assert(legacy.platforms == WebsiteModule.Platforms(true, true, true, false), s"legacy: ${legacy.platforms}")
+            case other => fail(s"expected Success, got $other")
         end for
     }
 
@@ -369,7 +425,7 @@ class WebsiteContentTest extends WebsiteTest:
                 assert(modules.map(_.slug) == Chunk("kyo-parse"), s"expected only kyo-parse, got ${modules.map(_.slug)}")
                 assert(!modules.exists(_.slug == "kyo-examples"), "kyo-examples must be dropped, not rendered")
                 assert(
-                    modules.head.platforms == WebsiteModule.Platforms(true, true, true),
+                    modules.head.platforms == WebsiteModule.Platforms(true, true, true, false),
                     s"kyo-parse platforms: ${modules.head.platforms}"
                 )
                 assert(modules.head.readme == "# kyo-parse\n\nParser combinators.", s"kyo-parse readme: ${modules.head.readme}")
