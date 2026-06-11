@@ -13,3 +13,8 @@ private[kyo] object timeSliceMs        extends StaticFlag[Int](10)
 private[kyo] object cycleIntervalNs    extends StaticFlag[Int](100000)
 private[kyo] object enableTopJMX       extends StaticFlag[Boolean](false)
 private[kyo] object enableTopConsoleMs extends StaticFlag[Int](0)
+
+// worker rebalance rate-limit (ms)
+private[kyo] object minInterval extends StaticFlag[Int](1)
+// WorkerQueue initial backing-array size
+private[kyo] object queueCapacity extends StaticFlag[Int](8, n => Right(Math.max(1, n)))
