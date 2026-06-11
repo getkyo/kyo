@@ -657,9 +657,11 @@ object UI:
           *
           * Recursive givens cover: direct `HtmlContent` values, `Reactive[C]`/`Foreach[A,C]`/`Fragment[C]` where `C` has an
           * `AsHtmlChild` witness (so a nested `Fragment[Fragment[...]]` and a `foreach`/`when` returning a `Fragment` are
-          * accepted), and union types `A | B` where both sides have witnesses. `AsHtmlChild[UI]` has no given, so a value
-          * statically typed as bare `UI` is still rejected; `AsHtmlChild[Svg.Circle]` has no given (SVG primitives do not extend
-          * `HtmlContent`), so SVG nodes are rejected. Each child is checked individually at the call site via the `HtmlChildVal`
+          * accepted), and union types `A | B` where both sides have witnesses. A lowest-priority
+          * `AsHtmlChild[UI]` given (in `AsHtmlChildLowestPriority`) accepts bare `UI` values as children; it resolves only
+          * when no higher-priority given matches, so named `HtmlContent` subtypes, wrappers, and fragments all resolve first.
+          * `AsHtmlChild[Svg.Circle]` has no given (SVG primitives do not extend `HtmlContent`), so SVG nodes are rejected.
+          * Each child is checked individually at the call site via the `HtmlChildVal`
           * implicit conversion, which avoids the LUB-widening that varargs would otherwise cause for heterogeneous arg lists.
           *
           * The `if cond then elem else UI.empty` idiom infers the branch union `A | Fragment[Nothing]`. The general `A | B`
