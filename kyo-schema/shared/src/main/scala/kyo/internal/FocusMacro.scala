@@ -771,11 +771,14 @@ import scala.quoted.*
                                                 "Ensure the field is declared as Maybe[T] where T is a concrete type with a given Schema."
                                         )
                             else
-                                // Normal field — summon Schema normally
-                                val schema = Expr.summon[Schema[ft]].getOrElse(
-                                    report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType))
-                                )
-                                (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                                // Normal field: try direct summon, then fall back to explicit container
+                                // schema construction for collection/optional types that require Frame.
+                                val schemaExpr: Expr[Schema[Any]] =
+                                    Expr.summon[Schema[ft]]
+                                        .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                        .orElse(buildContainerSchemaOpt[A](fieldType, fieldName))
+                                        .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
+                                (_: Expr[Schema[A]]) => schemaExpr
 
                     (fieldName, idx, resolver)
                 }
@@ -892,29 +895,32 @@ import scala.quoted.*
                 (self: Expr[Schema[A]]) => '{ $self.asInstanceOf[Schema[Any]] }
 
             // Container[RecursiveType] -- e.g. List[Value], Chunk[Value]
+            // Use *NoStructure helpers to avoid the `using frame: Frame` requirement on the public
+            // container givens. Frame.derive is blocked inside the kyo package, so we cannot satisfy
+            // the Frame parameter in a macro-emitted expression.
             case AppliedType(tycon, List(arg)) if arg.dealias =:= parentType =>
                 val containerSym = tycon.typeSymbol
                 if containerSym == TypeRepr.of[List].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.listSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.listSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.optionSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.optionSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.maybeSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.maybeSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else if containerSym == TypeRepr.of[kyo.Chunk[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.chunkSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.chunkSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else if containerSym == TypeRepr.of[Vector[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.vectorSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.vectorSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else if containerSym == TypeRepr.of[Set[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.setSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.setSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else if containerSym == TypeRepr.of[Seq[Any]].typeSymbol then
                     (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.seqSchema[A](using $self).asInstanceOf[Schema[Any]] }
+                        '{ kyo.Schema.seqSchemaNoStructure[A]($self).asInstanceOf[Schema[Any]] }
                 else
                     report.errorAndAbort(
                         s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
@@ -923,6 +929,7 @@ import scala.quoted.*
                 end if
 
             // Container[Tuple2[X, RecursiveType]] or Option[Map[String, RecursiveType]] etc.
+            // Use *NoStructure helpers (same reason as Category 1: Frame.derive blocked in kyo package).
             case AppliedType(tycon, List(inner)) if containsRecursiveType(inner, parentType) =>
                 val containerSym = tycon.typeSymbol
                 // Build the inner schema resolver recursively, then wrap in the container
@@ -933,47 +940,57 @@ import scala.quoted.*
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.chunkSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
+                                    kyo.Schema.chunkSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[List].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.listSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]]
+                                    kyo.Schema.listSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[Vector[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.vectorSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
+                                    kyo.Schema.vectorSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[Set[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
-                                '{ kyo.Schema.setSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]] }
+                                '{
+                                    kyo.Schema.setSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
+                                }
                         else if containerSym == TypeRepr.of[Seq[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
-                                '{ kyo.Schema.seqSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]] }
+                                '{
+                                    kyo.Schema.seqSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
+                                }
                         else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.optionSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
+                                    kyo.Schema.optionSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
                                 }
                         else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
                             (self: Expr[Schema[A]]) =>
                                 val innerSchema = innerResolver(self)
                                 '{
-                                    kyo.Schema.maybeSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
+                                    kyo.Schema.maybeSchemaNoStructure[innerT](
+                                        $innerSchema.asInstanceOf[Schema[innerT]]
+                                    ).asInstanceOf[Schema[Any]]
                                 }
                         else
                             report.errorAndAbort(
@@ -1098,12 +1115,15 @@ import scala.quoted.*
                                             report.errorAndAbort(noSchemaMessage(fieldName, innerType2.show, fieldType.show))
                                         )
                                         (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
-                            // For Option and other types, use full schema
+                            // For Option and other types: try direct summon, then fall back to
+                            // explicit container schema construction for types that require Frame.
                             case _ =>
-                                val schema = Expr.summon[Schema[t]].getOrElse(
-                                    report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType))
-                                )
-                                (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                                val schemaExpr: Expr[Schema[Any]] =
+                                    Expr.summon[Schema[t]]
+                                        .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                        .orElse(buildContainerSchemaOpt[A](fieldType, fieldName))
+                                        .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
+                                (_: Expr[Schema[A]]) => schemaExpr
                     else if maybeFields.contains(idx) then
                         // Non-recursive Maybe field - extract inner type and summon Schema for it
                         fieldType.dealias match
@@ -1120,11 +1140,14 @@ import scala.quoted.*
                                         "Ensure the field is declared as Maybe[T] where T is a concrete type with a given Schema."
                                 )
                     else
-                        // Non-recursive, non-Maybe field - summon Schema for full type
-                        val schema = Expr.summon[Schema[t]].getOrElse(
-                            report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType))
-                        )
-                        (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                        // Non-recursive, non-Maybe field: try direct summon, then fall back to
+                        // explicit container schema construction for types that require Frame.
+                        val schemaExpr: Expr[Schema[Any]] =
+                            Expr.summon[Schema[t]]
+                                .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                .orElse(buildContainerSchemaOpt[A](fieldType, fieldName))
+                                .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
+                        (_: Expr[Schema[A]]) => schemaExpr
                     end if
 
             (fieldName, idx, resolver)
@@ -1505,19 +1528,89 @@ import scala.quoted.*
         end if
     end defaultsImpl
 
+    /** Tries to build a Schema expression for a container type that requires Frame.
+      *
+      * Collection and optional givens (listSchema, vectorSchema, setSchema, chunkSchema, seqSchema,
+      * maybeSchema, optionSchema) require `using frame: Frame`. During macro-driven Schema derivation,
+      * `Expr.summon[Schema[Container[X]]]` cannot satisfy the Frame requirement because Frame.derive
+      * is blocked inside the kyo package and no ambient Frame exists at compile time.
+      *
+      * This helper builds schemas using the `*NoStructure` helpers (which take a plain `inner: Schema[A]`
+      * parameter and call `Schema.init`, the no-structure variant). The resulting schemas are used
+      * only for field serialization in the derived-schema path; their `structure` returns the Phase 02
+      * `Open` default like other derived schemas until Phase 08 populates them via the macro.
+      *
+      * Returns `Some(expr)` if the type is a recognized single-arg container with a resolvable inner
+      * Schema; `None` otherwise.
+      */
+    private def buildContainerSchemaOpt[A](using
+        Quotes
+    )(
+        fieldType: quotes.reflect.TypeRepr,
+        fieldName: String
+    ): Option[Expr[Schema[Any]]] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+        val listSym                    = TypeRepr.of[List].typeSymbol
+        val vectorSym                  = TypeRepr.of[Vector[Any]].typeSymbol
+        val setSym                     = TypeRepr.of[Set[Any]].typeSymbol
+        val seqSym                     = TypeRepr.of[Seq[Any]].typeSymbol
+        val chunkSym                   = TypeRepr.of[kyo.Chunk[Any]].typeSymbol
+        val maybeSym                   = TypeRepr.of[kyo.Maybe[Any]].typeSymbol
+        val optionSym                  = TypeRepr.of[Option[Any]].typeSymbol
+
+        fieldType.dealias match
+            case AppliedType(tycon, List(innerType)) =>
+                val sym = tycon.typeSymbol
+                if sym == listSym || sym == vectorSym || sym == setSym ||
+                    sym == seqSym || sym == chunkSym || sym == maybeSym || sym == optionSym
+                then
+                    innerType.asType match
+                        case '[inner] =>
+                            val innerSchemaOpt: Option[Expr[Schema[inner]]] =
+                                Expr.summon[Schema[inner]].orElse(
+                                    buildContainerSchemaOpt[A](innerType, fieldName)
+                                        .map(_.asInstanceOf[Expr[Schema[inner]]])
+                                )
+                            innerSchemaOpt.map { innerSchema =>
+                                if sym == listSym then
+                                    '{ kyo.Schema.listSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                else if sym == vectorSym then
+                                    '{ kyo.Schema.vectorSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                else if sym == setSym then
+                                    '{ kyo.Schema.setSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                else if sym == seqSym then
+                                    '{ kyo.Schema.seqSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                else if sym == chunkSym then
+                                    '{ kyo.Schema.chunkSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                else if sym == maybeSym then
+                                    '{ kyo.Schema.maybeSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                else
+                                    '{ kyo.Schema.optionSchemaNoStructure[inner]($innerSchema).asInstanceOf[Schema[Any]] }
+                                end if
+                            }
+                else None
+                end if
+            case _ => None
+        end match
+    end buildContainerSchemaOpt
+
     /** Builds a consistent error message for missing Schema instances during derivation.
       *
       * For applied types (List[X], Option[X], Map[K,V], etc.) where the real issue is an unsupported type argument, identifies which type
-      * argument has no Schema by trying to summon each one.
+      * argument has no Schema by trying to summon each one. Also tries buildContainerSchemaOpt to avoid false-positive "missing schema"
+      * diagnostics for container types that require Frame.
       */
     private def noSchemaFieldMessage(using Quotes)(fieldName: String, fieldType: quotes.reflect.TypeRepr): String =
         import quotes.reflect.*
         fieldType.dealias match
             case AppliedType(_, args) if args.nonEmpty =>
-                // Find the first type argument that has no Schema
+                // Find the first type argument that has no Schema (via direct summon or container fallback)
                 val unsupported = args.find { arg =>
                     arg.asType match
-                        case '[t] => Expr.summon[Schema[t]].isEmpty
+                        case '[t] =>
+                            Expr.summon[Schema[t]].isEmpty &&
+                            buildContainerSchemaOpt[Any](arg, fieldName).isEmpty
                 }
                 unsupported match
                     case Some(inner) =>

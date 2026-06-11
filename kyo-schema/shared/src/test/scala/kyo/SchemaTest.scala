@@ -6337,4 +6337,94 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "container structure" - {
+        "listSchema produces Collection structure with name List and inner reference eq" in {
+            val schema = summon[Schema[List[Int]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "List")
+                    assert(elementType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "vectorSchema produces Collection structure with name Vector and inner reference eq" in {
+            val schema = summon[Schema[Vector[String]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Vector")
+                    assert(elementType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "setSchema produces Collection structure with name Set and inner reference eq" in {
+            val schema = summon[Schema[Set[Boolean]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Set")
+                    assert(elementType eq summon[Schema[Boolean]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "chunkSchema produces Collection structure with name Chunk and inner reference eq" in {
+            val schema = summon[Schema[Chunk[Long]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Chunk")
+                    assert(elementType eq summon[Schema[Long]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "seqSchema produces Collection structure with name Seq and inner reference eq" in {
+            val schema = summon[Schema[Seq[Double]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Seq")
+                    assert(elementType eq summon[Schema[Double]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "spanSchema produces Collection structure with name Span and inner reference eq" in {
+            val schema = summon[Schema[Span[Int]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Span")
+                    assert(elementType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "maybeSchema produces Optional structure with name Maybe and inner reference eq" in {
+            val schema = summon[Schema[Maybe[String]]]
+            schema.structure match
+                case Structure.Type.Optional(name, _, innerType) =>
+                    assert(name == "Maybe")
+                    assert(innerType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Optional but got $other")
+            end match
+        }
+        "optionSchema produces Optional structure with name Option and inner reference eq" in {
+            val schema = summon[Schema[Option[Int]]]
+            schema.structure match
+                case Structure.Type.Optional(name, _, innerType) =>
+                    assert(name == "Option")
+                    assert(innerType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Optional but got $other")
+            end match
+        }
+        "Schema[List[Int]].structure returns same reference on repeated calls" in {
+            val schema = summon[Schema[List[Int]]]
+            assert(schema.structure eq schema.structure)
+        }
+        "Schema[Maybe[String]].structure returns same reference on repeated calls" in {
+            val schema = summon[Schema[Maybe[String]]]
+            assert(schema.structure eq schema.structure)
+        }
+    }
+
+    "container Frame propagation" - {
+        "summon Schema[List[Int]] succeeds with Frame in scope and produces Collection structure" in {
+            val schema = summon[Schema[List[Int]]]
+            assert(schema.structure.isInstanceOf[Structure.Type.Collection])
+        }
+    }
+
 end SchemaTest

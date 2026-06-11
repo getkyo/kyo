@@ -1197,7 +1197,7 @@ object Schema:
     private[kyo] inline def initWithStructure[A](
         inline writeFn: (A, Writer) => Unit,
         inline readFn: Reader => A,
-        structure: Structure.Type,
+        structure: => Structure.Type,
         inline getterFn: A => Maybe[Any] = (a: A) => Maybe(a).asInstanceOf[Maybe[Any]],
         inline setterFn: (A, Any) => A = (_: A, v: Any) => v.asInstanceOf[A],
         segments: Seq[String] = Seq.empty,
@@ -1214,7 +1214,11 @@ object Schema:
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty
     ): Schema[A] =
-        val _structure = structure
+        // Lazy evaluation defers inner.structure access until structure is first queried.
+        // Container givens pass `inner.structure` as the structure argument; derived (non-primitive)
+        // inner schemas return `???` from structure until Phase 08 populates them. Lazy evaluation
+        // prevents NotImplementedError when a container schema is constructed over a derived inner.
+        lazy val _structure = structure
         new Schema[A](
             segments,
             examples,
@@ -1471,10 +1475,12 @@ object Schema:
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Unit, Tag[Unit].asInstanceOf[Tag[Any]])
     )
 
-    // --- Collection Schema givens ---
+    // Internal no-structure collection schema builders for macro-derived schemas.
+    // FocusMacro uses these when it encounters container fields in derived schemas.
+    // They bypass the public givens (which require `using frame: Frame`) and call
+    // Schema.init (no structure). Phase 09 deletes these along with Schema.init.
 
-    /** Schema for List[A] values. */
-    given listSchema[A](using inner: Schema[A]): Schema[List[A]] =
+    private[kyo] def listSchemaNoStructure[A](inner: Schema[A]): Schema[List[A]] =
         Schema.init[List[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1495,8 +1501,7 @@ object Schema:
                 builder.result()
         )
 
-    /** Schema for Vector[A] values. */
-    given vectorSchema[A](using inner: Schema[A]): Schema[Vector[A]] =
+    private[kyo] def vectorSchemaNoStructure[A](inner: Schema[A]): Schema[Vector[A]] =
         Schema.init[Vector[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1517,8 +1522,7 @@ object Schema:
                 builder.result()
         )
 
-    /** Schema for Set[A] values. */
-    given setSchema[A](using inner: Schema[A]): Schema[Set[A]] =
+    private[kyo] def setSchemaNoStructure[A](inner: Schema[A]): Schema[Set[A]] =
         Schema.init[Set[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1539,8 +1543,27 @@ object Schema:
                 builder.result()
         )
 
-    /** Schema for Chunk[A] values. */
-    given chunkSchema[A](using inner: Schema[A]): Schema[Chunk[A]] =
+    private[kyo] def seqSchemaNoStructure[A](inner: Schema[A]): Schema[Seq[A]] =
+        Schema.init[Seq[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(inner.serializeWrite(_, writer))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = List.newBuilder[A]
+                @tailrec
+                def loop(): Unit =
+                    if reader.hasNextElement() then
+                        builder += inner.serializeRead(reader)
+                        loop()
+                loop()
+                reader.arrayEnd()
+                builder.result()
+        )
+
+    private[kyo] def chunkSchemaNoStructure[A](inner: Schema[A]): Schema[Chunk[A]] =
         Schema.init[Chunk[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1561,9 +1584,154 @@ object Schema:
                 builder.result()
         )
 
+    private[kyo] def maybeSchemaNoStructure[A](inner: Schema[A]): Schema[Maybe[A]] =
+        Schema.init[Maybe[A]](
+            writeFn = (value, writer) =>
+                value match
+                    case Maybe.Present(v) => inner.serializeWrite(v, writer)
+                    case _ =>
+                        writer.nil()
+            ,
+            readFn = reader =>
+                if reader.isNil() then Maybe.empty
+                else Maybe(inner.serializeRead(reader))
+        )
+
+    private[kyo] def optionSchemaNoStructure[A](inner: Schema[A]): Schema[Option[A]] =
+        Schema.init[Option[A]](
+            writeFn = (value, writer) =>
+                value match
+                    case Some(v) => inner.serializeWrite(v, writer)
+                    case None =>
+                        writer.nil()
+            ,
+            readFn = reader =>
+                if reader.isNil() then None
+                else Some(inner.serializeRead(reader))
+        )
+
+    // --- Collection Schema givens ---
+
+    /** Schema for List[A] values. */
+    given listSchema[A](using inner: Schema[A], frame: Frame): Schema[List[A]] =
+        Schema.initWithStructure[List[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(inner.serializeWrite(_, writer))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = List.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += inner.serializeRead(reader)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+            ,
+            // Deviation D-1: Tag[List[A]] requires implicit Tag[A] which non-inline givens do not
+            // have in scope. Fall back to Tag[Any] per prep Deviation D-1 policy. Phase 09 remediation.
+            structure = Structure.Type.Collection(
+                "List",
+                Tag[Any],
+                inner.structure
+            )
+        )
+
+    /** Schema for Vector[A] values. */
+    given vectorSchema[A](using inner: Schema[A], frame: Frame): Schema[Vector[A]] =
+        Schema.initWithStructure[Vector[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(inner.serializeWrite(_, writer))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Vector.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += inner.serializeRead(reader)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+            ,
+            // Deviation D-1: Tag[Vector[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Collection(
+                "Vector",
+                Tag[Any],
+                inner.structure
+            )
+        )
+
+    /** Schema for Set[A] values. */
+    given setSchema[A](using inner: Schema[A], frame: Frame): Schema[Set[A]] =
+        Schema.initWithStructure[Set[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(inner.serializeWrite(_, writer))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Set.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += inner.serializeRead(reader)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+            ,
+            // Deviation D-1: Tag[Set[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Collection(
+                "Set",
+                Tag[Any],
+                inner.structure
+            )
+        )
+
+    /** Schema for Chunk[A] values. */
+    given chunkSchema[A](using inner: Schema[A], frame: Frame): Schema[Chunk[A]] =
+        Schema.initWithStructure[Chunk[A]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach(inner.serializeWrite(_, writer))
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Chunk.newBuilder[A]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        builder += inner.serializeRead(reader)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+            ,
+            // Deviation D-1: Tag[Chunk[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Collection(
+                "Chunk",
+                Tag[Any],
+                inner.structure
+            )
+        )
+
     /** Schema for Seq[A] values. */
-    given seqSchema[A](using inner: Schema[A]): Schema[Seq[A]] =
-        Schema.init[Seq[A]](
+    given seqSchema[A](using inner: Schema[A], frame: Frame): Schema[Seq[A]] =
+        Schema.initWithStructure[Seq[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach(inner.serializeWrite(_, writer))
@@ -1580,11 +1748,18 @@ object Schema:
                 loop()
                 reader.arrayEnd()
                 builder.result()
+            ,
+            // Deviation D-1: Tag[Seq[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Collection(
+                "Seq",
+                Tag[Any],
+                inner.structure
+            )
         )
 
     /** Schema for Span[A] values. */
-    given spanSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
-        Schema.init[Span[A]](
+    given spanSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A], frame: Frame): Schema[Span[A]] =
+        Schema.initWithStructure[Span[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach(inner.serializeWrite(_, writer))
@@ -1601,14 +1776,20 @@ object Schema:
                 loop()
                 reader.arrayEnd()
                 Span.from(builder.result())
+            ,
+            structure = Structure.Type.Collection(
+                "Span",
+                Tag[Span[A]].asInstanceOf[Tag[Any]],
+                inner.structure
+            )
         )
 
     /** Schema for Maybe[A] values.
       *
       * Encodes as null when Absent, delegates to inner schema when Present.
       */
-    given maybeSchema[A](using inner: Schema[A]): Schema[Maybe[A]] =
-        Schema.init[Maybe[A]](
+    given maybeSchema[A](using inner: Schema[A], frame: Frame): Schema[Maybe[A]] =
+        Schema.initWithStructure[Maybe[A]](
             writeFn = (value, writer) =>
                 value match
                     case Maybe.Present(v) => inner.serializeWrite(v, writer)
@@ -1617,12 +1798,18 @@ object Schema:
             ,
             readFn = reader =>
                 if reader.isNil() then Maybe.empty
-                else Maybe(inner.serializeRead(reader))
+                else Maybe(inner.serializeRead(reader)),
+            // Deviation D-1: Tag[Maybe[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Optional(
+                "Maybe",
+                Tag[Any],
+                inner.structure
+            )
         )
 
     /** Schema for Option[A] values. */
-    given optionSchema[A](using inner: Schema[A]): Schema[Option[A]] =
-        Schema.init[Option[A]](
+    given optionSchema[A](using inner: Schema[A], frame: Frame): Schema[Option[A]] =
+        Schema.initWithStructure[Option[A]](
             writeFn = (value, writer) =>
                 value match
                     case Some(v) => inner.serializeWrite(v, writer)
@@ -1631,7 +1818,13 @@ object Schema:
             ,
             readFn = reader =>
                 if reader.isNil() then None
-                else Some(inner.serializeRead(reader))
+                else Some(inner.serializeRead(reader)),
+            // Deviation D-1: Tag[Option[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Optional(
+                "Option",
+                Tag[Any],
+                inner.structure
+            )
         )
 
     /** Schema for Map[String, V] values (object encoding). */
