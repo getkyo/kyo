@@ -23,11 +23,19 @@ trait Task {
       */
     def needsInterrupt(): Boolean = false
 
-    protected def runtime(): Int =
+    private[scheduler] def runtime(): Int =
         state.runtime
 
     def addRuntime(v: Int) =
         this.state = state.addRuntime(v)
+
+    /** Drops accumulated runtime to the minimum so this task is scheduled ahead of tasks that have
+      * run longer. Used when a fiber is interrupted: it must run promptly to observe the interrupt
+      * and release its worker and finalizers, but its accumulated runtime would otherwise
+      * deprioritize it.
+      */
+    def resetRuntime(): Unit =
+        this.state = state.resetRuntime
 }
 
 object Task {
@@ -62,14 +70,13 @@ object Task {
               */
             def addRuntime(v: Int): State =
                 (if (s < 0) -s else s) + v
+
+            /** Drops accumulated runtime to the minimum, giving the task the highest scheduling
+              * priority. Clears the preemption flag.
+              */
+            def resetRuntime: State = 0
         }
     }
-
-    implicit val taskOrdering: Ordering[Task] =
-        new Ordering[Task] {
-            def compare(x: Task, y: Task) =
-                y.runtime() - x.runtime()
-        }
 
     type Result = Boolean
     val Preempted: Result = true

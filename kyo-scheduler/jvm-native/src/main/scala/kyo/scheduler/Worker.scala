@@ -71,7 +71,7 @@ import scala.util.control.NonFatal
   *   Maximum time slice for task execution before preemption
   *
   * @see
-  *   Queue for details on the underlying task queue implementation
+  *   WorkerQueue for details on the underlying task queue implementation
   * @see
   *   Task for the task execution model
   * @see
@@ -130,7 +130,7 @@ abstract private class Worker(
 
     private val lostTasks = new LongAdder
 
-    private val queue = new Queue[Task]()
+    private val queue = new WorkerQueue()
 
     private val schedule = scheduleTask(_, this)
 
