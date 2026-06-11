@@ -95,6 +95,39 @@ class RecorderTest extends AsyncFreeSpec with NonImplicitAssertions:
             Future.successful(succeed)
         }
 
+        "record bounds a huge value to a short preview with a total-length marker" in {
+            // Regression: a ~500KB recorded value (e.g. a rendered SVG) must not produce an unbounded
+            // diagram. On Scala Native an oversized diagram overflows the test-interface RPC writeUTF
+            // 64KB cap and crashes the whole suite's transport.
+            val r    = new Recorder()
+            val huge = "x" * 500000
+            r.record(huge, 0)
+            val diagram = r.diagram("assert(s == expected)", summon[Frame])
+            assert(diagram.length <= Recorder.MaxDiagram, s"diagram length ${diagram.length} exceeds ${Recorder.MaxDiagram}")
+            assert(diagram.contains("(500000 chars total)"), s"Expected total-length marker in:\n${diagram.take(200)}")
+            Future.successful(succeed)
+        }
+
+        "render flattens control characters so a multi-line value stays on one line" in {
+            val rendered = Recorder.render("a\nb\tc\rd")
+            assert(!rendered.contains('\n'), s"newline leaked: '$rendered'")
+            assert(!rendered.contains('\r'), s"carriage return leaked: '$rendered'")
+            assert(!rendered.contains('\t'), s"tab leaked: '$rendered'")
+            assert(rendered == "a\\nb\\tc\\rd", s"got: '$rendered'")
+            Future.successful(succeed)
+        }
+
+        "render is null-safe (String.valueOf, not value.toString)" in {
+            assert(Recorder.render(null) == "null")
+            Future.successful(succeed)
+        }
+
+        "render leaves a short value unchanged" in {
+            assert(Recorder.render(42) == "42")
+            assert(Recorder.render("hi") == "hi")
+            Future.successful(succeed)
+        }
+
     }
 
 end RecorderTest

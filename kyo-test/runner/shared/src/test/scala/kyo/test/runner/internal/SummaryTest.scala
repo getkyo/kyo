@@ -221,4 +221,20 @@ class SummaryTest extends kyo.test.Test[Any]:
         assert(!summary.contains("MixedSuite > ign"), s"Ignored leaf must not appear in TOTAL FAILURES:\n$summary"): Unit
     }
 
+    "a huge single-line failure diagram is bounded in the summary (native writeUTF RPC safety)" in {
+        // The summary string is what Runner.done() returns; on Scala Native sbt ships it back over the
+        // test-interface RPC via DataOutputStream.writeUTF, which caps at 65535 bytes. A failing leaf
+        // whose diagram is a single ~500KB line (e.g. a rendered SVG with no newlines) must not make the
+        // per-leaf reason carry the whole thing, or the summary overflows that RPC and crashes the
+        // entire suite's transport.
+        val hugeLine = "x" * 500000
+        val summary = Summary.render(
+            reportOf(leafResult(TestResult.Failed(hugeLine, Maybe.empty, oneMilli))),
+            Chunk.empty,
+            Chunk.empty
+        )
+        assert(summary.contains("TOTAL FAILURES (1)"), s"expected TOTAL FAILURES (1)"): Unit
+        assert(summary.length < 64000, s"summary length ${summary.length} exceeds the 64KB writeUTF cap"): Unit
+    }
+
 end SummaryTest
