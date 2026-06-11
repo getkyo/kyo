@@ -68,7 +68,7 @@ object LandingApp:
                             "."
                         ),
                         UI.p.cssClass("lead")(
-                            "Software is easier to write than it has ever been. Making it hold up under real use is the part that has not changed. Kyo is a foundation with layered safety, from the first line of code to crash recovery, so what you build survives errors, restarts, and real traffic."
+                            "AI can write the code. Making it hold up under real use is the part that has not changed. Kyo is the foundation that takes that on, with layered safety from the first line of code to crash recovery, so what you build survives errors, restarts, and real traffic."
                         ),
                         UI.div.cssClass("hero-cta")(
                             UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(docsHome))("Start building"),
@@ -81,7 +81,7 @@ object LandingApp:
                             UI.span("·"),
                             UI.span("Scala 3"),
                             UI.span("·"),
-                            UI.span("Server, browser, and native")
+                            UI.span("Server, browser, native, and Wasm")
                         )
                     ),
                     heroCode
@@ -161,7 +161,7 @@ object LandingApp:
                             UI.h2("From \"it works\" to \"you can depend on it.\"")
                         ),
                         UI.p(
-                            "The demo works. Then an error slips through unnoticed, a restart wipes the night's work, or a little real traffic shows up and the whole thing buckles. The distance between software that works once and software you can depend on is the gap most projects fall into, and the less of the code you wrote yourself, the more the ground underneath has to hold."
+                            "The demo works. Then an error slips through unnoticed, a restart wipes the night's work, or a little real traffic shows up and the whole thing buckles. The distance between software that works once and software you can depend on is the gap most projects fall into, and the more of the code an AI wrote, the more the ground underneath has to hold."
                         )
                     ),
                     UI.div.cssClass("stat")(
@@ -370,7 +370,7 @@ object LandingApp:
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("sec-head").cssClass("center")(
                     UI.div.cssClass("eyebrow")("Platforms and the floor"),
-                    UI.h2("One codebase. Three platforms. One process that carries the load.")
+                    UI.h2("One codebase. Four platforms. One process that carries the load.")
                 ),
                 UI.div.cssClass("pf-cards")(
                     UI.div.cssClass("pf")(
@@ -387,6 +387,11 @@ object LandingApp:
                         UI.div.cssClass("pf-k")("Native"),
                         UI.div.cssClass("pf-n")("Native binary"),
                         UI.p("Command-line tools and binaries that start in milliseconds, with no runtime to install.")
+                    ),
+                    UI.div.cssClass("pf")(
+                        UI.div.cssClass("pf-k")("WebAssembly"),
+                        UI.div.cssClass("pf-n")("WasmGC"),
+                        UI.p("The Scala.js WebAssembly backend on Node 24, from the same source as the rest.")
                     )
                 ),
                 UI.p.cssClass("floor")(

@@ -607,7 +607,10 @@ object WebsiteStyles:
             )
             .rule(
                 Selector.cls("on-dark").descendant(Selector.cls("btn-primary")),
-                Style.bg(_.white).borderColor(_.white).color(_.variable("ink"))
+                // The button fill is always white (it sits on the always-dark CTA band), so its label
+                // must be a FIXED dark. `ink` is theme-variable and flips light in dark mode, which made
+                // this white-on-white in dark mode.
+                Style.bg(_.white).borderColor(_.white).color(inkSection)
                     .hover(_.bg(hex("#EFEDE6")))
             )
     end landingDark
