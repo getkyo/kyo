@@ -35,6 +35,7 @@ class SiteAppTest extends WebsiteTest:
                 queryRef,
                 (_: String) => Kyo.unit,
                 Kyo.unit,
+                Kyo.unit,
                 Signal.initConst(body)
             )
             html <- UI.runRender(view).take(1).run
@@ -45,15 +46,16 @@ class SiteAppTest extends WebsiteTest:
       * on a heading hit). Confirms the populated dropdown structure, hrefs, and sub-labels.
       */
     private def renderWithQuery(query: String)(using Frame): String < Async =
-        val modules = Chunk(
-            WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)),
-            WebsiteModule("kyo-stream", "Effects", "kyo-stream", "", WebsiteModule.Platforms(true, true, true))
-        )
-        val headings = Map(
-            "kyo-core"   -> Chunk(DocsSearch.Heading("Channels and queues", "channels-and-queues")),
-            "kyo-stream" -> Chunk.empty[DocsSearch.Heading]
-        )
-        val index = DocsSearch.headingIndex("latest", modules, s => headings.getOrElse(s, Chunk.empty))
+        val index = DocsSearch.Index(Chunk(
+            DocsSearch.Entry(
+                "kyo-core",
+                "kyo-core",
+                "Effects",
+                "latest",
+                Chunk(DocsSearch.Section("Channels and queues", "channels-and-queues", 2, "channels and queues", Chunk.empty))
+            ),
+            DocsSearch.Entry("kyo-stream", "kyo-stream", "Effects", "latest", Chunk.empty)
+        ))
         for
             queryRef <- Signal.initRef(query)
             body = UI.div.id("content-marker")
@@ -63,6 +65,7 @@ class SiteAppTest extends WebsiteTest:
                 Signal.initConst(index),
                 queryRef,
                 (_: String) => Kyo.unit,
+                Kyo.unit,
                 Kyo.unit,
                 Signal.initConst(body)
             )
@@ -106,6 +109,17 @@ class SiteAppTest extends WebsiteTest:
             assert(html.contains("github.com/getkyo/kyo"), s"GitHub link missing: $html")
             // Both external links open in a new tab.
             assert(html.contains("target=\"_blank\""), s"external links must open in a new tab: $html")
+        }
+    }
+
+    "header carries a theme toggle with both sun and moon icons" in {
+        render(versions2, home).map { html =>
+            assert(html.contains("class=\"theme-toggle\""), s"theme-toggle button missing: $html")
+            assert(html.contains("class=\"sun\""), s"sun icon slot missing: $html")
+            assert(html.contains("class=\"moon\""), s"moon icon slot missing: $html")
+            // Icons are rendered with the kyo-ui Svg DSL (inline <svg>), not a raster or raw string.
+            assert(html.contains("<svg"), s"toggle should render inline SVG icons: $html")
+            assert(html.contains("aria-label=\"Toggle dark mode\""), s"toggle should carry an aria-label: $html")
         }
     }
 

@@ -3,75 +3,73 @@ package kyo.website
 
 import kyo.*
 
-/** Client-side search index and filter for documentation content.
+/** Client-side ranked search index and query engine for the documentation.
   *
-  * Builds a flat search index from module titles plus section headings and filters it by a
-  * plain-text query. All operations are pure and synchronous.
+  * The index is FLAT at the section level: every `##`/`###` section of every module is one searchable
+  * [[Section]] document carrying its heading, anchor slug, prose body, and the API symbols it mentions
+  * (the base identifier of each code reference, e.g. `Abort.run` and `Abort[E]` both contribute the
+  * symbol `Abort`). Module entries also expose their title, so a module name resolves to the module
+  * page. This granularity is what lets a type name like `Abort` resolve to the section that actually
+  * documents it rather than to incidental method-name matches elsewhere.
   *
-  * Two index sources are supported:
-  *   - [[DocsSearch.index]] builds entries from a [[WebsiteContent]] value, using each module's
-  *     stripped README prose as the searchable text (code blocks, inline code, Markdown
-  *     punctuation, and HTML tags removed).
-  *   - [[DocsSearch.headingIndex]] builds entries from the same module list plus each module's
-  *     section headings (from the version `manifest.json` `toc`), so heading matches surface a
-  *     deep link to the heading anchor. This is the index the live header search uses.
+  * [[filter]] ranks with a field-boosted TF-IDF score (the standard relevance model, tuned for a small
+  * corpus): each query word scores against four fields with descending weight, module TITLE, section
+  * HEADING, section SYMBOLS (an exact symbol match is the strongest signal), and section BODY, each
+  * contribution scaled by the term's inverse document frequency so common words count for little and
+  * distinctive ones (a type name) count for a lot. A word that does not match exactly falls back to a
+  * prefix match at reduced weight so search-as-you-type ranks sensibly on a partial last word. Every
+  * query word must match somewhere for a document to be a hit (precision for multi-word queries). The
+  * function is pure and deterministic, so the dropdown and keyboard navigation always agree.
   *
-  * The search is a case-insensitive, multi-word substring filter. Title hits are ranked before
-  * heading/text hits. An empty or blank query yields no hits.
+  * Documents are tokenized by splitting on non-alphanumerics AND camelCase boundaries (so `foldAbort`
+  * yields `fold`, `abort`, and `foldabort`); queries are split on non-alphanumerics only. Symbols are
+  * kept whole for exact matching, with their camelCase parts folded into the body tokens for recall.
   *
   * @see
-  *   [[DocsSearch.index]] to build a prose index
+  *   [[DocsSearch.filter]] to run a query
   * @see
-  *   [[DocsSearch.headingIndex]] to build a heading-aware index
-  * @see
-  *   [[DocsSearch.filter]] to search either
+  *   [[DocsSearch.seed]] to build the synchronous title-only seed used before the full index loads
   */
 object DocsSearch:
 
-    /** A single section heading of a module: its display text and its anchor slug.
-      *
-      * @param text
-      *   The heading text shown as the `search-result-sub` label and matched against the query.
-      * @param slug
-      *   The heading's anchor slug, used to build the `#<slug>` fragment of a heading hit's route.
+    /** A module section heading: display text and anchor slug. Carried by the version manifest's `toc`
+      * (parsed by `DocsClient.routeTable`); the ranked search index uses the richer [[Section]] instead.
       */
     final case class Heading(text: String, slug: String) derives CanEqual
 
-    /** The complete search index for one documentation version.
+    /** One searchable section of a module: a heading and the content beneath it.
       *
-      * `entries` holds one [[Entry]] per module, in README order.
-      *
-      * @param entries
-      *   The indexed module entries.
+      * @param heading
+      *   The section heading text (shown as the `search-result-sub` label, and a boosted match field).
+      * @param slug
+      *   The heading's anchor slug, used to build the `#<slug>` fragment of a section hit's route.
+      * @param level
+      *   The heading level (1 for the module intro/H1, 2 for `##`, 3 for `###`).
+      * @param body
+      *   The section's stripped prose, matched as the lowest-boost field.
+      * @param symbols
+      *   The base API identifiers the section references (e.g. `Abort`, `Env`), matched exactly with a
+      *   high boost so a type-name query resolves to the section that features it.
       */
-    final case class Index(entries: Chunk[Entry]) derives CanEqual
+    final case class Section(heading: String, slug: String, level: Int, body: String, symbols: Chunk[String]) derives CanEqual
 
-    /** One indexed module entry.
+    /** One indexed module: its identity plus every searchable section.
       *
       * @param slug
       *   URL slug for the module page.
       * @param title
-      *   Display title shown in search results.
+      *   Display title, the highest-boost match field (so a module name ranks the module page top).
       * @param group
       *   Sidebar group the module belongs to.
       * @param prefix
-      *   The physical tree prefix (`latest` or `v<X>`) the module's route lives under, used to
-      *   build hit routes `/<prefix>/<slug>/`.
-      * @param text
-      *   Searchable text for full-text matching: stripped prose ([[index]]) or the module's joined
-      *   heading texts ([[headingIndex]]).
-      * @param headings
-      *   The module's section headings. Non-empty for a heading index (so a heading match can be
-      *   pinpointed to its anchor); empty for a prose index.
+      *   The physical tree prefix (`latest` or `v<X>`) the module's route lives under.
+      * @param sections
+      *   The module's searchable sections, in document order. Empty for the title-only [[seed]].
       */
-    final case class Entry(
-        slug: String,
-        title: String,
-        group: String,
-        prefix: String,
-        text: String,
-        headings: Chunk[Heading]
-    ) derives CanEqual
+    final case class Entry(slug: String, title: String, group: String, prefix: String, sections: Chunk[Section]) derives CanEqual
+
+    /** The complete search index for one documentation version: one [[Entry]] per module. */
+    final case class Index(entries: Chunk[Entry]) derives CanEqual
 
     /** A single search result hit.
       *
@@ -80,169 +78,173 @@ object DocsSearch:
       * @param title
       *   Display title of the matched module (the primary result label).
       * @param route
-      *   The client-routable href: `/<prefix>/<slug>/` for a title hit, plus `#<heading-slug>` for
-      *   a heading hit.
+      *   The client-routable href: `/<prefix>/<slug>/` for a module hit, plus `#<heading-slug>` for a
+      *   section hit.
       * @param sub
-      *   The matched heading text for a heading hit (rendered as the `search-result-sub` label);
-      *   `Absent` for a title hit.
+      *   The matched section heading (rendered as the `search-result-sub` label); `Absent` for a module
+      *   hit.
       */
     final case class Hit(slug: String, title: String, route: String, sub: Maybe[String]) derives CanEqual
 
-    /** Build a prose search index from a [[WebsiteContent]] value.
-      *
-      * Produces one [[Entry]] per module across all groups, in README order. Each entry's `text`
-      * is the stripped prose of that module's README (see [[plaintext]]) and its `headings` is
-      * empty, so [[filter]] yields title and prose hits but no heading anchors. The `prefix` is the
-      * content version's tag.
-      *
-      * @param content
-      *   The versioned documentation content.
-      * @return
-      *   A [[DocsSearch.Index]] with one prose entry per module.
+    /** Build the synchronous title-only seed: one section-less [[Entry]] per module, so the very first
+      * keystroke already matches module names. The eager fetch upgrades this to the full section index.
       */
-    def index(content: WebsiteContent): DocsSearch.Index =
-        val prefix = content.version.tag
-        val entries = content.groups.flatMap { group =>
-            group.modules.map { mod =>
-                Entry(mod.slug, mod.title, mod.group, prefix, plaintext(mod.readme), Chunk.empty)
-            }
-        }
-        Index(entries)
-    end index
+    def seed(prefix: String, modules: Chunk[WebsiteModule]): DocsSearch.Index =
+        Index(modules.map(m => Entry(m.slug, m.title, m.group, prefix, Chunk.empty)))
 
-    /** Build a heading-aware search index from a module list plus per-module section headings.
-      *
-      * Produces one [[Entry]] per module, in the given order. Each entry's `text` is the module's
-      * heading texts joined with spaces (so [[filter]]'s title-before-text ranking ranks title
-      * matches first and heading matches second) and its `headings` carries the headings so a
-      * heading match resolves to the heading's `#<slug>` anchor. Used by the live header search,
-      * which sources titles/slugs/groups from the boot island and headings from the version
-      * `manifest.json` `toc`.
-      *
-      * @param prefix
-      *   The physical tree prefix (`latest` or `v<X>`) the modules' routes live under.
-      * @param modules
-      *   The modules to index (slug, title, group), in display order.
-      * @param headingsOf
-      *   The section headings for a module slug (empty when a module has none).
-      * @return
-      *   A [[DocsSearch.Index]] with one heading-aware entry per module.
-      */
-    def headingIndex(
-        prefix: String,
-        modules: Chunk[WebsiteModule],
-        headingsOf: String => Chunk[Heading]
-    ): DocsSearch.Index =
-        val entries = modules.map { mod =>
-            val headings = headingsOf(mod.slug)
-            val text     = headings.map(_.text).mkString(" ")
-            Entry(mod.slug, mod.title, mod.group, prefix, text, headings)
-        }
-        Index(entries)
-    end headingIndex
+    // ---- field boosts (descending: an exact symbol or a title is worth far more than a body word) ----
+    private val TitleBoost: Double   = 9.0
+    private val SymbolBoost: Double  = 6.0
+    private val HeadingBoost: Double = 5.0
+    private val BodyBoost: Double    = 2.0
+    private val SubFactor: Double    = 0.2  // a camelCase sub-word hit (`abort` inside `foldAbort`) counts low
+    private val PrefixFactor: Double = 0.25 // a prefix (as-you-type) hit counts low
+    private val K: Double            = 1.2  // BM25 term-frequency saturation
 
-    /** Filter the index by a plain-text query, ranking title hits before heading/text hits.
-      *
-      * The query is split on whitespace and all matching is case-insensitive substring. A blank or
-      * whitespace-only query yields an empty [[Chunk]].
-      *
-      *   - Entries where ALL query words appear in the title are emitted first, ranked within the
-      *     title band by match quality (exact match, then prefix match, then word-boundary match,
-      *     then substring match), with entry document order as the tie-break.
-      *   - Then, for entries that did NOT match by title, each section heading where ALL query words
-      *     appear emits one hit ranked within the heading band by match quality, then heading document
-      *     order. A module with no headings but whose joined `text` matches emits a single module-page
-      *     hit (the prose-index fallback, ranked lowest in the heading band).
-      *
-      * The two-band order (all title hits before all heading/text hits) is never crossed by the
-      * within-band ranking. The function is pure and deterministic: the same input always produces
-      * the same output, so the dropdown and keyboard nav always agree.
-      *
-      * @param index
-      *   The index to search.
-      * @param query
-      *   The raw query string. Blank returns empty.
-      * @return
-      *   Matched hits in ranked order (title matches first, then heading matches).
-      */
+    // A core CONCEPT (a type/effect) is DEFINED in the foundation modules and only REFERENCED elsewhere,
+    // so a section's relevance for a concept query depends on its module's tier: the effect-defining
+    // groups are boosted, the external-integration groups down-weighted, everything else neutral. This
+    // keeps a query like `Abort` resolving to the canonical effect docs (kyo-prelude, "Foundation")
+    // rather than to an integration's bridge section that merely names the type in its heading. The tier
+    // applies to section hits only, so module-name queries are unaffected.
+    private val CoreGroups: Set[String]       = Set("foundation", "application runtime")
+    private val PeripheralGroups: Set[String] = Set("interop with other effect stacks", "scheduler embedding for other runtimes")
+    private def tierWeight(group: String): Double =
+        val g = group.toLowerCase
+        if CoreGroups.contains(g) then 1.5
+        else if PeripheralGroups.contains(g) then 0.6
+        else 1.0
+    end tierWeight
+
+    /** Run a ranked query, returning hits best-first. Blank queries yield no hits. */
     def filter(index: DocsSearch.Index, query: String): Chunk[DocsSearch.Hit] =
-        if query.isBlank then Chunk.empty
+        val qWords = tokenizeQuery(query)
+        if qWords.isEmpty then Chunk.empty
         else
-            val q     = query.trim.toLowerCase
-            val words = q.split("\\s+").toSeq
-            val titleHits =
-                index.entries.zipWithIndex.collect {
-                    case (e, idx) if matches(e.title.toLowerCase, words) =>
-                        val key = (-matchClass(e.title.toLowerCase, q, words), 0, idx, 0)
-                        (key, Hit(e.slug, e.title, moduleRoute(e), Absent))
-                }.sortBy(_._1).map(_._2)
-            val headingScored =
-                index.entries.zipWithIndex.flatMap { case (e, idx) =>
-                    if matches(e.title.toLowerCase, words) then Chunk.empty
-                    else if e.headings.isEmpty then
-                        // Prose-index fallback: no per-heading anchors, so emit a single module-page hit
-                        // when the entry's text matches. isProse=1 ensures all per-heading hits rank first.
-                        if matches(e.text.toLowerCase, words) then
-                            val key = (1, -matchClass(e.text.toLowerCase, q, words), 0, idx, 0)
-                            Chunk((key, Hit(e.slug, e.title, moduleRoute(e), Absent)))
-                        else Chunk.empty
-                    else
-                        e.headings.zipWithIndex.collect {
-                            case (h, hidx) if matches(h.text.toLowerCase, words) =>
-                                // isProse=0 ensures per-heading hits sort before any prose-fallback hit.
-                                val key = (0, -matchClass(h.text.toLowerCase, q, words), -levelWeight(e, h), idx, hidx)
-                                (key, Hit(e.slug, e.title, s"${moduleRoute(e)}#${h.slug}", Present(h.text)))
-                        }
+            // Corpus IDF is computed over the section documents: a word in few sections is distinctive.
+            val sections = index.entries.flatMap(_.sections)
+            val docCount = math.max(sections.size, 1)
+            val df       = scala.collection.mutable.HashMap.empty[String, Int]
+            sections.foreach { s =>
+                sectionTermSet(s).foreach(t => df.update(t, df.getOrElse(t, 0) + 1))
+            }
+            def idf(t: String): Double =
+                val d = df.getOrElse(t, 0)
+                math.max(0.0001, math.log(1.0 + (docCount - d + 0.5) / (d + 0.5)))
+
+            val scored = scala.collection.mutable.ArrayBuffer.empty[(Double, Int, Int, Hit)]
+            index.entries.zipWithIndex.foreach { case (e, ei) =>
+                // Module-title hit: score the title field on its own; a module name should win for it.
+                val titleScore = scoreField(qWords, wholeTokens(e.title), TitleBoost, idf)
+                if titleScore > 0 then scored += ((titleScore, 0, ei, Hit(e.slug, e.title, moduleRoute(e), Absent)))
+                e.sections.zipWithIndex.foreach { case (s, si) =>
+                    val headWhole  = wholeTokens(s.heading)
+                    val headSub    = subTokens(s.heading)
+                    val bodyWhole  = wholeTokens(s.body)
+                    val bodySub    = subTokens(s.body)
+                    val syms       = s.symbols.iterator.map(_.toLowerCase).toSet
+                    var score      = 0.0
+                    var matchedAll = true
+                    qWords.foreach { w =>
+                        val bw = count(bodyWhole, w)
+                        val hw = count(headWhole, w)
+                        var c  = 0.0
+                        // A featured symbol is frequency-weighted by its whole-word body count, so the
+                        // section that uses a type the most (the one that documents it) wins it.
+                        if syms.contains(w) then c += SymbolBoost * idf(w) * tf(bw + 1)
+                        c += HeadingBoost * idf(w) * tf(hw)
+                        c += BodyBoost * idf(w) * tf(bw)
+                        // camelCase sub-word hits (`abort` inside `foldAbort`) keep recall but count low.
+                        c += SubFactor * (HeadingBoost * idf(w) * tf(count(headSub, w)) + BodyBoost * idf(w) * tf(count(bodySub, w)))
+                        if c == 0.0 then
+                            if w.length >= 2 && (prefixIn(headWhole, w) || prefixIn(bodyWhole, w) || syms.exists(_.startsWith(w)))
+                            then c += PrefixFactor * HeadingBoost * idf(w)
+                            else matchedAll = false
+                        end if
+                        score += c
+                    }
+                    if matchedAll && score > 0.0 then
+                        scored += ((
+                            score * tierWeight(e.group),
+                            1,
+                            si,
+                            Hit(e.slug, e.title, s"${moduleRoute(e)}#${s.slug}", Present(s.heading))
+                        ))
+                    end if
                 }
-            val headingHits = headingScored.sortBy(_._1).map(_._2)
-            titleHits ++ headingHits
+            }
+            // Best score first; ties break by (module hit before section hit, then document order) for stability.
+            Chunk.from(scored.sortBy { case (sc, kind, ord, _) => (-sc, kind, ord) }.iterator.map(_._4))
         end if
     end filter
 
+    // ---- scoring helpers ----
+
+    private def scoreField(qWords: Seq[String], docToks: Seq[String], boost: Double, idf: String => Double): Double =
+        var score = 0.0
+        var all   = true
+        qWords.foreach { w =>
+            val n = count(docToks, w)
+            if n > 0 then score += boost * idf(w) * tf(n)
+            else if w.length >= 2 && prefixIn(docToks, w) then score += PrefixFactor * boost * idf(w)
+            else all = false
+        }
+        if all then score else 0.0
+    end scoreField
+
+    private def tf(n: Int): Double = if n <= 0 then 0.0 else n * (K + 1.0) / (n + K)
+
+    private def count(toks: Seq[String], w: String): Int = toks.count(_ == w)
+
+    private def prefixIn(toks: Seq[String], w: String): Boolean = toks.exists(t => t != w && t.startsWith(w))
+
     private def moduleRoute(e: Entry): String = s"/${e.prefix}/${e.slug}/"
 
-    /** Strip prose from a README Markdown string, removing code and punctuation for search.
-      *
-      * Strips (in order): fenced code blocks, inline code backticks, HTML tags, and common
-      * Markdown punctuation characters (`#`, `*`, `_`, `[`, `]`, `(`, `)`, `` ` ``, `>`). The
-      * result is the narrative prose suitable for full-text matching.
+    // The distinct term set of a section, used for document-frequency counting.
+    private def sectionTermSet(s: Section): Set[String] =
+        (wholeTokens(s.heading) ++ subTokens(s.heading) ++ wholeTokens(s.body) ++ subTokens(s.body)
+            ++ s.symbols.iterator.map(_.toLowerCase)).toSet
+
+    // ---- tokenization ----
+
+    /** Query / whole-word tokens: split on non-alphanumerics, lowercase, NO camelCase split, so a user
+      * typing `foldAbort` searches that whole identifier while `Abort` searches just `abort`, and a
+      * document's `foldAbort` is a different whole word from a bare `Abort`.
       */
-    private def plaintext(readme: String): String =
-        // Remove fenced code blocks (``` ... ``` or ~~~ ... ~~~)
-        val noFenced = readme.replaceAll("(?s)```.*?```", " ").replaceAll("(?s)~~~.*?~~~", " ")
-        // Remove inline code (`...`)
-        val noInline = noFenced.replaceAll("`[^`]*`", " ")
-        // Remove HTML tags
-        val noHtml = noInline.replaceAll("<[^>]+>", " ")
-        // Remove Markdown punctuation
-        val noMarkdown = noHtml.replaceAll("[#*_\\[\\]()>`]+", " ")
-        // Collapse whitespace
-        noMarkdown.replaceAll("\\s+", " ").trim
-    end plaintext
+    private[website] def tokenizeQuery(s: String): Seq[String] = wholeTokens(s)
 
-    private def matches(haystack: String, words: Seq[String]): Boolean =
-        words.forall(w => haystack.contains(w))
+    private[website] def wholeTokens(s: String): Seq[String] =
+        s.split("[^A-Za-z0-9]+").iterator.filter(_.nonEmpty).map(_.toLowerCase).toSeq
 
-    private def matchClass(candidate: String, fullQuery: String, words: Seq[String]): Int =
-        if candidate == fullQuery then 3
-        else if candidate.startsWith(fullQuery) then 2
-        else if words.exists(w => atWordBoundary(candidate, w)) then 1
-        else 0
+    /** Sub-word tokens: the camelCase parts of multi-part identifiers only (so `foldAbort` yields `fold`
+      * and `abort`, but a plain word yields nothing here). Used as a low-weight recall signal.
+      */
+    private[website] def subTokens(s: String): Seq[String] =
+        s.split("[^A-Za-z0-9]+").iterator.filter(_.nonEmpty).flatMap { w =>
+            val parts = camelParts(w)
+            if parts.sizeIs > 1 then parts.iterator.map(_.toLowerCase) else Iterator.empty
+        }.toSeq
 
-    private def atWordBoundary(candidate: String, word: String): Boolean =
-        var from = candidate.indexOf(word)
-        while from >= 0 do
-            val before = if from == 0 then ' ' else candidate.charAt(from - 1)
-            if !before.isLetterOrDigit then return true
-            from = candidate.indexOf(word, from + 1)
-        end while
-        false
-    end atWordBoundary
-
-    // DocsSearch.Heading carries only text and slug; no level field is available at filter time.
-    // levelWeight therefore degenerates to 0: the heading-band sort key
-    // (isProse, -matchClass, -levelWeight, entryIndex, headingDocIndex) uses the prose
-    // discriminator, match quality, and document order only.
-    private def levelWeight(e: Entry, h: Heading): Int = 0
+    /** Split an identifier at lowercase->uppercase and letter<->digit boundaries (`foldAbort` ->
+      * `fold`, `Abort`; `runOrAbort` -> `run`, `Or`, `Abort`), without splitting runs of capitals.
+      */
+    private[website] def camelParts(w: String): List[String] =
+        val parts = scala.collection.mutable.ListBuffer.empty[String]
+        val cur   = new StringBuilder
+        var prev  = ' '
+        w.foreach { ch =>
+            val boundary =
+                cur.nonEmpty && (
+                    (prev.isLower && ch.isUpper) || (prev.isLetter && ch.isDigit) || (prev.isDigit && ch.isLetter)
+                )
+            if boundary then
+                parts += cur.toString
+                cur.clear()
+            cur += ch
+            prev = ch
+        }
+        if cur.nonEmpty then parts += cur.toString
+        parts.toList
+    end camelParts
 
 end DocsSearch

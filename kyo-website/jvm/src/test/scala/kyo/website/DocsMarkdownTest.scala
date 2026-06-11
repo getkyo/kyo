@@ -851,7 +851,7 @@ class DocsMarkdownTest extends WebsiteTest:
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield
             assert(snippets.size == 1, s"expected 1 pair: $snippets")
-            val (heading, snippet) = snippets(0)
+            val (heading, snippet, _) = snippets(0)
             assert(heading.text == "Overview", s"heading text must be Overview: $heading")
             assert(heading.slug == "overview", s"heading slug must be overview: $heading")
             assert(!snippet.contains("kyo.png"), s"RawEmbed content must not appear in snippet: $snippet")
@@ -869,9 +869,9 @@ class DocsMarkdownTest extends WebsiteTest:
             rendered <- DocsMarkdownRender.transpile(source)
         yield
             assert(snippets.size == 3, s"expected 3 pairs, got ${snippets.size}: $snippets")
-            val (h0, s0) = snippets(0)
-            val (h1, s1) = snippets(1)
-            val (h2, s2) = snippets(2)
+            val (h0, s0, _) = snippets(0)
+            val (h1, s1, _) = snippets(1)
+            val (h2, s2, _) = snippets(2)
             assert(h0.level == 2, s"first heading must be level 2: $h0")
             assert(h0.text == "Alpha", s"first heading text must be Alpha: $h0")
             assert(h0.slug == "alpha", s"first heading slug must be alpha: $h0")
@@ -895,7 +895,7 @@ class DocsMarkdownTest extends WebsiteTest:
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield
             assert(snippets.size == 1, s"expected 1 pair: $snippets")
-            val (_, snippet) = snippets(0)
+            val (_, snippet, _) = snippets(0)
             assert(!snippet.contains("xyzzy"), s"fenced code must not leak into snippet: $snippet")
             assert(snippet == "", s"snippet must be empty when only block is a fence: $snippet")
         end for
@@ -908,7 +908,7 @@ class DocsMarkdownTest extends WebsiteTest:
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield
             assert(snippets.size == 2, s"expected 2 pairs: $snippets")
-            val (_, snippet0) = snippets(0)
+            val (_, snippet0, _) = snippets(0)
             assert(snippet0 == "", s"first heading with no prose must have empty snippet: $snippet0")
         end for
     }

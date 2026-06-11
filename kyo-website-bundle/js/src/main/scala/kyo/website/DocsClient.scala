@@ -353,12 +353,21 @@ object DocsClient:
             group <- extractString(obj, "group")
         yield
             val sectionsArray = extractArray(obj, "sections").getOrElse("[]")
-            val sectionObjs   = splitJsonArray(sectionsArray)
-            val headings      = Chunk.from(sectionObjs.flatMap(parseHeading))
-            val snippets      = sectionObjs.flatMap(s => extractString(s, "snippet"))
-            val text          = (headings.map(_.text).toSeq ++ snippets).mkString(" ")
-            DocsSearch.Entry(slug, title, group, "", text, headings)
+            val sections      = Chunk.from(splitJsonArray(sectionsArray).flatMap(parseSearchSection))
+            DocsSearch.Entry(slug, title, group, "", sections)
     end parseSearchEntry
+
+    private def parseSearchSection(obj: String): Maybe[DocsSearch.Section] =
+        for
+            text <- extractString(obj, "text")
+            slug <- extractString(obj, "slug")
+        yield
+            val level = extractInt(obj, "level").getOrElse(2)
+            val body  = extractString(obj, "body").orElse(extractString(obj, "snippet")).getOrElse("")
+            // `symbols` is a space-joined string of base API identifiers (kept simple to parse).
+            val symbols = Chunk.from(extractString(obj, "symbols").getOrElse("").split("\\s+").iterator.filter(_.nonEmpty))
+            DocsSearch.Section(text, slug, level, body, symbols)
+    end parseSearchSection
 
     /** Fetch and parse the `search-index.json` for the given active prefix.
       *

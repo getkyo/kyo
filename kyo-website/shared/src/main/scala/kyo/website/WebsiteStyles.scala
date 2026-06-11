@@ -49,38 +49,102 @@ object WebsiteStyles:
     private val whiteFill12   = Color.rgba(255, 255, 255, 0.12)
     private val shadowSoft    = Color.rgba(20, 20, 15, 0.05)
 
+    // The themeable color tokens, one entry per token in each theme. `lightVars` is the :root default;
+    // `darkVars` (same keys) is applied both by the `prefers-color-scheme: dark` media block (the OS
+    // default, in `responsive`) and by the explicit `data-theme` toggle (in `themeOverrides`).
+    // `--btn`/`--btn-deep` are the solid button fill, kept separate from `--accent` so the button stays
+    // dark enough for white label text while `--accent` (links, emphasis) lightens in dark mode for
+    // contrast. The intentionally-dark surfaces (the landing "foundation" sections, the fenced code
+    // blocks) read `var(--ink-section)`, which elevates slightly above the page in dark mode.
+    private val lightVars: Seq[(String, String)] = Seq(
+        "bg"               -> "#FAF8F4",
+        "surface"          -> "#FFFFFF",
+        "ink"              -> "#16150F",
+        "dim"              -> "#56534A",
+        "faint"            -> "#8C887C",
+        "line"             -> "#E8E3D9",
+        "line-soft"        -> "#F0ECE3",
+        "scroll-thumb"     -> "rgba(0,0,0,.18)",
+        "scroll-thumb-hov" -> "rgba(0,0,0,.34)",
+        "accent"           -> "#4E46E0",
+        "btn"              -> "#4E46E0",
+        "btn-deep"         -> "#332CB8",
+        "accent-ghost"     -> "rgba(78,70,224,.08)",
+        "accent-line"      -> "rgba(78,70,224,.15)",
+        "amber"            -> "#C98A2B",
+        "jade"             -> "#2EA87E",
+        "muted"            -> "#6B7280",
+        "text"             -> "#16150F",
+        "text-dim"         -> "#56534A",
+        "ink-prose"        -> "#2D2C28",
+        "ink-section"      -> "#16150F"
+    )
+
+    private val darkVars: Seq[(String, String)] = Seq(
+        "bg"               -> "#14130D",
+        "surface"          -> "#1D1B14",
+        "ink"              -> "#F4F1EA",
+        "dim"              -> "#B6B1A5",
+        "faint"            -> "#8C887C",
+        "line"             -> "rgba(255,255,255,.10)",
+        "line-soft"        -> "rgba(255,255,255,.055)",
+        "scroll-thumb"     -> "rgba(255,255,255,.18)",
+        "scroll-thumb-hov" -> "rgba(255,255,255,.36)",
+        "accent"           -> "#9D97F0",
+        "btn"              -> "#6E66E8",
+        "btn-deep"         -> "#5A52DC",
+        "accent-ghost"     -> "rgba(157,151,240,.13)",
+        "accent-line"      -> "rgba(157,151,240,.24)",
+        "amber"            -> "#E0A94A",
+        "jade"             -> "#5BC79B",
+        "muted"            -> "#9A968B",
+        "text"             -> "#E9E5DC",
+        "text-dim"         -> "#B6B1A5",
+        "ink-prose"        -> "#D6D2C8",
+        "ink-section"      -> "#1C1A13"
+    )
+
+    // Theme-independent tokens (fonts, radii, widths) shared by every theme.
+    private val baseTokens: Seq[(String, String)] = Seq(
+        "serif"     -> "\"Newsreader\", Georgia, \"Times New Roman\", serif",
+        "sans"      -> "\"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
+        "mono"      -> "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, monospace",
+        "radius"    -> "16px",
+        "radius-sm" -> "10px",
+        "wrap"      -> "1120px",
+        "sidebar-w" -> "260px",
+        "content-w" -> "860px",
+        "header-h"  -> "60px"
+    )
+
+    // Explicit theme overrides for the nav toggle: a `data-theme` attribute on <html> forces a theme,
+    // overriding the OS `prefers-color-scheme` default. Emitted LAST in the sheet so that, at equal
+    // specificity with the media block's `:root`, source order makes the explicit choice win.
+    private def themeOverrides: Stylesheet =
+        Stylesheet.empty
+            .scopedVars(Selector.data("theme", "dark"), darkVars*)
+            .scopedVars(Selector.data("theme", "light"), lightVars*)
+
+    // Webkit/Blink custom scrollbar for one scroll surface: a slim floating pill thumb (a transparent
+    // border plus background-clip:padding-box insets the painted thumb inside its track) over a
+    // transparent track, brightening on hover. Chrome and Safari render this and ignore the standard
+    // scrollbar-width/scrollbar-color; Firefox ignores `::-webkit-*` and keeps the thin themed
+    // scrollbar-color fallback set on the element itself. One helper themes every scroll surface alike.
+    private def polishedScrollbar(target: Selector): Stylesheet =
+        Stylesheet.empty
+            .rule(target.pseudoElement("-webkit-scrollbar"), Style.width(10.px).height(10.px))
+            .rule(target.pseudoElement("-webkit-scrollbar-track"), Style.bg(Color.transparent))
+            .rule(
+                target.pseudoElement("-webkit-scrollbar-thumb"),
+                Style.bg(Color.variable("scroll-thumb")).rounded(99.px)
+                    .border(2.px, Color.transparent).backgroundClip(_.paddingBox)
+                    .hover(_.bg(Color.variable("scroll-thumb-hov")))
+            )
+
     private def buildSheet: Stylesheet =
         Stylesheet.empty
-            // CSS custom properties (palette + typography tokens from kyo-landing.html / docs.html)
-            .vars(
-                "bg"           -> "#FAF8F4",
-                "surface"      -> "#FFFFFF",
-                "ink"          -> "#16150F",
-                "dim"          -> "#56534A",
-                "faint"        -> "#8C887C",
-                "line"         -> "#E8E3D9",
-                "line-soft"    -> "#F0ECE3",
-                "accent"       -> "#4E46E0",
-                "accent-deep"  -> "#332CB8",
-                "accent-ghost" -> "rgba(78,70,224,.08)",
-                "accent-line"  -> "rgba(78,70,224,.15)",
-                "amber"        -> "#C98A2B",
-                "jade"         -> "#2EA87E",
-                "muted"        -> "#6B7280",
-                "text"         -> "#16150F",
-                "text-dim"     -> "#56534A",
-                "ink-prose"    -> "#2D2C28",
-                "ink-section"  -> "#16150F",
-                "serif"        -> "\"Newsreader\", Georgia, \"Times New Roman\", serif",
-                "sans"         -> "\"Inter\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif",
-                "mono"         -> "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, monospace",
-                "radius"       -> "16px",
-                "radius-sm"    -> "10px",
-                "wrap"         -> "1120px",
-                "sidebar-w"    -> "260px",
-                "content-w"    -> "860px",
-                "header-h"     -> "60px"
-            )
+            // CSS custom properties: the light palette plus the theme-independent tokens.
+            .vars((lightVars ++ baseTokens)*)
             ++ baseTypography
             ++ landingChrome
             ++ landingHero
@@ -95,12 +159,29 @@ object WebsiteStyles:
             ++ docsContent
             ++ docsProse
             ++ docsTokens
+            ++ themeToggle
+            // Polished custom scrollbars on the three scroll surfaces: the page, the docs rail, and a
+            // fenced code panel that scrolls a long line horizontally.
+            ++ polishedScrollbar(Selector.tag("html"))
+            ++ polishedScrollbar(Selector.cls("docs-sidebar"))
+            ++ polishedScrollbar(Selector.cls("docs-content").descendant(Selector.tag("pre")))
             ++ responsive
+            ++ themeOverrides
     end buildSheet
 
     // ---- Base typography: apply the Inter sans stack and base color to the page root ----
     private def baseTypography: Stylesheet =
         Stylesheet.empty
+            // Reserve the page scrollbar gutter on the document scroll root so a route swap that grows or
+            // shrinks the document past the viewport never toggles the classic scrollbar and shifts the
+            // whole layout sideways (the left-rail "jump"). A no-op on overlay-scrollbar systems, where the
+            // gutter is zero-width. The same thin, themed scrollbar the sidebar uses applies here so the
+            // page scrollbar matches the rail rather than falling back to the chunky OS default.
+            .rule(
+                Selector.tag("html"),
+                Style.scrollbarGutter(_.stable)
+                    .scrollbarWidth(_.thin).scrollbarColor(Color.variable("scroll-thumb"), Color.transparent)
+            )
             .rule(
                 Selector.tag("body"),
                 Style.bg(_.variable("bg")).color(_.variable("ink"))
@@ -153,10 +234,10 @@ object WebsiteStyles:
                     .maxWidth(1500.px).margin(0.px, Length.Auto).width(Length.Pct(100))
                     .padding(0.px, 24.px)
             )
-            // The search-results dropdown: an absolutely-positioned panel anchored under the right
-            // edge of the .right cluster (which is position: relative below). Always present for
-            // SSG<->bundle hydration parity; empty at the empty query (no rows), so it reserves no
-            // visible height. When populated it floats above the page content as a card.
+            // The search-results dropdown: an absolutely-positioned panel anchored under the search
+            // input via its .search-wrap container (position: relative; see that rule below). Always
+            // present for SSG<->bundle hydration parity; empty at the empty query (no rows), so it
+            // reserves no visible height. When populated it floats above the page content as a card.
             .rule(
                 "search-results",
                 Style.column.position(_.dropdown).gap(2.px)
@@ -216,8 +297,9 @@ object WebsiteStyles:
             )
             .rule(
                 "right",
-                // position: relative so the absolutely-positioned .search-results dropdown anchors to
-                // this cluster (under the search input) rather than the viewport.
+                // The header's right cluster. The search dropdown anchors to the inner .search-wrap (its
+                // own positioned context), not here; relative is kept so the cluster is a stable
+                // positioning root for any future overlay it owns.
                 Style.row.align(_.center).gap(10.px).margin(0.px, 0.px, 0.px, Length.Auto)
                     .position(_.relative)
             )
@@ -234,8 +316,8 @@ object WebsiteStyles:
             )
             .rule(
                 "btn-primary",
-                Style.bg(_.variable("accent")).borderColor(_.variable("accent")).color(_.white)
-                    .hover(_.bg(_.variable("accent-deep")).borderColor(_.variable("accent-deep")).color(_.white))
+                Style.bg(_.variable("btn")).borderColor(_.variable("btn")).color(_.white)
+                    .hover(_.bg(_.variable("btn-deep")).borderColor(_.variable("btn-deep")).color(_.white))
             )
             .rule(
                 "btn-ghost",
@@ -726,9 +808,16 @@ object WebsiteStyles:
             // The header search box (rendered by SiteApp). The dead docs-header chrome
             // (.docs-header/.docs-header-right/.docs-nav) is folded into the unified .site-header*
             // and .links rules, so those rules are removed here to keep the sheet honest.
+            // Relative anchor box for the input + its absolutely-positioned .search-results dropdown,
+            // so the dropdown opens directly under the input. It grows to fill the header's free space
+            // (the input fills it in turn) just as the bare input did before it gained this wrapper.
+            .rule(
+                "search-wrap",
+                Style.row.position(_.relative).flexGrow(1.0).minWidth(0.px)
+            )
             .rule(
                 "search-input",
-                Style.fontFamily(Style.FontFamily.Custom("var(--sans)")).fontSize(13.5.px)
+                Style.width(Length.Pct(100)).fontFamily(Style.FontFamily.Custom("var(--sans)")).fontSize(13.5.px)
                     .padding(8.px, 12.px).border(1.px, _.variable("line")).rounded(10.px)
                     .bg(_.variable("surface")).color(_.variable("ink"))
                     .focus(_.borderColor(_.variable("accent")))
@@ -756,8 +845,12 @@ object WebsiteStyles:
                 Style.column.width(260.px).flexShrink(0.0)
                     .position(_.sticky).top(60.px).alignSelf(_.start)
                     .maxHeight(Length.Calc("100vh - 60px")).overflowY(_.auto)
+                    .scrollbarWidth(_.thin).scrollbarColor(Color.variable("scroll-thumb"), Color.transparent)
                     .bg(_.variable("bg")).borderRight(1.px, _.variable("line-soft"))
-                    .padding(22.px, 14.px, 60.px, 24.px)
+                    // Symmetric horizontal padding so the active-module highlight block sits balanced
+                    // between the rail edges; the old 24/14 left/right split read as right-shifted once the
+                    // scrollbar occupied the right gutter.
+                    .padding(22.px, 18.px, 60.px, 18.px)
             )
             // sidebar-nav is a <nav>, which the base reset gives align-items:center; Style.column
             // flips the direction but leaves the center alignment, so each group would center at a
@@ -997,21 +1090,77 @@ object WebsiteStyles:
                 Style.listItem.color(_.variable("ink-prose")).lineHeight(1.7).fontSize(16.px)
                     .margin(4.px, 0.px, 0.px, 0.px)
             )
-            // inline code in prose: an inline-block pill so its padding/border render while it still
-            // flows within the sentence (a bare inline box would clip the vertical padding).
+            // Inline code in prose: an inline-block chip so its padding and tint render while the token
+            // still flows within the sentence (a bare inline box clips vertical padding). Two choices keep
+            // it quiet rather than noisy: line-height 1 pins the chip box to the glyph height so it HUGS
+            // the text instead of inheriting the prose 1.65 line-height and ballooning into a pill taller
+            // than the words around it; and there is NO border, only a faint accent wash, so a sentence
+            // dense with `Type` references reads as lightly tinted code, not a row of outlined boxes.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("code")),
-                Style.inlineBlock.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(0.84.em).color(_.variable("text"))
-                    .bg(_.variable("accent-ghost")).border(1.px, _.variable("accent-line"))
-                    .padding(1.px, 6.px).rounded(5.px)
+                Style.inlineBlock.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(0.92.em).lineHeight(1.0)
+                    .color(_.variable("text")).bg(_.variable("accent-ghost"))
+                    .padding(1.5.px, 5.px).rounded(5.px)
             )
-            // fenced code blocks: a block <pre> with white-space:pre (UA default) preserves newlines;
-            // the inner <code> is block too, and its token spans flow inline so each source line reads
-            // left-to-right with the line breaks intact.
+            // Fenced code panel (.code-block): the renderer wraps every fenced block in
+            // `.code-block > (button.code-copy, pre)` with no header bar. The panel owns the framing, the
+            // dark ink-section fill (reads as a code surface in both site themes), a hairline top-light
+            // border, a soft drop shadow that lifts it off the page, and overflow:hidden so the children
+            // clip cleanly to the 12px rounded corners. position:relative anchors the floating Copy button
+            // to the panel's top-right corner. The block separates from following prose by its bottom margin.
+            .rule(
+                "code-block",
+                // The hairline top-light border is what reads as the panel edge in DARK mode, where the
+                // dark ink-section surface sits on the near-black page and the drop shadow all but
+                // disappears; .12 (vs a fainter .08) keeps the rounded rectangle a discrete pane there
+                // while staying an unobtrusive top highlight on the light cream page.
+                Style.column.position(_.relative).bg(_.variable("ink-section")).rounded(12.px).overflow(_.hidden)
+                    .border(1.px, Color.rgba(255, 255, 255, 0.12))
+                    .shadow(0.px, 2.px, 14.px, 0.px, Color.rgba(20, 20, 15, 0.22))
+                    .margin(0.px, 0.px, 22.px, 0.px)
+            )
+            // Copy button: a quiet uppercase-mono pill with a copy glyph, floating in the panel's top-right
+            // corner (no header bar). An opaque-ish bg lets it read over the rare long first line; it
+            // brightens on hover. The bundle attaches one delegated click handler that copies the panel's
+            // <pre> text and flips data-copied for a moment; the CSS below swaps the "Copy" label for
+            // "Copied" off that attribute (no per-button JS, works for SPA-injected blocks too).
+            .rule(
+                "code-copy",
+                Style.row.align(_.center).justify(_.center)
+                    .position(_.absolute).top(8.px).right(8.px).zIndex(2)
+                    .color(Color.rgba(255, 255, 255, 0.5))
+                    .bg(Color.rgba(38, 35, 27, 0.92)).border(1.px, Color.rgba(255, 255, 255, 0.14)).rounded(7.px)
+                    .padding(4.px).cursor(_.pointer)
+                    .transition(150, Style.Easing.ease)
+                    .hover(_.color(Color.rgba(255, 255, 255, 0.95)).borderColor(Color.rgba(255, 255, 255, 0.3))
+                        .bg(Color.rgba(52, 48, 38, 0.96)))
+            )
+            // The copy/check glyph follows the button color (stroke=currentColor) at a small fixed size.
+            .rule(
+                Selector.cls("code-copy").descendant(Selector.tag("svg")),
+                Style.block.width(15.px).height(15.px).flexShrink(0.0)
+            )
+            // "Copied" is hidden until the button carries data-copied; the [data-copied] descendant rules
+            // outrank the bare class so the swap survives the .docs-content cascade.
+            .rule("code-copy-done", Style.displayNone)
+            .rule(
+                Selector.data("copied", "true").descendant(Selector.cls("code-copy-idle")),
+                Style.displayNone
+            )
+            .rule(
+                Selector.data("copied", "true").descendant(Selector.cls("code-copy-done")),
+                Style.block.color(_.variable("jade"))
+            )
+            // The <pre> is now just the scroll surface inside the panel: transparent (the panel owns the
+            // fill), padded for the code inset, and overflow:auto so a long line scrolls horizontally
+            // rather than clipping. A thin, low-contrast scrollbar replaces the chunky OS default on the
+            // dark surface (current Chrome/Firefox/Safari honor scrollbar-width/scrollbar-color). The extra
+            // TOP padding reserves a clear strip for the floating Copy button so it never sits over the
+            // first line of code.
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("pre")),
-                Style.block.bg(_.variable("ink-section")).rounded(12.px).padding(18.px, 20.px)
-                    .margin(0.px, 0.px, 22.px, 0.px).overflow(_.auto)
+                Style.block.bg(Color.transparent).padding(34.px, 18.px, 18.px, 18.px).margin(0.px).overflow(_.auto)
+                    .scrollbarWidth(_.thin).scrollbarColor(Color.rgba(255, 255, 255, 0.22), Color.transparent)
             )
             .rule(
                 Selector.cls("docs-content").descendant(Selector.tag("pre")).descendant(Selector.tag("code")),
@@ -1111,6 +1260,39 @@ object WebsiteStyles:
             .rule("tok-operator", Style.color(hex("#89DDFF")))
     end docsTokens
 
+    // ---- Theme toggle: a 36px icon button in the nav. The button holds both a sun and a moon icon;
+    // CSS shows exactly one based on the root data-theme so the displayed icon matches the active theme
+    // with no reactive wiring (the no-flash boot script sets data-theme before paint). Light mode shows
+    // the moon (the switch-to-dark affordance); dark mode shows the sun. The onClick handler that flips
+    // data-theme + persists is supplied by the bundle entry (the generator passes a no-op for the SSG). ----
+    private def themeToggle: Stylesheet =
+        Stylesheet.empty
+            .rule(
+                "theme-toggle",
+                Style.row.align(_.center).justify(_.center).width(36.px).height(36.px).flexShrink(0)
+                    .rounded(10.px).bg(_.variable("surface")).border(1.px, _.variable("line"))
+                    .color(_.variable("dim")).cursor(_.pointer)
+                    .hover(_.color(_.variable("ink")).borderColor(_.variable("faint")))
+            )
+            .rule(Selector.cls("theme-toggle").descendant(Selector.tag("svg")), Style.width(17.px).height(17.px))
+            // The shown icon is `display: block` (an explicit display that overrides the hidden icon's
+            // `display: none`); `Style.row` would only set the flex props and leave `display` to the reset,
+            // so it could not override `none` and BOTH icons would collapse. The 17px svg centers inside the
+            // flex button regardless.
+            // light (default): show moon, hide sun
+            .rule(Selector.cls("theme-toggle").descendant(Selector.cls("moon")), Style.block)
+            .rule(Selector.cls("theme-toggle").descendant(Selector.cls("sun")), Style.displayNone)
+            // dark: show sun, hide moon
+            .rule(
+                Selector.data("theme", "dark").descendant(Selector.cls("theme-toggle")).descendant(Selector.cls("moon")),
+                Style.displayNone
+            )
+            .rule(
+                Selector.data("theme", "dark").descendant(Selector.cls("theme-toggle")).descendant(Selector.cls("sun")),
+                Style.block
+            )
+    end themeToggle
+
     // ---- Responsive breakpoints ----
     private def responsive: Stylesheet =
         Stylesheet.empty
@@ -1193,16 +1375,11 @@ object WebsiteStyles:
                     // wide-viewport 820px reading cap (which would leave dead space on a phone).
                     .rule("docs-content", Style.flexBasis(Length.Pct(100)).maxWidth(Length.Pct(100)).padding(28.px, 22.px, 80.px, 22.px))
             )
-            // dark-mode palette override
+            // OS dark-mode default: re-theme the whole palette when the user's system is set to dark
+            // (the same `darkVars` the explicit toggle uses). The `data-theme` toggle in `themeOverrides`
+            // overrides this when the user picks a theme explicitly.
             .media(Stylesheet.MediaQuery.prefersDark)(
-                Stylesheet.empty.vars(
-                    "bg"      -> "#1A1917",
-                    "surface" -> "#242320",
-                    "ink"     -> "#F0ECE3",
-                    "dim"     -> "#A09A90",
-                    "faint"   -> "#6B6760",
-                    "line"    -> "#2E2C28"
-                )
+                Stylesheet.empty.vars(darkVars*)
             )
     end responsive
 

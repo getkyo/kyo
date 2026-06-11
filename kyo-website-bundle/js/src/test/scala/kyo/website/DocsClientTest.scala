@@ -505,8 +505,8 @@ class DocsClientTest extends kyo.test.Test[Any]:
     "parseSearchIndex on a well-formed body yields the expected entries" in {
         val body =
             """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[""" +
-                """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","snippet":"Fibers are lightweight threads."},""" +
-                """{"level":3,"text":"Interruption","slug":"interruption","snippet":"Interrupt a fiber."}""" +
+                """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","symbols":"Fiber Async","body":"Fibers are lightweight threads."},""" +
+                """{"level":3,"text":"Interruption","slug":"interruption","symbols":"","body":"Interrupt a fiber."}""" +
                 """]}]"""
         for
             entries <- DocsClient.parseSearchIndex(body)
@@ -517,17 +517,16 @@ class DocsClientTest extends kyo.test.Test[Any]:
             assert(e.title == "kyo-core", s"title: ${e.title}")
             assert(e.group == "Effects", s"group: ${e.group}")
             assert(e.prefix == "", s"prefix must be empty (stamped later by fetchSearchIndex), got: ${e.prefix}")
-            assert(
-                e.headings == Chunk(
-                    DocsSearch.Heading("Fibers and forks", "fibers-and-forks"),
-                    DocsSearch.Heading("Interruption", "interruption")
-                ),
-                s"headings must carry text+slug from sections, got: ${e.headings}"
-            )
-            assert(e.text.contains("Fibers and forks"), s"text must include section text, got: ${e.text}")
-            assert(e.text.contains("Fibers are lightweight threads."), s"text must include snippet, got: ${e.text}")
-            assert(e.text.contains("Interruption"), s"text must include second section text, got: ${e.text}")
-            assert(e.text.contains("Interrupt a fiber."), s"text must include second snippet, got: ${e.text}")
+            assert(e.sections.size == 2, s"expected 2 sections, got: ${e.sections.size}")
+            val s0 = e.sections(0)
+            assert(s0.heading == "Fibers and forks", s"section heading: ${s0.heading}")
+            assert(s0.slug == "fibers-and-forks", s"section slug: ${s0.slug}")
+            assert(s0.level == 2, s"section level: ${s0.level}")
+            assert(s0.body == "Fibers are lightweight threads.", s"section body: ${s0.body}")
+            assert(s0.symbols == Chunk("Fiber", "Async"), s"section symbols (space-split): ${s0.symbols}")
+            val s1 = e.sections(1)
+            assert(s1.heading == "Interruption" && s1.level == 3, s"second section: $s1")
+            assert(s1.symbols == Chunk.empty, s"empty symbols string yields no symbols, got: ${s1.symbols}")
         end for
     }
 
@@ -563,10 +562,10 @@ class DocsClientTest extends kyo.test.Test[Any]:
     // emit/parse round-trip: the schema the emitter produces parses back to the expected entries
     "emit/parse round-trip parses the emitted schema back to the expected entries" in {
         // Fixture in the exact schema writeSearchIndex produces:
-        // {"slug","title","group","sections":[{"level","text","slug","snippet"}]}
+        // {"slug","title","group","sections":[{"level","text","slug","symbols","body"}]}
         val body =
             """[{"slug": "kyo-core", "title": "kyo-core", "group": "Effects", "sections": [""" +
-                """{"level": 2, "text": "Fibers and forks", "slug": "fibers-and-forks", "snippet": "Fibers are lightweight threads."}""" +
+                """{"level": 2, "text": "Fibers and forks", "slug": "fibers-and-forks", "symbols": "Fiber", "body": "Fibers are lightweight threads."}""" +
                 """]}]"""
         for
             entries <- DocsClient.parseSearchIndex(body)
@@ -576,18 +575,13 @@ class DocsClientTest extends kyo.test.Test[Any]:
             assert(e.slug == "kyo-core", s"round-trip slug: ${e.slug}")
             assert(e.title == "kyo-core", s"round-trip title: ${e.title}")
             assert(e.group == "Effects", s"round-trip group: ${e.group}")
+            val sec = e.sections(0)
             assert(
-                e.headings(0) == DocsSearch.Heading("Fibers and forks", "fibers-and-forks"),
-                s"round-trip heading text+slug: ${e.headings(0)}"
+                sec.heading == "Fibers and forks" && sec.slug == "fibers-and-forks",
+                s"round-trip section heading+slug: $sec"
             )
-            assert(
-                e.text.contains("Fibers and forks"),
-                s"round-trip text must contain section text, got: ${e.text}"
-            )
-            assert(
-                e.text.contains("Fibers are lightweight threads."),
-                s"round-trip text must contain snippet, got: ${e.text}"
-            )
+            assert(sec.body == "Fibers are lightweight threads.", s"round-trip section body: ${sec.body}")
+            assert(sec.symbols == Chunk("Fiber"), s"round-trip section symbols: ${sec.symbols}")
         end for
     }
 
@@ -637,8 +631,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
             assert(entries.size == 1, s"Heading-less module must yield 1 entry, got: ${entries.size}")
             val e = entries(0)
             assert(e.slug == "kyo-prelude", s"slug: ${e.slug}")
-            assert(e.headings == Chunk.empty, s"headings must be empty for no sections, got: ${e.headings}")
-            assert(e.text == "", s"text must be empty for no sections, got: '${e.text}'")
+            assert(e.sections == Chunk.empty, s"sections must be empty for an empty sections array, got: ${e.sections}")
         end for
     }
 
@@ -649,11 +642,11 @@ class DocsClientTest extends kyo.test.Test[Any]:
         // Build the title-only seed: one module, no headings.
         val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
         val content       = WebsiteContent("", Chunk(WebsiteContent.Group("Effects", modules)), WebsiteVersion("v0.9.0", "0.9.0", false))
-        val titleOnlySeed = DocsSearch.headingIndex("v0.9.0", modules, _ => Chunk.empty)
+        val titleOnlySeed = DocsSearch.seed("v0.9.0", modules)
         // The stub search-index.json body carries a section heading not present in the title-only seed.
         val searchIndexBody =
             """[{"slug":"kyo-core","title":"kyo-core","group":"Effects","sections":[""" +
-                """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","snippet":"Fibers are lightweight."}""" +
+                """{"level":2,"text":"Fibers and forks","slug":"fibers-and-forks","symbols":"Fiber","body":"Fibers are lightweight."}""" +
                 """]}]"""
         withFetch(Map("/v0.9.0/search-index.json" -> searchIndexBody)) {
             for
@@ -661,15 +654,15 @@ class DocsClientTest extends kyo.test.Test[Any]:
                 _           <- WebsiteBundleMain.refreshSearchIndex(searchIndex, "v0.9.0")
                 upgraded    <- searchIndex.get
             yield
-                // The title-only seed has no headings; the upgraded index must carry the fetched heading.
+                // The title-only seed has no sections; the upgraded index must carry the fetched section.
                 assert(
-                    titleOnlySeed.entries(0).headings == Chunk.empty,
-                    s"seed must have no headings (pre-condition), got: ${titleOnlySeed.entries(0).headings}"
+                    titleOnlySeed.entries(0).sections == Chunk.empty,
+                    s"seed must have no sections (pre-condition), got: ${titleOnlySeed.entries(0).sections}"
                 )
                 assert(upgraded.entries.size == 1, s"upgraded index must have 1 entry, got: ${upgraded.entries.size}")
                 assert(
-                    upgraded.entries(0).headings == Chunk(DocsSearch.Heading("Fibers and forks", "fibers-and-forks")),
-                    s"upgraded index must carry the fetched heading, got: ${upgraded.entries(0).headings}"
+                    upgraded.entries(0).sections.map(_.heading) == Chunk("Fibers and forks"),
+                    s"upgraded index must carry the fetched section, got: ${upgraded.entries(0).sections}"
                 )
                 assert(
                     upgraded.entries(0).prefix == "v0.9.0",
@@ -685,7 +678,7 @@ class DocsClientTest extends kyo.test.Test[Any]:
     "refreshSearchIndex retains the title-only seed when the fetch fails" in {
         // Build the title-only seed: one module, no headings.
         val modules       = Chunk(WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true)))
-        val titleOnlySeed = DocsSearch.headingIndex("v0.9.0", modules, _ => Chunk.empty)
+        val titleOnlySeed = DocsSearch.seed("v0.9.0", modules)
         // Empty stub map: any fetch throws, simulating a network or HTTP error.
         withFetch(Map.empty) {
             for

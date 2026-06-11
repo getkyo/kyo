@@ -71,11 +71,15 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
     // A populated heading index whose entries cover a title hit AND a heading hit, so the populated
     // .search-results dropdown renders search-result / search-result-active / search-result-sub /
     // search-result-title rows for the coverage harvest.
-    private val searchModules = Chunk(
-        WebsiteModule("kyo-core", "Effects", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
-    )
-    private val searchHeadings = Map("kyo-core" -> Chunk(DocsSearch.Heading("Channels and queues", "channels-and-queues")))
-    private val searchIndex    = DocsSearch.headingIndex("latest", searchModules, s => searchHeadings.getOrElse(s, Chunk.empty))
+    private val searchIndex = DocsSearch.Index(Chunk(
+        DocsSearch.Entry(
+            "kyo-core",
+            "kyo-core",
+            "Effects",
+            "latest",
+            Chunk(DocsSearch.Section("Channels and queues", "channels-and-queues", 2, "channels and queues", Chunk.empty))
+        )
+    ))
 
     // Wrap a content body in the unified SiteApp shell so the merged header chrome is harvested too.
     // A NON-empty query against the populated index forces the search-results dropdown to render its
@@ -91,6 +95,7 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
                 Signal.initConst(searchIndex),
                 queryRef,
                 (_: String) => Kyo.unit,
+                Kyo.unit,
                 Kyo.unit,
                 Signal.initConst(body)
             )

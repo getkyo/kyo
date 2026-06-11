@@ -37,6 +37,54 @@ object DocsMarkdownRender:
     private def html(cs: kyo.Chunk[UI]): Seq[UI.Ast.HtmlChildVal] =
         cs.toSeq.map(n => UI.Ast.HtmlChildVal.lift(n))
 
+    // A 24x24 line-icon frame: the shapes inherit `stroke = currentColor` from the `<g>` so the icon
+    // follows the button's text color. Mirrors the SiteApp icon idiom.
+    private def iconFrame(body: Svg.SvgElement*)(using Frame): UI =
+        Svg.svg.viewBox(Svg.ViewBox(0, 0, 24, 24))(
+            Svg.g
+                .fill(Svg.Paint.None)
+                .stroke(Svg.Paint.CurrentColor)
+                .strokeWidth(2.0)
+                .strokeLinecap(Svg.StrokeLinecap.Round)
+                .strokeLinejoin(Svg.StrokeLinejoin.Round)(body*)
+        )
+
+    // The "copy" glyph: two overlapping documents. The front is a rounded rect; the back is an open
+    // rounded-corner L so nothing draws inside the overlap.
+    private def copyIcon(using Frame): UI =
+        iconFrame(
+            Svg.rect.x(8).y(8).width(14).height(14).rx(2).ry(2),
+            Svg.path.d(
+                Svg.PathData.from(4, 16)
+                    .cubicTo(2.9, 16, 2, 15.1, 2, 14)
+                    .vLineTo(4)
+                    .cubicTo(2, 2.9, 2.9, 2, 4, 2)
+                    .hLineTo(14)
+                    .cubicTo(15.1, 2, 16, 2.9, 16, 4)
+            )
+        )
+
+    // A checkmark, shown for the brief "copied" confirmation state.
+    private def checkIcon(using Frame): UI =
+        iconFrame(Svg.path.d(Svg.PathData.from(20, 6).lineTo(9, 17).lineTo(4, 12)))
+
+    /** Wrap a fenced-code `pre` in a framed panel with an icon-only Copy button floating in the top-right
+      * corner (no header bar). Build-time only (the highlighted `pre` is already a string by the time the
+      * bundle consumes it). The CSS for `.code-block` / `.code-copy` lives in `WebsiteStyles.docsContent`.
+      */
+    private def codeBlock(pre: UI)(using Frame): UI =
+        UI.div.cssClass("code-block")(
+            // A plain icon <button> wired by one delegated bundle handler (no per-block JS): it copies the
+            // panel's <pre> text and flips data-copied, which the CSS reads to swap the copy glyph for a
+            // check. The CSS floats it absolutely in the panel's top-right corner; the pre's top padding
+            // clears it so it never sits over the first line of code. The aria-label names the icon button.
+            UI.button.cssClass("code-copy").aria("label", "Copy code to clipboard")(
+                UI.div.cssClass("code-copy-idle")(copyIcon),
+                UI.div.cssClass("code-copy-done")(checkIcon)
+            ),
+            pre
+        )
+
     /** The article subtree, pre-rendered HTML string, and heading outline produced by [[transpile]]
       * and [[renderArticle]].
       *
@@ -112,11 +160,13 @@ object DocsMarkdownRender:
       *   Maximum snippet length in characters; truncates at the last word boundary at or before this
       *   limit.
       */
-    private[website] def sectionSnippets(source: String, maxChars: Int)(using Frame): Chunk[(DocsMarkdown.Heading, String)] < Sync =
+    private[website] def sectionSnippets(source: String, maxChars: Int)(using
+        Frame
+    ): Chunk[(DocsMarkdown.Heading, String, Chunk[String])] < Sync =
         Sync.defer {
             val cleaned    = stripDoctest(source)
             val blocks     = splitBlocks(cleaned)
-            val out        = new mutable.ArrayBuffer[(DocsMarkdown.Heading, String)]()
+            val out        = new mutable.ArrayBuffer[(DocsMarkdown.Heading, String, Chunk[String])]()
             val slugCounts = new mutable.HashMap[String, Int]()
             def uniqueSlug(raw: String): String =
                 val count = slugCounts.getOrElse(raw, 0)
@@ -136,20 +186,24 @@ object DocsMarkdownRender:
                         val slug          = makeSlug(text)
                         val heading       = DocsMarkdown.Heading(level, stripInlineMarkdown(text), slug)
                         val prose         = new mutable.ArrayBuffer[String]()
-                        var j             = i + 1
+                        // The raw (un-stripped) text of the heading + its blocks, kept so the inline-code
+                        // spans survive for symbol extraction (stripInlineMarkdown drops the backticks).
+                        val raw = new mutable.ArrayBuffer[String]()
+                        raw += text
+                        var j = i + 1
                         // isInstanceOf is used here for the loop guard; a match-inversion would be less readable.
                         while j < blocks.length && !blocks(j).isInstanceOf[Block.Heading] do
                             blocks(j) match
-                                case Block.Paragraph(t)  => prose += stripInlineMarkdown(t)
-                                case Block.Quote(c)      => prose += stripInlineMarkdown(c)
-                                case Block.Unordered(ls) => prose += ls.map(stripInlineMarkdown).mkString(" ")
-                                case Block.Ordered(ls)   => prose += ls.map(stripInlineMarkdown).mkString(" ")
-                                case Block.Table(ls)     => prose += ls.map(stripInlineMarkdown).mkString(" ")
+                                case Block.Paragraph(t)  => prose += stripInlineMarkdown(t); raw += t
+                                case Block.Quote(c)      => prose += stripInlineMarkdown(c); raw += c
+                                case Block.Unordered(ls) => prose += ls.map(stripInlineMarkdown).mkString(" "); raw ++= ls
+                                case Block.Ordered(ls)   => prose += ls.map(stripInlineMarkdown).mkString(" "); raw ++= ls
+                                case Block.Table(ls)     => prose += ls.map(stripInlineMarkdown).mkString(" "); raw ++= ls
                                 case _                   => ()
                             end match
                             j += 1
                         end while
-                        out += (heading -> snippetOf(prose.mkString(" "), maxChars))
+                        out += ((heading, snippetOf(prose.mkString(" "), maxChars), sectionSymbols(raw.toSeq)))
                     case _ => ()
                 end match
                 i += 1
@@ -157,6 +211,29 @@ object DocsMarkdownRender:
             Chunk.from(out.toSeq)
         }
     end sectionSnippets
+
+    private val InlineCodeRe = "`([^`]+)`".r
+
+    /** The distinct base API identifiers an section references in inline code, in first-seen order.
+      * Each inline `code` span contributes its leading identifier path head: `Abort.run` and `Abort[E]`
+      * both yield `Abort`, `foldAbort` yields `foldAbort`. Used as the high-boost exact-match field so a
+      * type-name query resolves to the section that features it.
+      */
+    private def sectionSymbols(rawBlocks: Seq[String]): Chunk[String] =
+        val syms = scala.collection.mutable.LinkedHashSet.empty[String]
+        rawBlocks.foreach { t =>
+            InlineCodeRe.findAllMatchIn(t).foreach { m =>
+                baseIdent(m.group(1)).foreach(syms += _)
+            }
+        }
+        Chunk.from(syms.toSeq)
+    end sectionSymbols
+
+    private def baseIdent(code: String): Option[String] =
+        val afterLead = code.dropWhile(c => !(c.isLetter || c == '_'))
+        val id        = afterLead.takeWhile(c => c.isLetterOrDigit || c == '_')
+        if id.length >= 2 && (id.head.isLetter || id.head == '_') then Some(id) else None
+    end baseIdent
 
     /** Collapse whitespace and truncate `prose` at the last word boundary at or before `maxChars`.
       * Returns the trimmed prefix with no trailing ellipsis.
@@ -428,7 +505,7 @@ object DocsMarkdownRender:
                 headings += DocsMarkdown.Heading(level, stripInlineMarkdown(text), slug)
 
             case Block.Fence(info, body) =>
-                uiBlocks += UI.pre(UI.code(highlight(info, body)))
+                uiBlocks += codeBlock(UI.pre(UI.code(highlight(info, body))))
 
             case Block.Quote(content) =>
                 uiBlocks += parseBlockquote(content)
@@ -645,7 +722,7 @@ object DocsMarkdownRender:
                     codeLines += lines(i)
                     i += 1
                 if i < lines.length then i += 1
-                result += UI.pre(UI.code(html(Chunk(highlight(info, codeLines.mkString("\n"))))*))
+                result += codeBlock(UI.pre(UI.code(html(Chunk(highlight(info, codeLines.mkString("\n"))))*)))
             else
                 val paraLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length && lines(i).trim.nonEmpty && !lines(i).trim.startsWith("```") do

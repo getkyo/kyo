@@ -3,6 +3,7 @@ package kyo.website
 
 import kyo.*
 import org.scalajs.dom
+import scala.scalajs.js
 
 /** SPA bundle entry-point.
   *
@@ -127,6 +128,14 @@ object WebsiteBundleMain:
         // the cache so the module branch reuses the first-paint content instead of re-fetching it.
         seedArticleCache(initialRoute, DocsClient.Article(island.articleHtml, island.headings))
         for
+            // Re-apply an explicit theme choice (set by the nav toggle on a prior visit) before the body
+            // mounts, so it overrides the OS `prefers-color-scheme` default. No stored choice leaves the
+            // OS default in force (handled purely by the `@media` CSS, no flash).
+            _ <- applyStoredTheme
+            // One delegated click listener wires every code-block Copy button (SSR + SPA-injected alike).
+            _ <- wireCodeCopy
+            // One delegated click listener closes the search dropdown when the user clicks outside it.
+            _          <- wireSearchDismiss
             articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
             tocRef     <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
             // Content-loading flag, false at first paint (the boot island is already injected into
@@ -168,11 +177,118 @@ object WebsiteBundleMain:
                 // module page is already loaded (the nav fiber does not re-fire for a same-route push).
                 target => UILocation.push(target).andThen(scrollToHash()),
                 Kyo.unit, // onSearchFocus no-op; eager fetch makes focus-triggered loading unnecessary
+                toggleTheme,
                 content
             )
         yield view
         end for
     end build
+
+    /** The localStorage key the nav theme toggle persists the explicit choice under. */
+    private val themeKey = "kyo-theme"
+
+    /** Set the document root's `data-theme` to the EFFECTIVE theme on mount: the explicit stored choice
+      * (the toggle writes `themeKey` = `"dark"`/`"light"`), else the OS `prefers-color-scheme`. Pinning
+      * `data-theme` to the effective theme keeps the nav toggle's icon (which keys off `data-theme`)
+      * correct even for an OS-dark visitor who has not toggled. The first paint already used the right
+      * palette via the `@media` CSS, so for an OS-matching visitor this sets the same colors (no flash);
+      * only an explicit choice opposite to the OS repaints. `color-scheme` is set too so native
+      * scrollbars and form controls match.
+      */
+    private def applyStoredTheme(using Frame): Unit < Sync = Sync.defer {
+        val stored = dom.window.localStorage.getItem(themeKey)
+        val theme =
+            if stored == "dark" || stored == "light" then stored
+            else if dom.window.matchMedia("(prefers-color-scheme: dark)").matches then "dark"
+            else "light"
+        val root = dom.document.documentElement
+        root.setAttribute("data-theme", theme)
+        root.asInstanceOf[js.Dynamic].style.colorScheme = theme
+    }
+
+    /** Flip the effective theme and persist the choice. The effective theme is the explicit `data-theme`
+      * when one is set, otherwise the OS `prefers-color-scheme`; flipping writes the opposite as both the
+      * `data-theme` attribute (so the explicit override CSS applies) and the persisted `themeKey`.
+      */
+    private def toggleTheme(using Frame): Unit < Sync = Sync.defer {
+        val root = dom.document.documentElement
+        val attr = root.getAttribute("data-theme")
+        val effectiveDark =
+            if attr == "dark" then true
+            else if attr == "light" then false
+            else dom.window.matchMedia("(prefers-color-scheme: dark)").matches
+        val next = if effectiveDark then "light" else "dark"
+        root.setAttribute("data-theme", next)
+        root.asInstanceOf[js.Dynamic].style.colorScheme = next
+        dom.window.localStorage.setItem(themeKey, next)
+    }
+
+    /** Wire the code-block Copy buttons with ONE delegated `document` click listener, so a single
+      * registration covers every code panel on the page AND every panel injected later by an SPA content
+      * swap (event delegation, no per-render rebinding). On a Copy click it copies the panel's `<pre>`
+      * text to the clipboard and flips the button's `data-copied` attribute for ~1.6s, which the CSS reads
+      * to swap the "Copy" label for "Copied".
+      */
+    private def wireCodeCopy(using Frame): Unit < Sync = Sync.defer {
+        // Unsafe: a DOM event bridge at the JS boundary. The single-threaded event loop runs the listener;
+        // no Kyo state crosses it. A click target is always an Element (so it carries `closest`); the
+        // typed facade gives Unit returns for the attribute writes, and js.Dynamic is needed only for
+        // `navigator.clipboard`, which is not in that facade. The clipboard Promise and the timer id are
+        // discarded deliberately (fire-and-forget).
+        dom.document.addEventListener(
+            "click",
+            (e: dom.Event) =>
+                val target = e.target.asInstanceOf[dom.Element]
+                if target != null then
+                    val btn = target.closest("button.code-copy")
+                    if btn != null then
+                        val block = btn.closest(".code-block")
+                        val pre   = if block != null then block.querySelector("pre") else null
+                        if pre != null then
+                            btn.setAttribute("data-copied", "true")
+                            val _ = js.Dynamic.global.navigator.clipboard.writeText(pre.textContent)
+                            val _ = dom.window.setTimeout(() => btn.removeAttribute("data-copied"), 1600.0)
+                        end if
+                    end if
+                end if
+        )
+    }
+
+    /** One delegated document click listener that closes the header search dropdown. It closes on a
+      * click EITHER outside the search box (`.search-wrap`) OR on a result row (`a.search-result`, a
+      * selection: the row's `href` drives the SPA navigation, and this clears the query so the dropdown
+      * does not linger over the destination). A click on the input itself, or on the dropdown chrome
+      * (its padding / scrollbar, which is inside `.search-wrap` but not a row), leaves it open so the
+      * user can keep typing or scrolling. Closing clears the input value and dispatches a bubbling
+      * `input` event, routing through the input's existing reactive `onInput` binding (which sets the
+      * query Signal to ""), so the dropdown hides via the same path a manual clear would.
+      */
+    private def wireSearchDismiss(using Frame): Unit < Sync = Sync.defer {
+        // Unsafe: a DOM event bridge at the JS boundary. The single-threaded event loop runs the listener;
+        // no Kyo state crosses it. The click target is an Element (it carries `closest`); the synthetic
+        // bubbling `input` Event is built via js.Dynamic (the typed facade's init-dict constructor is
+        // awkward) and is what reaches the reactive binding. The dispatchEvent boolean is discarded.
+        dom.document.addEventListener(
+            "click",
+            (e: dom.Event) =>
+                val target = e.target.asInstanceOf[dom.Element]
+                if target != null then
+                    val outside  = target.closest(".search-wrap") == null
+                    val onResult = target.closest("a.search-result") != null
+                    if outside || onResult then
+                        val input = dom.document.querySelector("input.search-input")
+                        if input != null then
+                            val field = input.asInstanceOf[dom.html.Input]
+                            if field.value.nonEmpty then
+                                field.value = ""
+                                val ev = js.Dynamic.newInstance(js.Dynamic.global.Event)("input", js.Dynamic.literal(bubbles = true))
+                                val _  = field.dispatchEvent(ev.asInstanceOf[dom.Event])
+                            end if
+                        end if
+                    end if
+                end if
+        )
+    }
 
     /** Build a title-only search index synchronously from the boot island: one entry per module
       * (title/slug/group) under `prefix`, with no headings yet. Used as the immediate synchronous
@@ -180,8 +296,7 @@ object WebsiteBundleMain:
       * headings once the network request lands.
       */
     private def titleIndex(content: WebsiteContent, prefix: String): DocsSearch.Index =
-        val modules = content.groups.flatMap(_.modules)
-        DocsSearch.headingIndex(prefix, modules, _ => Chunk.empty)
+        DocsSearch.seed(prefix, content.groups.flatMap(_.modules))
     end titleIndex
 
     /** Attempt to fetch the full heading-aware search index and upgrade the ref on success.
@@ -335,30 +450,27 @@ object WebsiteBundleMain:
         docsBody: UI
     )(using Frame): Unit < Async =
         for
-            // Clear the shared refs BEFORE the (async) content fetch so the rail's active-module reactive
-            // never paints stale content from the PREVIOUS module while the new module's content.html is in
-            // flight. The `route` signal flips synchronously on click, so the rail keys the NEW module as
-            // active immediately; without this reset it would expand showing the OLD module's `## ` sections
-            // (tocRef still holds them) and the article would still show the OLD page, both for the full
-            // fetch window (~400ms on a cold module), then correct. Resetting tocRef to empty makes the
-            // newly-active module expand with NO sections until the real ones arrive (a clean empty over a
-            // stale list), and resetting articleRef to empty blanks the article column rather than lying
-            // about which page is loaded (a brief empty reads as "loading", stale content reads as "my click
-            // did nothing"). For an already-cached route the reset and the real set run back-to-back in this
-            // fiber, so the empty frame collapses into the same paint and is never visible.
+            // Keep the PREVIOUS module's article on screen through the (async) content.html fetch and swap
+            // it atomically when the new HTML arrives, rather than blanking the column first. Blanking first
+            // collapsed the article to empty for the whole fetch window (~tens of ms on a cold module): a
+            // white flash in the content column, and because an empty page is short, the page scrollbar
+            // dropped then re-appeared and shifted the whole layout sideways (the left rail visibly jumped).
+            // The `route` signal flips synchronously on click, so the rail already keys the NEW module as
+            // active and the click reads as registered; letting the old prose linger for one fetch is a
+            // smooth lag, not a "did my click do anything" stall. tocRef IS still reset to empty up front so
+            // the newly-active rail module expands with NO sections (a clean empty) instead of the previous
+            // module's `## ` list, until the real headings arrive with the article. For an already-cached
+            // route the fetch resolves in-fiber, so the article set runs back-to-back and the swap is one
+            // paint with nothing stale on screen.
             //
-            // Raising `loadingRef` alongside the clear hides the prev/next pager for the same window: the
-            // pager is keyed on the `route` signal (which flips synchronously on click), not on whether the
-            // article has loaded, so without this gate it would paint at the TOP of the now-empty content
-            // area (a footer flash) until the article filled in and pushed it down. With the gate the pager
-            // stays hidden until the article is set, then both appear together. `Sync.ensure` lowers the flag
-            // on EVERY exit (success, fetch failure, or panic) so it never sticks true and strand the pager
-            // hidden.
+            // `loadingRef` gates the prev/next pager hidden for the same window: it is keyed on the `route`
+            // signal (which flipped synchronously), so without the gate it would paint the NEW module's
+            // pager under the still-visible OLD article. `Sync.ensure` lowers the flag on EVERY exit
+            // (success, fetch failure, or panic) so it never sticks true and strands the pager hidden.
             _ <- loadingRef.set(true)
             _ <- Sync.ensure(loadingRef.set(false)) {
                 for
                     _ <- tocRef.set(Chunk.empty)
-                    _ <- articleRef.set(UI.empty)
                     article <- Sync.defer(Maybe.fromOption(articleCache.get(nextRoute))).flatMap {
                         case Present(a) => Sync.defer(a)
                         case Absent =>

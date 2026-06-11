@@ -47,6 +47,7 @@ class ChromeParityTest extends WebsiteTest:
                 queryRef,
                 (_: String) => Kyo.unit,
                 Kyo.unit,
+                Kyo.unit,
                 Signal.initConst(body)
             )
         yield view

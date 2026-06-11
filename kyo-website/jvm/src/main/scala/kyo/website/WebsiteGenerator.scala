@@ -257,6 +257,9 @@ object WebsiteGenerator:
                 // bundle supplies the live UILocation.push + the manifest fetch.
                 (_: String) => Kyo.unit,
                 Kyo.unit,
+                // No theme toggle at build time: the static page has no DOM handler, and the theme is
+                // applied by CSS (@media) / the bundle on mount.
+                Kyo.unit,
                 Signal.initConst(body)
             )
         yield view
@@ -385,7 +388,10 @@ object WebsiteGenerator:
             )}", "prev": $prevJson, "next": $nextJson, "toc": $tocJson}"""
     end manifestEntry
 
-    private val SnippetMaxChars: Int = 160
+    // The per-section body cap shipped in the search index: generous enough that a section's defining
+    // terms (which cluster in its opening prose) are captured for relevance ranking, bounded so the
+    // index stays small.
+    private val SnippetMaxChars: Int = 600
 
     /** Serialize the version's modules to `<prefix>/search-index.json` as a flat JSON array of
       * module objects, each carrying `slug`, `title`, `group`, and a `sections` array. Each section
@@ -405,13 +411,16 @@ object WebsiteGenerator:
         end for
     end writeSearchIndex
 
-    private def searchEntryJson(m: WebsiteModule, sections: Chunk[(DocsMarkdown.Heading, String)]): String =
-        val sectionsJson = sections.toSeq.map { case (h, snippet) => sectionJson(h, snippet) }.mkString("[", ", ", "]")
+    private def searchEntryJson(m: WebsiteModule, sections: Chunk[(DocsMarkdown.Heading, String, Chunk[String])]): String =
+        val sectionsJson = sections.toSeq.map { case (h, body, symbols) => sectionJson(h, body, symbols) }.mkString("[", ", ", "]")
         s"""  {"slug": "${escJson(m.slug)}", "title": "${escJson(m.title)}", "group": "${escJson(m.group)}", "sections": $sectionsJson}"""
     end searchEntryJson
 
-    private def sectionJson(h: DocsMarkdown.Heading, snippet: String): String =
-        s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}", "snippet": "${escJson(snippet)}"}"""
+    private def sectionJson(h: DocsMarkdown.Heading, body: String, symbols: Chunk[String]): String =
+        // `symbols` is space-joined (simple to parse client-side); `body` carries the ranked prose.
+        s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}", "symbols": "${escJson(
+                symbols.toSeq.mkString(" ")
+            )}", "body": "${escJson(body)}"}"""
     end sectionJson
 
     // ---- Boot islands (first-paint payload; the schema DocsClient parses) ----

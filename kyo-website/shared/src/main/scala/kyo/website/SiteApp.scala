@@ -43,6 +43,46 @@ object SiteApp:
     private def html(cs: kyo.Chunk[UI]): Seq[UI.Ast.HtmlChildVal] =
         cs.toSeq.map(n => UI.Ast.HtmlChildVal.lift(n))
 
+    // Feather-style theme-toggle icons built with the kyo-ui `Svg` DSL. `stroke = currentColor` makes
+    // them inherit the button's text color (and its hover tone); CSS shows exactly one based on the root
+    // `data-theme`. A shared `iconFrame` applies the common stroke style to either icon's body.
+    private def iconFrame(body: Svg.SvgElement*)(using Frame): UI =
+        // The stroke family is carried on a `<g>` (the `<svg>` root has no presentation attrs); the
+        // shapes inherit it. `stroke = currentColor` makes the icon follow the button's text color.
+        Svg.svg.viewBox(Svg.ViewBox(0, 0, 24, 24))(
+            Svg.g
+                .fill(Svg.Paint.None)
+                .stroke(Svg.Paint.CurrentColor)
+                .strokeWidth(2.0)
+                .strokeLinecap(Svg.StrokeLinecap.Round)
+                .strokeLinejoin(Svg.StrokeLinejoin.Round)(body*)
+        )
+
+    private def sunIcon(using Frame): UI =
+        iconFrame(
+            Svg.circle.cx(12).cy(12).r(4),
+            Svg.path.d(
+                Svg.PathData.from(12, 2).vLineBy(2)
+                    .moveTo(12, 20).vLineBy(2)
+                    .moveTo(4.93, 4.93).lineBy(1.41, 1.41)
+                    .moveTo(17.66, 17.66).lineBy(1.41, 1.41)
+                    .moveTo(2, 12).hLineBy(2)
+                    .moveTo(20, 12).hLineBy(2)
+                    .moveTo(6.34, 17.66).lineBy(-1.41, 1.41)
+                    .moveTo(19.07, 4.93).lineBy(-1.41, 1.41)
+            )
+        )
+
+    private def moonIcon(using Frame): UI =
+        iconFrame(
+            Svg.path.d(
+                Svg.PathData.from(21, 12.79)
+                    .arcTo(9, 9, 0, largeArc = true, sweep = true, 11.21, 3)
+                    .arcTo(7, 7, 0, largeArc = false, sweep = false, 21, 12.79)
+                    .close
+            )
+        )
+
     /** Compose the unified shell: the persistent header above one route-reactive content slot.
       *
       * @param versions
@@ -65,6 +105,10 @@ object SiteApp:
       *   Run once the user first focuses the search box. The bundle uses this to lazily fetch and
       *   cache the heading index (so the manifest fetch never blocks initial load); the SSG passes a
       *   no-op.
+      * @param toggleTheme
+      *   Run when the nav theme toggle is clicked. The bundle flips `data-theme` on the document root
+      *   and persists the choice; the SSG generator passes a no-op (the static page carries no DOM
+      *   handler, and the no-flash boot script applies the stored theme before paint).
       * @param content
       *   The route body (landing or docs), already built by the caller. A constant signal on the SSG
       *   path; a `SignalRef[UI]` updated by the nav fiber on the bundle.
@@ -78,6 +122,7 @@ object SiteApp:
         queryRef: SignalRef[String],
         navigate: String => Unit < Async,
         onSearchFocus: => Unit < Async,
+        toggleTheme: => Unit < Async,
         content: Signal[UI]
     )(using Frame): UI < Sync =
         for
@@ -89,7 +134,7 @@ object SiteApp:
             // data-kyo-path is stable as long as the header structure is identical across SSG and
             // bundle (it is the same SiteApp.view).
             UI.div(
-                siteHeader(versions, docsHome, searchIndex, queryRef, activeRef, navigate, onSearchFocus),
+                siteHeader(versions, docsHome, searchIndex, queryRef, activeRef, navigate, onSearchFocus, toggleTheme),
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(content.map(c => c))
             )
@@ -104,7 +149,8 @@ object SiteApp:
         queryRef: SignalRef[String],
         activeRef: SignalRef[Int],
         navigate: String => Unit < Async,
-        onSearchFocus: => Unit < Async
+        onSearchFocus: => Unit < Async,
+        toggleTheme: => Unit < Async
     )(using Frame): UI =
         // Derive the overview/intro route from the first path segment of docsHome.
         // e.g. docsHome = "/latest/kyo-data/" -> overviewHome = "/latest/"
@@ -133,15 +179,27 @@ object SiteApp:
                         .target(Target.Blank)
                 ),
                 UI.div.cssClass("right")(
-                    UI.input
-                        .cssClass("search-input")
-                        .placeholder("Search docs")
-                        .value(queryRef)
-                        .onFocus(onSearchFocus)
-                        .onInput(q => queryRef.set(q).andThen(activeRef.set(-1)))
-                        .onKeyDown(handleKey(searchIndex, queryRef, activeRef, navigate)),
-                    searchResults(searchIndex, queryRef, activeRef),
+                    // The input and its dropdown share a position:relative wrapper so the absolutely
+                    // positioned .search-results anchors directly under the input (not the right edge of
+                    // the whole header cluster). The wrapper is also the hit-test region for the
+                    // click-outside dismiss wired in the bundle.
+                    UI.div.cssClass("search-wrap")(
+                        UI.input
+                            .cssClass("search-input")
+                            .placeholder("Search docs")
+                            .value(queryRef)
+                            .onFocus(onSearchFocus)
+                            .onInput(q => queryRef.set(q).andThen(activeRef.set(-1)))
+                            .onKeyDown(handleKey(searchIndex, queryRef, activeRef, navigate)),
+                        searchResults(searchIndex, queryRef, activeRef)
+                    ),
                     UI.dropdown(versionOptions*).cssClass("ver").id("site-version"),
+                    // Theme toggle: holds both icons; CSS shows the one matching the root data-theme.
+                    // onClick flips data-theme + persists (the bundle's effect; a no-op on the SSG).
+                    UI.button.cssClass("theme-toggle").aria("label", "Toggle dark mode").onClick(toggleTheme)(
+                        UI.span.cssClass("sun")(sunIcon),
+                        UI.span.cssClass("moon")(moonIcon)
+                    ),
                     UI.a
                         .cssClass("btn")
                         .cssClass("btn-primary")

@@ -1271,9 +1271,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
-    // ---- each section carries level + text + slug + snippet ----
+    // ---- each section carries level + text + slug + symbols + body ----
 
-    "each section in search-index.json carries level, text, slug, and snippet" in {
+    "each section in search-index.json carries level, text, slug, symbols, and body" in {
         val readme = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
         val mod    = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1287,7 +1287,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
             assert(json.contains("\"text\": \"Fibers and forks\""), s"first section text missing: $json")
             assert(json.contains("\"slug\": \"fibers-and-forks\""), s"first section slug missing: $json")
             assert(json.contains("\"level\": 2"), s"first section level missing: $json")
-            assert(json.contains("Fibers are lightweight threads"), s"first section snippet missing: $json")
+            assert(json.contains("Fibers are lightweight threads"), s"first section body missing: $json")
+            assert(json.contains("\"symbols\": \""), s"each section must carry a symbols field: $json")
+            assert(json.contains("\"body\": \""), s"each section must carry a body field: $json")
             assert(json.contains("\"text\": \"Interruption\""), s"second section text missing: $json")
             assert(json.contains("\"slug\": \"interruption\""), s"second section slug missing: $json")
             assert(json.contains("\"level\": 3"), s"second section level missing: $json")
@@ -1297,11 +1299,11 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
-    // ---- snippet <= 160 chars, word-boundary, no ellipsis ----
+    // ---- body <= 600 chars, word-boundary, no ellipsis ----
 
-    "snippet is at most 160 chars, word-boundary truncated, and has no ellipsis" in {
-        // Produce a prose block that exceeds 160 characters.
-        val longProse = ("The quick brown fox jumps over the lazy dog " * 5).trim
+    "body is at most 600 chars, word-boundary truncated, and has no ellipsis" in {
+        // Produce a prose block that exceeds 600 characters.
+        val longProse = ("The quick brown fox jumps over the lazy dog " * 20).trim
         val readme    = s"## Section\n$longProse\n"
         val mod       = WebsiteModule("kyo-long", "Foundation", "kyo-long", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1312,18 +1314,18 @@ class WebsiteGeneratorTest extends WebsiteTest:
             _         <- emit(Chunk(content), out, bundleDir)
             json      <- readFile(out / "v1.0.0" / "search-index.json")
         yield
-            // Extract the snippet value from the JSON.
-            val snippetKey = "\"snippet\": \""
-            val sk         = json.indexOf(snippetKey)
-            assert(sk >= 0, s"snippet field not found: $json")
-            val from    = sk + snippetKey.length
+            // Extract the body value from the JSON.
+            val bodyKey = "\"body\": \""
+            val sk      = json.indexOf(bodyKey)
+            assert(sk >= 0, s"body field not found: $json")
+            val from    = sk + bodyKey.length
             var i       = from
             var snippet = ""
             while i < json.length && json.charAt(i) != '"' do i += 1
             snippet = json.substring(from, i)
-            assert(snippet.length <= 160, s"snippet must be at most 160 chars, got ${snippet.length}: $snippet")
-            assert(!snippet.endsWith("..."), s"snippet must not end with ...: $snippet")
-            assert(!snippet.endsWith("…"), s"snippet must not end with ellipsis char: $snippet")
+            assert(snippet.length <= 600, s"body must be at most 600 chars, got ${snippet.length}: $snippet")
+            assert(!snippet.endsWith("..."), s"body must not end with ...: $snippet")
+            assert(!snippet.endsWith("…"), s"body must not end with ellipsis char: $snippet")
             // The snippet must land on a whole-word boundary: it must be a prefix of the
             // whitespace-collapsed source prose, and the character at position snippet.length
             // in the collapsed string must be whitespace (proving the cut did not split a word).
