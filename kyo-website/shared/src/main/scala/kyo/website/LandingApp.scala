@@ -76,8 +76,11 @@ object LandingApp:
                         ),
                         UI.div.cssClass("trust")(
                             UI.span("Open source"),
+                            UI.span("·"),
                             UI.span("Apache-2.0"),
+                            UI.span("·"),
                             UI.span("Scala 3"),
+                            UI.span("·"),
                             UI.span("Server, browser, and native")
                         )
                     ),

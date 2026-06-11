@@ -183,7 +183,10 @@ object WebsiteStyles:
             // page scrollbar matches the rail rather than falling back to the chunky OS default.
             .rule(
                 Selector.tag("html"),
-                Style.scrollbarGutter(_.stable)
+                // both-edges reserves the scrollbar gutter on BOTH sides so centered content stays
+                // centered relative to the viewport (with a one-edge gutter, every centered block sits
+                // ~half the scrollbar width left of true center).
+                Style.scrollbarGutter(_.stableBothEdges)
                     .scrollbarWidth(_.thin).scrollbarColor(Color.variable("scroll-thumb"), Color.transparent)
             )
             .rule(
@@ -217,10 +220,10 @@ object WebsiteStyles:
                 Selector.tag("header"),
                 Style.position(_.flow).bg(_.variable("bg")).borderBottom(1.px, _.variable("line-soft"))
             )
-            // Unified site header (G2): a full-bleed sticky bar whose inner row is capped at 1500px
-            // (the docs-shell width) and centered, so the one header sits above both the 1120px
-            // landing body and the 1500px docs 2-pane row without ever appearing narrower than the
-            // docs content. position:sticky + top:0 + z-index:100 pin the bar at the viewport top on
+            // Unified site header (G2): a full-bleed sticky bar whose inner row is capped at 1120px and
+            // centered, matching both the landing `.wrap` and the `.docs-shell` (both 1120px) so the
+            // brand and nav share the exact left/right edge of the content beneath them on every route.
+            // position:sticky + top:0 + z-index:100 pin the bar at the viewport top on
             // scroll and layer it above page content (Position.sticky emits only position:sticky; the
             // offset and stacking are set explicitly so the docs rail can stick at its own top:60px
             // offset below this header). The .search-results dropdown uses Position.dropdown
@@ -235,8 +238,8 @@ object WebsiteStyles:
             .rule(
                 "site-header-inner",
                 Style.row.align(_.center).gap(24.px).height(60.px)
-                    .maxWidth(1500.px).margin(0.px, Length.Auto).width(Length.Pct(100))
-                    .padding(0.px, 24.px)
+                    .maxWidth(1120.px).margin(0.px, Length.Auto).width(Length.Pct(100))
+                    .padding(0.px, 28.px)
             )
             // The search-results dropdown: an absolutely-positioned panel anchored under the search
             // input via its .search-wrap container (position: relative; see that rule below). Always
@@ -406,7 +409,7 @@ object WebsiteStyles:
             )
             .rule(
                 "trust",
-                Style.row.justify(_.center).align(_.center).gap(22.px).flexWrap(_.wrap)
+                Style.row.justify(_.center).align(_.center).gap(10.px).flexWrap(_.wrap)
                     .margin(34.px, 0.px, 0.px, 0.px)
                     .fontSize(13.5.px).color(_.variable("faint"))
                     .fontFamily(Style.FontFamily.Custom("var(--mono)"))
@@ -754,7 +757,7 @@ object WebsiteStyles:
             )
             .rule(
                 "note",
-                Style.color(_.variable("faint")).fontSize(14.px).maxWidth(320.px)
+                Style.color(_.variable("dim")).fontSize(14.px).maxWidth(320.px)
                     .margin(14.px, 0.px, 0.px, 0.px).lineHeight(1.6)
             )
             .rule(
@@ -762,7 +765,7 @@ object WebsiteStyles:
                 Style.row.justify(_.spaceBetween).align(_.center).gap(14.px).flexWrap(_.wrap)
                     .margin(44.px, 0.px, 0.px, 0.px).padding(22.px, 0.px, 0.px, 0.px)
                     .borderTop(1.px, _.variable("line-soft"))
-                    .fontSize(13.px).color(_.variable("faint"))
+                    .fontSize(13.px).color(_.variable("dim"))
             )
     end landingFooter
 
