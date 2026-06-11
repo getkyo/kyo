@@ -6946,4 +6946,67 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     }
 
+    // =========================================================================
+    // Suite A: transform structure propagation (INV-11, INV-12)
+    // =========================================================================
+
+    "transform structure propagation" - {
+
+        "longSchema.transform[Duration].structure is the same reference as longSchema.structure (INV-11)" in {
+            val source  = Schema.longSchema
+            val derived = source.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
+            assert(derived.structure.eq(source.structure))
+        }
+
+        "longSchema.transform[Duration].structure tag equals Tag[Long], not Tag[Duration] (INV-12)" in {
+            val source  = Schema.longSchema
+            val derived = source.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
+            derived.structure match
+                case p: Structure.Type.Primitive =>
+                    assert(p.tag =:= Tag[Long].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Primitive structure but got $other")
+            end match
+        }
+
+        "instantSchema.transform[kyo.Instant].structure is the same reference as instantSchema.structure (INV-11)" in {
+            val source  = Schema.instantSchema
+            val derived = source.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
+            assert(derived.structure.eq(source.structure))
+        }
+
+        "instantSchema.transform[kyo.Instant].structure is Type.Primitive (INV-11)" in {
+            val source  = Schema.instantSchema
+            val derived = source.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
+            derived.structure match
+                case _: Structure.Type.Primitive => succeed
+                case other                       => fail(s"Expected Primitive structure but got $other")
+            end match
+        }
+
+        "kyoInstantSchema.structure is the same reference as instantSchema.structure (INV-11)" in {
+            assert(Schema.kyoInstantSchema.structure.eq(Schema.instantSchema.structure))
+        }
+
+        "kyoDurationSchema.structure is the same reference as longSchema.structure (INV-11)" in {
+            assert(Schema.kyoDurationSchema.structure.eq(Schema.longSchema.structure))
+        }
+
+    }
+
+    // =========================================================================
+    // Suite B: transform Structure.compatible (INV-12, R-016)
+    // =========================================================================
+
+    "transform Structure.compatible" - {
+
+        "Structure.Type.compatible(longSchema.structure, kyoDurationSchema.structure) returns true (INV-12)" in {
+            assert(Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
+        }
+
+        "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns true (INV-12)" in {
+            assert(Structure.Type.compatible(Schema.instantSchema.structure, Schema.kyoInstantSchema.structure))
+        }
+
+    }
+
 end SchemaTest

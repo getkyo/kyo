@@ -910,9 +910,10 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     def transform[B](to: A => B)(from: B => A): Schema[B] =
         val self = this
-        Schema.init[B](
+        Schema.initWithStructure[B](
             writeFn = (b: B, w: Writer) => self.serializeWrite(from(b), w),
-            readFn = (r: Reader) => to(self.serializeRead(r))
+            readFn = (r: Reader) => to(self.serializeRead(r)),
+            structure = self.structure
         )
     end transform
 
