@@ -23,6 +23,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     final override def onComplete() =
         doPreempt()
+        // The promise just completed (interrupt for a still-running fiber): drop accumulated
+        // runtime so this task is scheduled promptly to observe the interrupt and run its
+        // finalizers, instead of being deprioritized by the runtime it built up while running.
+        resetRuntime()
+    end onComplete
 
     final override def addFinalizer(f: Maybe[Error[Any]] => Unit) =
         finalizers = finalizers.add(f)

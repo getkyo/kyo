@@ -113,13 +113,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers".notNative.ignore(
-            "hangs intermittently (sometimes indefinitely) on the cross-platform CI matrix via the Defer-prefixed Async.Join interrupt-cascade gap; needs a kernel-level bracket primitive (see INTERRUPT-CASCADE-FIX.md)"
-        ) in {
-            // Pending: hangs intermittently (sometimes indefinitely) on the cross-platform
-            // CI matrix via the Defer-prefixed Async.Join interrupt-cascade gap. The cascade
-            // fix in c417de57b was insufficient; a kernel-level bracket primitive is needed.
-            // See INTERRUPT-CASCADE-FIX.md.
+        "multiple fibers".notNative in {
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
@@ -154,9 +148,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                 else once.map(i => if i then repeat(n - 1) else fail("interrupt returned false"))
             repeat(50).andThen(succeed("all 50 interrupt attempts returned true"))
         }
-        "DIAGNOSE — multi-fiber interrupt per-fiber state on hang".notJs.ignore(
-            "diagnostic harness for the same cascade-gap multi-fiber interrupt hang (see INTERRUPT-CASCADE-FIX.md)"
-        ) in {
+        "DIAGNOSE — multi-fiber interrupt per-fiber state on hang".notJs.timeout(5.minutes) in {
             // Diagnostic harness for the multi-fiber interrupt hang seen on
             // linux-x64 / build (JVM). Mirrors "multiple fibers" (3 fibers, 2s warmup,
             // 3 sequential interrupts) but uses one done latch per fiber and snapshots
@@ -242,7 +234,7 @@ class AsyncTest extends kyo.test.Test[Any]:
                                 s"f3{interrupt=$i3 done=$d3 finRan=${p3 == 0}}"
                         )
             def repeat(i: Int): Unit < (Abort[Any] & Async & Scope) =
-                if i >= iters then ()
+                if i >= iters then succeed(s"all $iters iterations passed")
                 else
                     once(i).map {
                         case Result.Success(_)       => repeat(i + 1)
