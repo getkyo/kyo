@@ -6,6 +6,7 @@ import kyo.UI.Href
 import kyo.UI.ImgSrc
 import kyo.UI.Keyboard
 import kyo.UI.Target
+import scala.language.implicitConversions
 
 /** The unified single-page-app shell: one persistent header above a single route-reactive content
   * slot.
@@ -36,6 +37,11 @@ import kyo.UI.Target
   * is an empty container, so the SSG shell and the bundle's first render are structurally identical.
   */
 object SiteApp:
+
+    private def html(cs: Seq[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.map(n => UI.Ast.HtmlChildVal.lift(n))
+    private def html(cs: kyo.Chunk[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.toSeq.map(n => UI.Ast.HtmlChildVal.lift(n))
 
     /** Compose the unified shell: the persistent header above one route-reactive content slot.
       *
@@ -244,7 +250,7 @@ object SiteApp:
                     val subSpan: Seq[UI] =
                         hit.sub.map(s => Seq[UI](UI.span.cssClass("search-result-sub")(s))).getOrElse(Seq.empty)
                     val children: Seq[UI] = titleSpan +: subSpan
-                    row.href(Href.Path(hit.route))(children*)
+                    row.href(Href.Path(hit.route))(html(children)*)
                 }*
             )
         end if

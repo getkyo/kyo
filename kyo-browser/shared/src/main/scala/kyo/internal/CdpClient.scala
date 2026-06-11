@@ -420,6 +420,27 @@ object CdpClient:
                 case Absent => Exchange.Message.Push(ev)
         }
 
+    /** Like [[dispatchOrPush]] but DROPS the event (returns Skip) when no per-session handler is registered, instead of pushing it to the
+      * bounded `exchange.events` channel. Used for opt-in `Runtime.consoleAPICalled` / `Runtime.exceptionThrown` events, which only a
+      * `withConsole`-style subscriber observes (via a registered handler). When no subscriber is active, no consumer drains these events
+      * from `exchange.events`; pushing them there lets a high-frequency emitter (e.g. a page in a tight throw/console loop) fill the bounded
+      * channel and block the reader fiber, wedging every CDP response. Dropping when unsubscribed keeps the reader fiber free; the subscribe
+      * path stays unchanged (its handler does the best-effort offer).
+      */
+    private def dispatchOrDrop(
+        dispatchers: AtomicRef[Dict[String, CdpEvent.Generic => Unit < Sync]],
+        sid: Maybe[SessionId],
+        ev: CdpEvent.Generic
+    )(using Frame): Exchange.Message[Int, String, CdpEvent] < Sync =
+        dispatchers.use { d =>
+            sid match
+                case Present(s) =>
+                    d.get(s.value) match
+                        case Present(handler) => handler(ev).andThen(Exchange.Message.Skip)
+                        case Absent           => Exchange.Message.Skip
+                case Absent => Exchange.Message.Skip
+        }
+
     /** Decodes a `Page.screencastFrame` event into a `(ScreencastFrameWire, sessionId: Int)` pair. Returns `Absent` on a wrong-method event
       * or any decode failure. The decoder is `Maybe`-returning and never aborts; decode failures are treated as unknown frames.
       *
@@ -546,7 +567,7 @@ object CdpClient:
                                     else if method == "Page.screencastFrame" then
                                         dispatchOrPush(screencastEventDispatchers, sid, ev)
                                     else if method == "Runtime.consoleAPICalled" || method == "Runtime.exceptionThrown" then
-                                        dispatchOrPush(consoleEventDispatchers, sid, ev)
+                                        dispatchOrDrop(consoleEventDispatchers, sid, ev)
                                     else
                                         Exchange.Message.Push(ev)
                                     end if

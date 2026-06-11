@@ -1,6 +1,6 @@
 package kyo
 
-class HttpQueryParamsTest extends Test:
+class HttpQueryParamsTest extends BaseHttpTest:
 
     "empty" - {
         "is empty" in {

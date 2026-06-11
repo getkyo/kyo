@@ -2,7 +2,7 @@ package kyo
 
 import scala.language.implicitConversions
 
-class StylesheetTest extends Test:
+class StylesheetTest extends kyo.test.Test[Any]:
 
     import Stylesheet.*
 
@@ -143,7 +143,7 @@ class StylesheetTest extends Test:
         assert(Stylesheet.empty == Stylesheet.empty)
     }
 
-    "runRenderPage with sheet.render: baseCss strictly before .feat-grid rule (INV-001)" in run {
+    "runRenderPage with sheet.render: baseCss strictly before .feat-grid rule (INV-001)" in {
         val sheet = Stylesheet.rule("feat-grid", Style.row)
         val css   = sheet.render
         val head  = UI.PageHead(title = "t", css = css)
@@ -182,7 +182,7 @@ class StylesheetTest extends Test:
         assert(ng1 == ng2)
     }
 
-    "cssClass renders class attribute and coexists with style attribute" in run {
+    "cssClass renders class attribute and coexists with style attribute" in {
         val html = kyo.internal.HtmlRenderer.render(
             UI.div.cssClass("feat-grid").cssClass("dark").style(Style.bg(Style.Color.blue)),
             Seq.empty

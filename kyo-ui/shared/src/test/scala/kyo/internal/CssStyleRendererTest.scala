@@ -7,7 +7,7 @@ import kyo.Style
 import kyo.Style.*
 import kyo.Style.Color
 
-class CssStyleRendererTest extends Test:
+class CssStyleRendererTest extends kyo.test.Test[Any]:
 
     // ---- color() ----
 

@@ -26,7 +26,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 1: whitelist membership (pure, no Chrome)
     // -------------------------------------------------------------------------
 
-    "eventWhitelist contains Page.screencastFrame, Runtime.consoleAPICalled, Runtime.exceptionThrown" in run {
+    "eventWhitelist contains Page.screencastFrame, Runtime.consoleAPICalled, Runtime.exceptionThrown" in {
         assert(CdpClient.eventWhitelist.contains("Page.screencastFrame"))
         assert(CdpClient.eventWhitelist.contains("Runtime.consoleAPICalled"))
         assert(CdpClient.eventWhitelist.contains("Runtime.exceptionThrown"))
@@ -79,7 +79,7 @@ class BrowserScreencastTest extends BrowserTest:
             }
         }
 
-    "a registered screencast dispatcher receives frames and the cast does not stall" in run {
+    "a registered screencast dispatcher receives frames and the cast does not stall" in {
         withBrowser {
             val html = page(
                 """<html><head><style>
@@ -103,7 +103,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 3: no dispatcher registered, whitelisted event is pushed not dropped
     // -------------------------------------------------------------------------
 
-    "with no dispatcher a whitelisted screencast event is pushed not dropped" in run {
+    "with no dispatcher a whitelisted screencast event is pushed not dropped" in {
         val wire =
             """{"method":"Page.screencastFrame","params":{"data":"AAAA","metadata":{"scrollOffsetX":0,"scrollOffsetY":0},"sessionId":1}}"""
         for
@@ -136,7 +136,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 4: parseScreencastFrame returns Absent on wrong-method event (pure)
     // -------------------------------------------------------------------------
 
-    "parseScreencastFrame returns Absent on a wrong-method event" in run {
+    "parseScreencastFrame returns Absent on a wrong-method event" in {
         val ev = CdpEvent.Generic(method = "Page.loadEventFired", paramsJson = "{}", sessionId = Absent)
         assert(CdpClient.parseScreencastFrame(ev) == Absent)
     }
@@ -145,7 +145,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 5: parseScreencastFrame returns Absent on malformed params (pure)
     // -------------------------------------------------------------------------
 
-    "parseScreencastFrame returns Absent on malformed params JSON" in run {
+    "parseScreencastFrame returns Absent on malformed params JSON" in {
         val ev = CdpEvent.Generic(method = "Page.screencastFrame", paramsJson = "not-valid-json", sessionId = Absent)
         assert(CdpClient.parseScreencastFrame(ev) == Absent)
     }
@@ -154,7 +154,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 6: dispatcher handler swallows Abort[Closed] and never blocks reader
     // -------------------------------------------------------------------------
 
-    "dispatcher handler swallows Abort[Closed] and never blocks the reader" in run {
+    "dispatcher handler swallows Abort[Closed] and never blocks the reader" in {
         val ev = CdpEvent.Generic("Page.screencastFrame", "{}", Absent)
         // Create a channel and immediately close it so any offer inside the handler raises Abort[Closed].
         Channel.initUnscoped[ScreencastFrameWire](1).map { closedChannel =>
@@ -201,7 +201,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 7: records frames of an animation, events-first
     // -------------------------------------------------------------------------
 
-    "screenshotFrames records frames of an animation with non-decreasing offsetMs" in run {
+    "screenshotFrames records frames of an animation with non-decreasing offsetMs" in {
         withBrowser {
             onPage(spinPage) {
                 Browser.screenshotFrames(maxDurationMs = 2000L, maxFrames = 90) {
@@ -232,7 +232,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 8: offsetMs is relative to the cast start (t0), not raw epoch
     // -------------------------------------------------------------------------
 
-    "screenshotFrames offsetMs is measured relative to the cast start" in run {
+    "screenshotFrames offsetMs is measured relative to the cast start" in {
         withBrowser {
             onPage(spinPage) {
                 Browser.screenshotFrames(maxDurationMs = 2000L, maxFrames = 60) {
@@ -256,7 +256,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 9: aborts on the frame cap, frame-count-first
     // -------------------------------------------------------------------------
 
-    "screenshotFrames aborts on the frame cap with limit equal to maxFrames" in run {
+    "screenshotFrames aborts on the frame cap with limit equal to maxFrames" in {
         withBrowser {
             onPage(spinPage) {
                 Abort.run[BrowserReadException] {
@@ -279,7 +279,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 10: aborts on the duration cap while frames stay under maxFrames
     // -------------------------------------------------------------------------
 
-    "screenshotFrames aborts on the duration cap with reached and limit both in milliseconds" in run {
+    "screenshotFrames aborts on the duration cap with reached and limit both in milliseconds" in {
         withBrowser {
             onPage(spinPage) {
                 Abort.run[BrowserReadException] {
@@ -312,7 +312,7 @@ class BrowserScreencastTest extends BrowserTest:
     // Test 11: Webp maps to the screencast jpeg codec without aborting
     // -------------------------------------------------------------------------
 
-    "screenshotFrames Webp format records via the jpeg codec without aborting" in run {
+    "screenshotFrames Webp format records via the jpeg codec without aborting" in {
         withBrowser {
             onPage(spinPage) {
                 Browser.screenshotFrames(maxDurationMs = 800L, maxFrames = 240, format = Browser.ScreenshotFormat.Webp) {
@@ -348,7 +348,7 @@ class BrowserScreencastTest extends BrowserTest:
     // is read by polling until the entry is gone, bounded by a fixed schedule, then asserted concretely. The poll re-reads
     // the AtomicRef directly; the tab object outlives its CDP teardown. A second, independent cast then records frames,
     // proving the recorder is reusable and stopScreencast left Chrome in a clean state.
-    "screenshotFrames tears down the dispatcher on interruption and a later cast still works" in run {
+    "screenshotFrames tears down the dispatcher on interruption and a later cast still works" in {
         // A static page carrying only the CSS animation: Chrome keeps re-rendering it (so the cast records frames)
         // while the DOM stays still, so `goto` settles promptly and the interruption window is deterministic.
         val animOnlyPage =

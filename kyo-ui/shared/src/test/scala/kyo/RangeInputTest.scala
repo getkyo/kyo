@@ -6,44 +6,44 @@ import scala.language.implicitConversions
 
 class RangeInputTest extends UITest:
 
-    "type range" in run {
+    "type range" in {
         withUI(UI.div(UI.rangeInput.id("r"))) {
-            Browser.assertAttribute(Selector.id("r"), "type", "range").andThen(succeed)
+            Browser.assertAttribute(Selector.id("r"), "type", "range").unit
         }
     }
 
-    "min max attributes" in run {
+    "min max attributes" in {
         withUI(UI.div(UI.rangeInput.min(0).max(100).id("r"))) {
             for
                 _ <- Browser.assertAttribute(Selector.id("r"), "min", "0")
                 _ <- Browser.assertAttribute(Selector.id("r"), "max", "100")
-            yield succeed
+            yield ()
         }
     }
 
-    "step attribute" in run {
+    "step attribute" in {
         withUI(UI.div(UI.rangeInput.step(5).id("r"))) {
-            Browser.assertAttribute(Selector.id("r"), "step", "5").andThen(succeed)
+            Browser.assertAttribute(Selector.id("r"), "step", "5").unit
         }
     }
 
-    "all constraints" in run {
+    "all constraints" in {
         withUI(UI.div(UI.rangeInput.min(0).max(100).step(5).id("r"))) {
             for
                 _ <- Browser.assertAttribute(Selector.id("r"), "min", "0")
                 _ <- Browser.assertAttribute(Selector.id("r"), "max", "100")
                 _ <- Browser.assertAttribute(Selector.id("r"), "step", "5")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled" in run {
+    "disabled" in {
         withUI(UI.div(UI.rangeInput.disabled(true).id("r"))) {
-            Browser.assertDisabled(Selector.id("r")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("r")).unit
         }
     }
 
-    "disabled signal toggle" in run {
+    "disabled signal toggle" in {
         val app: UI < Async =
             for disabled <- Signal.initRef(true)
             yield UI.div(
@@ -55,11 +55,11 @@ class RangeInputTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("r"))
                 _ <- Browser.click(Selector.id("en"))
                 _ <- Browser.assertEnabled(Selector.id("r"))
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange fires" in run {
+    "onChange fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0.0)
             yield UI.div(
@@ -70,11 +70,11 @@ class RangeInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("r"), "42")
                 _ <- Browser.assertText(Selector.id("v"), "42")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange correct value" in run {
+    "onChange correct value" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0.0)
             yield UI.div(
@@ -85,20 +85,20 @@ class RangeInputTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("r"), "75.5")
                 _ <- Browser.assertText(Selector.id("v"), "75.5")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus" in run {
+    "focus" in {
         withUI(UI.div(UI.rangeInput.id("r"))) {
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertVisible(Selector.id("r"))
-            yield succeed
+            yield ()
         }
     }
 
-    "onFocus fires" in run {
+    "onFocus fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -109,11 +109,11 @@ class RangeInputTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "onBlur fires" in run {
+    "onBlur fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -126,11 +126,11 @@ class RangeInputTest extends UITest:
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey ArrowRight fires onKeyDown" in run {
+    "pressKey ArrowRight fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -141,11 +141,11 @@ class RangeInputTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.ArrowRight)
                 _ <- Browser.assertText(Selector.id("v"), "ArrowRight")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey ArrowLeft fires onKeyDown" in run {
+    "pressKey ArrowLeft fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -156,7 +156,7 @@ class RangeInputTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.ArrowLeft)
                 _ <- Browser.assertText(Selector.id("v"), "ArrowLeft")
-            yield succeed
+            yield ()
         }
     }
 

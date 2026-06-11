@@ -2,9 +2,9 @@ package kyo
 
 import scala.collection.mutable.ArrayBuffer
 
-class WhileTest extends Test:
+class WhileTest extends kyo.test.Test[Any]:
 
-    "atomic counter" in run {
+    "atomic counter" in {
         direct {
             val counter = AtomicInt.init(0).now
             while counter.get.now < 3 do
@@ -15,7 +15,7 @@ class WhileTest extends Test:
         }
     }
 
-    "accumulating buffers" in run {
+    "accumulating buffers" in {
         val buff1 = new ArrayBuffer[Int]()
         val buff2 = new ArrayBuffer[Int]()
         var i     = 0
@@ -45,7 +45,7 @@ class WhileTest extends Test:
     }
 
     "effectful condition" - {
-        "simple condition" in run {
+        "simple condition" in {
             direct {
                 val counter = AtomicInt.init(0).now
                 while counter.get.now < 5 do
@@ -55,7 +55,7 @@ class WhileTest extends Test:
             }
         }
 
-        "compound condition" in run {
+        "compound condition" in {
             direct {
                 val counter1 = AtomicInt.init(0).now
                 val counter2 = AtomicInt.init(10).now
@@ -73,7 +73,7 @@ class WhileTest extends Test:
     }
 
     "nested effects" - {
-        "in condition and body" in run {
+        "in condition and body" in {
             val results = ArrayBuffer[Int]()
             direct {
                 val counter = AtomicInt.init(0).now
@@ -88,7 +88,7 @@ class WhileTest extends Test:
             }
         }
 
-        "with abort effect" in run {
+        "with abort effect" in {
             direct {
                 val counter = AtomicInt.init(0).now
                 val result = Abort.run {
@@ -108,7 +108,7 @@ class WhileTest extends Test:
     }
 
     "complex control flow" - {
-        "break using abort" in run {
+        "break using abort" in {
             direct {
                 val counter = AtomicInt.init(0).now
                 val result = Abort.run {
@@ -126,7 +126,7 @@ class WhileTest extends Test:
             }
         }
 
-        "continue pattern" in run {
+        "continue pattern" in {
             val evens = ArrayBuffer[Int]()
             direct {
                 val counter = AtomicInt.init(0).now
@@ -146,7 +146,7 @@ class WhileTest extends Test:
         }
     }
 
-    "error handling" in run {
+    "error handling" in {
         val operations = ArrayBuffer[String]()
         direct {
             val result = Abort.run {

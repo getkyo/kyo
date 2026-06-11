@@ -2,7 +2,7 @@ package kyo.website
 
 import kyo.*
 
-class WebsiteStylesTest extends Test:
+class WebsiteStylesTest extends WebsiteTest:
 
     "sheet is a Stylesheet value; render is non-empty and contains :root vars and .feat-grid rule (INV-012)" in {
         val sheet = WebsiteStyles.sheet

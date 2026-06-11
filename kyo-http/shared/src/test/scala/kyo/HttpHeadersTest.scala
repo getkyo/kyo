@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpHeadersTest extends Test:
+class HttpHeadersTest extends BaseHttpTest:
 
     "cookie" - {
         "parses single cookie" in {

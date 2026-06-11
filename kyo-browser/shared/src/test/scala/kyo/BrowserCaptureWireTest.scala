@@ -8,7 +8,7 @@ import kyo.internal.CdpTypes.*
   * All tests are synchronous (no Chrome, no `withBrowser`). Each test exercises the derived `Schema`
   * by encoding or decoding a concrete value and asserting on the result. No reflection is used.
   */
-class BrowserCaptureWireTest extends Test:
+class BrowserCaptureWireTest extends BrowserTest:
 
     "ViewportParams DPR serializes as a JSON number (not integer)" in {
         val vp   = ViewportParams(390, 844, deviceScaleFactor = 3.0)

@@ -8,7 +8,7 @@ import kyo.internal.transport.*
   * ReadPump receives completed reads from the driver and forwards bytes into a channel. We use a mock IoDriver that captures the promise
   * passed to awaitRead so we can complete it synchronously in tests, driving the pump state machine.
   */
-class ReadPumpTest extends kyo.Test:
+class ReadPumpTest extends kyo.BaseHttpTest:
 
     import AllowUnsafe.embrace.danger
     given Frame = Frame.internal
@@ -126,7 +126,6 @@ class ReadPumpTest extends kyo.Test:
             // pump re-registered for next read
             assert(driver.awaitReadCount == 2)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "EOF on empty span closes pump" in {
@@ -138,7 +137,6 @@ class ReadPumpTest extends kyo.Test:
 
             // EOF → teardown → closeFn called
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "channel accepts offer and continues reading" in {
@@ -160,7 +158,6 @@ class ReadPumpTest extends kyo.Test:
             assert(r2 != Absent)
 
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "channel full triggers backpressure — pump stops reading" in {
@@ -177,7 +174,6 @@ class ReadPumpTest extends kyo.Test:
             // Pump should NOT have re-registered for a read (backpressure active)
             assert(driver.awaitReadCount == 1)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "backpressure resolved resumes reading" in {
@@ -203,7 +199,6 @@ class ReadPumpTest extends kyo.Test:
             // happens when backpressureCallback fires with Success.
             // Since everything is synchronous in tests, verify pump re-registered
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "channel closed during backpressure — no second teardown" in {
@@ -221,9 +216,8 @@ class ReadPumpTest extends kyo.Test:
 
             // Channel closure causes putFiber to complete with Failure(Closed)
             // backpressureCallback handles this with () (no teardown, already closed)
-            // closeFn from channel.close in teardown or from our closure:
-            // The test just verifies no panic/exception
-            succeed
+            // The test verifies no panic/double-teardown occurs (no second teardown invocation)
+            succeed("runs without error: closing channel under backpressure must not double-teardown")
         }
 
         "driver read failure causes teardown" in {
@@ -235,7 +229,6 @@ class ReadPumpTest extends kyo.Test:
 
             // Failure → teardown
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "driver read panic causes teardown" in {
@@ -247,7 +240,6 @@ class ReadPumpTest extends kyo.Test:
 
             // Panic → teardown
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "absent result from driver causes teardown" in {
@@ -265,7 +257,6 @@ class ReadPumpTest extends kyo.Test:
 
             assert(driver.awaitReadCount == 3)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "multiple rapid reads coalesce correctly" in {
@@ -289,7 +280,6 @@ class ReadPumpTest extends kyo.Test:
 
             assert(count == 5)
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "channel closed during offer returns Failure(Closed) causes teardown" in {
@@ -304,7 +294,6 @@ class ReadPumpTest extends kyo.Test:
 
             // Should trigger teardown
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         "backpressure callback with panic triggers teardown" in {
@@ -324,7 +313,7 @@ class ReadPumpTest extends kyo.Test:
 
             // The pump should handle this gracefully (no crash)
             // Whether closeFn is called depends on timing, but no exception should be thrown
-            succeed
+            succeed("runs without error: backpressure panic path must not crash the pump")
         }
 
         "becomeAvailable fails after read causes teardown" in {
@@ -341,7 +330,6 @@ class ReadPumpTest extends kyo.Test:
             assert(driver.awaitReadCount == 3)
 
             assert(closeFn().isEmpty)
-            succeed
         }
 
         "EOF after data delivery causes teardown after consumer drains the buffered bytes" in {
@@ -365,7 +353,6 @@ class ReadPumpTest extends kyo.Test:
             // After the poll, the channel transitions to FullyClosed; the closeAwaitEmpty fiber
             // completes synchronously inline and closeFn fires.
             assert(closeFn().nonEmpty, s"expected closeFn to fire after consumer drained, got ${closeFn()}")
-            succeed
         }
 
         "teardown closes channel and calls closeFn" in {
@@ -378,7 +365,6 @@ class ReadPumpTest extends kyo.Test:
             // teardown calls channel.close() and closeFn()
             assert(channel.closed())
             assert(closeFn().nonEmpty)
-            succeed
         }
 
         // Repro for kyo-pod ContainerItTest > execStream stderr-empty failure on Linux x64.
@@ -415,7 +401,6 @@ class ReadPumpTest extends kyo.Test:
             assert(r1.get.toArrayUnsafe.sameElements("first-chunk!".getBytes("UTF-8")))
             assert(r2.get.toArrayUnsafe.sameElements("second-chunk".getBytes("UTF-8")))
             assert(closeFn().nonEmpty)
-            succeed
         }
     }
 

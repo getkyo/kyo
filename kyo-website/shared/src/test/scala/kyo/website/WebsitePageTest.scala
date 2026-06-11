@@ -3,7 +3,7 @@ package kyo.website
 import kyo.*
 import scala.language.implicitConversions
 
-class WebsitePageTest extends Test:
+class WebsitePageTest extends WebsiteTest:
 
     private val defaultOpts = WebsitePage.Options(
         title = "Kyo",
@@ -15,7 +15,7 @@ class WebsitePageTest extends Test:
     private def renderPage(opts: WebsitePage.Options, view: UI)(using Frame): String < Async =
         WebsitePage.wrap(opts)(view).take(1).run.map(_.headMaybe.getOrElse(""))
 
-    "document structure: doctype, html lang=en, one head, one body, closing html (INV-002)" in run {
+    "document structure: doctype, html lang=en, one head, one body, closing html (INV-002)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(html.startsWith("<!DOCTYPE html>"))
             assert(html.contains("<html lang=\"en\""))
@@ -25,7 +25,7 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "head <style> contains WebsiteStyles marker rule (.feat-grid) AFTER UI.baseCss marker (INV-001/INV-012)" in run {
+    "head <style> contains WebsiteStyles marker rule (.feat-grid) AFTER UI.baseCss marker (INV-001/INV-012)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             val styleStart  = html.indexOf("<style>")
             val styleEnd    = html.indexOf("</style>")
@@ -38,19 +38,19 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "head contains Google Fonts link (INV-002 fonts)" in run {
+    "head contains Google Fonts link (INV-002 fonts)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(html.contains("fonts.googleapis.com"))
         }
     }
 
-    "head contains <script type=\"module\"> with bundleHref (INV-002)" in run {
+    "head contains <script type=\"module\"> with bundleHref (INV-002)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(html.contains("""<script type="module" src="main.js">"""))
         }
     }
 
-    "body carries the view markup directly (no boot-hook wrapper, G3)" in run {
+    "body carries the view markup directly (no boot-hook wrapper, G3)" in {
         renderPage(defaultOpts, UI.div.id("inner-content")).map { html =>
             val bodyStart = html.indexOf("<body>")
             val bodyEnd   = html.indexOf("</body>")
@@ -61,13 +61,13 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "title is attribute-escaped" in run {
+    "title is attribute-escaped" in {
         renderPage(defaultOpts.copy(title = "<Kyo & Friends>"), UI.div).map { html =>
             assert(html.contains("<title>&lt;Kyo &amp; Friends&gt;</title>"))
         }
     }
 
-    "description and canonical are included in meta/links" in run {
+    "description and canonical are included in meta/links" in {
         renderPage(
             defaultOpts.copy(
                 description = "Desc<test>",
@@ -80,14 +80,14 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "bundleHref with javascript: scheme falls back to main.js" in run {
+    "bundleHref with javascript: scheme falls back to main.js" in {
         renderPage(defaultOpts.copy(bundleHref = "javascript:alert(1)"), UI.div).map { html =>
             assert(html.contains("src=\"main.js\""))
             assert(!html.contains("javascript:alert"))
         }
     }
 
-    "rendered sheet is byte-identical across two calls with different Options" in run {
+    "rendered sheet is byte-identical across two calls with different Options" in {
         for
             h1 <- renderPage(defaultOpts, UI.div)
             h2 <- renderPage(defaultOpts.copy(title = "Other"), UI.div)
@@ -98,7 +98,7 @@ class WebsitePageTest extends Test:
         end for
     }
 
-    "pageHead passes UI.stylesheetCss(WebsiteStyles.sheet) not a raw string (INV-012)" in run {
+    "pageHead passes UI.stylesheetCss(WebsiteStyles.sheet) not a raw string (INV-012)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             val sheet = WebsiteStyles.sheet.render
             val css   = UI.stylesheetCss(WebsiteStyles.sheet)
@@ -107,7 +107,7 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "<style> CSS is not HTML-escaped; <title> is" in run {
+    "<style> CSS is not HTML-escaped; <title> is" in {
         renderPage(defaultOpts.copy(title = "<Kyo>"), UI.div).map { html =>
             assert(html.contains("<title>&lt;Kyo&gt;</title>"))
             // CSS in <style> should contain literal chars, not HTML-escaped
@@ -119,13 +119,13 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "head links include web fonts" in run {
+    "head links include web fonts" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(html.contains("fonts.googleapis.com"))
         }
     }
 
-    "head includes a favicon link so /favicon.ico does not 404 (B10)" in run {
+    "head includes a favicon link so /favicon.ico does not 404 (B10)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(html.contains("""<link rel="icon" href="/kyo.png">"""), s"head must carry the favicon link: $html")
         }
@@ -135,7 +135,7 @@ class WebsitePageTest extends Test:
         assert(UI.stylesheetCss(WebsiteStyles.sheet) == WebsiteStyles.sheet.render)
     }
 
-    "exactly one doctype, one head, one body, one closing html (INV-002)" in run {
+    "exactly one doctype, one head, one body, one closing html (INV-002)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(countOccurrences(html, "<!DOCTYPE html>") == 1)
             assert(countOccurrences(html, "<head>") == 1)
@@ -146,7 +146,7 @@ class WebsitePageTest extends Test:
 
     // ---- SEO-5: JSON-LD injection ----
 
-    "wrap injects application/ld+json block when jsonLd is non-empty, escaping angle brackets (SEO-5)" in run {
+    "wrap injects application/ld+json block when jsonLd is non-empty, escaping angle brackets (SEO-5)" in {
         renderPage(defaultOpts.copy(jsonLd = """{"@type":"TechArticle","x":"</script>"}"""), UI.div).map { html =>
             assert(html.contains("""<script type="application/ld+json">"""), s"JSON-LD block must be present: $html")
             val block = extractJsonLd(html)
@@ -162,7 +162,7 @@ class WebsitePageTest extends Test:
         }
     }
 
-    "wrap emits no application/ld+json block when jsonLd is empty (the default)" in run {
+    "wrap emits no application/ld+json block when jsonLd is empty (the default)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(!html.contains("application/ld+json"), s"no JSON-LD block when jsonLd is empty: $html")
         }
@@ -170,7 +170,7 @@ class WebsitePageTest extends Test:
 
     // ---- DECISION-SEO-B: noindex robots meta ----
 
-    "wrap emits noindex robots meta when noindex=true, absent when false (DECISION-SEO-B)" in run {
+    "wrap emits noindex robots meta when noindex=true, absent when false (DECISION-SEO-B)" in {
         for
             on  <- renderPage(defaultOpts.copy(noindex = true), UI.div)
             off <- renderPage(defaultOpts, UI.div)
@@ -182,7 +182,7 @@ class WebsitePageTest extends Test:
 
     // ---- AF-6: no stray rel="alternate" duplicating the canonical ----
 
-    "no stray rel=alternate link in the rendered head (AF-6)" in run {
+    "no stray rel=alternate link in the rendered head (AF-6)" in {
         renderPage(defaultOpts, UI.div).map { html =>
             assert(!html.contains("""rel="alternate""""), s"head must not carry a stray rel=alternate: $html")
             // The canonical is still present (the removal only dropped the duplicate alternate).

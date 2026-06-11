@@ -4,7 +4,7 @@ import UI.*
 import UI.Ast.*
 import scala.language.implicitConversions
 
-class UIDslTest extends Test:
+class UIDslTest extends kyo.test.Test[Any]:
 
     "div builder" in {
         val result = div("hello")
@@ -34,9 +34,8 @@ class UIDslTest extends Test:
 
     "fragment builder" in {
         val result = fragment(div("a"), div("b"))
-        result match
-            case f: Fragment => assert(f.children.size == 2)
-            case other       => fail(s"Expected Fragment, got $other")
+        assert(result.isInstanceOf[Fragment[?]])
+        assert(result.children.size == 2)
     }
 
     "div with id propagates id attribute" in {

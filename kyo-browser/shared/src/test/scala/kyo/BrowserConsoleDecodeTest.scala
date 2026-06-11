@@ -10,11 +10,11 @@ import kyo.internal.ConsoleApiCalledWire
   * These need no Chrome: they construct the wire records directly and call the `private[kyo]` decoders. The CDP `'warning'` spelling and the
   * drain `'warn'` spelling live in separate decoders and never collide.
   */
-class BrowserConsoleDecodeTest extends Test:
+class BrowserConsoleDecodeTest extends BrowserTest:
 
     // ---- decodeConsoleApiCalled: non-structural type map ----
 
-    "decodeConsoleApiCalled maps each non-structural type to the right level" in run {
+    "decodeConsoleApiCalled maps each non-structural type to the right level" in {
         val cases = Chunk(
             ("log", Browser.ConsoleLevel.Log),
             ("info", Browser.ConsoleLevel.Info),
@@ -40,7 +40,7 @@ class BrowserConsoleDecodeTest extends Test:
 
     // ---- decodeConsoleApiCalled: structural types abort ----
 
-    "decodeConsoleApiCalled aborts on each of the 8 structural types" in run {
+    "decodeConsoleApiCalled aborts on each of the 8 structural types" in {
         val structural =
             Chunk("count", "countReset", "timeEnd", "startGroup", "startGroupCollapsed", "endGroup", "clear", "profile", "profileEnd")
         Kyo.foreach(structural) { cdpType =>
@@ -63,7 +63,7 @@ class BrowserConsoleDecodeTest extends Test:
 
     // ---- decodeConsoleMessage (drain): warn vs warning ----
 
-    "decodeConsoleMessage (drain) maps 'warn' not 'warning'" in run {
+    "decodeConsoleMessage (drain) maps 'warn' not 'warning'" in {
         Abort.run[BrowserReadException](Browser.decodeConsoleMessage(ConsoleMessageWire("warn", "w", 0L), 0L)).map { warnResult =>
             warnResult match
                 case Result.Success(msg) =>
@@ -85,7 +85,7 @@ class BrowserConsoleDecodeTest extends Test:
 
     // ---- decodeConsoleMessage (drain): new info/debug levels ----
 
-    "decodeConsoleMessage maps the new info/debug levels" in run {
+    "decodeConsoleMessage maps the new info/debug levels" in {
         Abort.run[BrowserReadException](Browser.decodeConsoleMessage(ConsoleMessageWire("info", "i", 0L), 0L)).map { infoResult =>
             infoResult match
                 case Result.Success(msg) =>
@@ -110,7 +110,7 @@ class BrowserConsoleDecodeTest extends Test:
 
     // ---- decodeConsoleMessage (drain): offsetMs relative to t0 ----
 
-    "decodeConsoleMessage computes offsetMs relative to t0" in run {
+    "decodeConsoleMessage computes offsetMs relative to t0" in {
         Abort.run[BrowserReadException](Browser.decodeConsoleMessage(ConsoleMessageWire("log", "x", 5000L), 4000L)).map {
             case Result.Success(msg) =>
                 assert(msg.offsetMs == 1000L, s"expected offsetMs 1000 but got ${msg.offsetMs}")
@@ -123,7 +123,7 @@ class BrowserConsoleDecodeTest extends Test:
 
     // ---- N2: CdpClient.parseConsoleEvent Absent paths (mirrors the screencast decoder tests) ----
 
-    "parseConsoleEvent returns Absent on a wrong-method event and on malformed payloads" in run {
+    "parseConsoleEvent returns Absent on a wrong-method event and on malformed payloads" in {
         val wrongMethod      = CdpEvent.Generic(method = "Page.loadEventFired", paramsJson = "{}", sessionId = Absent)
         val malformedConsole = CdpEvent.Generic(method = "Runtime.consoleAPICalled", paramsJson = "not-valid-json", sessionId = Absent)
         val malformedException =

@@ -118,7 +118,8 @@ Agent({
 
 Read the verify report. Possible outcomes:
 
-- **PASS** (all five gates): report the result to the user. The README is ready.
+- **PASS** (all six gates including Gate 0 sbt doctest): report the result to the user. The README is ready.
+- **BLOCK on Gate 0 (sbt doctest failure)**: HARD BLOCK. The README contains code that does not compile. Read the compiler errors quoted in Gate 0's report. For each error: if it cites a fabricated method/type name (`Not found: X`), the drafter invented it ; re-dispatch `readme-edit` with the failing block and the correct API. If it cites a permission error (`X cannot be accessed`, `X is private[Y]`), the source's visibility was wrong ; the supervisor either opens the visibility in source (small, audit-document the change) or removes the example. If it cites a syntax error (`uninitialized`, keyword conflicts, `?=>` in unexpected position), the drafter hallucinated syntax ; re-dispatch `readme-edit` with the correct shape. NEVER declare PASS while Gate 0 reports a failure.
 - **BLOCK on Gate 1, 2, 3, or with 1-5 `[DRAFT-OMISSION]` / any `[CALLOUT-MISSING]`**: re-dispatch `readme-edit` with a synthesized action list from the verify findings (one entry per finding). Then re-verify.
 - **BLOCK with NO-SPINE or severe forward-reference cascade or >5 `[DRAFT-OMISSION]`**: severe drafter drift. Switch to WRITE mode: dispatch `readme-draft` to rewrite from the source analysis, then re-critique, then re-verify.
 - **BLOCK with >5 `[INVENTORY-GAP]` entries**: analyzer slot-dropped real public surface. Re-dispatch `readme-analyze-source` with a steering note listing the orphan names that must appear in the regenerated inventory. After the new analysis lands, re-dispatch `readme-draft`, then re-critique, then re-verify.

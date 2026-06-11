@@ -3,7 +3,7 @@ package kyo.kernel
 import kyo.*
 import kyo.kernel.*
 
-class EffectTest extends Test:
+class EffectTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[String]]
 
@@ -22,7 +22,7 @@ class EffectTest extends Test:
         }
 
         "no match" in {
-            assertThrows[Exception] {
+            interceptThrown[Exception] {
                 Effect.catching {
                     throw new Exception("Test exception")
                 } {

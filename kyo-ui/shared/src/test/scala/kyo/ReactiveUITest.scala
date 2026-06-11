@@ -82,7 +82,7 @@ class ReactiveUITest extends UITest:
 
     // ---- Browser-level reactive behaviour ----
 
-    "reactive span updates on signal change" in run {
+    "reactive span updates on signal change" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -94,27 +94,27 @@ class ReactiveUITest extends UITest:
                 _ <- Browser.assertText(Selector.id("val"), "initial")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("val"), "updated")
-            yield succeed
+            yield ()
         }
     }
 
-    "UI.when hides element when signal is false" in run {
+    "UI.when hides element when signal is false" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
                 UI.button("Toggle").id("tog").onClick(show.getAndUpdate(!_).unit),
-                show.map(s => if s then UI.span("visible").id("target") else UI.empty)
+                UI.when(show)(UI.span("visible").id("target"))
             )
         withUI(app) {
             for
                 _ <- Browser.assertExists(Selector.id("target"))
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertNotExists(Selector.id("target"))
-            yield succeed
+            yield ()
         }
     }
 
-    "two reactive zones update independently" in run {
+    "two reactive zones update independently" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("A0")
@@ -135,11 +135,11 @@ class ReactiveUITest extends UITest:
                 _ <- Browser.click(Selector.id("ub"))
                 _ <- Browser.assertText(Selector.id("va"), "A1")
                 _ <- Browser.assertText(Selector.id("vb"), "B1")
-            yield succeed
+            yield ()
         }
     }
 
-    "nested reactive within reactive updates correctly" in run {
+    "nested reactive within reactive updates correctly" in {
         val app: UI < Async =
             for
                 outer <- Signal.initRef(true)
@@ -147,10 +147,7 @@ class ReactiveUITest extends UITest:
             yield UI.div(
                 UI.button("HideOuter").id("ho").onClick(outer.set(false)),
                 UI.button("UpdateInner").id("ui").onClick(inner.set("inner-new")),
-                outer.map { o =>
-                    if o then (inner.map(t => UI.span(t).id("inner")): UI)
-                    else UI.empty
-                }
+                UI.when(outer)(UI.div(inner.map(t => UI.span(t).id("inner"))))
             )
         withUI(app) {
             for
@@ -159,11 +156,11 @@ class ReactiveUITest extends UITest:
                 _ <- Browser.assertText(Selector.id("inner"), "inner-new")
                 _ <- Browser.click(Selector.id("ho"))
                 _ <- Browser.assertNotExists(Selector.id("inner"))
-            yield succeed
+            yield ()
         }
     }
 
-    "reactive re-subscribes after DOM replacement" in run {
+    "reactive re-subscribes after DOM replacement" in {
         val app: UI < Async =
             for
                 toggle <- Signal.initRef(false)
@@ -184,11 +181,11 @@ class ReactiveUITest extends UITest:
                 _ <- Browser.assertText(Selector.id("ispan"), "v0") // inner still works
                 _ <- Browser.click(Selector.id("set"))
                 _ <- Browser.assertText(Selector.id("ispan"), "v1")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal update after multiple renders is idempotent" in run {
+    "signal update after multiple renders is idempotent" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -204,7 +201,7 @@ class ReactiveUITest extends UITest:
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("cnt"), "5")
-            yield succeed
+            yield ()
         }
     }
 

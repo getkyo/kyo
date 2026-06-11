@@ -2,7 +2,7 @@ package kyo.website
 
 import kyo.*
 
-class WebsiteModuleTest extends Test:
+class WebsiteModuleTest extends WebsiteTest:
 
     "full construction" - {
         "fields read back correctly" in {

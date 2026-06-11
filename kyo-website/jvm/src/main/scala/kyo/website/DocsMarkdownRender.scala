@@ -4,6 +4,7 @@ package kyo.website
 import kyo.*
 import kyo.UI.*
 import scala.collection.mutable
+import scala.language.implicitConversions
 import scala.meta.*
 import scala.meta.tokens.Token as MetaToken
 
@@ -30,6 +31,11 @@ import scala.meta.tokens.Token as MetaToken
   *   [[DocsMarkdownRender.Rendered]] for the build-time render output
   */
 object DocsMarkdownRender:
+
+    private def html(cs: Seq[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.map(n => UI.Ast.HtmlChildVal.lift(n))
+    private def html(cs: kyo.Chunk[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.toSeq.map(n => UI.Ast.HtmlChildVal.lift(n))
 
     /** The article subtree, pre-rendered HTML string, and heading outline produced by [[transpile]]
       * and [[renderArticle]].
@@ -407,11 +413,13 @@ object DocsMarkdownRender:
                 val (level, text) = parseHeading(line)
                 val slug          = makeSlug(text)
                 val inlineNodes   = parseInline(text)
+                // The parser returns Chunk[UI]; convert to Seq[HtmlChildVal] for the spread operator.
+                val inlineChildren = html(inlineNodes)
                 val heading: UI = level match
-                    case 1 => UI.h1.id(slug)(inlineNodes*)
-                    case 2 => UI.h2.id(slug)(inlineNodes*)
-                    case 3 => UI.h3.id(slug)(inlineNodes*)
-                    case _ => UI.h4.id(slug)(inlineNodes*)
+                    case 1 => UI.h1.id(slug)(inlineChildren*)
+                    case 2 => UI.h2.id(slug)(inlineChildren*)
+                    case 3 => UI.h3.id(slug)(inlineChildren*)
+                    case _ => UI.h4.id(slug)(inlineChildren*)
                 uiBlocks += heading
                 // The in-page heading keeps the rich inline render (real <code>, bold, italic); the
                 // outline entry stores the plain-text form so the TOC and search show clean labels
@@ -432,14 +440,14 @@ object DocsMarkdownRender:
                 uiBlocks += parseUnorderedList(lines)
 
             case Block.Ordered(lines) =>
-                val items = lines.map(l => UI.li(parseInline(parseOrderedItem(l))*))
-                uiBlocks += UI.ol(items*)
+                val items = lines.map(l => UI.li(html(parseInline(parseOrderedItem(l)))*))
+                uiBlocks += UI.ol(html(items)*)
 
             case Block.RawEmbed(snippet) =>
                 uiBlocks += UI.p(UI.rawHtml(snippet))
 
             case Block.Paragraph(text) =>
-                uiBlocks += UI.p(parseInline(text)*)
+                uiBlocks += UI.p(html(parseInline(text))*)
         }
 
         val article: UI =
@@ -562,12 +570,12 @@ object DocsMarkdownRender:
         else
             val headerCells = parseRowCells(tableLines.head)
             val bodyRows    = if tableLines.length > 2 then tableLines.drop(2) else Chunk.empty[String]
-            val headerTr    = UI.tr(headerCells.map(cell => UI.th(parseInline(cell)*))*)
+            val headerTr    = UI.tr(html(headerCells.map(cell => UI.th(html(parseInline(cell))*)))*)
             val bodyTrs = bodyRows.map { row =>
                 val cells = parseRowCells(row)
-                UI.tr(cells.map(cell => UI.td(parseInline(cell)*))*)
+                UI.tr(html(cells.map(cell => UI.td(html(parseInline(cell))*)))*)
             }
-            UI.table(headerTr +: bodyTrs*)
+            UI.table(html(headerTr +: bodyTrs)*)
         end if
     end parseTable
 
@@ -582,21 +590,21 @@ object DocsMarkdownRender:
             val line = arr(i)
             if line.startsWith("  - ") then
                 // Orphan sub-item with no preceding top-level item; treat as a top-level item.
-                items += UI.li(parseInline(parseListItem(line.trim))*)
+                items += UI.li(html(parseInline(parseListItem(line.trim)))*)
                 i += 1
             else
                 val text = parseListItem(line.trim)
                 i += 1
                 val subItems = new mutable.ArrayBuffer[Ast.Li]()
                 while i < arr.length && arr(i).startsWith("  - ") do
-                    subItems += UI.li(parseInline(parseListItem(arr(i).trim))*)
+                    subItems += UI.li(html(parseInline(parseListItem(arr(i).trim)))*)
                     i += 1
                 end while
-                if subItems.isEmpty then items += UI.li(parseInline(text)*)
-                else items += UI.li((parseInline(text) :+ UI.ul(subItems.toSeq*))*)
+                if subItems.isEmpty then items += UI.li(html(parseInline(text))*)
+                else items += UI.li(html(parseInline(text) :+ UI.ul(html(subItems.toSeq)*))*)
             end if
         end while
-        UI.ul(items.toSeq*)
+        UI.ul(html(items.toSeq)*)
     end parseUnorderedList
 
     /** Strip the `- ` marker from a (trimmed) unordered-list line via a `Parse[Char]` grammar. */
@@ -616,9 +624,9 @@ object DocsMarkdownRender:
     private def parseBlockquote(content: String)(using Frame): UI =
         val firstNonEmpty = content.linesIterator.find(_.trim.nonEmpty).getOrElse("").trim
         val bqBlocks      = parseBlockquoteContent(content)
-        if firstNonEmpty.startsWith("**Note:**") then UI.div.cssClass("callout callout-note")(bqBlocks*)
-        else if firstNonEmpty.startsWith("**Caution:**") then UI.div.cssClass("callout callout-caution")(bqBlocks*)
-        else UI.div.cssClass("blockquote")(bqBlocks*)
+        if firstNonEmpty.startsWith("**Note:**") then UI.div.cssClass("callout callout-note")(html(bqBlocks)*)
+        else if firstNonEmpty.startsWith("**Caution:**") then UI.div.cssClass("callout callout-caution")(html(bqBlocks)*)
+        else UI.div.cssClass("blockquote")(html(bqBlocks)*)
     end parseBlockquote
 
     private def parseBlockquoteContent(content: String)(using Frame): Chunk[UI] =
@@ -637,13 +645,13 @@ object DocsMarkdownRender:
                     codeLines += lines(i)
                     i += 1
                 if i < lines.length then i += 1
-                result += UI.pre(UI.code(highlight(info, codeLines.mkString("\n"))))
+                result += UI.pre(UI.code(html(Chunk(highlight(info, codeLines.mkString("\n"))))*))
             else
                 val paraLines = new mutable.ArrayBuffer[String]()
                 while i < lines.length && lines(i).trim.nonEmpty && !lines(i).trim.startsWith("```") do
                     paraLines += lines(i).trim
                     i += 1
-                result += UI.p(parseInline(paraLines.mkString(" "))*)
+                result += UI.p(html(parseInline(paraLines.mkString(" ")))*)
             end if
         end while
         Chunk.from(result)
@@ -793,7 +801,7 @@ object DocsMarkdownRender:
             _    <- Parse.literal("](")
             url  <- readUntilChar(')')
             _    <- Parse.literal(')')
-        yield UI.a.href(toHref(url))(parseInline(body)*)
+        yield UI.a.href(toHref(url))(html(parseInline(body))*)
 
     /** `**text**` -> a bold `md-strong` span. */
     private def bold(using Frame): UI < Parse[Char] =

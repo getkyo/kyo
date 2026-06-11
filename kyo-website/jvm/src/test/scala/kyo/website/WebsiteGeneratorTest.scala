@@ -9,7 +9,7 @@ import kyo.*
   * Each test emits into a fresh temp directory. Tests assert concrete file contents, not just
   * existence. No git commits; output directories are ephemeral.
   */
-class WebsiteGeneratorTest extends Test:
+class WebsiteGeneratorTest extends WebsiteTest:
 
     // ---- Test data ----
 
@@ -83,7 +83,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 1: index.html is a complete document ----
 
-    "index.html is a complete HTML document" in run {
+    "index.html is a complete HTML document" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -100,7 +100,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 2: index.html contains landing content ----
 
-    "index.html contains landing page content" in run {
+    "index.html contains landing page content" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -128,7 +128,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 3: versions.json has correct shape and length ----
 
-    "versions.json has correct shape with 3 versions" in run {
+    "versions.json has correct shape with 3 versions" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -153,7 +153,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 4: CNAME exact content ----
 
-    "CNAME content is exactly getkyo.io" in run {
+    "CNAME content is exactly getkyo.io" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -167,7 +167,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 5: .nojekyll exists and is empty ----
 
-    ".nojekyll exists at root and is empty" in run {
+    ".nojekyll exists at root and is empty" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -179,7 +179,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 6: exactly one main.js referenced ----
 
-    "index.html references exactly one main.js bundle" in run {
+    "index.html references exactly one main.js bundle" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -197,7 +197,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 7: logo and favicon assets copied ----
 
-    "kyo.svg, kyo.png and kyo.ico are copied into outDir" in run {
+    "kyo.svg, kyo.png and kyo.ico are copied into outDir" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -214,7 +214,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 8: write failure is surfaced as WebsiteEmitException ----
 
-    "write failure aborts with WebsiteEmitException" in run {
+    "write failure aborts with WebsiteEmitException" in {
         for
             bundleDir <- stubBundleDir
             tmp <- Sync.defer {
@@ -244,7 +244,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 9: idempotent re-emit produces byte-identical files ----
 
-    "idempotent re-emit produces byte-identical files" in run {
+    "idempotent re-emit produces byte-identical files" in {
         for
             bundleDir <- stubBundleDir
             out1      <- Sync.defer(Path(Files.createTempDirectory("kyo-gen-idem-a").toString))
@@ -266,7 +266,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 10: empty content still writes root files ----
 
-    "empty content writes artifact-root files and empty versions.json" in run {
+    "empty content writes artifact-root files and empty versions.json" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -285,7 +285,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 13: versions.json length equals content size ----
 
-    "versions.json entry count equals input content size" in run {
+    "versions.json entry count equals input content size" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -299,7 +299,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test 14: bundle href in emitted HTML ends with main.js ----
 
-    "bundle href in emitted index.html ends with main.js" in run {
+    "bundle href in emitted index.html ends with main.js" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -320,7 +320,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- The landing page carries the unified header + islands ----
 
-    "landing index.html carries the unified SiteApp header and #docs-island + #versions-island" in run {
+    "landing index.html carries the unified SiteApp header and #docs-island + #versions-island" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -347,7 +347,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-2: the unified shell keeps a route-specific <head> per route ----
 
-    "route-specific <head>: /, /latest/, and a module route differ and each matches its own route (SEO-2)" in run {
+    "route-specific <head>: /, /latest/, and a module route differ and each matches its own route (SEO-2)" in {
         for
             out         <- tmpDir
             bundleDir   <- stubBundleDir
@@ -380,7 +380,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-1: the full transpiled article prose ships in the raw module HTML ----
 
-    "module index.html ships the full transpiled article prose in raw HTML (SEO-1)" in run {
+    "module index.html ships the full transpiled article prose in raw HTML (SEO-1)" in {
         // The fixture README carries a distinctive prose sentence; the SSG must ship its transpiled
         // text in the page HTML (not a JS-hydrated stub) so non-JS crawlers index it.
         val prose  = "Channels carry values between fibers without blocking a thread."
@@ -401,7 +401,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- full route set + per-route content.md + per-version manifest.json ----
 
-    "full route set + per-route content.md + per-version manifest.json" in run {
+    "full route set + per-route content.md + per-version manifest.json" in {
         for
             out           <- tmpDir
             bundleDir     <- stubBundleDir
@@ -446,7 +446,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- The intro route renders the root-README overview as a real article (not an empty one) ----
 
-    "intro route renders the transpiled overview article, not an empty article (overview-as-home)" in run {
+    "intro route renders the transpiled overview article, not an empty article (overview-as-home)" in {
         // A distinctive prose sentence + a couple of `## ` sections in the intro: the SSG must ship the
         // transpiled overview text AND its level-2 section anchors in the intro page HTML, and write the
         // raw intro as content.md.
@@ -480,7 +480,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- intro-only version emits intro alone ----
 
-    "intro-only version emits intro alone, zero per-module pages" in run {
+    "intro-only version emits intro alone, zero per-module pages" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -497,7 +497,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- latest mirrors newest stable, not the RC ----
 
-    "latest mirrors newest stable, not the RC" in run {
+    "latest mirrors newest stable, not the RC" in {
         val stableV1 = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group(
@@ -534,7 +534,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- latest falls back to newest pre-release ----
 
-    "latest falls back to newest pre-release when no stable tag" in run {
+    "latest falls back to newest pre-release when no stable tag" in {
         val rc1 = WebsiteContent(
             "intro",
             Chunk(WebsiteContent.Group(
@@ -570,7 +570,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- stable wins over a NEWER pre-release (pickLatest stability consolidation) ----
 
-    "latest mirrors an older stable over a newer pre-release (stability via WebsiteVersion.parse)" in run {
+    "latest mirrors an older stable over a newer pre-release (stability via WebsiteVersion.parse)" in {
         // pickLatest's stable filter is `WebsiteVersion.parse(tag).exists(_.preRelease.isEmpty)` (one
         // shared stability definition, not a substring-marker list). Here v1.0.1-RC1 is a NEWER triple
         // than the stable v1.0.0 but carries a pre-release suffix, so the stable v1.0.0 must still be
@@ -613,7 +613,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- docs page embeds transpiled article AND content.md equals source ----
 
-    "docs page embeds transpiled article AND content.md equals the source" in run {
+    "docs page embeds transpiled article AND content.md equals the source" in {
         val readme = "# MyModule\n## Scope\nDoes things.\n```scala\nval x = 1\n```\n"
         val mod    = WebsiteModule("my-module", "Foundation", "my-module", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -634,7 +634,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- rail section links resolve to article anchors ----
 
-    "rail section links resolve to article anchors" in run {
+    "rail section links resolve to article anchors" in {
         val readme = "# Alpha\n## Beta\nText.\n### Gamma\nMore.\n"
         val mod    = WebsiteModule("anchors", "Foundation", "anchors", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -664,7 +664,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- escJson escapes quote and backslash in versions.json ----
 
-    "escJson escapes quote and backslash in versions.json" in run {
+    "escJson escapes quote and backslash in versions.json" in {
         val specialVersion = WebsiteContent(
             "intro",
             Chunk.empty,
@@ -684,7 +684,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- escJson escapes control chars (newline, tab, CR, SOH) so JSON-LD stays valid ----
 
-    "escJson escapes control chars (newline, tab, carriage-return, SOH 0x01) in JSON-LD" in run {
+    "escJson escapes control chars (newline, tab, carriage-return, SOH 0x01) in JSON-LD" in {
         // Inject a label with embedded control characters into the versions.json pipeline.
         // The label value uses Scala escape sequences so scalac embeds the actual control chars:
         // \n = 0x0A (LF), \t = 0x09 (tab), \r = 0x0D (CR), \u0001 = 0x01 (SOH).
@@ -724,7 +724,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- Test: boot island round-trip (emit -> parse seeds the SPA) ----
 
-    "docs page embeds #docs-island + #versions-island that parse back to seeded content" in run {
+    "docs page embeds #docs-island + #versions-island that parse back to seeded content" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -749,7 +749,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- the latest version's own v<X>/ pages link within v<X>/, not latest/ ----
 
-    "latest version's own v<X> tree links within v<X> not latest" in run {
+    "latest version's own v<X> tree links within v<X> not latest" in {
         // The single version is flagged latest=true, so emit writes it under BOTH v1.0.0/ (emitVersion)
         // and latest/ (emitLatest). The v1.0.0/ copy must link within /v1.0.0/, not /latest/.
         val readme  = "# kyo-data\n## Overview\nData types.\n"
@@ -798,7 +798,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-3: sitemap.xml lists /, the /latest/ overview, and every latest slug; excludes versioned URLs ----
 
-    "sitemap.xml lists /, the /latest/ overview, and every latest slug; no /v<X>/ or asset URLs (SEO-3)" in run {
+    "sitemap.xml lists /, the /latest/ overview, and every latest slug; no /v<X>/ or asset URLs (SEO-3)" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -841,7 +841,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-3: robots.txt allows all and points to the sitemap ----
 
-    "robots.txt allows all crawlers and points to sitemap, blocks no AI crawler (SEO-3)" in run {
+    "robots.txt allows all crawlers and points to sitemap, blocks no AI crawler (SEO-3)" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -859,7 +859,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-3: sitemap.xml and robots.txt are always written, even for empty content ----
 
-    "sitemap.xml and robots.txt always written, even for empty content (SEO-3)" in run {
+    "sitemap.xml and robots.txt always written, even for empty content (SEO-3)" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -876,7 +876,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-5: module page head carries TechArticle JSON-LD ----
 
-    "module page head has TechArticle JSON-LD with the correct self url (SEO-5)" in run {
+    "module page head has TechArticle JSON-LD with the correct self url (SEO-5)" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -897,7 +897,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-5: landing page head carries WebSite + SoftwareSourceCode JSON-LD ----
 
-    "landing page head has WebSite + SoftwareSourceCode JSON-LD (SEO-5)" in run {
+    "landing page head has WebSite + SoftwareSourceCode JSON-LD (SEO-5)" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -915,7 +915,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- DECISION-SEO-A/B: canonical dedup + intro now indexable ----
 
-    "current-latest /v<X>/ module + intro canonicalize to /latest/; /latest/ intro is indexable (DECISION-SEO-A/B)" in run {
+    "current-latest /v<X>/ module + intro canonicalize to /latest/; /latest/ intro is indexable (DECISION-SEO-A/B)" in {
         for
             out            <- tmpDir
             bundleDir      <- stubBundleDir
@@ -963,7 +963,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- SEO-4 golden: SSG title/canonical match updateHead strings for each route kind ----
 
-    "SEO-4 golden: SSG title/canonical match updateHead strings for each route kind" in run {
+    "SEO-4 golden: SSG title/canonical match updateHead strings for each route kind" in {
         // These are the EXACT strings WebsiteBundleMain.updateHead emits for the same route kinds; the
         // cross-check pins the SSG and bundle head strings together so they cannot drift silently.
         for
@@ -1052,7 +1052,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- content.html, island reshape, landing seed, sitemap, manifest, escape ----
 
-    "content.html written per route with html + headings" in run {
+    "content.html written per route with html + headings" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1070,7 +1070,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "article ids equal shipped heading slugs in content.html" in run {
+    "article ids equal shipped heading slugs in content.html" in {
         val readme = "# Title\n## Section One\n### Sub\n"
         val mod    = WebsiteModule("inv004", "Foundation", "inv004", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1097,7 +1097,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "island carries article + headings, not markdown field" in run {
+    "island carries article + headings, not markdown field" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1112,7 +1112,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "landing seeds an empty-article island" in run {
+    "landing seeds an empty-article island" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1127,7 +1127,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "content.md still emitted per route" in run {
+    "content.md still emitted per route" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1145,7 +1145,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "sitemap excludes content.html as well as content.md" in run {
+    "sitemap excludes content.html as well as content.md" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1157,7 +1157,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "manifest toc level-carrying, unchanged after island reshape" in run {
+    "manifest toc level-carrying, unchanged after island reshape" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1172,7 +1172,7 @@ class WebsiteGeneratorTest extends Test:
         end for
     }
 
-    "island article HTML round-trips an escaped < tag on emit" in run {
+    "island article HTML round-trips an escaped < tag on emit" in {
         // Build a README whose rendered article will contain < characters (via a heading with a code
         // snippet; the backtick renders to <code>, so the rendered HTML contains <code>...</code>).
         val readme = "# Test\n## Usage\n`myFunc` does things.\n"
@@ -1203,7 +1203,7 @@ class WebsiteGeneratorTest extends Test:
 
     // No-regression roll-up: concrete level==2 check across island, content.html,
     // content.md, sitemap, manifest, and article ids in a single multi-version emit.
-    "level-carrying headings in island, content.html, and manifest" in run {
+    "level-carrying headings in island, content.html, and manifest" in {
         // Use a README with explicit level-2 headings so the level==2 assertion is concrete.
         val readme = "# Alpha\n## Beta\nText.\n## Gamma\nMore.\n"
         val mod    = WebsiteModule("inv010", "Foundation", "inv010", readme, WebsiteModule.Platforms(true, true, true))
@@ -1252,7 +1252,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- emit writes one search-index.json per prefix next to manifest.json ----
 
-    "emit writes one search-index.json per prefix next to manifest.json" in run {
+    "emit writes one search-index.json per prefix next to manifest.json" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -1273,7 +1273,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- each section carries level + text + slug + snippet ----
 
-    "each section in search-index.json carries level, text, slug, and snippet" in run {
+    "each section in search-index.json carries level, text, slug, and snippet" in {
         val readme = "## Fibers and forks\nFibers are lightweight threads.\n### Interruption\nInterrupt a fiber.\n"
         val mod    = WebsiteModule("kyo-async", "Foundation", "kyo-async", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1299,7 +1299,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- snippet <= 160 chars, word-boundary, no ellipsis ----
 
-    "snippet is at most 160 chars, word-boundary truncated, and has no ellipsis" in run {
+    "snippet is at most 160 chars, word-boundary truncated, and has no ellipsis" in {
         // Produce a prose block that exceeds 160 characters.
         val longProse = ("The quick brown fox jumps over the lazy dog " * 5).trim
         val readme    = s"## Section\n$longProse\n"
@@ -1343,7 +1343,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- heading-less module emits sections [] ----
 
-    "a heading-less module emits sections [] in search-index.json" in run {
+    "a heading-less module emits sections [] in search-index.json" in {
         val readme = "Prose only, no headings.\n"
         val mod    = WebsiteModule("kyo-noh", "Foundation", "kyo-noh", readme, WebsiteModule.Platforms(true, true, true))
         val content =
@@ -1361,7 +1361,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- manifest.json is byte-unchanged after adding search-index emit ----
 
-    "manifest.json is byte-unchanged after adding the search-index emit" in run {
+    "manifest.json is byte-unchanged after adding the search-index emit" in {
         // Golden string: the exact deterministic output of writeManifest for vWithModules
         // (two modules, kyo-data then kyo-kernel, each with their own TOC from the fixture READMEs).
         // This guards against any future manifest reformatting and proves the search-index emit is
@@ -1388,7 +1388,7 @@ class WebsiteGeneratorTest extends Test:
 
     // ---- search-index.json escapes JSON-special characters ----
 
-    "search-index.json escapes JSON-special characters in fields" in run {
+    "search-index.json escapes JSON-special characters in fields" in {
         val headingText = "Results: \"quoted\" & <angle>"
         val snippetText = "See the reference for more."
         val readme      = s"## $headingText\n$snippetText\n"

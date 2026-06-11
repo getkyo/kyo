@@ -6,7 +6,7 @@ class BrowserDiscoverTest extends BrowserTest:
 
     // element returns full ElementInfo for a present match.
     // A #submit button with known geometry and classes.
-    "element returns full ElementInfo for a present match" in run {
+    "element returns full ElementInfo for a present match" in {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
                 <button id="submit" class="primary action" style="position:absolute;left:10px;top:20px;width:80px;height:32px;">Submit</button>
@@ -36,7 +36,7 @@ class BrowserDiscoverTest extends BrowserTest:
     }
 
     // element returns Absent on no match.
-    "element returns Absent on no match" in run {
+    "element returns Absent on no match" in {
         withBrowser {
             onPage("<html><body></body></html>") {
                 Browser.element(Browser.Selector.css("#nope")).map { result =>
@@ -48,7 +48,7 @@ class BrowserDiscoverTest extends BrowserTest:
 
     // elementAt hit-tests the topmost element at a pixel.
     // A #box at (120,48,100,60). Hit point (130,58) is inside it.
-    "elementAt hit-tests the topmost element at a pixel" in run {
+    "elementAt hit-tests the topmost element at a pixel" in {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;">
                 <div id="box" style="position:absolute;left:120px;top:48px;width:100px;height:60px;background:blue;"></div>
@@ -69,7 +69,7 @@ class BrowserDiscoverTest extends BrowserTest:
     // elementAt returns Absent for an empty point and aborts on negative coords.
     // (a) a point over blank background returns Absent; (b) negative coords abort
     // BrowserInvalidArgumentException BEFORE any page eval.
-    "elementAt returns Absent for empty point and aborts on negative coordinates" in run {
+    "elementAt returns Absent for empty point and aborts on negative coordinates" in {
         withBrowser {
             onPage("""<html><body style="margin:0;padding:0;background:white;"></body></html>""") {
                 // sub-case (a): blank point returns Absent
@@ -92,7 +92,7 @@ class BrowserDiscoverTest extends BrowserTest:
     // elements returns a Chunk in document order, empty-fast-paths, and
     // ElementInfo.leaves filters ancestors.
     // Three sub-cases in one test.
-    "elements document order, empty fast-path, and ElementInfo.leaves pure filter" in run {
+    "elements document order, empty fast-path, and ElementInfo.leaves pure filter" in {
 
         // Sub-case C (pure, no Chrome needed): build a Chunk directly and verify leaves filters ancestors.
         val defaultBounds = Browser.Bounds(0, 0, 10, 10)
@@ -177,7 +177,7 @@ class BrowserDiscoverTest extends BrowserTest:
     // targets document.body, which is untagged, so the MutationObserver filter does not suppress it
     // and the count increments for a correct impl.
 
-    "screenshotMarks overlays numbered badges and removes them afterward" in run {
+    "screenshotMarks overlays numbered badges and removes them afterward" in {
         val html = """<!DOCTYPE html><html><body style="margin:0;padding:0;">
             <button id="b1" style="position:absolute;left:10px;top:10px;width:80px;height:30px;">One</button>
             <button id="b2" style="position:absolute;left:10px;top:50px;width:80px;height:30px;">Two</button>
@@ -210,7 +210,7 @@ class BrowserDiscoverTest extends BrowserTest:
     // the slot the first call reads back; the per-token removal makes each call self-contained.
     // After both calls, zero [data-kyo-internal] nodes (marks or otherwise) may remain.
 
-    "screenshotMarks called twice leaves zero mark nodes" in run {
+    "screenshotMarks called twice leaves zero mark nodes" in {
         val html = """<!DOCTYPE html><html><body style="margin:0;padding:0;">
             <button id="b1" style="position:absolute;left:10px;top:10px;width:80px;height:30px;">One</button>
             <button id="b2" style="position:absolute;left:10px;top:50px;width:80px;height:30px;">Two</button>
@@ -242,7 +242,7 @@ class BrowserDiscoverTest extends BrowserTest:
     // Build a Chunk of 5 ElementInfo stubs. screenshotMarks(marks, maxMarks = 3) must abort with
     // BrowserCaptureLimitExceededException("screenshotMarks", 3, 5) before any CDP call.
 
-    "screenshotMarks aborts over maxMarks" in run {
+    "screenshotMarks aborts over maxMarks" in {
         val dummyBounds = Browser.Bounds(0, 0, 10, 10)
         def mkInfo(n: Int) = Browser.ElementInfo(
             selector = s"#el$n",

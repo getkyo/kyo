@@ -2,7 +2,7 @@ package kyo.website
 
 import kyo.*
 
-class WebsiteVersionTest extends Test:
+class WebsiteVersionTest extends WebsiteTest:
 
     "equality and CanEqual" - {
         "two identical WebsiteVersion values are equal" in {

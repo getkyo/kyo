@@ -8,7 +8,7 @@ import kyo.*
   * structural snapshots here catch refactors of [[JsStringUtil.escapeJsString]] and the per-probe sentinel surface (e.g. dropping
   * `'not_attached'` or accidentally swapping the visible-sentinel value).
   */
-class ProbesJsTest extends kyo.Test:
+class ProbesJsTest extends kyo.BaseBrowserTest:
 
     private val sampleSelector: Selector = Selector.css("#sample")
 

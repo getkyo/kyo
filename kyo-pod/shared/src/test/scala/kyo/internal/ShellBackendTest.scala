@@ -2,18 +2,16 @@ package kyo.internal
 
 import kyo.*
 
-class ShellBackendTest extends kyo.Test:
+class ShellBackendTest extends kyo.BasePodTest:
 
     "lastLine" - {
 
         "empty input returns empty" in {
             assert(ShellBackend.lastLine("") == "")
-            succeed
         }
 
         "whitespace-only input returns empty" in {
             assert(ShellBackend.lastLine("   \n  \n\t\n") == "")
-            succeed
         }
 
         "single line returns the line trimmed" in {
@@ -21,12 +19,11 @@ class ShellBackendTest extends kyo.Test:
                 ShellBackend.lastLine("66451f24177d4ba33ecf6aa2c7270c2ee8dc90d61e180fae085332f380b1f5e2") ==
                     "66451f24177d4ba33ecf6aa2c7270c2ee8dc90d61e180fae085332f380b1f5e2"
             )
-            succeed
+            ()
         }
 
         "trailing newline is stripped" in {
             assert(ShellBackend.lastLine("abc123\n") == "abc123")
-            succeed
         }
 
         // Reproduces the CI failure: rootless podman without a systemd user session emits cgroupv2
@@ -49,7 +46,7 @@ class ShellBackendTest extends kyo.Test:
                 ShellBackend.lastLine(output) ==
                     "66451f24177d4ba33ecf6aa2c7270c2ee8dc90d61e180fae085332f380b1f5e2"
             )
-            succeed
+            ()
         }
 
         // Reproduces the CI failure: docker auto-pulls when the image is not local on `docker create`,
@@ -68,22 +65,19 @@ class ShellBackendTest extends kyo.Test:
                 ShellBackend.lastLine(output) ==
                     "4aecf173944311ec19d8f8cdb5659c1ca2a64873d1c40c240a76ee9a38c5f743"
             )
-            succeed
+            ()
         }
 
         "blank lines between content are skipped" in {
             assert(ShellBackend.lastLine("first\n\n\nlast\n") == "last")
-            succeed
         }
 
         "trailing whitespace lines are skipped" in {
             assert(ShellBackend.lastLine("the-id\n   \n\t\n") == "the-id")
-            succeed
         }
 
         "windows CRLF line endings" in {
             assert(ShellBackend.lastLine("warning\r\nthe-id\r\n") == "the-id")
-            succeed
         }
     }
     // =========================================================================
@@ -91,7 +85,7 @@ class ShellBackendTest extends kyo.Test:
     // =========================================================================
 
     "tar exit code primitive" - {
-        "tar with missing source path produces non-zero exit code" in run {
+        "tar with missing source path produces non-zero exit code" in {
             // Reproduce the primitive: spawn `tar -cf - /nonexistent`, drain stdout, observe exitValue.
             // Production code at HttpContainerBackend.scala (copyTo and imageBuildFromPath)
             // calls proc.stdout.run WITHOUT proc.waitFor — this test pins the primitive that must be checked.

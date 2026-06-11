@@ -1,13 +1,12 @@
 package kyo.internal
 
 import kyo.*
-import org.scalatest.compatible.Assertion
 
-class ZippableTest extends Test:
+class ZippableTest extends kyo.test.Test[Any]:
     "compile" - {
-        def check[Left, Right](using zip: Zippable[Left, Right])[Expected](using (zip.Out =:= Expected)): Assertion = succeed
+        def check[Left, Right](using zip: Zippable[Left, Right])[Expected](using (zip.Out =:= Expected)): Unit = ()
 
-        def on[A, B, C, D, E]: Assertion =
+        def on[A, B, C, D, E]: Unit =
             check[(A, B), (C, D)][(A, B, C, D)]
             check[A, Unit][A]
             check[Unit, B][B]

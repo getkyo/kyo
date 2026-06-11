@@ -13,7 +13,7 @@ import kyo.*
   * every `class="..."` token from the produced HTML and asserts each token is styled by some rule
   * in the sheet. A future `cssClass` with no rule fails the build with the offending class named.
   */
-class WebsiteStylesCoverageTest extends Test:
+class WebsiteStylesCoverageTest extends WebsiteTest:
 
     // Classes emitted by kyo-ui's own built-in components (e.g. the div-based dropdown), not by the
     // website apps, so they are out of scope for the website stylesheet. None are known today; the
@@ -148,7 +148,7 @@ class WebsiteStylesCoverageTest extends Test:
         end for
     end docsHtml
 
-    "every class LandingApp emits has a matching rule in WebsiteStyles.sheet" in run {
+    "every class LandingApp emits has a matching rule in WebsiteStyles.sheet" in {
         landingHtml.map { html =>
             val styled  = styledClasses(WebsiteStyles.sheet)
             val emitted = emittedClasses(html)
@@ -158,7 +158,7 @@ class WebsiteStylesCoverageTest extends Test:
         }
     }
 
-    "every class DocsApp emits has a matching rule in WebsiteStyles.sheet" in run {
+    "every class DocsApp emits has a matching rule in WebsiteStyles.sheet" in {
         docsHtml.map { html =>
             val styled  = styledClasses(WebsiteStyles.sheet)
             val emitted = emittedClasses(html)
@@ -168,7 +168,7 @@ class WebsiteStylesCoverageTest extends Test:
         }
     }
 
-    "the prose article exercised the callout/blockquote/md-strong/tok hooks" in run {
+    "the prose article exercised the callout/blockquote/md-strong/tok hooks" in {
         docsHtml.map { html =>
             // Confirm the fixture actually emits these classes, so the coverage assertion above is
             // meaningfully checking them rather than passing vacuously.
@@ -181,7 +181,7 @@ class WebsiteStylesCoverageTest extends Test:
         }
     }
 
-    "the populated search-results dropdown emits the search-result* classes (coverage is non-vacuous)" in run {
+    "the populated search-results dropdown emits the search-result* classes (coverage is non-vacuous)" in {
         landingHtml.map { html =>
             // The shell renders a non-empty query against the populated index, so the dropdown rows
             // are present: this confirms the search-result* classes the coverage assertion checks are
@@ -195,7 +195,7 @@ class WebsiteStylesCoverageTest extends Test:
     }
 
     // the .ver rule is present and is a positioning container (not the pill chrome)
-    "the .ver rule is a relatively-positioned layout container" in run {
+    "the .ver rule is a relatively-positioned layout container" in {
         val css = WebsiteStyles.sheet.render
         // find the .ver { ... } block (terminated by the next newline after the opening brace)
         val verIdx = css.indexOf(".ver {")
@@ -206,7 +206,7 @@ class WebsiteStylesCoverageTest extends Test:
     }
 
     // the option overlay rule is keyed on data-kyo-dropdown-options with position: absolute
-    "the [data-kyo-dropdown-options] rule carries position: absolute (Position.dropdown card chrome)" in run {
+    "the [data-kyo-dropdown-options] rule carries position: absolute (Position.dropdown card chrome)" in {
         val css    = WebsiteStyles.sheet.render
         val selStr = "[data-kyo-dropdown-options]"
         val selIdx = css.indexOf(selStr)
@@ -219,7 +219,7 @@ class WebsiteStylesCoverageTest extends Test:
     }
 
     // the highlighted-option rule is keyed on data-kyo-dropdown-hl="true" with accent-ghost
-    "the [data-kyo-dropdown-hl=true] rule carries the accent-ghost background" in run {
+    "the [data-kyo-dropdown-hl=true] rule carries the accent-ghost background" in {
         val css    = WebsiteStyles.sheet.render
         val selStr = """[data-kyo-dropdown-hl="true"]"""
         val selIdx = css.indexOf(selStr)
@@ -231,7 +231,7 @@ class WebsiteStylesCoverageTest extends Test:
 
     // the version dropdown carries .id("site-version"), so the renderer emits
     // data-kyo-dropdown-trigger and data-kyo-dropdown-options, proving those sheet rules match real elements.
-    "the version dropdown emits data-kyo-dropdown-trigger and data-kyo-dropdown-options" in run {
+    "the version dropdown emits data-kyo-dropdown-trigger and data-kyo-dropdown-options" in {
         landingHtml.map { html =>
             assert(
                 html.contains("data-kyo-dropdown-trigger=\"site-version\""),

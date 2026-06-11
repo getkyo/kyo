@@ -7,7 +7,7 @@ import kyo.internal.http1.*
 import kyo.internal.server.*
 import kyo.internal.util.*
 
-class Http1ParserTest extends kyo.Test:
+class Http1ParserTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -53,7 +53,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.headerCount == 1)
             assert(req.headerName(0) == "Host")
             assert(req.headerValue(0) == "localhost")
-            succeed
         }
 
         "parse POST with Content-Length" in {
@@ -66,7 +65,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.contentLength == 13)
             assert(!req.isChunked)
             assert(req.isKeepAlive)
-            succeed
         }
 
         "parse chunked request" in {
@@ -77,14 +75,12 @@ class Http1ParserTest extends kyo.Test:
             assert(req.method == HttpMethod.POST)
             assert(req.isChunked)
             assert(req.contentLength == -1)
-            succeed
         }
 
         "parse keep-alive default for HTTP/1.1" in {
             val req = parseRequest("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assert(req != null)
             assert(req.isKeepAlive)
-            succeed
         }
 
         "parse Connection: close" in {
@@ -93,7 +89,6 @@ class Http1ParserTest extends kyo.Test:
             )
             assert(req != null)
             assert(!req.isKeepAlive)
-            succeed
         }
 
         "parse path with query" in {
@@ -104,7 +99,7 @@ class Http1ParserTest extends kyo.Test:
             req.queryParam("key") match
                 case Present(v) => assert(v == "val")
                 case Absent     => fail("Expected query param 'key'")
-            succeed
+            ()
         }
 
         "parse multiple headers" in {
@@ -129,7 +124,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.headerValue(3) == "TestBot/1.0")
             assert(req.headerName(4) == "X-Custom")
             assert(req.headerValue(4) == "custom-value")
-            succeed
         }
 
         "parse path segments" in {
@@ -142,7 +136,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.pathSegmentAsString(0) == "api")
             assert(req.pathSegmentAsString(1) == "v1")
             assert(req.pathSegmentAsString(2) == "users")
-            succeed
         }
 
         "incremental data - small chunks" in {
@@ -162,7 +155,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.headerCount == 1)
             assert(req.headerName(0) == "Host")
             assert(req.headerValue(0) == "localhost")
-            succeed
         }
 
         "multiple requests on same parser" in {
@@ -194,7 +186,6 @@ class Http1ParserTest extends kyo.Test:
             assert(requests.size == 2, s"Expected 2 requests but got ${requests.size}")
             assert(requests(0).pathAsString == "/first")
             assert(requests(1).pathAsString == "/second")
-            succeed
         }
 
         "header exceeds max size" in {
@@ -224,7 +215,6 @@ class Http1ParserTest extends kyo.Test:
             // When data exceeds maxHeaderSize, onClosed should be called
             assert(closedCalled, "Parser should have called onClosed for oversized headers")
             assert(parsedReq == null, "Parser should not have produced a request for oversized headers")
-            succeed
         }
 
         "binary header values preserved" in {
@@ -236,14 +226,12 @@ class Http1ParserTest extends kyo.Test:
             assert(req.headerCount == 2)
             assert(req.headerName(1) == "X-Special")
             assert(req.headerValue(1) == "a=b&c=d;e/f")
-            succeed
         }
 
         "empty body GET has contentLength -1" in {
             val req = parseRequest("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assert(req != null)
             assert(req.contentLength == -1)
-            succeed
         }
 
         "case sensitive method - non-standard lowercase" in {
@@ -253,7 +241,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req != null)
             // ordinalFromName returns 0 (GET) as default for unknown methods
             assert(req.method == HttpMethod.GET)
-            succeed
         }
 
         "parse PUT method" in {
@@ -261,7 +248,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req != null)
             assert(req.method == HttpMethod.PUT)
             assert(req.contentLength == 5)
-            succeed
         }
 
         "parse DELETE method" in {
@@ -271,28 +257,24 @@ class Http1ParserTest extends kyo.Test:
             assert(req.pathSegmentCount == 2)
             assert(req.pathSegmentAsString(0) == "resource")
             assert(req.pathSegmentAsString(1) == "123")
-            succeed
         }
 
         "parse PATCH method" in {
             val req = parseRequest("PATCH /resource HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assert(req != null)
             assert(req.method == HttpMethod.PATCH)
-            succeed
         }
 
         "parse HEAD method" in {
             val req = parseRequest("HEAD / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assert(req != null)
             assert(req.method == HttpMethod.HEAD)
-            succeed
         }
 
         "parse OPTIONS method" in {
             val req = parseRequest("OPTIONS * HTTP/1.1\r\nHost: localhost\r\n\r\n")
             assert(req != null)
             assert(req.method == HttpMethod.OPTIONS)
-            succeed
         }
 
         "parse Connection: keep-alive explicitly" in {
@@ -301,7 +283,6 @@ class Http1ParserTest extends kyo.Test:
             )
             assert(req != null)
             assert(req.isKeepAlive)
-            succeed
         }
 
         "parse query with multiple parameters" in {
@@ -317,7 +298,7 @@ class Http1ParserTest extends kyo.Test:
             req.queryParam("limit") match
                 case Present(v) => assert(v == "10")
                 case Absent     => fail("Expected query param 'limit'")
-            succeed
+            ()
         }
 
         "parse percent-encoded query parameter" in {
@@ -326,7 +307,7 @@ class Http1ParserTest extends kyo.Test:
             req.queryParam("name") match
                 case Present(v) => assert(v == "hello world")
                 case Absent     => fail("Expected query param 'name'")
-            succeed
+            ()
         }
 
         "parse deep path segments" in {
@@ -339,7 +320,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.pathSegmentAsString(3) == "d")
             assert(req.pathSegmentAsString(4) == "e")
             assert(req.pathSegmentAsString(5) == "f")
-            succeed
         }
 
         "large headers - 50 headers" in {
@@ -360,7 +340,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.headerValue(24) == "value-24")
             assert(req.headerName(49) == "X-Header-49")
             assert(req.headerValue(49) == "value-49")
-            succeed
         }
 
         "path with encoded characters preserved" in {
@@ -368,7 +347,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req != null)
             // Raw path is preserved (percent-encoding not decoded at path level)
             assert(req.pathAsString == "/path%20with%20spaces")
-            succeed
         }
 
         "parse request with body leftover in same chunk" in {
@@ -380,7 +358,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req.method == HttpMethod.POST)
             assert(req.contentLength == 11)
             assert(req.pathAsString == "/echo")
-            succeed
         }
 
         "parse root path" in {
@@ -388,7 +365,6 @@ class Http1ParserTest extends kyo.Test:
             assert(req != null)
             assert(req.pathAsString == "/")
             assert(req.pathSegmentCount == 0)
-            succeed
         }
 
         "channel closed triggers onClosed" in {
@@ -407,7 +383,6 @@ class Http1ParserTest extends kyo.Test:
             parser.start()
 
             assert(closedCalled, "onClosed should have been called when channel is closed")
-            succeed
         }
     }
 
@@ -432,7 +407,7 @@ class Http1ParserTest extends kyo.Test:
                     assert(str.endsWith("\r\n\r\n"), s"Expected CRLFCRLF terminator, got: $str")
                 case _ => fail("Expected data in outbound channel")
             end match
-            succeed
+            ()
         }
 
         "respond writes headers" in {
@@ -455,7 +430,7 @@ class Http1ParserTest extends kyo.Test:
                     assert(str.endsWith("\r\n\r\n"), s"Expected header terminator, got: $str")
                 case _ => fail("Expected data in outbound channel")
             end match
-            succeed
+            ()
         }
 
         "respond writes status line and headers" in {
@@ -480,7 +455,7 @@ class Http1ParserTest extends kyo.Test:
                     assert(str.endsWith("\r\n\r\n"), s"Expected header terminator, got: $str")
                 case _ => fail("Expected data in outbound channel")
             end match
-            succeed
+            ()
         }
 
         "writeChunk sends chunked encoding format" in {
@@ -510,7 +485,7 @@ class Http1ParserTest extends kyo.Test:
                 case _ => fail("Expected combined chunk data")
             end match
 
-            succeed
+            ()
         }
 
         "finish sends last chunk marker" in {
@@ -531,7 +506,7 @@ class Http1ParserTest extends kyo.Test:
                     assert(data == "0\r\n\r\n", s"Expected last chunk marker, got: '$data'")
                 case _ => fail("Expected last chunk marker in outbound")
             end match
-            succeed
+            ()
         }
 
         "writeBody sends data directly" in {
@@ -553,7 +528,7 @@ class Http1ParserTest extends kyo.Test:
                     assert(data == "hello")
                 case _ => fail("Expected body data in outbound")
             end match
-            succeed
+            ()
         }
 
         "respond with 404 Not Found" in {
@@ -571,7 +546,7 @@ class Http1ParserTest extends kyo.Test:
                     assert(str.startsWith("HTTP/1.1 404 Not Found\r\n"), s"Got: $str")
                 case _ => fail("Expected status line in outbound")
             end match
-            succeed
+            ()
         }
 
         "respond with 500 Internal Server Error" in {
@@ -589,10 +564,10 @@ class Http1ParserTest extends kyo.Test:
                     assert(str.startsWith("HTTP/1.1 500 Internal Server Error\r\n"), s"Got: $str")
                 case _ => fail("Expected status line in outbound")
             end match
-            succeed
+            ()
         }
 
-        "setRequest and readBody" in run {
+        "setRequest and readBody" in {
             val inbound   = Channel.Unsafe.init[Span[Byte]](16)
             val outbound  = Channel.Unsafe.init[Span[Byte]](16)
             val headerBuf = new GrowableByteBuffer()
@@ -621,7 +596,6 @@ class Http1ParserTest extends kyo.Test:
             val ctx       = new Http1StreamContext(inbound, outbound, headerBuf)
 
             assert(ctx.bodyChannel eq inbound)
-            succeed
         }
     }
 
@@ -632,7 +606,6 @@ class Http1ParserTest extends kyo.Test:
             assert(lookup.endpointIdx == -1)
             assert(lookup.captureCount == 0)
             assert(lookup.captureSegmentIndices.length == 8)
-            succeed
         }
 
         "reset clears state" in {
@@ -648,7 +621,7 @@ class Http1ParserTest extends kyo.Test:
             assert(lookup.captureCount == 0)
             // captureSegmentIndices values are not cleared by reset (just count is zeroed)
             // which is correct behavior since captureCount determines valid entries
-            succeed
+            ()
         }
 
         "stores capture indices" in {
@@ -662,7 +635,6 @@ class Http1ParserTest extends kyo.Test:
             assert(lookup.captureCount == 2)
             assert(lookup.captureSegmentIndices(0) == 1)
             assert(lookup.captureSegmentIndices(1) == 3)
-            succeed
         }
 
         "reset and reuse" in {
@@ -685,7 +657,6 @@ class Http1ParserTest extends kyo.Test:
             assert(lookup.captureCount == 2)
             assert(lookup.captureSegmentIndices(0) == 7)
             assert(lookup.captureSegmentIndices(1) == 9)
-            succeed
         }
     }
 

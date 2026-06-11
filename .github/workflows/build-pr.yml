@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 
 # One job per arch. They run in parallel (no `needs:` between them) but each one
-# internally serializes JVM → JS → Native via build.yml's `max-parallel: 1` matrix.
+# internally serializes JVM, JS, Native, Wasm via build.yml's `max-parallel: 1` matrix.
 # Add or comment out arches here when budget allows; the runner-image mapping for each
 # is duplicated below to keep the workflow self-contained.
 

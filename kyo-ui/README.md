@@ -1,12 +1,12 @@
 # kyo-ui
 
-kyo-ui describes web UIs as pure values that run unchanged in three places: a Scala.js client mounting to the DOM, a server-driven HTML-over-SSE deployment, or an HTML stream for SSR and tests. Signals are first-class values throughout the API, and the API itself is typed tightly enough that broad categories of HTML and state mistakes do not compile.
+kyo-ui describes web UIs as pure values that run unchanged in three places: a Scala.js client mounting to the DOM, a server-driven HTML-over-WebSocket deployment, or an HTML stream for SSR and tests. Signals are first-class values throughout the API, and the API itself is typed tightly enough that broad categories of HTML and state mistakes do not compile.
 
-**A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as an HTTP triple (GET page + POST events + SSE diff stream) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-SSE app; only the runner changes.
+**A `UI` is a pure value, runnable on any of three targets.** `UI.runMount(ui)` mounts to the DOM on Scala.js. `UI.runHandlers(basePath)(ui)` exposes the same value as two HTTP handlers (a GET that serves the SSR page plus a WebSocket route that carries diffs out and events in) for server-driven deployments. `UI.runRender(ui)` returns a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports. The same source becomes a Scala.js single-page app or a server-push HTML-over-WebSocket app; only the runner changes. The same value tree includes a typed SVG layer (the `Svg.*` factories) rendered by the same engine across all three runners.
 
 **A `Signal[A]` is a value of type `A` everywhere kyo-ui takes one.** Setters and child slots that accept `A` equally accept `Signal[A]` (read-only, re-renders on change) or `SignalRef[A]` (read-write, two-way binding). Conditional rendering is `when(cond: Signal[Boolean])(ui)`. There is no wrapper type, no binder operator, no hooks; reactivity is the API, not a layer on top of it.
 
-**Invalid states do not compile.** Container factories restrict their children at the type level (`ul(div(...))` is a compile error). `Length` variants are method-typed (`.padding` rejects `Auto`, `.gap` rejects `Pct`). Domain enums (`Target`, `Href`, `Keyboard`, `FileAccept`, `Color`) replace stringly-typed attributes. Capability traits gate setters (`.disabled` only on `HasDisabled` elements, `.checked` only on `BooleanInput`). Wrong HTML stops compiling.
+**Invalid states do not compile.** Container factories restrict their children at the type level (`ul(div(...))` is a compile error). The same content-model typing rejects a bare SVG primitive as an HTML child (`div(Svg.circle(...))` does not compile; only the `<svg>` root, `Svg.svg(...)`, is HTML-embeddable). `Length` variants are method-typed (`.padding` rejects `Auto`, `.gap` rejects `Pct`). Domain enums (`Target`, `Href`, `Keyboard`, `FileAccept`, `Color`) replace stringly-typed attributes. Capability traits gate setters (`.disabled` only on `HasDisabled` elements, `.checked` only on `BooleanInput`). Wrong HTML stops compiling.
 
 **Updates are fine-grained.** No virtual DOM, no component re-execution. The `UI` value is built once; the framework registers a subscription at every point where a signal appears. When a signal emits, only the subtree bound to that signal re-renders, and only the DOM nodes inside that subtree get patched. Granularity is determined at the call site: `div(name: Signal[String])` updates one text node; `when(loggedIn)(bigSubtree)` rebuilds a whole subtree. You pick the boundary.
 
@@ -113,7 +113,7 @@ import kyo.*
 val list: UI = ul(li("Read"), li("Write"), li("Sleep"))
 ```
 
-Finite value domains are typed the same way, each covered in its own section below: `Length` variants are method-typed per property so `.padding` rejects `Auto` and `.gap` rejects `Pct` ([Lengths and sizing](#lengths-and-sizing)); attribute domains are enums rather than strings ([Domain enums for attributes](#domain-enums-for-attributes)); `Color` is a sealed ADT, never a CSS string ([Styles](#styles)); and capability traits gate setters, so `.checked` exists only on `BooleanInput` and `.disabled` only on `HasDisabled`.
+Finite value domains are typed the same way, each covered in its own section below: `Length` variants are method-typed per property so `.padding` rejects `Auto` and `.gap` rejects `Pct` ([Lengths and sizing](#lengths-and-sizing)); attribute domains are enums rather than strings ([Domain enums for attributes](#domain-enums-for-attributes)); `Color` is a sealed ADT, never a CSS string ([Styles](#styles)); and capability traits gate setters, so `.checked` exists only on `BooleanInput` and `.disabled` only on `HasDisabled`. The SVG-primitive content-model boundary (a bare `Svg.circle(...)` is not a valid HTML child) is covered in [SVG](#svg).
 
 ### Headings, lists, tables, structure
 
@@ -205,7 +205,7 @@ One value (`loggedIn`) drives four things at once: button click writes it, `when
 
 A reader coming from React or another VDOM library is likely to ask: when a signal updates, what re-runs? The answer is: only the closure attached to that signal's boundary.
 
-kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over SSE for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
+kyo-ui builds the `UI` value once. The value is an AST of plain case classes. Wherever a signal appears (as a child, as a setter argument, as a `when` condition), the framework registers a subscription on that signal at construction time, anchored to a path in the AST. When the signal emits, the framework re-evaluates only that boundary's closure (producing a new subtree), then patches the DOM (or pushes a diff over the WebSocket for `runHandlers`) at the corresponding path. Nothing above or beside the boundary is touched.
 
 Contrast with React: a state setter call inside a component triggers re-execution of the component function and propagates down through its descendants, building a new virtual DOM, diffing against the previous one, and applying minimal DOM updates. Components are functions called over and over; expensive subtrees need `React.memo` or `useMemo` to opt out of re-running.
 
@@ -213,7 +213,7 @@ In kyo-ui:
 
 - The function that constructs the `UI` value runs once. There is no component function that re-runs on every state change.
 - A `signal.render(f)` boundary is a subscription to the signal at the granularity of `f`. Only `f` re-runs when the signal emits, and the framework patches the DOM only at the path where the boundary was anchored.
-- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over SSE).
+- There is no virtual DOM. The boundary holds the previous rendered AST for that subtree, generates a fresh one, and emits a `Replace` diff at its anchor path. The browser-side runtime applies the diff via `outerHTML` (or the server-push transport pushes it over the WebSocket).
 - Subscription granularity is determined at the call site. `div(name: Signal[String])` is a fine-grained subscription on one text node. `when(loggedIn)(bigSubtree)` is a coarse subscription that swaps a whole subtree. Both are explicit choices in the code, not framework defaults to argue with.
 - There is no `useMemo`, `useCallback`, or `React.memo` equivalent because nothing gets re-executed that you did not opt into. The cost of "rendering" a subtree is the cost of the closure inside its boundary, and you wrote that closure.
 
@@ -809,6 +809,10 @@ The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`
 
 The primary element hook is `UI.cssClass(name)`: it emits `class="name"` on the element, giving a `Stylesheet` rule something stable to target. Call it multiple times to space-join classes. `style(...)` and `cssClass(...)` coexist on one element.
 
+## SVG
+
+SVG is not a separate document model bolted on the side. Every SVG node is a `UI` element built by a `Svg.*` factory, reusing the same path/event/reactive engine as `div` and `button`. The one boundary that matters is HTML embedding: only `Svg.svg` (the `Root`) is also `HtmlContent`, so it embeds in an HTML container, while bare SVG primitives extend `SvgElement`/`SvgNode` but NOT `HtmlContent`. Reach for the `<svg>` root as the single embed point, then build shapes inside it.
+
 ```scala
 import UI.*
 import kyo.*
@@ -831,6 +835,235 @@ val css: String = sheet.render
 Selectors: `Selector.cls("btn")` (`.btn`), `Selector.id("hero")` (`#hero`), `Selector.data("open")` (`[data-open]`), `Selector.tag("body")`. Combine with `.descendant(child)` and `.pseudo("hover")`.
 
 Reference a `:root` variable in a declaration with `Color.variable("accent")`, which renders as `var(--accent)`.
+
+```scala
+import UI.*
+import kyo.*
+
+val drawing: UI =
+    div(
+        Svg.svg.width(120).height(120).viewBox(Svg.ViewBox(0, 0, 120, 120))(
+            Svg.circle.cx(60).cy(60).r(40)
+        )
+    )
+```
+
+> **Caution:** `div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does NOT. Bare SVG primitives extend `SvgElement`/`SvgNode` but not `HtmlContent`, so the only HTML embed point is the `<svg>` root. Build shapes inside it.
+
+### Structure and grouping
+
+`Svg.g` groups elements (and carries shared `fill`/`stroke`/`transform`); `Svg.defs` holds reusable definitions; `Svg.symbol` defines a template instantiated by `Svg.use`; `Svg.switch` and `Svg.a` (an `SvgAnchor`) round out the structural set. `Svg.use(target)` resolves the target's id automatically, so a symbol with no explicit `.id` still wires up:
+
+```scala
+import UI.*
+import kyo.*
+
+val reused: UI =
+    Svg.svg.width(200).height(100).viewBox(Svg.ViewBox(0, 0, 200, 100))(
+        Svg.defs(
+            Svg.symbol.id("dot")(Svg.circle.cx(5).cy(5).r(5))
+        ),
+        Svg.g(
+            Svg.use(Svg.symbol.id("dot")),
+            Svg.use(Svg.symbol.id("dot")).x(20).y(0)
+        )
+    )
+```
+
+### Shapes and text
+
+The shape factories are `Svg.rect`, `Svg.circle`, `Svg.ellipse`, `Svg.line`, `Svg.polyline`, `Svg.polygon`, and `Svg.path`. The text factories are `Svg.text`, `Svg.tspan`, and `Svg.textPath`; each accepts a plain `String` child. Which setters exist on a given element is gated by SVG capability traits (`HasFill`, `HasStroke`, `HasTransform`, `HasOpacity`, `Positioned`, `Sized`, `HasFilter`, ...): `Svg.line` has no `fill` (it mixes in `HasStroke` but not `HasFill`), and `Svg.rect` carries `x`/`y`/`width`/`height` from `Positioned` and `Sized`.
+
+```scala
+import UI.*
+import kyo.*
+
+val labeled: UI =
+    Svg.svg.width(200).height(60).viewBox(Svg.ViewBox(0, 0, 200, 60))(
+        Svg.rect.x(0).y(0).width(200).height(60).fill(Svg.Paint.Color(Style.Color.slate)),
+        Svg.text.x(100).y(34)
+            .textAnchor(Svg.TextAnchor.Middle)
+            .fill(Svg.Paint.Color(Style.Color.white))
+            .fontSize(Svg.SvgLength.px(18.0))("centered")
+    )
+```
+
+### Typed value DSLs, no raw attribute strings
+
+SVG attribute values are typed, never raw strings. A path's `d` is built from a `Svg.PathData` value: start at `PathData.from(x, y)`, then chain `moveTo`, `lineTo`, `cubicTo`, `arcTo`, and `close` (each appends a command). There is no raw `d` string overload. The same applies to `Svg.Points` (point sequences), `Svg.Transform` (translate/rotate/scale/skew/matrix), `Svg.ViewBox`, `Svg.PreserveAspectRatio`, and `Svg.SvgLength` (`px`/`pct`/`em`/`user`).
+
+```scala
+import UI.*
+import kyo.*
+
+val triangle: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.path
+            .d(Svg.PathData.from(10, 90).lineTo(50, 10).lineTo(90, 90).close)
+            .fill(Svg.Paint.Color(Style.Color.blue))
+            .transform(Svg.Transform.Translate(0, 0))
+    )
+```
+
+### Constrained enums
+
+Where SVG would otherwise take a magic token, kyo-ui takes a typed enum: `Svg.FillRule`, `Svg.StrokeLinecap`, `Svg.StrokeLinejoin`, `Svg.TextAnchor`, `Svg.DominantBaseline`, `Svg.SpreadMethod`, `Svg.Units`, `Svg.BlendMode`, and more (each renders to its exact SVG token). A misspelled `"middel"` is impossible because `textAnchor` takes `Svg.TextAnchor`, not a `String`:
+
+```scala
+import UI.*
+import kyo.*
+
+val capped: UI =
+    Svg.svg.width(100).height(40).viewBox(Svg.ViewBox(0, 0, 100, 40))(
+        Svg.line.x1(10).y1(20).x2(90).y2(20)
+            .stroke(Svg.Paint.Color(Style.Color.black))
+            .strokeWidth(6.0)
+            .strokeLinecap(Svg.StrokeLinecap.Round)
+    )
+```
+
+### Paint and typed references
+
+A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `Paint.Color(c)`, or `Paint.Ref(server)`. An ambient `Style.Color => Paint` conversion lets you pass a plain `Style.Color` wherever a `Paint` is expected (with `scala.language.implicitConversions` in scope):
+
+```scala
+import UI.*
+import kyo.*
+import scala.language.implicitConversions
+
+val viaConversion: UI =
+    Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.circle.cx(30).cy(30).r(25).fill(Style.Color.green)
+    )
+```
+
+References are typed handles, never raw `url(#id)` strings. A paint server (`Svg.linearGradient`, `Svg.radialGradient`, `Svg.pattern`, holding `Svg.stop` children) yields a `Paint.Ref` through `.paint`; `Svg.clipPath`, `Svg.mask`, `Svg.marker`, and `Svg.filter` yield `ClipPath.Ref`/`Mask.Ref`/`Marker.Ref`/`Filter.Ref` through `.clipRef`/`.maskRef`/`.markerRef`/`.filterRef`. Define the server once, take its handle, and apply it:
+
+```scala
+import UI.*
+import kyo.*
+
+val gradientFill: UI =
+    val grad = Svg.linearGradient(
+        Svg.stop.offset(0.0).stopColor(Style.Color.blue),
+        Svg.stop.offset(1.0).stopColor(Style.Color.purple)
+    )
+    Svg.svg.width(120).height(80).viewBox(Svg.ViewBox(0, 0, 120, 80))(
+        Svg.defs(grad),
+        Svg.rect.x(0).y(0).width(120).height(80).fill(grad.paint)
+    )
+end gradientFill
+```
+
+> **Note:** SVG definition ids are derived deterministically from the construction-site `Frame` (`kyo-<hex(frame.hashCode)>`), not a global counter or randomness, so the id is stable across all three render targets. The `.paint`/`*Ref` handle and the emitted `id` attribute always agree, so a gradient referenced through `.paint` without an explicit `.id` still emits a matching `id` and never a dangling reference.
+
+### Filters
+
+`Svg.filter` defines a filter region and holds a pipeline of `fe*` primitives: `Svg.feGaussianBlur`, `Svg.feOffset`, `Svg.feBlend`, `Svg.feColorMatrix`, `Svg.feFlood`, `Svg.feComposite`, `Svg.feMerge` / `Svg.feMergeNode`, and more. Each primitive's `in`/`result` names wire the stages together; the consumer references the filter through the typed `Filter.Ref` from `.filterRef`:
+
+```scala
+import UI.*
+import kyo.*
+
+val blurred: UI =
+    val blur = Svg.filter(
+        Svg.feGaussianBlur.stdDeviation(2.0)
+    )
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.defs(blur),
+        Svg.circle.cx(40).cy(40).r(30).fill(Svg.Paint.Color(Style.Color.red)).filter(blur.filterRef)
+    )
+end blurred
+```
+
+### SMIL animation
+
+`Svg.animate`, `Svg.animateTransform`, `Svg.animateMotion`, and `Svg.set` are animation leaves placed INSIDE a shape (the `ShapeChild` content model), so the browser drives the tween with no server round-trip:
+
+```scala
+import UI.*
+import kyo.*
+
+val pulsing: UI =
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.circle.cx(40).cy(40).r(20).fill(Svg.Paint.Color(Style.Color.blue))(
+            Svg.animate.attributeName("r").from(20.0).to(35.0).dur("1s").repeatCount("indefinite")
+        )
+    )
+```
+
+### Embedding and metadata
+
+`Svg.image(href: UI.ImgSrc)` embeds a raster or vector image into the SVG canvas. The `href` is typed as `UI.ImgSrc` (the same union used by `UI.img`): `ImgSrc.Path` for a relative path, `ImgSrc.Absolute` for a full URL, or `ImgSrc.Data` for an inline base64 data URI.
+
+`Svg.foreignObject` re-enters the HTML content model inside SVG coordinate space. Its children are `HtmlContent` nodes (any `div`, `span`, or other HTML element), letting you position styled HTML fragments at an exact SVG coordinate. It is the only SVG surface that crosses back into `HtmlContent`.
+
+`Svg.title(text)` and `Svg.desc(text)` attach an accessible name and description to the containing SVG element; screen readers surface these as the element's label. `Svg.metadata` holds arbitrary structured metadata (RDF, custom XML) for the SVG document and carries no visual output.
+
+```scala
+import UI.*
+import kyo.*
+
+val annotated: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.title("Red circle"),
+        Svg.desc("A filled red circle centered in the viewport"),
+        Svg.circle.cx(50).cy(50).r(40).fill(Svg.Paint.Color(Style.Color.red))
+    )
+```
+
+### Events on SVG
+
+Because `Svg.Root` and the interactive SVG nodes mix in `Interactive`, the same typed event setters work as on HTML: `.onClick`, `.onHover((e: UI.MouseEvent) => ...)`, and `.onScroll((w: UI.WheelEvent) => ...)`, with the same payloads. Handlers usually live on the enclosing `Svg.g` (SVG hit-tests the topmost element, and dispatch delegates to ancestors), as the Flamegraph demo does:
+
+```scala
+import UI.*
+import kyo.*
+
+val interactiveCell: UI < Async =
+    for hovered <- Signal.initRef(false)
+    yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.g
+            .onClick(Console.printLine("clicked"))
+            .onHover((e: UI.MouseEvent) => hovered.set(true))
+            .onUnhover(hovered.set(false))(
+                Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
+            )
+    )
+```
+
+### A worked example: a small bar chart
+
+Putting the pieces together, a bar chart is one `Svg.rect` per value (positioned via typed lengths), an axis baseline via `Svg.line`, and centered labels via `Svg.text`. This mirrors the in-repo `demo/BarChart.scala`:
+
+```scala
+import UI.*
+import kyo.*
+
+val barChart: UI =
+    val values = Chunk(("kyo", 61.0), ("cats", 49.0), ("zio", 52.0))
+    val maxV   = 64.0
+    val baseY  = 110.0
+    val bars = values.zipWithIndex.flatMap { case ((label, v), i) =>
+        val x = 20.0 + i * 60.0
+        val h = (v / maxV) * 90.0
+        Chunk(
+            Svg.rect.x(x).y(baseY - h).width(40).height(h)
+                .fill(Svg.Paint.Color(Style.Color.blue)),
+            Svg.text.x(x + 20).y(baseY + 14)
+                .textAnchor(Svg.TextAnchor.Middle)
+                .fontSize(Svg.SvgLength.px(10.0))(label)
+        )
+    }
+    val axis = Svg.line.x1(15).y1(baseY).x2(205).y2(baseY)
+        .stroke(Svg.Paint.Color(Style.Color.gray)).strokeWidth(1.0)
+    div(
+        Svg.svg.width(220).height(130).viewBox(Svg.ViewBox(0, 0, 220, 130))(
+            (axis +: bars)*
+        )
+    )
+end barChart
+```
 
 ## Running a UI
 
@@ -870,7 +1103,9 @@ val mountTo: Unit < (Async & Scope) = runMount(ui, "#app")
 
 ### `UI.runHandlers(basePath)(ui)`
 
-Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: three handlers in one sequence, a GET that serves the initial page, a POST that receives client events, and an SSE stream that pushes diff updates. You wire them into `HttpServer.init` alongside your other routes.
+Server-push deployment. Returns `Seq[HttpHandler[?, ?, ?]] < Sync`: two handlers in one sequence, a GET that serves the initial server-side-rendered page (pure SSR, no session, no fibers, no cookie), and a WebSocket route at `/_kyo/ws` that carries `HtmlOp.Replace` diffs out to the client and client events back in over the same connection. You wire them into `HttpServer.init` alongside your other routes.
+
+The session is the WebSocket connection. The WS handler owns the reactive subscription via a `Scope`; closing the socket cascade-tears-down the whole subscription tree (leak-free by construction). Per-connection state resets on a real disconnect: a dropped socket starts a fresh session, so signal state is per-connection. The initial `ui` should be deterministic so the SSR page and the WebSocket's first render agree.
 
 ```scala
 import UI.*
@@ -906,7 +1141,7 @@ val firstFrame: String < Async       = snapshots.take(1).run.map(_.headMaybe.get
 
 > **Note:** `UI.runRender` re-emits the WHOLE document on every change, not a diff. The HTTP handlers do diff-pushing; if you want diff semantics in a custom transport, port the logic from `UIServer` and `UIExchange`.
 
-When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over SSE). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, a custom WebSocket transport you want to write yourself.
+When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over a WebSocket). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, or a custom transport you want to write yourself.
 
 ### `UI.runRenderPage(head)(ui)` (SSG / static-site generation)
 
@@ -1134,17 +1369,20 @@ Why every piece is there:
 - `.style(if t.done then Style.color(Color.gray).strikethrough else Style.empty)`: per-row conditional style, evaluated each time the row is rendered (which happens whenever `todos` changes).
 - `UI.runMount(ui)` runs the whole thing in `Async & Scope`. Closing the scope tears down listeners and removes nodes.
 
-This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive an SSE-backed or stream-backed deployment. Swap the runner; keep the UI.
+This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_ => initialUiValue))` or `UI.runRender(initialUiValue)` to drive a WebSocket-backed or stream-backed deployment. Swap the runner; keep the UI.
 
 ## Demos
 
-Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
+Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
 
 - [**Kanban**](shared/src/test/scala/demo/Kanban.scala): Trello-style board over server-push: add, move, and delete cards across columns.
 - [**Signup**](shared/src/test/scala/demo/Signup.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
-- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over SSE from a background fiber, with no client code.
+- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
 - [**Search**](shared/src/test/scala/demo/Search.scala): live Wikipedia search via `HttpClient`, with loading and error states.
 - [**Cart**](shared/src/test/scala/demo/Cart.scala): shopping cart with quantity steppers and a derived running total.
 - [**Playground**](shared/src/test/scala/demo/Playground.scala): HTML playground: a textarea feeds a live `iframe` preview.
 - [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
 - [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
+- [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
+- [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
+- [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.

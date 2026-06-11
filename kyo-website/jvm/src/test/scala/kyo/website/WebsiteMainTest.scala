@@ -5,7 +5,7 @@ import java.nio.file.Paths
 import kyo.*
 
 /** Tests for `WebsiteMain` CLI (Phase 4 scope: arg parsing + smoke emit). */
-class WebsiteMainTest extends Test:
+class WebsiteMainTest extends WebsiteTest:
 
     // ---- Helpers ----
 
@@ -37,7 +37,7 @@ class WebsiteMainTest extends Test:
 
     // ---- Test 11: CLI smoke emit writes index.html ----
 
-    "CLI smoke: emit via WebsiteGenerator writes complete artifact" in run {
+    "CLI smoke: emit via WebsiteGenerator writes complete artifact" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -60,7 +60,7 @@ class WebsiteMainTest extends Test:
 
     // ---- SEO-3: sitemap.xml and robots.txt are always written, even for empty content ----
 
-    "sitemap.xml and robots.txt always written, even for empty content (SEO-3)" in run {
+    "sitemap.xml and robots.txt always written, even for empty content (SEO-3)" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -83,7 +83,7 @@ class WebsiteMainTest extends Test:
 
     // ---- Test 12: --out flag is parsed correctly ----
 
-    "emit to the specified output directory" in run {
+    "emit to the specified output directory" in {
         for
             out       <- tmpDir
             bundleDir <- stubBundleDir
@@ -134,7 +134,7 @@ class WebsiteMainTest extends Test:
       */
     private val auditTags = Seq("v0.9.3", "v0.16.2", "v0.19.0", "v0.19.0-RC1")
 
-    "parseContent flags the newest STABLE version as latest, not the lexicographic last (WARN-1)" in run {
+    "parseContent flags the newest STABLE version as latest, not the lexicographic last (WARN-1)" in {
         for
             dir     <- contentDirWithTags(auditTags)
             content <- WebsiteMain.parseContent(Chunk("--content", dir))
@@ -146,7 +146,7 @@ class WebsiteMainTest extends Test:
         end for
     }
 
-    "parseContent latest selection is order-independent (lexicographic / shuffled input) (WARN-1)" in run {
+    "parseContent latest selection is order-independent (lexicographic / shuffled input) (WARN-1)" in {
         for
             lexDir      <- contentDirWithTags(auditTags.sorted) // v0.16.2, v0.19.0, v0.19.0-RC1, v0.9.3
             lexContent  <- WebsiteMain.parseContent(Chunk("--content", lexDir))
@@ -158,7 +158,7 @@ class WebsiteMainTest extends Test:
         end for
     }
 
-    "parseContent orders versions.json semantically, RC before its stable release (WARN-1)" in run {
+    "parseContent orders versions.json semantically, RC before its stable release (WARN-1)" in {
         for
             dir     <- contentDirWithTags(auditTags)
             content <- WebsiteMain.parseContent(Chunk("--content", dir))

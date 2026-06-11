@@ -8,7 +8,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
 
     "NavigationWatcher.NavSnapshotWire round-trips through JSON" - {
 
-        "decodes the {url, pushStateCount, beforeUnload} shape emitted by snapshotState" in run {
+        "decodes the {url, pushStateCount, beforeUnload} shape emitted by snapshotState" in {
             val raw = """{"url":"https://example.test/page","pushStateCount":3,"beforeUnload":false}"""
             Json.decode[NavigationWatcher.NavSnapshotWire](raw) match
                 case Result.Success(w) =>
@@ -19,7 +19,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             end match
         }
 
-        "encode-decode round-trip preserves all three fields" in run {
+        "encode-decode round-trip preserves all three fields" in {
             val original = NavigationWatcher.NavSnapshotWire(
                 url = "https://example.com/path?a=1&b=2#frag",
                 pushStateCount = 4,
@@ -31,11 +31,13 @@ class NavigationWatcherTest extends kyo.BrowserTest:
                 case other             => fail(s"expected Success but got $other")
         }
 
-        "decode of a non-JSON payload returns Failure" in run {
+        "decode of a non-JSON payload returns Failure" in {
             val bad = "not json at all"
             Json.decode[NavigationWatcher.NavSnapshotWire](bad) match
-                case Result.Failure(_) => succeed
-                case other             => fail(s"expected Failure for malformed JSON, got $other")
+                case Result.Failure(_) =>
+                    succeed("decoding a non-JSON payload returns a typed Result.Failure rather than panicking or succeeding")
+                case other => fail(s"expected Failure for malformed JSON, got $other")
+            end match
         }
     }
 
@@ -59,14 +61,12 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Present(NavigationWatcher.SettleStatus.Ready(snap.url, 200)),
             throwOnFailure = true
         )
-        decision match
-            case NavigationWatcher.PendingDecision.AbortNavigationNeverCommitted(`snap`.url, Browser.Settle.NetworkIdle) => succeed
-            case other =>
-                fail(
-                    s"expected AbortNavigationNeverCommitted(${snap.url}, NetworkIdle) but got $other " +
-                        "(if this returned DegradeToLoad the no-url-changed guard regressed and Browser.expectNavigation will silently succeed on no-op triggers)"
-                )
-        end match
+        val expected = NavigationWatcher.PendingDecision.AbortNavigationNeverCommitted(snap.url, Browser.Settle.NetworkIdle)
+        assert(
+            decision == expected,
+            s"expected AbortNavigationNeverCommitted(${snap.url}, NetworkIdle) but got $decision " +
+                "(if this returned DegradeToLoad the no-url-changed guard regressed and Browser.expectNavigation will silently succeed on no-op triggers)"
+        )
     }
 
     "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 200) → DegradeToLoad (page loaded, network never quiesced)" in {
@@ -77,9 +77,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 200)),
             throwOnFailure = true
         )
-        decision match
-            case NavigationWatcher.PendingDecision.DegradeToLoad => succeed
-            case other                                           => fail(s"expected DegradeToLoad but got $other")
+        assert(decision == NavigationWatcher.PendingDecision.DegradeToLoad, s"expected DegradeToLoad but got $decision")
     }
 
     "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 500, throwOnFailure=true) → AbortHttpError" in {
@@ -90,9 +88,10 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 500)),
             throwOnFailure = true
         )
-        decision match
-            case NavigationWatcher.PendingDecision.AbortHttpError("https://example.com/landed", 500) => succeed
-            case other => fail(s"expected AbortHttpError but got $other")
+        assert(
+            decision == NavigationWatcher.PendingDecision.AbortHttpError("https://example.com/landed", 500),
+            s"expected AbortHttpError(landed, 500) but got $decision"
+        )
     }
 
     "NavigationWatcher.decidePending: NetworkIdle + Ready(differentUrl, 500, throwOnFailure=false) → DegradeToLoad (HTTP-status check is gated)" in {
@@ -103,9 +102,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 500)),
             throwOnFailure = false
         )
-        decision match
-            case NavigationWatcher.PendingDecision.DegradeToLoad => succeed
-            case other                                           => fail(s"expected DegradeToLoad but got $other")
+        assert(decision == NavigationWatcher.PendingDecision.DegradeToLoad, s"expected DegradeToLoad but got $decision")
     }
 
     "NavigationWatcher.decidePending: NetworkIdle + Pending → AbortLoadEventNeverFired" in {
@@ -116,9 +113,10 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Present(NavigationWatcher.SettleStatus.Pending("https://example.com/loading")),
             throwOnFailure = true
         )
-        decision match
-            case NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("https://example.com/loading") => succeed
-            case other => fail(s"expected AbortLoadEventNeverFired but got $other")
+        assert(
+            decision == NavigationWatcher.PendingDecision.AbortLoadEventNeverFired("https://example.com/loading"),
+            s"expected AbortLoadEventNeverFired(loading) but got $decision"
+        )
     }
 
     "NavigationWatcher.decidePending: Settle.Load + Absent loadProbe → AbortSettleTimeout (non-NetworkIdle modes skip the degrade path)" in {
@@ -129,9 +127,10 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Absent,
             throwOnFailure = true
         )
-        decision match
-            case NavigationWatcher.PendingDecision.AbortSettleTimeout("https://example.com/loading", Browser.Settle.Load) => succeed
-            case other => fail(s"expected AbortSettleTimeout but got $other")
+        assert(
+            decision == NavigationWatcher.PendingDecision.AbortSettleTimeout("https://example.com/loading", Browser.Settle.Load),
+            s"expected AbortSettleTimeout(loading, Load) but got $decision"
+        )
     }
 
     "NavigationWatcher.decidePending: Absent expectedDifferentFrom + NetworkIdle + Ready(any, 200) → DegradeToLoad (no expected-URL constraint)" in {
@@ -142,12 +141,10 @@ class NavigationWatcherTest extends kyo.BrowserTest:
             loadProbe = Present(NavigationWatcher.SettleStatus.Ready("https://example.com/landed", 200)),
             throwOnFailure = true
         )
-        decision match
-            case NavigationWatcher.PendingDecision.DegradeToLoad => succeed
-            case other                                           => fail(s"expected DegradeToLoad but got $other")
+        assert(decision == NavigationWatcher.PendingDecision.DegradeToLoad, s"expected DegradeToLoad but got $decision")
     }
 
-    "NavigationWatcher.loadScheduleTimeout returns 5.seconds for a non-MaxDuration schedule" in run {
+    "NavigationWatcher.loadScheduleTimeout returns 5.seconds for a non-MaxDuration schedule" in {
         // `Schedule.fixed(...)` (without `.maxDuration(...)`) is NOT a MaxDuration; the helper hits the
         // default branch and returns 5 seconds.
         val plain = Schedule.fixed(100.millis)
@@ -166,7 +163,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     // Wire-shape drift must not degrade to a silent `Pending("(unknown)")`, which would leave the
     // navigation gate spinning forever. The decoder must `Abort.fail` with a typed
     // `BrowserProtocolErrorException` so the surrounding settle loop surfaces the diagnostic immediately.
-    "NavigationWatcher.decodeSettleState - JSON decode failure aborts with BrowserProtocolErrorException" in run {
+    "NavigationWatcher.decodeSettleState - JSON decode failure aborts with BrowserProtocolErrorException" in {
         val bad = "this is not json"
         Abort.run[BrowserConnectionException](NavigationWatcher.decodeSettleState(bad)).map {
             case Result.Failure(_: BrowserProtocolErrorException) =>
@@ -198,7 +195,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     //      taken with `pushStateCount=0`.
     //   3. `pollNavigated` then observes `__kyoNavRec.pushStateCount > snapshot.pushStateCount` and the method
     //      returns. The 5-second deadline is well above the 300ms scheduled fire.
-    "NavigationWatcher.waitForNext: navigation triggers resolution" in run {
+    "NavigationWatcher.waitForNext: navigation triggers resolution" in {
         withBrowserOnLocalhost {
             Browser.eval(
                 """(() => {
@@ -233,7 +230,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     // `readyState` reaches `interactive` quickly but stays there until the slow resource finishes; only then does
     // `complete` fire. With `Settle.DomContentLoaded` the watcher returns at `interactive`; with `Settle.Load`
     // it must wait past DCL.
-    "NavigationWatcher Settle.Load waits past DOMContentLoaded for the load event" in run {
+    "NavigationWatcher Settle.Load waits past DOMContentLoaded for the load event" in {
         withBrowserOnLocalhost {
             // Slow image: a 400-byte image whose response is delayed on the server side. The exact delay is
             // engineered to be observable but well under the 5-second loadSchedule fallback. The assertion
@@ -266,7 +263,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     // install body executes exactly ONCE. We observe via a setter on `__kyoNetTrackingInstalled` that increments an
     // AtomicRef-backed counter (writes from the install body are intercepted; the early-return branch on
     // subsequent calls does NOT write). The AtomicRef is the synchronisation primitive: no sleeps.
-    "NavigationWatcher.ensureNetworkTracking is a no-op on repeated invocations (idempotent install)" in run {
+    "NavigationWatcher.ensureNetworkTracking is a no-op on repeated invocations (idempotent install)" in {
         withBrowserOnLocalhost {
             Browser.use { tab =>
                 Browser.runOn(tab) {
@@ -324,7 +321,7 @@ class NavigationWatcherTest extends kyo.BrowserTest:
     // a 4xx/5xx response with `throwOnFailure=true` raises
     // `BrowserNavigationFailedException` through the `awaitSettle` path.
     // Behavioural assertion on the Abort SHAPE, NOT on log output.
-    "NavigationWatcher awaitSettle raises BrowserNavigationFailedException on 5xx with throwOnFailure=true" in run {
+    "NavigationWatcher awaitSettle raises BrowserNavigationFailedException on 5xx with throwOnFailure=true" in {
         withBrowserOnLocalhost {
             statusServer(HttpStatus.InternalServerError, "/boom") { (host, port) =>
                 val url = s"http://$host:$port/boom"

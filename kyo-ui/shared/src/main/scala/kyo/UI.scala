@@ -24,7 +24,7 @@ import scala.language.implicitConversions
   * The same `UI` value runs three ways, changing only the runner:
   *
   *   - `runMount` (Scala.js): mounts to the live DOM as a single-page app.
-  *   - `runHandlers`: exposes it as a server-push HTTP triple (page + events + SSE diff stream).
+  *   - `runHandlers`: exposes it as a server-push pair (SSR page GET and a WebSocket diff channel).
   *   - `runRender`: emits a `Stream[String, Async]` of full-page HTML for SSR, tests, or custom transports.
   *
   * @see
@@ -54,48 +54,50 @@ object UI:
     import Ast.*
 
     /** Auto-lifts a bare `String` into a [[kyo.UI.Ast.Text]] node, so string literals can be passed directly wherever a `UI` child is
-      * expected.
+      * expected. Returns `Text` (not the wider `UI`) so that the static type satisfies `HtmlContent` in container `apply` overloads.
       */
-    implicit def stringToUI(v: String)(using Frame): UI = Text(v)
+    implicit def stringToUI(v: String)(using Frame): Text = Text(v)
 
     /** Auto-lifts a `Signal[String]` into a reactive text node that re-renders whenever the signal emits. */
-    implicit def signalStringToUI(v: Signal[String])(using Frame): UI = Reactive(v.map(s => Text(s)))
+    implicit def signalStringToUI(v: Signal[String])(using Frame): Reactive[Text] = Reactive[Text](v.map(s => Text(s)))
 
     /** Auto-lifts a `Signal[A]` of UI values into a reactive node that swaps in the latest emitted subtree on every emission. */
-    implicit def signalUIToUI[A <: UI](v: Signal[A])(using Frame, CanEqual[A, A]): UI = Reactive(v.map(x => x: UI))
+    implicit def signalUIToUI[A <: UI](v: Signal[A])(using Frame, CanEqual[A, A]): Reactive[A] = Reactive[A](v.map(x => x: UI))
 
     // ---- Signal extensions ----
 
     extension [A](signal: Signal[A])
-        /** Projects a signal into a reactive subtree: `f` maps each emitted value to a `UI`, and the region re-renders on every emission. */
-        def render(f: A => UI)(using Frame): UI = Reactive(signal.map(f))
+        /** Projects a signal into a reactive subtree: `f` maps each emitted value to a `C`, and the region re-renders on every emission. */
+        def render[C <: UI](f: A => C)(using Frame): Reactive[C] = Reactive[C](signal.map(a => f(a): UI))
 
     extension [A](signal: Signal[Chunk[A]])
         /** Renders one child per element of the collection signal, re-rendering when the chunk changes. Elements are reconciled by
           * position; for stable identity across reorders and insertions use [[foreachKeyed]].
           */
-        def foreach(render: A => UI)(using Frame): Foreach[A] = Foreach(signal, Absent, (_, a) => render(a))
+        def foreach[C <: UI](render: A => C)(using Frame): Foreach[A, C] = Foreach[A, C](signal, Absent, (_, a) => render(a))
 
         /** Like [[foreach]] but `render` also receives each element's index. */
-        def foreachIndexed(render: (Int, A) => UI)(using Frame): Foreach[A] = Foreach(signal, Absent, render)
+        def foreachIndexed[C <: UI](render: (Int, A) => C)(using Frame): Foreach[A, C] = Foreach[A, C](signal, Absent, render)
 
         /** Renders one child per element, identifying elements by `key` so reorders and insertions reuse the matching existing nodes
           * instead of re-rendering positionally.
           */
-        def foreachKeyed(key: A => String)(render: A => UI)(using Frame): Foreach[A] =
-            Foreach(signal, Present(key), (_, a) => render(a))
+        def foreachKeyed[C <: UI](key: A => String)(render: A => C)(using Frame): Foreach[A, C] =
+            Foreach[A, C](signal, Present(key), (_, a) => render(a))
 
         /** Keyed [[foreachKeyed]] whose `render` also receives each element's index. */
-        def foreachKeyedIndexed(key: A => String)(render: (Int, A) => UI)(using Frame): Foreach[A] =
-            Foreach(signal, Present(key), render)
+        def foreachKeyedIndexed[C <: UI](key: A => String)(render: (Int, A) => C)(using Frame): Foreach[A, C] =
+            Foreach[A, C](signal, Present(key), render)
     end extension
 
     // ---- Factory constructors ----
 
     /** The empty UI: an [[kyo.UI.Ast.Fragment]] with no children, rendering nothing. Useful as a neutral element or a conditional
-      * "render nothing" branch.
+      * "render nothing" branch. Returns `Fragment[Nothing]`, which an HTML container accepts because `AsHtmlChild[Fragment[Nothing]]`
+      * resolves (the `Fragment` given needs `AsHtmlChild[Nothing]`, which the base `[T <: HtmlContent]` given supplies since
+      * `Nothing <: HtmlContent`).
       */
-    def empty(using Frame): UI = Fragment(Chunk.empty[UI])
+    def empty(using Frame): Fragment[Nothing] = Fragment[Nothing](Chunk.empty[UI])
 
     def div(using Frame): Div                     = Div()
     def p(using Frame): P                         = P()
@@ -156,8 +158,13 @@ object UI:
     /** An inline frame embedding the document at `src` (a URL or `data:` URI). Give it a size with `.style` and a `.title` for accessibility. */
     def iframe(src: String)(using Frame): Iframe = Iframe(src = Present(src))
 
-    /** Groups children into a single UI without introducing a wrapper element; the children render as siblings in the parent. */
-    def fragment(cs: UI*)(using Frame): UI = Fragment(Chunk.from(cs))
+    /** Groups children into a single UI without introducing a wrapper element; the children render as siblings in the parent.
+      * The type parameter `C` is inferred from the children, so `fragment(div, span)` produces `Fragment[Div | SpanElement]`,
+      * which an HTML container accepts because `AsHtmlChild[Fragment[Div | SpanElement]]` resolves (the `Fragment` given on top
+      * of the union given). `fragment(circle, rect)` produces a `Fragment` that fits SVG containers. A mixed `fragment(div, circle)`
+      * fits neither (correct: no `AsHtmlChild` witness for the SVG side and no SVG witness for the HTML side).
+      */
+    def fragment[C <: UI](cs: C*)(using Frame): Fragment[C] = Fragment[C](Chunk.from(cs))
 
     /** Inline HTML passthrough: emits `html` verbatim into the rendered output without any escaping.
       *
@@ -181,12 +188,16 @@ object UI:
       */
     def rawHtml(html: String)(using Frame): UI = Ast.RawHtml(html)
 
-    /** Conditional rendering: shows `ui` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
-    def when(condition: Signal[Boolean])(ui: => UI)(using Frame): UI =
-        Reactive(condition.map(v => if v then ui else UI.empty))
+    /** Conditional rendering: shows `body` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
+    def when[C <: UI](condition: Signal[Boolean])(body: => C)(using Frame): Reactive[C] =
+        Reactive[C](condition.map(v => if v then body else UI.empty))
 
-    /** Server-push: returns HTTP handlers (GET page + POST events + SSE stream) for this UI at the given path. Compose with other handlers
+    /** Server-push: returns HTTP handlers (SSR page GET and a WebSocket route) for this UI at the given path. Compose with other handlers
       * via HttpServer.init.
+      *
+      * The page GET is pure SSR: it evaluates the UI, renders the initial HTML, and returns. It creates no session, forks no fibers, and
+      * sets no cookie. Each WebSocket connection owns its own subscription tree for the duration of the connection; per-connection state
+      * resets when the client disconnects.
       */
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         UIServer.handlers(basePath)(ui)
@@ -202,20 +213,28 @@ object UI:
                     val exchange =
                         new UIExchange:
                             def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
-                                Abort.run[Closed](channel.put(())).unit
-                    for
-                        root <- ReactiveUI.normalize(ui, Seq.empty)
-                        _    <- ReactiveUI.subscribe(root, exchange)
-                    yield Loop.foreach {
-                        Abort.run[Closed](channel.take).map {
-                            case Result.Success(_) =>
-                                HtmlRenderer.render(ui, Seq.empty).map { html =>
-                                    Emit.valueWith(Chunk(html))(Loop.continue)
-                                }
-                            case _ => Loop.done
+                                // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
+                                Abort.runPartial[Closed](channel.put(())).unit
+                    // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
+                    // the consume loop ends, the Scope closes, and the subscription tree cascade-tears-down.
+                    Scope.run {
+                        for
+                            root <- ReactiveUI.normalize(ui, Seq.empty)
+                            _    <- ReactiveUI.subscribe(root, exchange)
+                        yield Loop.foreach {
+                            // runPartial captures only the Closed failure (the channel closed when the consumer stopped
+                            // draining / on teardown -> end the stream); a Panic propagates rather than being silently
+                            // turned into a clean stream end.
+                            Abort.runPartial[Closed](channel.take).map {
+                                case Result.Success(_) =>
+                                    HtmlRenderer.render(ui, Seq.empty).map { html =>
+                                        Emit.valueWith(Chunk(html))(Loop.continue)
+                                    }
+                                case Result.Failure(_) => Loop.done
+                            }
                         }
+                        end for
                     }
-                    end for
                 }
             }
         }
@@ -452,6 +471,21 @@ object UI:
         targetId: Maybe[String]
     ) derives CanEqual
 
+    /** The typed payload delivered to an `onScroll` handler.
+      *
+      * `deltaX` and `deltaY` are the wheel deltas in pixels (positive = scroll right/down). `targetId` is the `id` of the element the event
+      * fired on (`Absent` when that element has no id), and `modifiers` records any held keys (ctrl-wheel zoom is the common case).
+      *
+      * @see
+      *   [[kyo.UI.Ast.Interactive.onScroll]] for the setter that registers a handler receiving this payload.
+      */
+    final case class WheelEvent(
+        deltaX: Double,
+        deltaY: Double,
+        targetId: Maybe[String],
+        modifiers: Modifiers
+    ) derives CanEqual
+
     /** The case-class abstract syntax tree that every [[kyo.UI]] factory returns.
       *
       * Every node a factory builds is a value under `Ast`: the element case classes (`Div`, `Button`, `Input`, ...), the text node
@@ -498,19 +532,19 @@ object UI:
             def id(v: String): Self      = withAttrs(attrs.copy(identifier = Present(v)))
             def hidden(v: Boolean): Self = withAttrs(attrs.copy(hidden = Present(v)))
 
-            /** Reactive `hidden`: re-renders when the signal emits. Returns `UI` because it crosses the reactive boundary. */
-            def hidden(v: Signal[Boolean]): UI =
+            /** Reactive `hidden`: re-renders when the signal emits. */
+            def hidden(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(b => this.hidden(b): UI))
+                Reactive[Self](v.map(b => this.hidden(b): UI))
 
             // Visual
             def style(v: Style): Self               = withAttrs(attrs.copy(uiStyle = attrs.uiStyle ++ v))
             def style(f: Style.type => Style): Self = style(f(Style))
 
-            /** Reactive `style`: re-renders when the signal emits. Returns `UI` because it crosses the reactive boundary. */
-            def style(v: Signal[Style]): UI =
+            /** Reactive `style`: re-renders when the signal emits. */
+            def style(v: Signal[Style]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(s => this.style(s): UI))
+                Reactive[Self](v.map(s => this.style(s): UI))
 
             // ARIA attributes
             /** Sets a single `aria-*` attribute (the `name` is the suffix after `aria-`). */
@@ -591,15 +625,152 @@ object UI:
             def onFocus(f: MouseEvent => Any < Async): Self      = withAttrs(attrs.copy(onFocusEvt = Present(f)))
             def onBlur(action: => Any < Async): Self             = withAttrs(attrs.copy(onBlur = Present(Sync.defer(action)(using frame))))
             def onBlur(f: MouseEvent => Any < Async): Self       = withAttrs(attrs.copy(onBlurEvt = Present(f)))
+
+            /** Runs `action` when the pointer enters this element. */
+            def onHover(action: => Any < Async): Self = withAttrs(attrs.copy(onHover = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when the pointer enters this element, receiving the [[kyo.UI.MouseEvent]] payload. */
+            def onHover(f: MouseEvent => Any < Async): Self = withAttrs(attrs.copy(onHoverEvt = Present(f)))
+
+            /** Runs `action` when the pointer leaves this element. */
+            def onUnhover(action: => Any < Async): Self = withAttrs(attrs.copy(onUnhover = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when the pointer leaves this element, receiving the [[kyo.UI.MouseEvent]] payload. */
+            def onUnhover(f: MouseEvent => Any < Async): Self = withAttrs(attrs.copy(onUnhoverEvt = Present(f)))
+
+            /** Runs `action` when the mouse wheel is used over this element. */
+            def onScroll(action: => Any < Async): Self = withAttrs(attrs.copy(onScroll = Present(Sync.defer(action)(using frame))))
+
+            /** Runs `f` when the mouse wheel is used over this element, receiving the [[kyo.UI.WheelEvent]] payload. */
+            def onScroll(f: WheelEvent => Any < Async): Self = withAttrs(attrs.copy(onScrollEvt = Present(f)))
         end Interactive
 
         // ---- Layout traits ----
 
+        /** Content-model marker for elements that are valid HTML children: all `Block` and `Inline` layout elements, `Text` nodes,
+          * and the SVG root (`Svg.Root`). HTML containers restrict their `apply` overloads to this bound so that bare SVG primitives
+          * (which extend `SvgElement` but NOT `HtmlContent`) are rejected at compile time.
+          */
+        sealed trait HtmlContent extends UI
+
+        /** Typeclass witnessing that `T` is a valid child of an HTML container (content-model safety).
+          *
+          * Recursive givens cover: direct `HtmlContent` values, `Reactive[C]`/`Foreach[A,C]`/`Fragment[C]` where `C` has an
+          * `AsHtmlChild` witness (so a nested `Fragment[Fragment[...]]` and a `foreach`/`when` returning a `Fragment` are
+          * accepted), and union types `A | B` where both sides have witnesses. `AsHtmlChild[UI]` has no given, so a value
+          * statically typed as bare `UI` is still rejected; `AsHtmlChild[Svg.Circle]` has no given (SVG primitives do not extend
+          * `HtmlContent`), so SVG nodes are rejected. Each child is checked individually at the call site via the `HtmlChildVal`
+          * implicit conversion, which avoids the LUB-widening that varargs would otherwise cause for heterogeneous arg lists.
+          *
+          * The `if cond then elem else UI.empty` idiom infers the branch union `A | Fragment[Nothing]`. The general `A | B`
+          * given does not decompose a union (implicit search binds both `A` and `B` to the whole union, which then fails), so a
+          * dedicated `emptyOr` given resolves the "render this element or render nothing" shape directly when it is passed as a
+          * direct container child, e.g. `div(if cond then span(...) else UI.empty)`. It is placed in the lower-priority
+          * [[kyo.UI.Ast.AsHtmlChildLowPriority]] base so it does not compete with the direct `Fragment` given when the type is a
+          * bare `Fragment[Nothing]`. `A` still needs its own `AsHtmlChild` witness, so `Svg.Circle | Fragment[Nothing]` is rejected.
+          *
+          * For a reactive body the union must be pinned explicitly: `signal.render[Elem | Fragment[Nothing]](v => if v then elem
+          * else UI.empty)`, because `render`'s content type `C` is inferred independently of the container and would otherwise
+          * widen to `UI` (which has no witness). The simpler "show element while true, else nothing" case needs no union at all:
+          * `UI.when(signal)(elem)` renders `elem` when true and `UI.empty` otherwise.
+          *
+          * Known limitation: the general `A | B` union given does NOT recurse through the structural givens for a
+          * disjunct, so a single `fragment(...)` whose children mix a nested structural child with a plain sibling (element type
+          * e.g. `Fragment[SpanElement] | SpanElement`) is rejected. The fix is to convert per-element at the container instead,
+          * e.g. `div(fragment(fragment(a, b)), c)`; all realistic patterns compile this way.
+          */
+        trait AsHtmlChild[T]
+
+        /** Lowest-priority `AsHtmlChild` given: allows bare `UI` values as children. This is the fallback
+          * for callers whose helpers return `UI` (rather than a specific `HtmlContent` subtype); the
+          * typed givens in `AsHtmlChild` and `AsHtmlChildLowPriority` take precedence for all named types.
+          * Correctness is maintained by `HtmlRenderer`, which handles every `UI` variant at runtime.
+          */
+        sealed trait AsHtmlChildLowestPriority:
+            given AsHtmlChild_UI: AsHtmlChild[UI] = new AsHtmlChild[UI] {}
+
+        /** Lower-priority `AsHtmlChild` givens. Holds the `emptyOr` given for the `A | Fragment[Nothing]` branch union so it does
+          * not create an ambiguity with the direct `Fragment` given when the static type is a bare `Fragment[Nothing]`.
+          */
+        sealed trait AsHtmlChildLowPriority extends AsHtmlChildLowestPriority:
+            given emptyOr[A <: UI](using AsHtmlChild[A]): AsHtmlChild[A | Fragment[Nothing]] = new AsHtmlChild[A | Fragment[Nothing]] {}
+            // RawHtml extends UI (not HtmlContent); given here at low priority so the
+            // HtmlContent-based given in AsHtmlChild takes precedence for HtmlContent subtypes.
+            given AsHtmlChild_RawHtml: AsHtmlChild[RawHtml] = new AsHtmlChild[RawHtml] {}
+        end AsHtmlChildLowPriority
+
+        object AsHtmlChild extends AsHtmlChildLowPriority:
+            given [T <: HtmlContent]: AsHtmlChild[T]                               = new AsHtmlChild[T] {}
+            given [C <: UI](using AsHtmlChild[C]): AsHtmlChild[Reactive[C]]        = new AsHtmlChild[Reactive[C]] {}
+            given [A, C <: UI](using AsHtmlChild[C]): AsHtmlChild[Foreach[A, C]]   = new AsHtmlChild[Foreach[A, C]] {}
+            given [C <: UI](using AsHtmlChild[C]): AsHtmlChild[Fragment[C]]        = new AsHtmlChild[Fragment[C]] {}
+            given [A, B](using AsHtmlChild[A], AsHtmlChild[B]): AsHtmlChild[A | B] = new AsHtmlChild[A | B] {}
+        end AsHtmlChild
+
+        /** Witness that a value has passed the `AsHtmlChild` check, wrapping the underlying `UI` value. Because the wrapper is
+          * stored in the `HtmlChildVal*` vararg array (a generic position), the `AnyVal` is boxed there, so each argument
+          * allocates one short-lived wrapper at the call site. The wrappers are unwrapped immediately into the container's
+          * `Chunk[UI]` children and not retained, so this is a per-argument allocation on the cold construction path, not on
+          * the hot render path. HTML containers accept `HtmlChildVal*` so that each argument is checked individually at the
+          * call site rather than via a single inferred `T`, which avoids LUB-widening issues for heterogeneous lists like
+          * `(Button, Reactive[Span])`.
+          */
+        final class HtmlChildVal private[kyo] (private[kyo] val value: UI) extends AnyVal
+
+        object HtmlChildVal:
+            /** Implicit conversion: any value `T` with a `AsHtmlChild[T]` witness becomes a `HtmlChildVal`. */
+            implicit def lift[T <: UI](t: T)(using AsHtmlChild[T]): HtmlChildVal = new HtmlChildVal(t)
+
+            /** Direct implicit conversion from `String`: bridges the `stringToUI` auto-lift so that bare string literals
+              * can be passed directly to HTML container `apply` overloads without a double-implicit chain.
+              */
+            implicit def liftString(s: String)(using Frame): HtmlChildVal = new HtmlChildVal(Text(s))
+
+            /** Direct implicit conversion from a `Signal[A]` where A is an HTML-valid UI type: bridges the
+              * `signalUIToUI`/`signalStringToUI` auto-lifts without requiring a double-implicit chain.
+              * Checks that `AsHtmlChild[A]` exists so bare `Signal[SvgElement]` is still rejected.
+              */
+            implicit def liftSignal[A <: UI](sig: Signal[A])(using Frame, AsHtmlChild[A]): HtmlChildVal =
+                new HtmlChildVal(Reactive[A](sig.map(x => x: UI)))
+
+            /** Direct implicit conversion from a `Signal[String]` (including `SignalRef[String]`): produces a reactive
+              * text node so string signals can be passed directly to HTML container `apply` overloads.
+              */
+            implicit def liftSignalString(sig: Signal[String])(using Frame): HtmlChildVal =
+                new HtmlChildVal(Reactive[Text](sig.map(s => Text(s))))
+        end HtmlChildVal
+
         /** Layout marker for block-flow elements (`div`, `p`, headings, ...). */
-        sealed trait Block extends Element
+        sealed trait Block extends Element with HtmlContent
 
         /** Layout marker for inline-flow elements (`span`, `a`, inputs, ...). */
-        sealed trait Inline extends Element
+        sealed trait Inline extends Element with HtmlContent
+
+        // ---- SVG cross-file extension bridge ----
+
+        /** Sanctioned cross-file extension point for the SVG AST (defined in `Svg.scala`).
+          *
+          * `Element`, `Interactive`, `Block`, `Inline`, and `HtmlContent` are `sealed`, so the HTML
+          * AST stays closed and exhaustive over `UI`. SVG nodes live in a separate file, so they
+          * cannot extend a sealed trait directly; `SvgNode`, `SvgInteractiveNode`, and `SvgRootNode`
+          * are the only non-sealed descendants and form the bridge. `Svg.SvgElement` extends `SvgNode`, which makes every SVG
+          * element an `Element` (so it reuses the path/event/reactive engine) without making it
+          * `HtmlContent`: a bare SVG primitive is therefore not a valid HTML child (`div(Svg.circle)`
+          * does not compile).
+          */
+        trait SvgNode extends Element
+
+        /** Bridge for SVG nodes that also accept event handlers (`SvgNode` plus `Interactive`).
+          * SVG elements that carry events mix this in instead of `Interactive` directly, since
+          * `Interactive` is sealed.
+          */
+        trait SvgInteractiveNode extends SvgNode with Interactive
+
+        /** Bridge for the `<svg>` root only: an `SvgInteractiveNode` that is also `Inline`
+          * `HtmlContent`, so `Svg.Root` (and only the root) embeds in an HTML container
+          * (`div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does not).
+          */
+        trait SvgRootNode extends SvgInteractiveNode with Inline with HtmlContent
 
         // ---- Void trait (elements that cannot have children) ----
 
@@ -617,10 +788,10 @@ object UI:
             def disabled: Maybe[Boolean]
             def disabled(v: Boolean): Self
 
-            /** Reactive `disabled`: re-renders when the signal emits. Returns `UI` because it crosses the reactive boundary. */
-            def disabled(v: Signal[Boolean]): UI =
+            /** Reactive `disabled`: re-renders when the signal emits. */
+            def disabled(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(b => this.disabled(b): UI))
+                Reactive[Self](v.map(b => this.disabled(b): UI))
         end HasDisabled
 
         /** Capability trait for free-text form inputs: a `String` `value` (constant or `SignalRef`), placeholder, read-only, and `onInput`/`onChange`. */
@@ -655,12 +826,10 @@ object UI:
             /** Binds the checked state to a `SignalRef` two-way: toggling writes back into the ref, and ref changes update the control. */
             def checked(v: SignalRef[Boolean]): Self
 
-            /** Reactive (one-way) `checked` from a read-only `Signal`. Returns `UI` because it crosses the reactive boundary; use the
-              * `SignalRef` overload for two-way binding.
-              */
-            def checked(v: Signal[Boolean]): UI =
+            /** Reactive (one-way) `checked` from a read-only `Signal`; use the `SignalRef` overload for two-way binding. */
+            def checked(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(b => this.checked(b): UI))
+                Reactive[Self](v.map(b => this.checked(b): UI))
         end BooleanInput
 
         /** Capability marker for elements with semantic activation (button, anchor): can be triggered by keyboard as well as click. */
@@ -686,6 +855,12 @@ object UI:
             onFocusEvt: Maybe[MouseEvent => Any < Async] = Absent,
             onBlur: Maybe[Any < Async] = Absent,
             onBlurEvt: Maybe[MouseEvent => Any < Async] = Absent,
+            onHover: Maybe[Any < Async] = Absent,
+            onHoverEvt: Maybe[MouseEvent => Any < Async] = Absent,
+            onUnhover: Maybe[Any < Async] = Absent,
+            onUnhoverEvt: Maybe[MouseEvent => Any < Async] = Absent,
+            onScroll: Maybe[Any < Async] = Absent,
+            onScrollEvt: Maybe[WheelEvent => Any < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,
@@ -695,7 +870,7 @@ object UI:
         // ---- Non-element AST cases ----
 
         /** A literal text node; a bare `String` child auto-lifts to one. */
-        case class Text(value: String)(using val frame: Frame) extends UI
+        case class Text(value: String)(using val frame: Frame) extends UI with HtmlContent
 
         /** Verbatim inline HTML passthrough node. The `value` string is emitted byte-for-byte into the rendered output with no HTML
           * escaping. This is the AST counterpart to [[kyo.UI.rawHtml]].
@@ -709,102 +884,109 @@ object UI:
           */
         case class RawHtml(value: String)(using val frame: Frame) extends UI
 
-        /** A subtree driven by a `Signal[UI]`: re-renders the bound region whenever the signal emits a new value. */
-        case class Reactive(signal: Signal[UI])(using val frame: Frame) extends UI
+        /** A subtree driven by a `Signal[UI]`: re-renders the bound region whenever the signal emits a new value. The type parameter `C`
+          * is a phantom bound that records the content type at the construction site; it erases to `UI` at runtime.
+          */
+        case class Reactive[C <: UI](signal: Signal[UI])(using val frame: Frame) extends UI
 
-        /** A keyed list driven by a `Signal[Chunk[A]]`: renders one child per element, reconciling by `key` when present. */
-        case class Foreach[A](signal: Signal[Chunk[A]], key: Maybe[A => String], render: (Int, A) => UI)(using val frame: Frame) extends UI:
+        /** A keyed list driven by a `Signal[Chunk[A]]`: renders one child per element, reconciling by `key` when present. The type
+          * parameter `C` is a phantom bound that records the content type at the construction site; it erases to `UI` at runtime.
+          */
+        case class Foreach[A, C <: UI](signal: Signal[Chunk[A]], key: Maybe[A => String], render: (Int, A) => UI)(using val frame: Frame)
+            extends UI:
             /** Apply a polymorphic continuation with the typed members of this Foreach.
               *
-              * Callers that match on `Foreach[?]` (existential) lose the type parameter A. This method re-introduces A in a single, audited
+              * Callers that match on `Foreach[?, ?]` (existential) lose the type parameters. This method re-introduces A in a single
               * cast that is sound because the Foreach instance carries its own signal/render/key all constructed with the same A.
               */
             private[kyo] def applyTyped[B](k: [T] => (Signal[Chunk[T]], Maybe[T => String], (Int, T) => UI) => B): B =
                 k[A](signal, key, render)
         end Foreach
 
-        /** A transparent grouping of children with no wrapping element; renders its children inline into the parent. */
-        case class Fragment(children: Chunk[UI])(using val frame: Frame) extends UI
+        /** A transparent grouping of children with no wrapping element; renders its children inline into the parent. The type parameter
+          * `C` is a phantom bound that records the content type at the construction site; it erases to `UI` at runtime.
+          */
+        case class Fragment[C <: UI](children: Chunk[UI])(using val frame: Frame) extends UI
 
-        private[kyo] case class KeyedChild(key: String, child: UI)(using val frame: Frame) extends UI
+        private[kyo] case class KeyedChild[C <: UI](key: String, child: UI)(using val frame: Frame) extends UI
 
         // ====== Block containers ======
 
         final case class Div(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Div
-            def withAttrs(a: Attrs): Div = copy(attrs = a)
-            def apply(cs: UI*): Div      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Div      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Div = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Div
 
         final case class P(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = P
-            def withAttrs(a: Attrs): P = copy(attrs = a)
-            def apply(cs: UI*): P      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): P      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): P = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end P
 
         final case class Section(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Section
-            def withAttrs(a: Attrs): Section = copy(attrs = a)
-            def apply(cs: UI*): Section      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Section      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Section = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Section
 
         final case class Main(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Main
-            def withAttrs(a: Attrs): Main = copy(attrs = a)
-            def apply(cs: UI*): Main      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Main      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Main = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Main
 
         final case class Header(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Header
-            def withAttrs(a: Attrs): Header = copy(attrs = a)
-            def apply(cs: UI*): Header      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Header      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Header = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Header
 
         final case class Footer(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Footer
-            def withAttrs(a: Attrs): Footer = copy(attrs = a)
-            def apply(cs: UI*): Footer      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Footer      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Footer = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Footer
 
         final case class Pre(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Pre
-            def withAttrs(a: Attrs): Pre = copy(attrs = a)
-            def apply(cs: UI*): Pre      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Pre      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Pre = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Pre
 
         final case class Code(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Code
-            def withAttrs(a: Attrs): Code = copy(attrs = a)
-            def apply(cs: UI*): Code      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Code      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Code = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Code
 
         final case class Ul(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Ul
-            def withAttrs(a: Attrs): Ul                                 = copy(attrs = a)
-            def apply(cs: (Li | Reactive | Foreach[?] | Fragment)*): Ul = copy(children = children ++ Chunk.from(cs: Seq[UI]))
+            def withAttrs(a: Attrs): Ul      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Ul = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Ul
 
         final case class Ol(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Ol
-            def withAttrs(a: Attrs): Ol                                 = copy(attrs = a)
-            def apply(cs: (Li | Reactive | Foreach[?] | Fragment)*): Ol = copy(children = children ++ Chunk.from(cs: Seq[UI]))
+            def withAttrs(a: Attrs): Ol      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Ol = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Ol
 
         final case class Table(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = Table
-            def withAttrs(a: Attrs): Table                                 = copy(attrs = a)
-            def apply(cs: (Tr | Reactive | Foreach[?] | Fragment)*): Table = copy(children = children ++ Chunk.from(cs: Seq[UI]))
+            def withAttrs(a: Attrs): Table      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Table = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Table
 
         // ====== Headings (Block) ======
@@ -812,43 +994,43 @@ object UI:
         final case class H1(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = H1
-            def withAttrs(a: Attrs): H1 = copy(attrs = a)
-            def apply(cs: UI*): H1      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): H1      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): H1 = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end H1
 
         final case class H2(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = H2
-            def withAttrs(a: Attrs): H2 = copy(attrs = a)
-            def apply(cs: UI*): H2      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): H2      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): H2 = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end H2
 
         final case class H3(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = H3
-            def withAttrs(a: Attrs): H3 = copy(attrs = a)
-            def apply(cs: UI*): H3      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): H3      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): H3 = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end H3
 
         final case class H4(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = H4
-            def withAttrs(a: Attrs): H4 = copy(attrs = a)
-            def apply(cs: UI*): H4      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): H4      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): H4 = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end H4
 
         final case class H5(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = H5
-            def withAttrs(a: Attrs): H5 = copy(attrs = a)
-            def apply(cs: UI*): H5      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): H5      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): H5 = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end H5
 
         final case class H6(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
             type Self = H6
-            def withAttrs(a: Attrs): H6 = copy(attrs = a)
-            def apply(cs: UI*): H6      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): H6      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): H6 = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end H6
 
         // ====== Inline containers ======
@@ -856,29 +1038,29 @@ object UI:
         final case class SpanElement(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Inline
             with Interactive:
             type Self = SpanElement
-            def withAttrs(a: Attrs): SpanElement = copy(attrs = a)
-            def apply(cs: UI*): SpanElement      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): SpanElement      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): SpanElement = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end SpanElement
 
         final case class Nav(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Inline
             with Interactive:
             type Self = Nav
-            def withAttrs(a: Attrs): Nav = copy(attrs = a)
-            def apply(cs: UI*): Nav      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Nav      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Nav = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Nav
 
         final case class Li(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Inline
             with Interactive:
             type Self = Li
-            def withAttrs(a: Attrs): Li = copy(attrs = a)
-            def apply(cs: UI*): Li      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Li      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Li = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Li
 
         final case class Tr(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Inline
             with Interactive:
             type Self = Tr
-            def withAttrs(a: Attrs): Tr                                      = copy(attrs = a)
-            def apply(cs: (Td | Th | Reactive | Foreach[?] | Fragment)*): Tr = copy(children = children ++ Chunk.from(cs: Seq[UI]))
+            def withAttrs(a: Attrs): Tr      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Tr = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Tr
 
         // ====== Specialized Block elements ======
@@ -890,8 +1072,8 @@ object UI:
             onSubmitEvt: Maybe[MouseEvent => Any < Async] = Absent
         )(using val frame: Frame) extends Block with Interactive:
             type Self = Form
-            def withAttrs(a: Attrs): Form = copy(attrs = a)
-            def apply(cs: UI*): Form      = copy(children = children ++ Chunk.from(cs))
+            def withAttrs(a: Attrs): Form      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Form = copy(children = children ++ Chunk.from(cs.map(_.value)))
 
             /** Runs `action` on form submit, ignoring the event payload. */
             def onSubmit(action: => Any < Async): Form = copy(onSubmit = Present(Sync.defer(action)(using frame)))
@@ -933,11 +1115,11 @@ object UI:
             type Self = Select
             def withAttrs(a: Attrs): Select = copy(attrs = a)
 
-            def apply(cs: (Opt | Reactive | Foreach[?] | Fragment)*): Select = copy(children = children ++ Chunk.from(cs: Seq[UI]))
-            def value(v: String): Select                                     = copy(value = Present(Bound.Const(v)))
-            def value(v: SignalRef[String]): Select                          = copy(value = Present(Bound.Ref(v)))
-            def disabled(v: Boolean): Select                                 = copy(disabled = Present(v))
-            def onChange(f: String => Any < Async): Select                   = copy(onChange = Present(f))
+            def apply(cs: HtmlChildVal*): Select           = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def value(v: String): Select                   = copy(value = Present(Bound.Const(v)))
+            def value(v: SignalRef[String]): Select        = copy(value = Present(Bound.Ref(v)))
+            def disabled(v: Boolean): Select               = copy(disabled = Present(v))
+            def onChange(f: String => Any < Async): Select = copy(onChange = Present(f))
         end Select
 
         final case class Hr(attrs: Attrs = Attrs())(using val frame: Frame) extends Block with Void:
@@ -955,10 +1137,10 @@ object UI:
             rowspan: Maybe[Int] = Absent
         )(using val frame: Frame) extends Block with Interactive:
             type Self = Td
-            def withAttrs(a: Attrs): Td = copy(attrs = a)
-            def apply(cs: UI*): Td      = copy(children = children ++ Chunk.from(cs))
-            def colspan(v: Int): Td     = copy(colspan = Present(math.max(1, v)))
-            def rowspan(v: Int): Td     = copy(rowspan = Present(math.max(1, v)))
+            def withAttrs(a: Attrs): Td      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Td = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def colspan(v: Int): Td          = copy(colspan = Present(math.max(1, v)))
+            def rowspan(v: Int): Td          = copy(rowspan = Present(math.max(1, v)))
         end Td
 
         final case class Th(
@@ -968,10 +1150,10 @@ object UI:
             rowspan: Maybe[Int] = Absent
         )(using val frame: Frame) extends Block with Interactive:
             type Self = Th
-            def withAttrs(a: Attrs): Th = copy(attrs = a)
-            def apply(cs: UI*): Th      = copy(children = children ++ Chunk.from(cs))
-            def colspan(v: Int): Th     = copy(colspan = Present(math.max(1, v)))
-            def rowspan(v: Int): Th     = copy(rowspan = Present(math.max(1, v)))
+            def withAttrs(a: Attrs): Th      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Th = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def colspan(v: Int): Th          = copy(colspan = Present(math.max(1, v)))
+            def rowspan(v: Int): Th          = copy(rowspan = Present(math.max(1, v)))
         end Th
 
         final case class Label(
@@ -980,10 +1162,10 @@ object UI:
             forId: Maybe[String] = Absent
         )(using val frame: Frame) extends Block with Interactive:
             type Self = Label
-            def withAttrs(a: Attrs): Label = copy(attrs = a)
-            def apply(cs: UI*): Label      = copy(children = children ++ Chunk.from(cs))
-            def forId(v: String): Label    = copy(forId = Present(v))
-            def `for`(v: String): Label    = forId(v)
+            def withAttrs(a: Attrs): Label      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Label = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def forId(v: String): Label         = copy(forId = Present(v))
+            def `for`(v: String): Label         = forId(v)
         end Label
 
         final case class Opt(
@@ -993,13 +1175,13 @@ object UI:
             selected: Maybe[Boolean] = Absent
         )(using val frame: Frame) extends Block:
             type Self = Opt
-            def withAttrs(a: Attrs): Opt  = copy(attrs = a)
-            def apply(cs: UI*): Opt       = copy(children = children ++ Chunk.from(cs))
-            def value(v: String): Opt     = copy(value = Present(v))
-            def selected(v: Boolean): Opt = copy(selected = Present(v))
-            def selected(v: Signal[Boolean]): UI =
+            def withAttrs(a: Attrs): Opt      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Opt = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def value(v: String): Opt         = copy(value = Present(v))
+            def selected(v: Boolean): Opt     = copy(selected = Present(v))
+            def selected(v: Signal[Boolean]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(b => this.selected(b): UI))
+                Reactive[Self](v.map(b => this.selected(b): UI))
         end Opt
 
         // ====== Specialized Inline elements ======
@@ -1012,8 +1194,8 @@ object UI:
             type Self = Button
             def withAttrs(a: Attrs): Button = copy(attrs = a)
 
-            def apply(cs: UI*): Button       = copy(children = children ++ Chunk.from(cs))
-            def disabled(v: Boolean): Button = copy(disabled = Present(v))
+            def apply(cs: HtmlChildVal*): Button = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def disabled(v: Boolean): Button     = copy(disabled = Present(v))
         end Button
 
         // ---- Boolean inputs (checked + onChange: Boolean) ----
@@ -1037,10 +1219,10 @@ object UI:
                 if v then jsProp("indeterminate", "true")
                 else withAttrs(attrs.copy(jsProps = attrs.jsProps - "indeterminate"))
 
-            /** Reactive `indeterminate`: re-renders when the signal emits. Returns `UI` because it crosses the reactive boundary. */
-            def indeterminate(v: Signal[Boolean])(using Frame, CanEqual[Boolean, Boolean]): UI =
+            /** Reactive `indeterminate`: re-renders when the signal emits. */
+            def indeterminate(v: Signal[Boolean])(using Frame, CanEqual[Boolean, Boolean]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(b => this.indeterminate(b): UI))
+                Reactive[Self](v.map(b => this.indeterminate(b): UI))
         end Checkbox
 
         final case class Radio(
@@ -1336,12 +1518,12 @@ object UI:
             target: Maybe[Target] = Absent
         )(using val frame: Frame) extends Inline with Interactive with Focusable with Activatable with Clickable:
             type Self = Anchor
-            def withAttrs(a: Attrs): Anchor = copy(attrs = a)
-            def apply(cs: UI*): Anchor      = copy(children = children ++ Chunk.from(cs))
-            def href(v: Href): Anchor       = copy(href = Present(v))
-            def href(v: Signal[Href]): UI =
+            def withAttrs(a: Attrs): Anchor      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Anchor = copy(children = children ++ Chunk.from(cs.map(_.value)))
+            def href(v: Href): Anchor            = copy(href = Present(v))
+            def href(v: Signal[Href]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(h => this.href(h): UI))
+                Reactive[Self](v.map(h => this.href(h): UI))
             def href(v: Href, target: Target): Anchor = copy(href = Present(v), target = Present(target))
             def target(v: Target): Anchor             = copy(target = Present(v))
         end Anchor
@@ -1354,9 +1536,9 @@ object UI:
             type Self = Img
             def withAttrs(a: Attrs): Img = copy(attrs = a)
             def src(v: ImgSrc): Img      = copy(src = Present(v))
-            def src(v: Signal[ImgSrc]): UI =
+            def src(v: Signal[ImgSrc]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(s => this.src(s): UI))
+                Reactive[Self](v.map(s => this.src(s): UI))
             def alt(v: String): Img = copy(alt = Present(v))
         end Img
 
@@ -1369,9 +1551,9 @@ object UI:
             type Self = Iframe
             def withAttrs(a: Attrs): Iframe = copy(attrs = a)
             def src(v: String): Iframe      = copy(src = Present(v))
-            def src(v: Signal[String]): UI =
+            def src(v: Signal[String]): Reactive[Self] =
                 given Frame = frame
-                Reactive(v.map(s => this.src(s): UI))
+                Reactive[Self](v.map(s => this.src(s): UI))
             def title(v: String): Iframe = copy(frameTitle = Present(v))
         end Iframe
 

@@ -9,7 +9,7 @@ class BrowserViewportTest extends BrowserTest:
     // ---- setViewport ----
 
     // setViewport applies the CDP override; window.innerWidth reflects it.
-    "setViewport changes the rendered viewport width" in run {
+    "setViewport changes the rendered viewport width" in {
         withBrowser {
             onPage("<html><body>set-viewport-width</body></html>") {
                 Browser.setViewport(390, 844).andThen {
@@ -23,7 +23,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // setViewport threads deviceScaleFactor to both the per-tab cache and the CDP send.
     // devicePixelRatio reports the DPR and the cache holds the ViewportOverride triple.
-    "setViewport threads the DPR to the cache and the CDP send" in run {
+    "setViewport threads the DPR to the cache and the CDP send" in {
         withBrowser {
             onPage("<html><body>set-viewport-dpr</body></html>") {
                 Browser.setViewport(390, 844, deviceScaleFactor = 3.0).andThen {
@@ -45,7 +45,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // setViewport settles after, so the re-layout has quiesced on return. Reading innerWidth
     // immediately after setViewport returns observes the post-resize value, never a mid-resize race.
-    "setViewport settles after so the re-layout has quiesced on return" in run {
+    "setViewport settles after so the re-layout has quiesced on return" in {
         withBrowser {
             // A responsive page: a media query swaps the marker text when the viewport narrows below 500px.
             val html =
@@ -69,7 +69,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // resetViewport clears the CDP override and the cache. innerWidth returns to
     // the natural width and the per-tab cache returns to Absent.
-    "resetViewport clears the override and the cache" in run {
+    "resetViewport clears the override and the cache" in {
         withBrowser {
             onPage("<html><body>reset-viewport</body></html>") {
                 Browser.eval("String(window.innerWidth)").map { natural =>
@@ -98,7 +98,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // withViewport applies the override for the body and restores the prior DPR-carrying override
     // on exit (LIFO). A prior setViewport(800, 600, 2.0) establishes the override to restore.
-    "withViewport applies for the body and restores the prior DPR-carrying override after" in run {
+    "withViewport applies for the body and restores the prior DPR-carrying override after" in {
         withBrowser {
             onPage("<html><body>with-viewport-lifo</body></html>") {
                 Browser.setViewport(800, 600, deviceScaleFactor = 2.0).andThen {
@@ -130,7 +130,7 @@ class BrowserViewportTest extends BrowserTest:
     // `.set(prior)` (the ordering only holds on the JVM). So the cache is read by polling until the restore lands, bounded by
     // a fixed schedule, then asserted concretely. The poll re-reads the AtomicRef directly; the tab object outlives its CDP
     // teardown.
-    "withViewport restores on interruption" in run {
+    "withViewport restores on interruption" in {
         val priorOverride = BrowserTab.ViewportOverride(800, 600, 2.0)
         val p             = page("<html><body>with-viewport-interrupt</body></html>")
         kyo.internal.SharedChrome.init.map { wsUrl =>
@@ -200,7 +200,7 @@ class BrowserViewportTest extends BrowserTest:
 
     // scrollTo(x, y) moves the scroll position to the coordinate and settles after.
     // A tall page makes the y-offset reachable; window.scrollY reports the landed offset.
-    "scrollTo(x, y) scrolls to the coordinate and settles" in run {
+    "scrollTo(x, y) scrolls to the coordinate and settles" in {
         withBrowser {
             onPage("""<html><body style="margin:0"><div style="height:5000px"></div></body></html>""") {
                 Browser.scrollTo(0, 1200).andThen {
@@ -217,7 +217,7 @@ class BrowserViewportTest extends BrowserTest:
     // scrollToElement scrolls an off-screen element into view and auto-waits for a late-appearing
     // element. The #footer below the fold is inserted after ~150ms; the auto-wait retries until it
     // appears, then scrolls it into view. The raw getBoundingClientRect check confirms it is fully within the viewport.
-    "scrollToElement scrolls the element into view and auto-waits for a late-appearing element" in run {
+    "scrollToElement scrolls the element into view and auto-waits for a late-appearing element" in {
         val html =
             """<html><body style="margin:0">
               |<div style="height:3000px"></div>
@@ -246,7 +246,7 @@ class BrowserViewportTest extends BrowserTest:
     // scrollToElement aborts BrowserElementNotFoundException for a never-appearing element via the
     // narrow retry channel. The abort is BrowserElementNotFoundException, never a
     // BrowserMutationException (proving the channel is BrowserElementException, not widened).
-    "scrollToElement aborts BrowserElementNotFoundException for a never-appearing element via the narrow channel" in run {
+    "scrollToElement aborts BrowserElementNotFoundException for a never-appearing element via the narrow channel" in {
         withBrowser {
             onPage("<html><body>scroll-to-missing</body></html>") {
                 Abort.run[BrowserReadException] {

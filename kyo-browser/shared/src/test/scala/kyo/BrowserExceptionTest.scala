@@ -20,14 +20,13 @@ class BrowserExceptionTest extends BrowserTest:
         assert(ex.getCause eq cause)
     }
 
-    "a Panic produced inside an interaction method is surfaced via Abort.panic, not raw throw" in run {
+    "a Panic produced inside an interaction method is surfaced via Abort.panic, not raw throw" in {
         val panic = new RuntimeException("boom")
         Abort.run[Throwable] {
             Abort.panic(panic).andThen(())
         }.map {
             case Result.Panic(t) =>
                 assert(t.getMessage == "boom", s"Expected boom panic but got $t")
-                succeed
             case other =>
                 fail(s"Expected Result.Panic(boom) but got $other")
         }
@@ -41,14 +40,12 @@ class BrowserExceptionTest extends BrowserTest:
         assert(ex.error == "decode failed: <garbled json>")
         assert(ex.getMessage.contains("Page.getNavigationHistory"))
         assert(ex.getMessage.contains("<garbled json>"))
-        succeed
     }
 
     "BrowserProtocolErrorException.unexpectedReply produces the documented message" in {
         val ex = BrowserProtocolErrorException.unexpectedReply("Runtime.evaluate", "garbled")
         assert(ex.method == "Runtime.evaluate")
         assert(ex.error == "unexpected reply: garbled")
-        succeed
     }
 
     "BrowserSetupFailedException carries message and cause directly without RuntimeException wrap" in {
@@ -59,7 +56,6 @@ class BrowserExceptionTest extends BrowserTest:
         assert(ex.cause == Present(cause))
         // The KyoException cause slot is the genuine third-party Throwable, not a wrapper.
         assert(ex.getCause eq cause)
-        succeed
     }
 
     "BrowserAssertionTimedOutException.notQuiesced produces the documented message" in {
@@ -70,7 +66,6 @@ class BrowserExceptionTest extends BrowserTest:
         assert(msg.contains("last mutation"))
         assert(msg.contains("mutations"))
         assert(msg.contains("deadline"))
-        succeed
     }
 
     // ---- constructor + factory coverage ----
@@ -79,7 +74,6 @@ class BrowserExceptionTest extends BrowserTest:
         val ex = BrowserConnectionLostException("something went wrong")
         assert(ex.message == "something went wrong")
         assert(ex.cause == Absent)
-        succeed
     }
 
     "BrowserConnectionLostException(message, Present(closed)) stores the closed reason" in {
@@ -87,17 +81,15 @@ class BrowserExceptionTest extends BrowserTest:
         val ex     = BrowserConnectionLostException(s"Connection lost: ${closed.getMessage}", Present(closed))
         assert(ex.cause == Present(closed))
         assert(ex.getMessage.contains("Connection lost:"))
-        succeed
     }
 
     "BrowserProtocolErrorException.internalEvalFailed factory returns properly-shaped exception" in {
         val ex = BrowserProtocolErrorException.internalEvalFailed("unexpected null return")
         ex match
-            case _: BrowserProtocolErrorException => succeed
+            case _: BrowserProtocolErrorException => ()
             case null                             => fail("expected BrowserProtocolErrorException but got null")
         assert(ex.getMessage.contains("kyo-browser internal JS evaluation failed:"))
         assert(ex.getMessage.contains("unexpected null return"))
-        succeed
     }
 
     "BrowserSetupFailedException.apply(message, cause: Throwable) smart constructor wires both fields" in {
@@ -110,9 +102,9 @@ class BrowserExceptionTest extends BrowserTest:
         assert(ex.getCause eq cause)
         // Resulting instance still satisfies the marker hierarchy.
         ex match
-            case _: BrowserSetupException => succeed
+            case _: BrowserSetupException => ()
             case null                     => fail("expected BrowserSetupException but got null")
-        succeed
+        ()
     }
 
     // ---- Reason sealed-trait hierarchy unit tests ----
@@ -123,7 +115,6 @@ class BrowserExceptionTest extends BrowserTest:
         // Pin the description string so error messages don't silently regress.
         assert(reason.description == "element is not attached to the DOM")
         assert(ex.getMessage.contains("not attached"))
-        succeed
     }
 
     // getMessage on NotInViewport mentions the rect coordinates.
@@ -135,7 +126,6 @@ class BrowserExceptionTest extends BrowserTest:
         assert(ex.getMessage.contains("10"), s"expected rect x=10 in message: ${ex.getMessage}")
         assert(ex.getMessage.contains("20"), s"expected rect y=20 in message: ${ex.getMessage}")
         assert(ex.getMessage.contains("1280"), s"expected viewport width=1280 in message: ${ex.getMessage}")
-        succeed
     }
 
     // Extra: description strings for all leaf cases are non-empty and carry the expected discriminators.
@@ -168,7 +158,7 @@ class BrowserExceptionTest extends BrowserTest:
                 s"description for $reason = '$d' does not contain expected discriminator '$discriminator'"
             )
         }
-        succeed
+        ()
     }
 
     // Extra: CanEqual allows pattern-match exhaustiveness on concrete cases.
@@ -176,7 +166,6 @@ class BrowserExceptionTest extends BrowserTest:
         assert(Reason.NotAttached == Reason.NotAttached)
         assert(Reason.Unstable == Reason.Unstable)
         assert(Reason.FillDesync == Reason.FillDesync)
-        succeed
     }
 
     "Reason case classes compare structurally" in {
@@ -185,7 +174,6 @@ class BrowserExceptionTest extends BrowserTest:
         val r3 = Reason.NotVisible(Reason.NotVisibleCause.VisibilityHidden)
         assert(r1 == r2)
         assert(r1 != r3)
-        succeed
     }
 
     "Reason.NotFillable carries tagName through BrowserElementNotActionableException" in {
@@ -197,7 +185,7 @@ class BrowserExceptionTest extends BrowserTest:
                 assert(tag == "span", s"expected tagName=span but got $tag")
             case other => fail(s"expected NotFillable but got $other")
         end match
-        succeed
+        ()
     }
 
     "Reason.Disabled carries DisabledKind through getMessage" in {
@@ -211,7 +199,7 @@ class BrowserExceptionTest extends BrowserTest:
             val ex = BrowserElementNotActionableException("#btn", Reason.Disabled(kind))
             assert(ex.getMessage.toLowerCase.contains(discriminator), s"expected '$discriminator' in message: ${ex.getMessage}")
         }
-        succeed
+        ()
     }
 
     // ---- Other sentinel cases for wire-drift preservation ----
@@ -221,7 +209,6 @@ class BrowserExceptionTest extends BrowserTest:
         val d      = reason.description
         assert(d.nonEmpty, "description should not be empty")
         assert(d.contains("NewBrowserCause"), s"description should include raw cause string: $d")
-        succeed
     }
 
     "DisabledKind.Other preserves the raw wire string in description" in {
@@ -229,7 +216,6 @@ class BrowserExceptionTest extends BrowserTest:
         val d      = reason.description
         assert(d.nonEmpty, "description should not be empty")
         assert(d.contains("NewDisabledKind"), s"description should include raw kind string: $d")
-        succeed
     }
 
     "NotVisibleCause.Other compares structurally" in {
@@ -238,7 +224,6 @@ class BrowserExceptionTest extends BrowserTest:
         val c = Reason.NotVisibleCause.Other("bar")
         assert(a == b)
         assert(a != c)
-        succeed
     }
 
     "DisabledKind.Other compares structurally" in {
@@ -247,12 +232,11 @@ class BrowserExceptionTest extends BrowserTest:
         val c = Reason.DisabledKind.Other("bar")
         assert(a == b)
         assert(a != c)
-        succeed
     }
 
     // Live trigger for BrowserScriptErrorException: drive a real Chrome, evaluate JS that throws
     // a ReferenceError, and pin the typed exception shape.
-    "Browser.eval against undefined symbol surfaces BrowserScriptErrorException via typed Abort (live trigger)" in run {
+    "Browser.eval against undefined symbol surfaces BrowserScriptErrorException via typed Abort (live trigger)" in {
         withBrowser {
             onPage("<html><body></body></html>") {
                 Abort.run[BrowserScriptException] {
@@ -274,7 +258,7 @@ class BrowserExceptionTest extends BrowserTest:
     // Live trigger for BrowserDecodingException: Browser.evalJson[A] decodes the JS expression's result
     // against the supplied Schema. A JSON-incompatible result (e.g. a stringified value that does not
     // parse as the target type) surfaces BrowserDecodingException via typed Abort.
-    "Browser.evalJson against a malformed payload surfaces BrowserDecodingException via typed Abort (live trigger)" in run {
+    "Browser.evalJson against a malformed payload surfaces BrowserDecodingException via typed Abort (live trigger)" in {
         withBrowser {
             onPage("<html><body></body></html>") {
                 Abort.run[BrowserReadException] {

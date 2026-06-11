@@ -18,7 +18,7 @@ import kyo.UI.PageHead
   * here because `kyo.website` is a subpackage of `kyo`. `UI.runMount` is JS-only; this backend
   * replaces it for parity assertions on the JVM.
   */
-class ChromeParityTest extends Test:
+class ChromeParityTest extends WebsiteTest:
 
     private val v1        = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true)
     private val v0        = WebsiteVersion("v0.9.3", "0.9.3", false)
@@ -51,7 +51,7 @@ class ChromeParityTest extends Test:
             )
         yield view
 
-    "SiteApp landing-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
+    "SiteApp landing-route shell: SSG vs RecordingBackend parity (INV-003)" in {
         for
             body  <- LandingApp.body(docsHomeRoute)
             view  <- siteShell(versions2, docsHomeRoute, body)
@@ -64,7 +64,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    "SiteApp docs-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
+    "SiteApp docs-route shell: SSG vs RecordingBackend parity (INV-003)" in {
         // A "## Scope" section under the (level-1) page title, so the active module's nested section
         // outline (.sidebar-sections with a #scope link) renders. Both the SSG and the bundle's first
         // mount must produce that nested outline identically, which is exactly the hydration contract
@@ -101,7 +101,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    "SiteApp intro/overview-route shell: SSG vs RecordingBackend parity (INV-003)" in run {
+    "SiteApp intro/overview-route shell: SSG vs RecordingBackend parity (INV-003)" in {
         // The intro/overview route `/latest/` renders the root-README overview as a real article (the
         // same `content.md` the bundle fetches). The rail's Overview item is the active expanded item
         // showing the intro's level-2 sections. Both the SSG and the bundle's first mount must produce
@@ -130,7 +130,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    "parity holds for the header dropdown subtree under SiteApp (INV-003)" in run {
+    "parity holds for the header dropdown subtree under SiteApp (INV-003)" in {
         for
             body  <- LandingApp.body(docsHomeRoute)
             view  <- siteShell(versions2, docsHomeRoute, body)
@@ -174,7 +174,7 @@ class ChromeParityTest extends Test:
             version = WebsiteVersion("latest", "latest", true)
         )
 
-    "docs body SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003)" in run {
+    "docs body SSG runRenderPage contains data-kyo-reactive wrapping article (INV-003)" in {
         val src = "## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdownRender.transpile(src)
@@ -188,7 +188,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    "article is a UI subtree not a raw-HTML string at article-body level" in run {
+    "article is a UI subtree not a raw-HTML string at article-body level" in {
         val src = "## Scope\n\nSome text.\n"
         for
             rendered <- DocsMarkdownRender.transpile(src)
@@ -203,7 +203,7 @@ class ChromeParityTest extends Test:
         end for
     }
 
-    "same Markdown gives byte-identical article in two runRenderPage calls (INV-003)" in run {
+    "same Markdown gives byte-identical article in two runRenderPage calls (INV-003)" in {
         val src = "## Scope\n\n- item one\n- item two\n"
         for
             rendered1 <- DocsMarkdownRender.transpile(src)
@@ -223,7 +223,7 @@ class ChromeParityTest extends Test:
     // HtmlRenderer emits RawHtml verbatim (no escaping), so both sides return the same string.
     // This crosses the real RecordingBackend/HtmlRenderer path and confirms the rawHtml
     // injection is byte-identical to the SSG article string (INV-003).
-    "INV-003 SSG article HTML equals injected article HTML (RecordingBackend rawHtml path)" in run {
+    "INV-003 SSG article HTML equals injected article HTML (RecordingBackend rawHtml path)" in {
         val src = "# Title\n## Section\n\nCode: ```scala\nval x = true\nval n = null\n```\n"
         for
             rendered <- DocsMarkdownRender.renderArticle(src)

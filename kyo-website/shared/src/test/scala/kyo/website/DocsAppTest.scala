@@ -3,7 +3,7 @@ package kyo.website
 import kyo.*
 import kyo.UI.PageHead
 
-class DocsAppTest extends Test:
+class DocsAppTest extends WebsiteTest:
 
     private val testHead = PageHead(title = "t")
 
@@ -36,7 +36,7 @@ class DocsAppTest extends Test:
         WebsiteContent(intro = "", groups = Chunk.empty, version = ver)
 
     // Leaf 1: sidebar groups match README order
-    "sidebar groups match README order (leaf 1)" in run {
+    "sidebar groups match README order (leaf 1)" in {
         for
             route <- fixedRoute("/latest/kyo-data/")
             content = WebsiteContent(
@@ -71,7 +71,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 2: sidebar lists modules under each group with correct hrefs
-    "sidebar lists modules under each group (leaf 2)" in run {
+    "sidebar lists modules under each group (leaf 2)" in {
         for
             route <- fixedRoute("/latest/kyo-data/")
             content = WebsiteContent(
@@ -108,7 +108,7 @@ class DocsAppTest extends Test:
 
     // Leaf 3: the active module's nested sections render one `#slug` link per section heading (INV-004).
     // The level-1 page-title heading is the module link itself, so it is NOT repeated as a section link.
-    "active module nested sections: one #slug link per section heading, level-1 skipped (leaf 3)" in run {
+    "active module nested sections: one #slug link per section heading, level-1 skipped (leaf 3)" in {
         val toc = Chunk(
             DocsMarkdown.Heading(1, "kyo-core", "kyo-core"),
             DocsMarkdown.Heading(2, "Scope", "scope"),
@@ -129,7 +129,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 3b: a NON-active module renders no nested sections (the outline collapses when not current).
-    "non-active module renders no nested sections (leaf 3b)" in run {
+    "non-active module renders no nested sections (leaf 3b)" in {
         val toc = Chunk(
             DocsMarkdown.Heading(1, "kyo-data", "kyo-data"),
             DocsMarkdown.Heading(2, "Scope", "scope")
@@ -164,7 +164,7 @@ class DocsAppTest extends Test:
 
     // Leaf 4: the rail is one level deep: ONLY level-2 (`## `) sections render. The level-1 page title
     // is skipped (it is the module link), and level-3+ headings are dropped from the rail entirely.
-    "rail renders only level-2 sections, dropping level-1 and level-3+ (leaf 4)" in run {
+    "rail renders only level-2 sections, dropping level-1 and level-3+ (leaf 4)" in {
         val toc = Chunk(
             DocsMarkdown.Heading(1, "Top", "top"),  // page title, skipped (becomes the module link)
             DocsMarkdown.Heading(2, "Mid", "mid"),  // level-2: rendered as a section
@@ -189,7 +189,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 5: content area is route-reactive (INV-005/INV-013)
-    "content area is route-reactive INV-013 (leaf 5)" in run {
+    "content area is route-reactive INV-013 (leaf 5)" in {
         for
             route <- fixedRoute("/latest/kyo-core/")
             // DocsMarkdown.transpile is JVM-only after the split; use a constructed UI article
@@ -208,7 +208,7 @@ class DocsAppTest extends Test:
     // that negative is asserted by the "body renders no header" leaf below.
 
     // Leaf 6b: the docs body renders no header chrome (D5)
-    "docs body renders no header, dropdown, or search input (D5, leaf 6b)" in run {
+    "docs body renders no header, dropdown, or search input (D5, leaf 6b)" in {
         val versions = Chunk(WebsiteVersion("v1.0.0", "1.0.0", true), WebsiteVersion("v0.9.3", "0.9.3", false))
         for
             route <- fixedRoute("/latest/")
@@ -223,7 +223,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 7: version banner shows for non-latest
-    "version banner for non-latest version (leaf 7)" in run {
+    "version banner for non-latest version (leaf 7)" in {
         val ver = WebsiteVersion("v0.9.3", "0.9.3", false)
         for
             route <- fixedRoute("/v0.9.3/kyo-core/")
@@ -236,7 +236,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 8: no banner for latest
-    "no version banner for latest version (leaf 8)" in run {
+    "no version banner for latest version (leaf 8)" in {
         val ver = WebsiteVersion("v1.0.0", "1.0.0", true)
         for
             route <- fixedRoute("/latest/kyo-core/")
@@ -247,7 +247,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 9: prev/next reflect route position
-    "prev/next links reflect route position (leaf 9)" in run {
+    "prev/next links reflect route position (leaf 9)" in {
         val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
         val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
         val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
@@ -269,7 +269,7 @@ class DocsAppTest extends Test:
     // Leaf 9b: the prev/next pager is gated on `contentLoading`. While content is loading (the bundle
     // cleared the article for an async content.md fetch) the pager is ABSENT, so it cannot flash at the
     // top of the empty content area (the footer flash). Once content is loaded it renders as in leaf 9.
-    "prev/next pager is hidden while content is loading and shown once loaded (leaf 9b)" in run {
+    "prev/next pager is hidden while content is loading and shown once loaded (leaf 9b)" in {
         val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
         val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
         val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
@@ -297,7 +297,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 10: sidebar active state matches route
-    "sidebar active state matches route (leaf 10)" in run {
+    "sidebar active state matches route (leaf 10)" in {
         val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
         val content = WebsiteContent(
             intro = "",
@@ -312,7 +312,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 11: intro-only content renders chrome with the Overview item but no module links
-    "intro-only content renders shell with the Overview but no module links (leaf 11)" in run {
+    "intro-only content renders shell with the Overview but no module links (leaf 11)" in {
         for
             route <- fixedRoute("/latest/")
             html  <- rendered(emptyContent(), route, Chunk.empty, UI.empty)
@@ -325,7 +325,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 15: the Overview is the FIRST rail item, above the module groups, linking to the intro route.
-    "Overview is the first rail item above the module groups, linking to the intro route (leaf 15)" in run {
+    "Overview is the first rail item above the module groups, linking to the intro route (leaf 15)" in {
         val mod = WebsiteModule("kyo-core", "Foundation", "kyo-core", "", WebsiteModule.Platforms(true, true, true))
         val content = WebsiteContent(
             intro = "",
@@ -351,7 +351,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 16: on the intro/home route the Overview is the ACTIVE item and expands to its own h2 sections.
-    "on the intro home the Overview is active and expands to its h2 sections (leaf 16)" in run {
+    "on the intro home the Overview is active and expands to its h2 sections (leaf 16)" in {
         // The intro's own outline: no level-1 (no module title), two level-2 sections, one level-3 (dropped).
         val introToc = Chunk(
             DocsMarkdown.Heading(2, "Introduction", "introduction"),
@@ -386,7 +386,7 @@ class DocsAppTest extends Test:
 
     // Leaf 17: prev/next treats the overview as the FIRST page (no prev; next = first module), and the
     // first module's prev points back to the overview.
-    "prev/next: overview is the first page; first module prev points to the overview (leaf 17)" in run {
+    "prev/next: overview is the first page; first module prev points to the overview (leaf 17)" in {
         val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
         val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
         val content = WebsiteContent(
@@ -418,7 +418,7 @@ class DocsAppTest extends Test:
 
     // Leaf 13 (Phase-6 BLOCKER-1 regression): a non-latest version's sidebar + prev/next links use
     // the version prefix `/v<X>/...`, not `/latest/...`.
-    "non-latest version links use the version prefix not latest (BLOCKER-1 regression)" in run {
+    "non-latest version links use the version prefix not latest (BLOCKER-1 regression)" in {
         val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
         val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
         val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
@@ -445,7 +445,7 @@ class DocsAppTest extends Test:
     // own `v<X>/` tree. The physical tree decides the link prefix, NOT `version.latest`: the same
     // latest-flagged version links within `/v<X>/...` when served under `v<X>/`, and within `/latest/...`
     // when served under `latest/`.
-    "latest version under its own v<X> tree links within v<X> not latest (WARN-1 regression)" in run {
+    "latest version under its own v<X> tree links within v<X> not latest (WARN-1 regression)" in {
         val modA = WebsiteModule("mod-a", "Foundation", "Mod A", "", WebsiteModule.Platforms(true, true, true))
         val modB = WebsiteModule("mod-b", "Foundation", "Mod B", "", WebsiteModule.Platforms(true, true, true))
         val modC = WebsiteModule("mod-c", "Foundation", "Mod C", "", WebsiteModule.Platforms(true, true, true))
@@ -479,7 +479,7 @@ class DocsAppTest extends Test:
     }
 
     // Leaf 12: all chrome anchors are real HTML (INV-002)
-    "all chrome anchors are real HTML not JS placeholders (leaf 12)" in run {
+    "all chrome anchors are real HTML not JS placeholders (leaf 12)" in {
         val mod = WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true))
         val content = WebsiteContent(
             intro = "",

@@ -9,16 +9,16 @@ import scala.language.implicitConversions
 // JVM browser test infrastructure.
 class UIMountTest extends UITest:
 
-    "mounted div is present in body" in run {
+    "mounted div is present in body" in {
         withUI(UI.div("mounted").id("m")) {
             for
                 _ <- Browser.assertExists(Selector.id("m"))
                 _ <- Browser.assertText(Selector.id("m"), "mounted")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal update propagates to DOM via mount" in run {
+    "signal update propagates to DOM via mount" in {
         val app: UI < Async =
             for ref <- Signal.initRef("before")
             yield UI.div(
@@ -30,11 +30,11 @@ class UIMountTest extends UITest:
                 _ <- Browser.assertText(Selector.id("out"), "before")
                 _ <- Browser.click(Selector.id("chg"))
                 _ <- Browser.assertText(Selector.id("out"), "after")
-            yield succeed
+            yield ()
         }
     }
 
-    "mounted component preserves interactivity" in run {
+    "mounted component preserves interactivity" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -48,11 +48,11 @@ class UIMountTest extends UITest:
                 _ <- Browser.assertText(Selector.id("cnt"), "1")
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("cnt"), "2")
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple independent reactive islands after mount" in run {
+    "multiple independent reactive islands after mount" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("a0")
@@ -71,11 +71,11 @@ class UIMountTest extends UITest:
                 _ <- Browser.click(Selector.id("ub"))
                 _ <- Browser.assertText(Selector.id("va"), "a1")
                 _ <- Browser.assertText(Selector.id("vb"), "b1")
-            yield succeed
+            yield ()
         }
     }
 
-    "re-render does not unmount existing listeners" in run {
+    "re-render does not unmount existing listeners" in {
         val app: UI < Async =
             for
                 toggle  <- Signal.initRef(false)
@@ -96,7 +96,7 @@ class UIMountTest extends UITest:
                 _ <- Browser.assertText(Selector.id("tog"), "off")
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("cnt"), "2")
-            yield succeed
+            yield ()
         }
     }
 

@@ -4,35 +4,35 @@ import java.io.IOException
 import java.io.OutputStream
 import java.io.PrintStream
 
-class ConsoleTest extends Test:
+class ConsoleTest extends kyo.test.Test[Any]:
 
     case class Obj(a: String)
     val obj       = Obj("a")
     val pprintObj = pprint.apply(obj).toString
 
-    "readLine" in run {
+    "readLine" in {
         Console.withIn(List("readln")) {
             Console.readLine.map { result =>
                 assert(result == "readln")
             }
         }
     }
-    "print string" in run {
+    "print string" in {
         Console.withOut(Console.print("print")).map { (out, _) =>
             assert(out.stdOut == "print")
         }
     }
-    "printErr" in run {
+    "printErr" in {
         Console.withOut(Console.printErr("printErr")).map { (out, _) =>
             assert(out.stdErr == "printErr")
         }
     }
-    "println" in run {
+    "println" in {
         Console.withOut(Console.printLine("print")).map { (out, _) =>
             assert(out.stdOut == "print\n")
         }
     }
-    "printlnErr" in run {
+    "printlnErr" in {
         Console.withOut(Console.printLineErr("print")).map { (out, _) =>
             assert(out.stdErr == "print\n")
         }
@@ -134,9 +134,10 @@ class ConsoleTest extends Test:
         }
 
         "should convert to safe Console" in {
-            val testUnsafe  = new TestUnsafeConsole()
-            val safeConsole = testUnsafe.safe
-            assert(safeConsole.isInstanceOf[Console])
+            val testUnsafe           = new TestUnsafeConsole()
+            val safeConsole: Console = testUnsafe.safe
+            discard(safeConsole)
+            succeed("Unsafe.safe returns a safe Console wrapper (verified by the Console ascription)")
         }
     }
 

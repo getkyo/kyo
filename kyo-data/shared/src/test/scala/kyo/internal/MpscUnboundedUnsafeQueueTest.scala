@@ -16,7 +16,17 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
     def makeQueue[A](size: Int): UnsafeQueue[A] = new MpscUnboundedUnsafeQueue[A](size)
 
     "MpscUnboundedUnsafeQueue-specific" - {
-        "resizeUnderContention" in runNotJS {
+        "singleProducerDegenerateCase" in {
+            // MPSC queue with only 1 producer should still work
+            val q = new MpscUnboundedUnsafeQueue[Int](4)
+            for i <- 0 until 1000 do q.offer(i)
+            for i <- 0 until 1000 do
+                assert(q.poll() == Maybe(i))
+        }
+    }
+
+    "MpscUnboundedUnsafeQueue-specific concurrent".notJs - {
+        "resizeUnderContention" in {
             val q     = new MpscUnboundedUnsafeQueue[Long](4)
             val stop  = new AtomicBoolean(false)
             val start = new CountDownLatch(1)
@@ -48,15 +58,7 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(count == total.get(), s"Lost elements: expected ${total.get()}, got $count")
         }
 
-        "singleProducerDegenerateCase" in {
-            // MPSC queue with only 1 producer should still work
-            val q = new MpscUnboundedUnsafeQueue[Int](4)
-            for i <- 0 until 1000 do q.offer(i)
-            for i <- 0 until 1000 do
-                assert(q.poll() == Maybe(i))
-        }
-
-        "concurrentResizeRaceNoDuplicates" in runNotJS {
+        "concurrentResizeRaceNoDuplicates" in {
             val q        = new MpscUnboundedUnsafeQueue[Long](2)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -105,7 +107,7 @@ class MpscUnboundedUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(!dup.get(), "Concurrent resize produced duplicates")
         }
 
-        "concurrentResizeNoDataLoss" in runNotJS {
+        "concurrentResizeNoDataLoss" in {
             val q        = new MpscUnboundedUnsafeQueue[Long](4)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)

@@ -4,7 +4,7 @@ import kyo.ContainerPredef.MongoDB
 import kyo.ContainerPredef.MySQL
 import kyo.ContainerPredef.Postgres
 
-class ContainerPredefItTest extends Test:
+class ContainerPredefItTest extends BasePodTest:
 
     // Real database containers (postgres/mysql/mongo) include heavy image pulls (~600MB for
     // mysql:8.0) plus init scripts that can take 30-60s on a cold cache. The default 60s

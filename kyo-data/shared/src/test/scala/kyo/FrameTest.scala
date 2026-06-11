@@ -1,6 +1,6 @@
 package kyo
 
-class FrameTest extends Test:
+class FrameTest extends kyo.test.Test[Any]:
 
     def test(v: Int)(using frame: Frame) = frame
 

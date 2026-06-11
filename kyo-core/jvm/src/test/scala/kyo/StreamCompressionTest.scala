@@ -16,7 +16,7 @@ import kyo.Result.Failure
 import kyo.StreamCompression.*
 import scala.annotation.tailrec
 
-class StreamCompressionTest extends Test:
+class StreamCompressionTest extends kyo.test.Test[Any]:
     private inline val shortText      = "abcdefg1234567890"
     private inline val otherShortText = "AXXX\u0000XXXA"
 
@@ -77,7 +77,7 @@ class StreamCompressionTest extends Test:
     private inline def getBytes(s: String): Array[Byte] = s.getBytes
 
     "deflate/inflate" - {
-        "inflate please wrap" in run {
+        "inflate please wrap" in {
             for
                 inStream <- Sync.defer(Stream.init(
                     Chunk.from(Array[Byte](120, -100, -53, -52, 75, -53, 73, 44, 73, 85, 40, -56, 73, 77, 44, 78, 85, 40, 47, 74, 44, 0, 0,
@@ -89,7 +89,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == "inflate please wrap")
         }
 
-        "inflate please nowrap" in run {
+        "inflate please nowrap" in {
             for
                 inStream <- Sync.defer(Stream.init(
                     Chunk.from(Array[Byte](-53, -52, 75, -53, 73, 44, 73, 85, 40, -56, 73, 77, 44, 78, 85, -56, -53, 47, 47, 74, 44, 0, 0))
@@ -100,7 +100,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == "inflate please nowrap")
         }
 
-        "short stream" in run {
+        "short stream" in {
             for
                 inStream <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
                 inChunk  <- inStream.run
@@ -114,7 +114,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == shortText)
         }
 
-        "stream of two deflated inputs" in run {
+        "stream of two deflated inputs" in {
             for
                 inStream1 <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
                 inChunk1  <- inStream1.run
@@ -134,7 +134,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == shortText ++ otherShortText)
         }
 
-        "inflate input (deflated larger than inflated)" in runJVM {
+        "inflate input (deflated larger than inflated)".onlyJvm in {
             for
                 inStream <- Sync.defer(Stream.init(
                     Chunk.from(getBytes("꒔諒ᇂ즆ᰃ遇ኼ㎐만咘똠ᯈ䕍쏮쿻ࣇ㦲䷱瘫椪⫐褽睌쨘꛹騏蕾☦余쒧꺠ܝ猸b뷈埣ꂓ琌ཬ隖㣰忢鐮橀쁚誅렌폓㖅ꋹ켗餪庺Đ懣㫍㫌굦뢲䅦苮Ѣқ闭䮚ū﫣༶漵>껆拦휬콯耙腒䔖돆圹Ⲷ曩ꀌ㒈")),
@@ -158,7 +158,7 @@ class StreamCompressionTest extends Test:
             yield assert(expected == result)
         }
 
-        "long input, buffer smaller than chunks" in run {
+        "long input, buffer smaller than chunks" in {
             for
                 inStream <- Sync.defer(Stream.init(
                     Chunk.from(getBytes(longText)),
@@ -175,7 +175,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == longText)
         }
 
-        "long input, chunks smaller then buffer" in run {
+        "long input, chunks smaller then buffer" in {
             for
                 inStream <- Sync.defer(Stream.init(
                     Chunk.from(getBytes(longText)),
@@ -192,7 +192,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == longText)
         }
 
-        "long input, nowrap = true" in run {
+        "long input, nowrap = true" in {
             for
                 inStream <- Sync.defer(Stream.init(Chunk.from(getBytes(longText))))
                 inChunk  <- inStream.run
@@ -206,7 +206,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == longText)
         }
 
-        "fail early if header is corrupted" in run {
+        "fail early if header is corrupted" in {
             Abort.run(
                 for
                     inStream       <- Sync.defer(Stream.init(Chunk[Byte](1, 2, 3, 4, 5)))
@@ -215,11 +215,11 @@ class StreamCompressionTest extends Test:
                 yield ()
             ).map: result =>
                 result match
-                    case Failure(_: StreamCompressionException) => assert(true)
+                    case Failure(_: StreamCompressionException) => succeed
                     case _                                      => assert(false)
         }
 
-        "inflate nowrap: remaining = 0 but not all was pulled" in run {
+        "inflate nowrap: remaining = 0 but not all was pulled" in {
             for
                 deflatedStream <- Sync.defer {
                     val deflatedChunk =
@@ -231,7 +231,7 @@ class StreamCompressionTest extends Test:
             yield assert(resultChunk == inflateRandomExampleThatFailed)
         }
 
-        "deflate and then inflate" in run {
+        "deflate and then inflate" in {
             val longTextChunk = Chunk.from(getBytes(longText))
             for
                 inStream       <- Sync.defer(Stream.init(longTextChunk))
@@ -242,7 +242,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "deflate does compress" in run {
+        "deflate does compress" in {
             val uncompressed = Chunk.from(getBytes(
                 """"
                 |According to the caption on the bronze marker placed by the Multnomah Chapter of the Daughters of the American Revolution on May 12, 1939,
@@ -256,7 +256,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "JDK inflates what was deflated" in run {
+        "JDK inflates what was deflated" in {
             val input = Chunk.from(getBytes(
                 """
                     |The headphones were on.
@@ -274,7 +274,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "JDK inflates what was deflated, nowrap" in run {
+        "JDK inflates what was deflated, nowrap" in {
             val input = Chunk.from(getBytes(
                 """
                     |The wolves stopped in their tracks, sizing up the mother and her cubs.
@@ -291,7 +291,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "same as JDKs" in run {
+        "same as JDKs" in {
             val input = Chunk.from(getBytes(
                 """
                     |Stormi is a dog. She is dark grey and has long legs.
@@ -314,7 +314,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "deflate empty bytes" in run {
+        "deflate empty bytes" in {
             for
                 inStream       <- Sync.defer(Stream.empty[Byte])
                 deflatedStream <- Sync.defer(inStream.deflate())
@@ -327,7 +327,7 @@ class StreamCompressionTest extends Test:
     }
 
     "gzip/gunzip" - {
-        "short stream" in run {
+        "short stream" in {
             val shortTextChunk = Chunk.from(getBytes(shortText))
             for
                 jdkGzippedStream <- Sync.defer {
@@ -341,7 +341,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "stream of two gzipped inputs" in run {
+        "stream of two gzipped inputs" in {
             for
                 inStream1 <- Sync.defer(Stream.init(Chunk.from(getBytes(shortText))))
                 inChunk1  <- inStream1.run
@@ -361,7 +361,7 @@ class StreamCompressionTest extends Test:
             yield assert(string == shortText ++ otherShortText)
         }
 
-        "long stream, no sync flush" in run {
+        "long stream, no sync flush" in {
             val longTextChunk = Chunk.from(getBytes(longText))
             for
                 jdkGzippedStream <- Sync.defer {
@@ -375,7 +375,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "with extras" in run {
+        "with extras" in {
             // length = 310
             val text = getBytes("""
                                   |It was that terrifying feeling you have as you tightly hold the covers over you with the knowledge that there is something hiding under your bed.
@@ -411,7 +411,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "gzip empty bytes" in run {
+        "gzip empty bytes" in {
             for
                 inStream     <- Sync.defer(Stream.empty[Byte])
                 gzipStream   <- Sync.defer(inStream.gzip())
@@ -421,7 +421,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "gzip and then gunzip" in run {
+        "gzip and then gunzip" in {
             val longTextChunk = Chunk.from(getBytes(longText))
             for
                 inStream     <- Sync.defer(Stream.init(longTextChunk))
@@ -432,7 +432,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "gzip does compress" in run {
+        "gzip does compress" in {
             val uncompressed = Chunk.from(getBytes(""""
                    |Love isn't always a ray of sunshine.
                    |That's what the older girls kept telling her when she said she had found the perfect man.
@@ -448,7 +448,7 @@ class StreamCompressionTest extends Test:
             end for
         }
 
-        "same as JDKs" in run {
+        "same as JDKs" in {
             val input = Chunk.from(getBytes(
                 """
                     |Sometimes there isn't a good answer.

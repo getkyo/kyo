@@ -56,7 +56,7 @@ class BrowserCaptureTest extends BrowserTest:
     // 300ms is installed via withConfig. Assert: returns an Image (not an abort), and the elapsed
     // time is bounded (well under 600ms).
 
-    "hold-still returns an Image on a never-quiescing page" in run {
+    "hold-still returns an Image on a never-quiescing page" in {
         val html = """<body>
             <style>
               @keyframes spin {
@@ -108,7 +108,7 @@ class BrowserCaptureTest extends BrowserTest:
     // captureHoldStillTimeout), and the hash of the result equals the hash of a second immediate
     // screenshot (the page did not change during or after the hold-still).
 
-    "hold-still converges on a static page" in run {
+    "hold-still converges on a static page" in {
         val html = """<!DOCTYPE html><html><body>
             <p style="color:black;font-size:16px;">static page</p>
         </body></html>"""
@@ -147,7 +147,7 @@ class BrowserCaptureTest extends BrowserTest:
     // differ). The explicit teardown assertion here checks that the removal targets the freeze
     // node by its unique token, so the actual DOM node count is the correctness witness.
 
-    "the freeze stylesheet is injected during capture and removed on exit" in run {
+    "the freeze stylesheet is injected during capture and removed on exit" in {
         val html = """<!DOCTYPE html><html><body><div>test</div></body></html>"""
         withBrowser {
             onPage(html) {
@@ -178,7 +178,7 @@ class BrowserCaptureTest extends BrowserTest:
     //   - document.querySelectorAll('style[data-kyo-internal]').length === 0  (no stuck freeze)
     //   - getComputedStyle(document.body).animationPlayState is NOT stuck 'paused'.
 
-    "nested hold-still freezes tear down both and leave the page unfrozen" in run {
+    "nested hold-still freezes tear down both and leave the page unfrozen" in {
         val html = """<!DOCTYPE html><html><head><style>
             @keyframes spin { from { opacity: 1; } to { opacity: 0.5; } }
             body { animation: spin 1s linear infinite; }
@@ -224,7 +224,7 @@ class BrowserCaptureTest extends BrowserTest:
     // the freeze injection side-effect. It is a behavioral assertion: we observe the returned
     // Image is non-null and the freeze style is cleaned up, proving end-to-end convergence held.
 
-    "hold-still converges despite its own freeze injection mutation" in run {
+    "hold-still converges despite its own freeze injection mutation" in {
         val html = """<!DOCTYPE html><html><body><div id="content">stable</div></body></html>"""
         withBrowser {
             onPage(html) {
@@ -265,7 +265,7 @@ class BrowserCaptureTest extends BrowserTest:
     // PNG dimensions live at bytes 16-23 of the IHDR chunk (bytes 16-19 = width, 20-23 = height,
     // big-endian int32).
 
-    "screenshot captures the live viewport size" in run {
+    "screenshot captures the live viewport size" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html><body><div style="background:blue;width:100%;height:100%;">vp</div></body></html>""") {
                 Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
@@ -289,7 +289,7 @@ class BrowserCaptureTest extends BrowserTest:
     // On a static page, screenshot() must return non-empty bytes starting with the PNG magic bytes
     // 0x89 'P' 'N' 'G'.
 
-    "screenshot returns a valid PNG by default" in run {
+    "screenshot returns a valid PNG by default" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html><body><div style="background:red;width:100px;height:50px;">box</div></body></html>""") {
                 Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
@@ -312,7 +312,7 @@ class BrowserCaptureTest extends BrowserTest:
     // 400x300 PNG (captureBeyondViewport allowed the out-of-viewport region). Verify dimensions
     // via PNG IHDR as above.
 
-    "screenshotRegion captures a below-the-fold region" in run {
+    "screenshotRegion captures a below-the-fold region" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html><body style="height:5000px;background:green;"></body></html>""") {
                 Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
@@ -335,7 +335,7 @@ class BrowserCaptureTest extends BrowserTest:
     // BrowserInvalidArgumentException BEFORE any CDP call (the abort fires synchronously, not
     // after a network round-trip).
 
-    "screenshotRegion aborts on non-positive size" in run {
+    "screenshotRegion aborts on non-positive size" in {
         withBrowser {
             onPage("""<html><body></body></html>""") {
                 Abort.run[BrowserReadException](Browser.screenshotRegion(0, 0, 0, 300)).map { r1 =>
@@ -368,7 +368,7 @@ class BrowserCaptureTest extends BrowserTest:
     // count = ceil(1200 / 400) = 3. screenshotFullPage() must return a Chunk[Image] of 3 elements,
     // each non-empty.
 
-    "screenshotFullPage returns one band per viewport-height" in run {
+    "screenshotFullPage returns one band per viewport-height" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html style="margin:0;padding:0;"><body style="margin:0;padding:0;"></body></html>""") {
                 Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
@@ -404,7 +404,7 @@ class BrowserCaptureTest extends BrowserTest:
     // A regression to per-band withHoldStill would make the install count equal the band count
     // and fail assertion (b).
 
-    "screenshotFullPage injects the freeze style exactly once across all bands" in run {
+    "screenshotFullPage injects the freeze style exactly once across all bands" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html style="margin:0;padding:0;"><body style="margin:0;padding:0;"></body></html>""") {
                 Browser.withConfig(_.captureHoldStillTimeout(500.millis).captureHoldStillInterval(50.millis)) {
@@ -473,7 +473,7 @@ class BrowserCaptureTest extends BrowserTest:
     // BrowserCaptureLimitExceededException("screenshotFullPage", 3, 7) before producing any
     // partial output.
 
-    "screenshotFullPage aborts over maxBands before any capture" in run {
+    "screenshotFullPage aborts over maxBands before any capture" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html style="margin:0;padding:0;"><body style="margin:0;padding:0;"></body></html>""") {
                 Browser.setViewport(800, 400).andThen {
@@ -505,7 +505,7 @@ class BrowserCaptureTest extends BrowserTest:
     // A page with a setTimeout that inserts .badge after 200ms. screenshotElement issued
     // immediately must auto-wait (withRetry) and return the badge's Image when it appears.
 
-    "screenshotElement auto-waits for a late-appearing element" in run {
+    "screenshotElement auto-waits for a late-appearing element" in {
         val html = """<!DOCTYPE html><html><body>
             <script>setTimeout(() => {
                 const d = document.createElement('div');
@@ -537,7 +537,7 @@ class BrowserCaptureTest extends BrowserTest:
     // A page with no .never element. Under a tight retrySchedule, screenshotElement must abort
     // BrowserElementNotFoundException within the schedule budget.
 
-    "screenshotElement aborts BrowserElementNotFoundException for missing element" in run {
+    "screenshotElement aborts BrowserElementNotFoundException for missing element" in {
         withBrowser {
             onPage("""<html><body><div>no match here</div></body></html>""") {
                 tight {
@@ -575,7 +575,7 @@ class BrowserCaptureTest extends BrowserTest:
     // The override-restore property is also pinned: after the transparent capture, screenshot()
     // succeeds, confirming the override was cleared (Scope.acquireRelease teardown).
 
-    "screenshotElement with transparentBackground produces a transparent background" in run {
+    "screenshotElement with transparentBackground produces a transparent background" in {
         val html = """<!DOCTYPE html><html><body style="margin:0;">
             <div class="badge" style="background:transparent;width:50px;height:30px;">
                 <div style="background:blue;width:10px;height:10px;"></div>
@@ -628,7 +628,7 @@ class BrowserCaptureTest extends BrowserTest:
     // (the element channel), NOT a BrowserMutationException from the perpetual mutations.
     // The Test.timed bound confirms it exits within the schedule budget.
 
-    "screenshotElement does not widen the retry channel to BrowserMutationException" in run {
+    "screenshotElement does not widen the retry channel to BrowserMutationException" in {
         val html = """<!DOCTYPE html><html><body>
             <script>setInterval(() => {
                 const p = document.createElement('p');

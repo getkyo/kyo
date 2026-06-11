@@ -3,6 +3,7 @@ package kyo.website
 
 import kyo.*
 import kyo.UI.Href
+import scala.language.implicitConversions
 
 /** The 2-pane documentation content body as a kyo-ui `UI` value.
   *
@@ -31,6 +32,11 @@ import kyo.UI.Href
   *   [[DocsApp.body]] for the main entry point
   */
 object DocsApp:
+
+    private def html(cs: Seq[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.map(n => UI.Ast.HtmlChildVal.lift(n))
+    private def html(cs: kyo.Chunk[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.toSeq.map(n => UI.Ast.HtmlChildVal.lift(n))
 
     /** Assemble the 2-pane docs content body for one route (header excluded, owned by `SiteApp`).
       *
@@ -124,11 +130,11 @@ object DocsApp:
     )(using Frame): UI =
         val nav =
             UI.nav.cssClass("sidebar-nav")(
-                (overviewItem(route, prefix, tocSignal) +: content.groups.toSeq.map { group =>
+                html(overviewItem(route, prefix, tocSignal) +: content.groups.toSeq.map { group =>
                     UI.div.cssClass("sidebar-group")(
                         UI.div.cssClass("sidebar-group-name")(UI.span(groupLabel(group.name))),
                         UI.ul(
-                            group.modules.toSeq.map { mod =>
+                            html(group.modules.toSeq.map { mod =>
                                 val href         = s"/$prefix/${mod.slug}/"
                                 val activeSignal = route.map(r => r.endsWith(s"/${mod.slug}/") || r == href)
                                 // Key each module node on BOTH the active flag AND the page outline:
@@ -149,7 +155,7 @@ object DocsApp:
                                             UI.a(mod.displayName).href(Href.Path(href))
                                         )
                                 })
-                            }*
+                            })*
                         )
                     )
                 })*

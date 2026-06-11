@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-class HttpExceptionTest extends Test:
+class HttpExceptionTest extends BaseHttpTest:
 
     "HttpStatusException" - {
         "includes body when provided" in {

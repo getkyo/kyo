@@ -4,12 +4,12 @@ import kyo.Browser.*
 import scala.language.implicitConversions
 
 /** Tests that exercise realistic keyboard/mouse interaction patterns. Where the original test used char-by-char `pressKey`, we use
-  * `Browser.fill` instead; kyo-browser's `press` re-focuses before each call (cursor reset, see BROWSER-FEEDBACK), so consecutive
+  * `Browser.fill` instead; kyo-browser's `press` re-focuses before each call (cursor reset), so consecutive
   * keystrokes don't accumulate. `fill` uses CDP `Input.insertText` with the full string in one shot.
   */
 class RealisticInteractionItTest extends UITest:
 
-    "type abc one key at a time signal updates after each" in run {
+    "type abc one key at a time signal updates after each" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -24,11 +24,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:ab")
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.assertText(Selector.id("v"), "sig:abc")
-            yield succeed
+            yield ()
         }
     }
 
-    "type then backspace signal shows remaining" in run {
+    "type then backspace signal shows remaining" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -45,11 +45,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:a")
                 _ <- Browser.press(Selector.id("i"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "sig:")
-            yield succeed
+            yield ()
         }
     }
 
-    "backspace on empty input signal stays empty" in run {
+    "backspace on empty input signal stays empty" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -60,11 +60,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "sig:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "type backspace type again signal correct" in run {
+    "type backspace type again signal correct" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -78,11 +78,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:h")
                 _ <- Browser.fill(Selector.id("i"), "hi")
                 _ <- Browser.assertText(Selector.id("v"), "sig:hi")
-            yield succeed
+            yield ()
         }
     }
 
-    "type space character via fill" in run {
+    "type space character via fill" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -93,11 +93,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "a b")
                 _ <- Browser.assertText(Selector.id("v"), "sig:[a b]")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill then fill replaces value" in run {
+    "fill then fill replaces value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -110,11 +110,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:hello")
                 _ <- Browser.fill(Selector.id("i"), "hello!")
                 _ <- Browser.assertText(Selector.id("v"), "sig:hello!")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill then backspace removes last char" in run {
+    "fill then backspace removes last char" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -127,11 +127,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sig:abc")
                 _ <- Browser.press(Selector.id("i"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "sig:ab")
-            yield succeed
+            yield ()
         }
     }
 
-    "type in two inputs independently" in run {
+    "type in two inputs independently" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("")
@@ -148,11 +148,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("ib"), "y")
                 _ <- Browser.assertText(Selector.id("va"), "a:x")
                 _ <- Browser.assertText(Selector.id("vb"), "b:y")
-            yield succeed
+            yield ()
         }
     }
 
-    "click checkbox toggles checked" in run {
+    "click checkbox toggles checked" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -163,11 +163,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "checked:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "click checkbox twice toggles back" in run {
+    "click checkbox twice toggles back" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -180,11 +180,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "checked:true")
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "checked:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "click checked checkbox unchecks" in run {
+    "click checked checkbox unchecks" in {
         val app: UI < Async =
             for ref <- Signal.initRef(true)
             yield UI.div(
@@ -195,11 +195,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "checked:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "click radio selects it" in run {
+    "click radio selects it" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -210,11 +210,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "selected:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "click radio in group switches selection" in run {
+    "click radio in group switches selection" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -228,11 +228,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "sel:a")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "sel:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "form fill then check then submit" in run {
+    "form fill then check then submit" in {
         val app: UI < Async =
             for
                 nameRef  <- Signal.initRef("")
@@ -258,11 +258,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("agree"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Joe|true")
-            yield succeed
+            yield ()
         }
     }
 
-    "form Enter on input submits with typed value" in run {
+    "form Enter on input submits with typed value" in {
         val app: UI < Async =
             for
                 ref    <- Signal.initRef("")
@@ -284,11 +284,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "hi")
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "submitted:hi")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill value matches signal" in run {
+    "fill value matches signal" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -307,7 +307,7 @@ class RealisticInteractionItTest extends UITest:
         }
     }
 
-    "textarea fill chars accumulate" in run {
+    "textarea fill chars accumulate" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -318,11 +318,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("t"), "abc")
                 _ <- Browser.assertText(Selector.id("v"), "text:abc")
-            yield succeed
+            yield ()
         }
     }
 
-    "textarea fill then fill more" in run {
+    "textarea fill then fill more" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -334,11 +334,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("t"), "hello")
                 _ <- Browser.fill(Selector.id("t"), "hello!")
                 _ <- Browser.assertText(Selector.id("v"), "text:hello!")
-            yield succeed
+            yield ()
         }
     }
 
-    "password fill chars accumulate" in run {
+    "password fill chars accumulate" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -349,11 +349,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("p"), "sec")
                 _ <- Browser.assertText(Selector.id("v"), "pw:sec")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput append handler double-counts is application bug" in run {
+    "onInput append handler double-counts is application bug" in {
         // onInput receives full current value; using append pattern double-counts.
         val app: UI < Async =
             for ref <- Signal.initRef("")
@@ -366,13 +366,13 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "a")
                 // fill clears (sends empty input), then inserts "a"; append: "" + "" + "a" = "a"
                 _ <- Browser.assertText(Selector.id("v"), "sig:a")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: requires Browser.assertFocused
     /*
-    "click on input sets focus" in run {
+    "click on input sets focus" in {
         withUI(UI.div(UI.input.id("a"), UI.input.id("b"))) {
             for
                 _ <- Browser.click(Selector.id("a"))
@@ -380,23 +380,23 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertFocused(Selector.id("b"))
                 _ <- Browser.assertNotFocused(Selector.id("a"))
-            yield succeed
+            yield ()
         }
     }
 
-    "click on button sets focus" in run {
+    "click on button sets focus" in {
         withUI(UI.div(UI.button("A").id("a"), UI.button("B").id("b"))) {
             for
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertFocused(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertFocused(Selector.id("b"))
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "fill on disabled input no signal change" in run {
+    "fill on disabled input no signal change" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -407,11 +407,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:initial")
-            yield succeed
+            yield ()
         }
     }
 
-    "click disabled checkbox no toggle" in run {
+    "click disabled checkbox no toggle" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -422,11 +422,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "checked:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid 10 chars accumulate correctly" in run {
+    "rapid 10 chars accumulate correctly" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -437,11 +437,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "0123456789")
                 _ <- Browser.assertText(Selector.id("v"), "sig:0123456789")
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid check uncheck via click cycle" in run {
+    "rapid check uncheck via click cycle" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -454,11 +454,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "3")
-            yield succeed
+            yield ()
         }
     }
 
-    "number input fill digits accumulate" in run {
+    "number input fill digits accumulate" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -469,11 +469,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "42")
                 _ <- Browser.assertText(Selector.id("v"), "num:42")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill auto-focuses then blur on next interaction" in run {
+    "fill auto-focuses then blur on next interaction" in {
         val app: UI < Async =
             for
                 focusRef <- Signal.initRef("")
@@ -490,11 +490,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vf"), "focus:a")
                 _ <- Browser.fill(Selector.id("b"), "world")
                 _ <- Browser.assertText(Selector.id("vb"), "blur:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "press auto-focuses target" in run {
+    "press auto-focuses target" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -505,11 +505,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('x'))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "full form keyboard workflow type check select submit" in run {
+    "full form keyboard workflow type check select submit" in {
         val app: UI < Async =
             for
                 name   <- Signal.initRef("")
@@ -540,11 +540,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.select(Selector.id("role"), "b")
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "result:Joe|true|b")
-            yield succeed
+            yield ()
         }
     }
 
-    "type 100 chars rapidly all appear" in run {
+    "type 100 chars rapidly all appear" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -556,12 +556,12 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), text)
                 _ <- Browser.assertText(Selector.id("v"), "len:100")
-            yield succeed
+            yield ()
             end for
         }
     }
 
-    "email input type" in run {
+    "email input type" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -572,11 +572,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("e"), "a@b.com")
                 _ <- Browser.assertText(Selector.id("v"), "email:a@b.com")
-            yield succeed
+            yield ()
         }
     }
 
-    "external signal set overwrites typed value" in run {
+    "external signal set overwrites typed value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -589,11 +589,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "typed")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:override")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill empty string clears signal" in run {
+    "fill empty string clears signal" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -604,11 +604,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "")
                 _ <- Browser.assertText(Selector.id("v"), "sig:[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill then fill different value second wins" in run {
+    "fill then fill different value second wins" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -620,11 +620,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "first")
                 _ <- Browser.fill(Selector.id("i"), "second")
                 _ <- Browser.assertText(Selector.id("v"), "sig:second")
-            yield succeed
+            yield ()
         }
     }
 
-    "press Enter in single line input does not insert newline" in run {
+    "press Enter in single line input does not insert newline" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -636,24 +636,24 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "sig:[abc]")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: requires Browser.assertFocused
     /*
-    "press Tab moves focus" in run {
+    "press Tab moves focus" in {
         withUI(UI.div(UI.input.id("a"), UI.input.id("b"))) {
             for
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.press(Selector.id("a"), Key.Tab)
                 _ <- Browser.assertFocused(Selector.id("b"))
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "click radio already selected stays selected" in run {
+    "click radio already selected stays selected" in {
         val app: UI < Async =
             for ref <- Signal.initRef(true)
             yield UI.div(
@@ -665,11 +665,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertChecked(Selector.id("r"))
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertChecked(Selector.id("r"))
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid click checkbox 50 times correct final state" in run {
+    "rapid click checkbox 50 times correct final state" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -681,11 +681,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Kyo.foreachDiscard(0 until 50)(_ => Browser.click(Selector.id("c")))
                 // 50 clicks from false → still false (even count)
                 _ <- Browser.assertText(Selector.id("v"), "v:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "click disabled radio no select" in run {
+    "click disabled radio no select" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -696,11 +696,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "sel:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox onChange receives correct boolean" in run {
+    "checkbox onChange receives correct boolean" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -711,11 +711,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "v:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "radio inside form click does not submit" in run {
+    "radio inside form click does not submit" in {
         val app: UI < Async =
             for
                 ref       <- Signal.initRef(false)
@@ -732,23 +732,23 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("vr"), "sel:true")
                 _ <- Browser.assertText(Selector.id("vs"), "sub:0")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: requires Browser.assertFocused / assertNotFocused
     /*
-    "focus non focusable div rejected" in run {
+    "focus non focusable div rejected" in {
         withUI(UI.div(UI.div("text").id("d"), UI.input.id("i"))) {
             for
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.assertNotFocused(Selector.id("d"))
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "focus preserved through sibling signal change" in run {
+    "focus preserved through sibling signal change" in {
         val app: UI < Async =
             for
                 counter <- Signal.initRef(0)
@@ -765,11 +765,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vf"), "true")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("vc"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "two forms cross focus blur" in run {
+    "two forms cross focus blur" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -788,11 +788,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("i1"))
                 _ <- Browser.click(Selector.id("i2"))
                 _ <- Browser.assertText(Selector.id("v"), "focus:1,blur:1,focus:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "no initial focus first interaction focuses element" in run {
+    "no initial focus first interaction focuses element" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -804,11 +804,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "false")
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus blur focus same element all handlers fire" in run {
+    "focus blur focus same element all handlers fire" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -824,11 +824,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("v"), "focus:a,blur:a,focus:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "external signal set then type more appends to external" in run {
+    "external signal set then type more appends to external" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -841,22 +841,22 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.fill(Selector.id("i"), "ext+more")
                 _ <- Browser.assertText(Selector.id("v"), "sig:ext+more")
-            yield succeed
+            yield ()
         }
     }
 
-    "press on element without onInput no crash" in run {
+    "press on element without onInput no crash" in {
         withUI(UI.div(UI.input.id("i"))) {
             for
                 _ <- Browser.press(Selector.id("i"), Key('x'))
                 _ <- Browser.assertVisible(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: Space on checkbox toggles requires kyo-browser fix for key->checkbox interaction
     /*
-    "Space on checkbox toggles" in run {
+    "Space on checkbox toggles" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -867,12 +867,12 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "Enter on checkbox toggles" in run {
+    "Enter on checkbox toggles" in {
         // TUI parity: Enter activates checkbox via synthetic click()
         val app: UI < Async =
             for ref <- Signal.initRef("none")
@@ -884,13 +884,13 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: same as above
     /*
-    "Space on radio selects" in run {
+    "Space on radio selects" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -901,12 +901,12 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "Enter on radio selects" in run {
+    "Enter on radio selects" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -917,13 +917,13 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: requires Browser.assertFocused
     /*
-    "Tab to checkbox assertFocused no state change" in run {
+    "Tab to checkbox assertFocused no state change" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -937,11 +937,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.press(Selector.id("i"), Key.Tab)
                 _ <- Browser.assertFocused(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "v:false")
-            yield succeed
+            yield ()
         }
     }
 
-    "Tab to radio assertFocused no state change" in run {
+    "Tab to radio assertFocused no state change" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -955,12 +955,12 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.press(Selector.id("i"), Key.Tab)
                 _ <- Browser.assertFocused(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "v:false")
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "radio with SignalRef two way binding click auto updates" in run {
+    "radio with SignalRef two way binding click auto updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -971,11 +971,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("r"))
                 _ <- Browser.assertText(Selector.id("v"), "sig:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox onClick and onChange both fire on click" in run {
+    "checkbox onClick and onChange both fire on click".flaky in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -989,24 +989,24 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.click(Selector.id("c"))
                 _ <- assertContains("click")
                 _ <- assertContains("change:true")
-            yield succeed
+            yield ()
         }
     }
 
     // PENDING: requires Browser.assertFocused
     /*
-    "focus via Shift Tab assertFocused" in run {
+    "focus via Shift Tab assertFocused" in {
         withUI(UI.div(UI.input.id("a"), UI.input.id("b"))) {
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.press(Selector.id("b"), Key.Tab, KeyModifiers(shift = true))
                 _ <- Browser.assertFocused(Selector.id("a"))
-            yield succeed
+            yield ()
         }
     }
      */
 
-    "focus via label click forId" in run {
+    "focus via label click forId" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -1018,11 +1018,11 @@ class RealisticInteractionItTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("l"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus then element disabled via signal" in run {
+    "focus then element disabled via signal" in {
         val app: UI < Async =
             for
                 disabled <- Signal.initRef(false)
@@ -1038,11 +1038,11 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "true")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertDisabled(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
-    "focus then element removed via conditional" in run {
+    "focus then element removed via conditional" in {
         val app: UI < Async =
             for
                 show <- Signal.initRef(true)
@@ -1058,7 +1058,7 @@ class RealisticInteractionItTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "true")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertNotExists(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 

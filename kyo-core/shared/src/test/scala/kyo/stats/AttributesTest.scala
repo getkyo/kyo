@@ -3,7 +3,7 @@ package kyo.stats
 import kyo.*
 import kyo.stats.Attributes.*
 
-class AttributesTest extends Test:
+class AttributesTest extends kyo.test.Test[Any]:
 
     "empty" in {
         val attrs = Attributes.empty

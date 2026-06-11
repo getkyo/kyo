@@ -2,7 +2,7 @@ package kyo.website
 
 import kyo.*
 
-class WebsiteExceptionTest extends Test:
+class WebsiteExceptionTest extends WebsiteTest:
 
     "ReadmeException carries typed detail" - {
         "detail and path fields are accessible" in {

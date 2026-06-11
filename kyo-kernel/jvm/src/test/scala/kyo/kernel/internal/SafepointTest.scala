@@ -3,12 +3,12 @@ package kyo.kernel.internal
 import kyo.*
 import kyo.Result.Error
 import kyo.Result.Panic
-import kyo.Tagged.*
 import kyo.kernel.*
 import scala.concurrent.Await
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 
-class SafepointTest extends Test:
+class SafepointTest extends kyo.test.Test[Any]:
 
     def fork[A](f: => A < Any): A < Any =
         Effect.defer {
@@ -104,7 +104,7 @@ class SafepointTest extends Test:
         computation.eval
     }
 
-    "no leak between forked executions" in run {
+    "no leak between forked executions" in {
         var capturedSafepoint: Safepoint = null
 
         val computation1 = Effect.defer {
@@ -125,7 +125,7 @@ class SafepointTest extends Test:
         end for
     }
 
-    "no new Safepoint for nested eval calls" in run {
+    "no new Safepoint for nested eval calls" in {
         val outerComputation = Effect.defer {
             val outerSafepoint = Safepoint.get
             val innerComputation = Effect.defer {
@@ -139,7 +139,7 @@ class SafepointTest extends Test:
         outerComputation.map(result => assert(result == 42))
     }
 
-    "capture Safepoint in closures" in run {
+    "capture Safepoint in closures" in {
         var capturedSafepoint: Safepoint = null
 
         val computation = Effect.defer {
@@ -332,9 +332,10 @@ class SafepointTest extends Test:
 
             assert(result == 26)
 
+            // kyo-test runs leaf bodies in a deferred closure (the AssertScope context function), which adds one owner level so the leaf-local map closure's callerName renders as $anonfun instead of ?.
             val expectedLogs = Seq(
                 "Entering computation with value: 6",
-                "Entering ? with value: 12",
+                "Entering $anonfun with value: 12",
                 "Entering computation with value: 13",
                 "Entering $anonfun with value: 26"
             )
@@ -358,7 +359,7 @@ class SafepointTest extends Test:
 
         "executes cleanup after exception" in {
             var cleaned = false
-            assertThrows[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 Safepoint.ensure { _ => cleaned = true } {
                     throw new RuntimeException("Test exception")
                 }.eval
@@ -413,7 +414,7 @@ class SafepointTest extends Test:
                     _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], throw new RuntimeException("Test failure"))
                 yield 42
             }
-            assertThrows[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 ArrowEffect.handle(Tag[TestEffect1], result)([C] => (input, cont) => cont(input)).eval
             }
             assert(cleaned)
@@ -453,7 +454,7 @@ class SafepointTest extends Test:
 
         "executes thunk on exception" in {
             var executed = false
-            assertThrows[RuntimeException] {
+            interceptThrown[RuntimeException] {
                 Safepoint.ensure { _ =>
                     executed = true
                 } {
@@ -635,7 +636,7 @@ class SafepointTest extends Test:
                     def enter(frame: Frame, value: Any): Boolean                     = true
                     def exit(): Unit                                                 = {}
 
-                assertThrows[RuntimeException] {
+                interceptThrown[RuntimeException] {
                     Safepoint.propagating(interceptor) {
                         Safepoint.ensure { _ =>
                             ensureExecuted = true
@@ -666,7 +667,7 @@ class SafepointTest extends Test:
                 var receivedValue: Maybe[Error[Any]] = null
                 val exception                        = new RuntimeException("Test exception")
 
-                assertThrows[RuntimeException] {
+                interceptThrown[RuntimeException] {
                     Safepoint.ensure { t =>
                         receivedValue = t
                     } {
@@ -683,7 +684,7 @@ class SafepointTest extends Test:
                 var innerException: Maybe[Error[Any]] = null
                 val testException                     = new RuntimeException("Test nested exception")
 
-                assertThrows[RuntimeException] {
+                interceptThrown[RuntimeException] {
                     Safepoint.ensure { t =>
                         outerException = t
                     } {

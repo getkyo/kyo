@@ -1,6 +1,6 @@
 package kyo
 
-class FileExceptionTest extends Test:
+class FileExceptionTest extends kyo.test.Test[Any]:
 
     // A dummy path used only to construct exception instances — no I/O is performed.
     val p: Path = Path("tmp", "kyo-file-exception-test")
@@ -36,7 +36,7 @@ class FileExceptionTest extends Test:
     // subtypes in Abort. We verify that:
     //   (a) a FileNotFoundException is recovered (returns the fallback value)
     //   (b) a FileAccessDeniedException is NOT recovered and remains as Abort failure
-    "Abort.recover[FileNotFoundException] recovers only FileNotFoundException" in run {
+    "Abort.recover[FileNotFoundException] recovers only FileNotFoundException" in {
         // (a) FileNotFoundException should be recovered to -1
         val notFoundComputation: Int < (Sync & Abort[FileReadException]) =
             Abort.fail(FileNotFoundException(p)).map((_: Nothing) => 42)
@@ -61,7 +61,7 @@ class FileExceptionTest extends Test:
         yield
             assert(r1 == Result.Success(-1))
             r2 match
-                case Result.Failure(_: FileAccessDeniedException) => succeed
+                case Result.Failure(_: FileAccessDeniedException) => ()
                 case other                                        => fail(s"Expected FileAccessDeniedException failure, got $other")
         end for
     }

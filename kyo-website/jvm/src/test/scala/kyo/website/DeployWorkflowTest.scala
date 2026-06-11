@@ -13,7 +13,7 @@ import java.nio.file.Paths
   * substrings rather than re-parsing the YAML. The in-Chrome chrome-parity and SPA-navigation leaves
   * (leaves 9 and 22, `WebsiteSpaSmokeTest`) run in the campaign-end cross-platform gate, not here.
   */
-class DeployWorkflowTest extends Test:
+class DeployWorkflowTest extends WebsiteTest:
 
     // Locate the repo root by walking up from user.dir until build.sbt is found, so the workflow file
     // resolves regardless of the JVM working directory (mirrors WebsiteBuildGraphTest).

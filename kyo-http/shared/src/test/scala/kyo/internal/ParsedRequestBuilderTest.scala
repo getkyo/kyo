@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.codec.*
 
-class ParsedRequestBuilderTest extends kyo.Test:
+class ParsedRequestBuilderTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -35,7 +35,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             val req = builder.build()
             // method should be PATCH (ordinal 3)
             assert(req.method == HttpMethod.PATCH)
-            succeed
         }
 
         // Test 2: Set chunked flag — bit 0
@@ -55,7 +54,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             builder.setChunked(false)
             val req2 = builder.build()
             assert(req2.isChunked == false)
-            succeed
         }
 
         // Test 3: Set keepAlive flag — bit 1
@@ -75,7 +73,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             builder.setKeepAlive(false)
             val req2 = builder.build()
             assert(req2.isKeepAlive == false)
-            succeed
         }
 
         // Test 4: All remaining bit flags at correct bit positions
@@ -125,7 +122,7 @@ class ParsedRequestBuilderTest extends kyo.Test:
             val req6 = builder.build()
             assert(req6.isUpgrade == true)
 
-            succeed
+            ()
         }
 
         // Test 5: Set path — path offset/length encoded correctly
@@ -142,7 +139,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             // We access via headersAsPacked indirect check: pathSegmentCount is at [14..15]
             // Direct check via ParsedRequest is the cleanest
             assert(req.pathSegmentCount == 0) // no segments added
-            succeed
         }
 
         // Test 6: setQuery writes bytes and sets hasQuery flag automatically
@@ -158,7 +154,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             val req = builder.build()
             assert(req.hasQuery == true)
             assert(req.queryRawString == Present(queryStr))
-            succeed
         }
 
         // Test 7: addPathSegment appends offset/length and increments segmentCount
@@ -172,7 +167,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             val req = builder.build()
             assert(req.pathSegmentCount == 1)
             assert(req.pathSegmentAsString(0) == "api")
-            succeed
         }
 
         // Test 8: Multiple path segments accumulate in order
@@ -192,7 +186,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req.pathSegmentAsString(1) == "b")
             assert(req.pathSegmentAsString(2) == "c")
             assert(req.pathSegmentAsString(3) == "d")
-            succeed
         }
 
         // Test 9: addHeader writes name and value, records offsets, increments headerCount
@@ -208,7 +201,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req.headerCount == 1)
             assert(req.headerName(0) == "Content-Type")
             assert(req.headerValue(0) == "application/json")
-            succeed
         }
 
         // Test 10: Multiple headers accumulate and count matches
@@ -234,7 +226,7 @@ class ParsedRequestBuilderTest extends kyo.Test:
                 assert(req.headerName(i) == n)
                 assert(req.headerValue(i) == v)
             }
-            succeed
+            ()
         }
 
         // Test 11: Segment offset array doubling — addPathSegment 16+ times triggers growth
@@ -256,7 +248,7 @@ class ParsedRequestBuilderTest extends kyo.Test:
             (0 until count).foreach { i =>
                 assert(req.pathSegmentAsString(i) == s"seg$i")
             }
-            succeed
+            ()
         }
 
         // Test 12: Header offset array doubling — addHeader 32+ times triggers growth
@@ -278,7 +270,7 @@ class ParsedRequestBuilderTest extends kyo.Test:
                 assert(req.headerName(i) == s"X-Header-$i")
                 assert(req.headerValue(i) == s"value-$i")
             }
-            succeed
+            ()
         }
 
         // Test 13: Build packs format correctly — verify output array layout matches spec
@@ -305,7 +297,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req.headerCount == 1)
             assert(req.headerName(0) == "Host")
             assert(req.headerValue(0) == "localhost")
-            succeed
         }
 
         // Test 14: Build encodes flags big-endian — result[0] = flags >> 8, result[1] = flags & 0xFF
@@ -330,7 +321,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req.hasMultipleHost == false)
             assert(req.hasEmptyHost == false)
             assert(req.isUpgrade == false)
-            succeed
         }
 
         // Test 15: Build encodes headerCount at correct position: offset 16 + segCount*4
@@ -353,7 +343,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req.headerCount == 1)
             assert(req.headerName(0) == "X-Test")
             assert(req.headerValue(0) == "ok")
-            succeed
         }
 
         // Test 16: Build empty request — no path, no headers → still valid ParsedRequest
@@ -372,7 +361,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             // Empty path should be readable as empty string
             val path = req.pathAsString
             assert(path == "")
-            succeed
         }
 
         // Test 17: reset() clears all state
@@ -411,7 +399,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req.pathSegmentCount == 0)
             assert(req.headerCount == 0)
             assert(req.pathAsString == "/after-reset")
-            succeed
         }
 
         // Test 18: reset() allows full reuse — reset → set → build works correctly second time
@@ -471,7 +458,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             assert(req2.pathSegmentCount == 2)
             assert(req2.pathSegmentAsString(0) == "second")
             assert(req2.pathSegmentAsString(1) == "path")
-            succeed
         }
 
         // Test 19: setContentLength with positive value — encoded big-endian at offset 2
@@ -484,7 +470,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             val req = builder.build()
             // Verify via ParsedRequest.contentLength which reads big-endian int at offset 2
             assert(req.contentLength == 0x01020304)
-            succeed
         }
 
         // Test 20: setContentLength(-1) encodes as 0xFFFFFFFF
@@ -504,7 +489,6 @@ class ParsedRequestBuilderTest extends kyo.Test:
             builder2.setPath(pathBytes, 0, pathBytes.length)
             val req2 = builder2.build()
             assert(req2.contentLength == -1)
-            succeed
         }
     }
 

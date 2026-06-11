@@ -2,11 +2,11 @@ package kyo.internal
 
 import kyo.*
 
-class BrowserLauncherTest extends Test:
+class BrowserLauncherTest extends BaseBrowserTest:
 
     override def timeout = 2.minutes
 
-    "launch returns wsUrl starting with ws://" in run {
+    "launch returns wsUrl starting with ws://" in {
         Scope.run {
             SharedChrome.chromeConfig.map { cfg =>
                 BrowserLauncher.launch(cfg).map { wsUrl =>
@@ -16,7 +16,7 @@ class BrowserLauncherTest extends Test:
         }
     }
 
-    "wsUrl contains host and port" in run {
+    "wsUrl contains host and port" in {
         Scope.run {
             SharedChrome.chromeConfig.map { cfg =>
                 BrowserLauncher.launch(cfg).map { wsUrl =>
@@ -28,7 +28,7 @@ class BrowserLauncherTest extends Test:
         }
     }
 
-    "two concurrent launches use different ports" in run {
+    "two concurrent launches use different ports" in {
         Scope.run {
             SharedChrome.chromeConfig.map { cfg =>
                 Async.zip(
@@ -43,7 +43,7 @@ class BrowserLauncherTest extends Test:
         }
     }
 
-    "invalid executable fails with BrowserSetupException" in run {
+    "invalid executable fails with BrowserSetupException" in {
         Abort.run[BrowserSetupException] {
             Scope.run {
                 BrowserLauncher.launch(
@@ -51,13 +51,13 @@ class BrowserLauncherTest extends Test:
                 )
             }
         }.map {
-            case Result.Success(_)                              => fail("Expected failure for invalid executable")
-            case Result.Failure(_: BrowserSetupFailedException) => succeed
-            case Result.Panic(ex)                               => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
+            case Result.Success(_)                               => fail("Expected failure for invalid executable")
+            case Result.Failure(ex: BrowserSetupFailedException) => assert(ex.getMessage.contains("/nonexistent/browser/executable"))
+            case Result.Panic(ex)                                => fail(s"Expected Failure, got Panic: ${ex.getMessage}")
         }
     }
 
-    "very short timeout fails fast" in run {
+    "very short timeout fails fast" in {
         for
             timedRes <- timed(Abort.run[BrowserSetupException] {
                 Scope.run {
@@ -80,7 +80,7 @@ class BrowserLauncherTest extends Test:
             end match
     }
 
-    "extraArgs are passed through" in run {
+    "extraArgs are passed through" in {
         Scope.run {
             SharedChrome.chromeConfig.map { cfg =>
                 val config = cfg.copy(extraArgs = Chunk("--disable-field-trial-config"))
@@ -175,7 +175,7 @@ class BrowserLauncherTest extends Test:
 
     // Genuine-timeout path. pollDevToolsActivePort against a tmpDir where Chrome never writes the
     // file must time out within the configured budget and surface BrowserSetupFailedException.
-    "pollDevToolsActivePort times out when DevToolsActivePort is never written" in run {
+    "pollDevToolsActivePort times out when DevToolsActivePort is never written" in {
         val timeout = 200.millis
         Scope.run {
             for
@@ -189,7 +189,7 @@ class BrowserLauncherTest extends Test:
                     case Result.Success(url) =>
                         fail(s"Expected timeout but pollDevToolsActivePort returned $url")
                     case Result.Failure(_: BrowserSetupFailedException) =>
-                        succeed
+                        ()
                     case Result.Panic(ex) =>
                         fail(s"Expected Failure, got Panic: ${ex.getMessage}")
                 end match
@@ -198,7 +198,7 @@ class BrowserLauncherTest extends Test:
 
     // Happy-path. When the DevToolsActivePort file IS present with valid content, the poller returns
     // the assembled ws:// URL without running the timeout.
-    "pollDevToolsActivePort returns the URL when DevToolsActivePort exists and is well-formed" in run {
+    "pollDevToolsActivePort returns the URL when DevToolsActivePort exists and is well-formed" in {
         Scope.run {
             for
                 tmp <- Path.tempDir("kyo-browser-pollDevTools-happy-")
@@ -211,7 +211,7 @@ class BrowserLauncherTest extends Test:
 
     // killOrphans pgrep-missing; exercises the CommandException-swallow branch in
     // BrowserLauncher.scala (the `Abort.run[CommandException]` wrapping `Command(command, ...).text`).
-    "killOrphans is a no-op when pgrep is missing" in run {
+    "killOrphans is a no-op when pgrep is missing" in {
         // The CommandException-swallow branch executes when the command binary
         // cannot be exec'd. Inject an absolute path to a non-existent binary;
         // ProcessBuilder raises IOException → CommandException → Abort.run swallows.
@@ -224,7 +224,9 @@ class BrowserLauncherTest extends Test:
                     command = nonexistentPgrep
                 )
             }.map {
-                case Result.Success(_) => succeed
+                case Result.Success(_) =>
+                    // killOrphans swallowed the CommandException and returned normally.
+                    succeed("killOrphans swallows a CommandException from a missing pgrep binary and returns normally")
                 case Result.Failure(err) =>
                     fail(s"killOrphans should swallow CommandException, got Failure: $err")
                 case Result.Panic(ex) =>
@@ -246,7 +248,7 @@ class BrowserLauncherTest extends Test:
     // sh's argv with sleep's, losing the tag). Verified empirically on macOS before writing the
     // test: `pgrep -f "user-data-dir=.*<tag>"` matches the sh PID for this form, does NOT match
     // for the single-stmt form.
-    "killOrphans kills processes matching the kyo-browser user-data-dir pattern" in run {
+    "killOrphans kills processes matching the kyo-browser user-data-dir pattern" in {
         Scope.run {
             for
                 n <- Random.nextLong

@@ -1,6 +1,6 @@
 package kyo
 
-class UIBaseCssTest extends Test:
+class UIBaseCssTest extends kyo.test.Test[Any]:
 
     "UI.baseCss is non-empty and contains box-sizing: border-box" in {
         assert(UI.baseCss.nonEmpty)
@@ -12,7 +12,7 @@ class UIBaseCssTest extends Test:
         assert(UI.baseCss.contains("display: contents"))
     }
 
-    "runRenderPage output contains UI.baseCss verbatim" in run {
+    "runRenderPage output contains UI.baseCss verbatim" in {
         for
             frames <- UI.runRenderPage(UI.PageHead(title = "t"))(UI.div).take(1).run
             html = frames.headMaybe.getOrElse("")

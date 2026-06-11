@@ -1,11 +1,6 @@
 package kyo.website
 
 import kyo.*
-import kyo.internal.BaseKyoCoreTest
-import kyo.internal.Platform
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.ExecutionContext
 
 /** Pure unit tests for the nav router's route classification (`WebsiteBundleMain.classifyRoute`).
   *
@@ -18,13 +13,7 @@ import scala.concurrent.ExecutionContext
   * locally. A regression in either derivation (e.g. removing the `+ island.content.version.tag`
   * seed) directly fails the tests that call those helpers.
   */
-class RouterRobustnessTest extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
-
-    type Assertion = org.scalatest.Assertion
-    def assertionSuccess              = succeed
-    def assertionFailure(msg: String) = fail(msg)
-
-    override given executionContext: ExecutionContext = Platform.executionContext
+class RouterRobustnessTest extends kyo.test.Test[Any]:
 
     private def segmentsOf(route: String): Array[String] =
         route.split('/').filter(_.nonEmpty)

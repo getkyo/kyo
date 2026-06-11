@@ -3,7 +3,7 @@ package kyo.website
 import kyo.*
 import kyo.UI.*
 
-class DocsMarkdownTest extends Test:
+class DocsMarkdownTest extends WebsiteTest:
 
     // Helper: run SSG renderer and get the first HTML emission.
     private def renderHtml(ui: UI)(using Frame): String < Async =
@@ -22,7 +22,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- GFM pipe table ----
 
-    "GFM pipe table -> UI.table subtree" in run {
+    "GFM pipe table -> UI.table subtree" in {
         val source =
             "| Name | Type |\n" +
                 "| ---- | ---- |\n" +
@@ -41,7 +41,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Heading slugs == headings slugs ----
 
-    "heading id slugs equal headings slugs" in run {
+    "heading id slugs equal headings slugs" in {
         val source =
             "# Alpha\n" +
                 "## Beta\n" +
@@ -62,7 +62,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Slug rule ----
 
-    "slug lowercases and replaces non-alnum" in run {
+    "slug lowercases and replaces non-alnum" in {
         for rendered <- transpile("## Composing: map, flatMap\n")
         yield
             assert(rendered.headings.size == 1)
@@ -72,7 +72,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Duplicate heading deduplication ----
 
-    "duplicate headings get -2 suffix on both sides" in run {
+    "duplicate headings get -2 suffix on both sides" in {
         val source = "## Note\n## Note\n"
         for
             rendered <- transpile(source)
@@ -87,7 +87,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Two-space nested list ----
 
-    "two-space nested list does not flatten" in run {
+    "two-space nested list does not flatten" in {
         val source = "- Exception\n  - FileException\n  - TimeoutException\n"
         for html <- transpileHtml(source)
         yield
@@ -100,19 +100,19 @@ class DocsMarkdownTest extends Test:
 
     // ---- Callouts ----
 
-    "blockquote Note becomes callout callout-note" in run {
+    "blockquote Note becomes callout callout-note" in {
         for html <- transpileHtml("> **Note:** be careful\n")
         yield assert(html.contains("callout-note"), s"HTML: $html")
         end for
     }
 
-    "blockquote Caution becomes callout callout-caution" in run {
+    "blockquote Caution becomes callout callout-caution" in {
         for html <- transpileHtml("> **Caution:** danger\n")
         yield assert(html.contains("callout-caution"), s"HTML: $html")
         end for
     }
 
-    "other blockquote labels become plain blockquote" in run {
+    "other blockquote labels become plain blockquote" in {
         for html <- transpileHtml("> **Sequential vs parallel:** some text\n")
         yield
             assert(html.contains("blockquote"), s"HTML: $html")
@@ -123,7 +123,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Form-B bold opener stays plain prose ----
 
-    "Form-B bold opener in a paragraph stays plain prose" in run {
+    "Form-B bold opener in a paragraph stays plain prose" in {
         for html <- transpileHtml("**Note:** inline text here\n")
         yield
             assert(html.contains("<p"), s"Expected paragraph: $html")
@@ -134,7 +134,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Blockquote-wrapped fenced code ----
 
-    "blockquote-wrapped fenced code is a real pre/code block" in run {
+    "blockquote-wrapped fenced code is a real pre/code block" in {
         val source =
             "> **Note:** see below\n" +
                 ">\n" +
@@ -151,7 +151,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Doctest comment stripping ----
 
-    "doctest:setup comment is stripped" in run {
+    "doctest:setup comment is stripped" in {
         val source =
             "<!-- doctest:setup\n" +
                 "```scala\n" +
@@ -167,7 +167,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "doctest:setup block does not leak its closing --> into prose (B1)" in run {
+    "doctest:setup block does not leak its closing --> into prose (B1)" in {
         // Mirrors the kyo-http README shape: a leading `<!-- doctest:setup ... -->` whose closing
         // `-->` sits on its own line after the wrapped fenced block. The closing line must be
         // consumed, not emitted as a `--> ` paragraph above the H1.
@@ -189,7 +189,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "leading multi-line HTML comment with text after --> keeps that text (B1)" in run {
+    "leading multi-line HTML comment with text after --> keeps that text (B1)" in {
         val source =
             "<!-- a comment\n" +
                 "spanning lines -->Kept text.\n" +
@@ -204,7 +204,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Intra-repo README.md link rewriting (B2) ----
 
-    "[..](dir/README.md) link rewrites to the directory route (B2)" in run {
+    "[..](dir/README.md) link rewrites to the directory route (B2)" in {
         val source = "See [prelude](../kyo-prelude/README.md) for details.\n"
         for html <- transpileHtml(source)
         yield
@@ -213,7 +213,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "[..](README.md) bare link rewrites to ./ (B2)" in run {
+    "[..](README.md) bare link rewrites to ./ (B2)" in {
         val source = "Back to [home](README.md).\n"
         for html <- transpileHtml(source)
         yield
@@ -222,7 +222,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "[..](README.md#anchor) keeps the fragment (B2)" in run {
+    "[..](README.md#anchor) keeps the fragment (B2)" in {
         val source = "Jump to [section](README.md#getting-started).\n"
         for html <- transpileHtml(source)
         yield
@@ -231,7 +231,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "external http(s) links are left untouched by README rewriting (B2)" in run {
+    "external http(s) links are left untouched by README rewriting (B2)" in {
         val source = "Visit [site](https://example.com/README.md) now.\n"
         for html <- transpileHtml(source)
         yield assert(html.contains("https://example.com/README.md"), s"external link must be untouched: $html")
@@ -239,7 +239,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Heading.text inline-markdown stripping (B3) ----
 
-    "heading with inline code yields plain TOC text but renders real <code> (B3)" in run {
+    "heading with inline code yields plain TOC text but renders real <code> (B3)" in {
         val source = "## Working with `Sync`\n"
         for
             rendered <- transpile(source)
@@ -254,7 +254,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "heading with bold/italic/link yields plain TOC text (B3)" in run {
+    "heading with bold/italic/link yields plain TOC text (B3)" in {
         val source = "### **Bold** and *italic* and [linked](x.md)\n"
         for rendered <- transpile(source)
         yield assert(
@@ -265,7 +265,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Doctest info-string suffix stripping ----
 
-    "doctest info-string suffix is stripped" in run {
+    "doctest info-string suffix is stripped" in {
         val source = "```scala doctest:scope=inherited\nval x = 1\n```\n"
         for html <- transpileHtml(source)
         yield
@@ -276,7 +276,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Scala token highlighting ----
 
-    "scala fence gets tok-* token spans" in run {
+    "scala fence gets tok-* token spans" in {
         val source = "```scala\nval x = 1\ndef foo: Int = x\n```\n"
         for html <- transpileHtml(source)
         yield assert(html.contains("tok-keyword"), s"Expected tok-keyword: $html")
@@ -285,7 +285,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- SBT and bash token highlighting ----
 
-    "sbt and bash fences get tok-* spans" in run {
+    "sbt and bash fences get tok-* spans" in {
         // With the scalameta highlighter, sbt operators like +=, %%, % are symbolic idents
         // that classify as tok-operator (not tok-keyword as in the old hand-written lexer).
         // Bash still uses the keyword-Set lexer, so 'if', 'then', 'fi' are tok-keyword.
@@ -304,7 +304,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Bare/other fence: no token spans ----
 
-    "bare and other fences produce plain pre/code with no tok-* spans" in run {
+    "bare and other fences produce plain pre/code with no tok-* spans" in {
         val bareSource = "```\nsome plain text\n```\n"
         val textSource = "```text\nsome plain text\n```\n"
         for
@@ -319,7 +319,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Shield.io badge (linked image) ----
 
-    "shield.io badge -> UI.a containing UI.img" in run {
+    "shield.io badge -> UI.a containing UI.img" in {
         val source = "[![Version](https://img.shields.io/badge/v-1.0)](https://getkyo.io)\n"
         for html <- transpileHtml(source)
         yield
@@ -331,7 +331,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Root README inline <img> passthrough ----
 
-    "root README inline img becomes UI.rawHtml leaf" in run {
+    "root README inline img becomes UI.rawHtml leaf" in {
         val snippet = """<img src="kyo.png" width="200" alt="Kyo">"""
         val source  = snippet + "\nSome regular text here.\n"
         for html <- transpileHtml(source)
@@ -347,7 +347,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Empty source edge case ----
 
-    "empty source returns UI.empty and Chunk.empty headings" in run {
+    "empty source returns UI.empty and Chunk.empty headings" in {
         for rendered <- transpile("")
         yield assert(rendered == DocsMarkdownRender.Rendered(UI.empty, "", Chunk.empty))
         end for
@@ -355,7 +355,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- HTML comment before heading ----
 
-    "leading HTML comment is skipped; first heading is the H1" in run {
+    "leading HTML comment is skipped; first heading is the H1" in {
         val source = "<!-- This is a comment -->\n# kyo-core\nSome text.\n"
         for rendered <- transpile(source)
         yield assert(rendered.headings.headMaybe.map(_.text) == Present("kyo-core"))
@@ -364,7 +364,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Degrade-not-fail: unknown construct ----
 
-    "unknown construct degrades to plain paragraph without abort" in run {
+    "unknown construct degrades to plain paragraph without abort" in {
         // A definition list style is not supported; must not abort, must produce some output.
         val source = "term\n:   definition\n"
         for
@@ -385,7 +385,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Degrade-not-fail: malformed table ----
 
-    "malformed table degrades gracefully without abort" in run {
+    "malformed table degrades gracefully without abort" in {
         // Table with no separator row - only one line starting with |.
         val source = "| A | B |\n"
         for html <- transpileHtml(source)
@@ -397,7 +397,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Multi-line <a><img></a> video embed ----
 
-    "multi-line <a><img></a> video embed is coalesced into one wrapped rawHtml node" in run {
+    "multi-line <a><img></a> video embed is coalesced into one wrapped rawHtml node" in {
         val source =
             "<a href=\"http://www.youtube.com/watch?v=uA2_TWP5WF4\" title=\"Kyo Tour\">\n" +
                 "    <img src=\"https://img.youtube.com/vi/uA2_TWP5WF4/maxresdefault.jpg\" alt=\"Kyo\" width=\"500\" height=\"300\">\n" +
@@ -426,7 +426,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Tokenizer forward-progress (regression for the lone-`/` infinite loop) ----
 
-    "scala fence with a lone `/` operator transpiles without hanging" in run {
+    "scala fence with a lone `/` operator transpiles without hanging" in {
         // `Path / "etc"` contains a `/` that is not `//` or `/*` and not an sbt operator, so no
         // tokenizer branch consumed it; the loop used to stall on it and allocate forever (OOM).
         val source =
@@ -444,7 +444,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "bash fence with a lone special char transpiles without hanging" in run {
+    "bash fence with a lone special char transpiles without hanging" in {
         val source =
             "```bash\n" +
                 "ls / | wc -l\n" +
@@ -458,7 +458,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- Perf guard: a large README must transpile + render in bounded time ----
 
-    "large synthetic README transpiles and renders in bounded time" in run {
+    "large synthetic README transpiles and renders in bounded time" in {
         // Mixed prose + code fences (with lone-`/` operators) + a table + lists, sized ~128 KB.
         // Pre-fix this either hangs in the tokenizer (lone `/`) or runs O(n^2) in the inline parser;
         // post-fix it is linear and completes well under the 30s budget on every platform runner.
@@ -507,7 +507,7 @@ class DocsMarkdownTest extends Test:
         val source = "```scala\n" + code + "\n```\n"
         transpileHtml(source)
 
-    "every TokenKind cssClass is in the docsTokens stylesheet" in run {
+    "every TokenKind cssClass is in the docsTokens stylesheet" in {
         // Collect all css classes from the token kinds.
         val tokenClasses = DocsMarkdownRender.TokenKind.values.map(_.cssClass).toSet
         // The stylesheet includes: tok-keyword, tok-string, tok-comment, tok-type, tok-number,
@@ -530,7 +530,7 @@ class DocsMarkdownTest extends Test:
         )
     }
 
-    "cssClass mapping is exact per kind" in run {
+    "cssClass mapping is exact per kind" in {
         assert(DocsMarkdownRender.TokenKind.Keyword.cssClass == "tok-keyword")
         assert(DocsMarkdownRender.TokenKind.Str.cssClass == "tok-string")
         assert(DocsMarkdownRender.TokenKind.Comment.cssClass == "tok-comment")
@@ -541,7 +541,7 @@ class DocsMarkdownTest extends Test:
         assert(DocsMarkdownRender.TokenKind.Operator.cssClass == "tok-operator")
     }
 
-    "keyword/number classification: val x = 1" in run {
+    "keyword/number classification: val x = 1" in {
         for html <- highlightScalaHtml("val x = 1")
         yield
             assert(html.contains("tok-keyword"), s"Expected tok-keyword for val: $html")
@@ -555,7 +555,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "string and char literals" in run {
+    "string and char literals" in {
         for html <- highlightScalaHtml("val s = \"hi\"\nval c = 'a'")
         yield
             assert(html.contains("tok-string"), s"Expected tok-string for string literal: $html")
@@ -564,7 +564,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "line and block comments" in run {
+    "line and block comments" in {
         for html <- highlightScalaHtml("// note\n/* block */\nval x = 1")
         yield
             assert(html.contains("tok-comment"), s"Expected tok-comment: $html")
@@ -573,7 +573,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "numeric literals Int/Long/Float/Double" in run {
+    "numeric literals Int/Long/Float/Double" in {
         for html <- highlightScalaHtml("val a = 1\nval b = 2L\nval c = 3.0\nval d = 4.5d")
         yield
             // Each of 1, 2L, 3.0, 4.5d should be in tok-number spans.
@@ -585,7 +585,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "interpolation parts and id: s\"x=$x\"" in run {
+    "interpolation parts and id: s\"x=$x\"" in {
         for html <- highlightScalaHtml("s\"x=$x\"")
         yield
             // The interpolator id 's' should be in tok-interpolation.
@@ -597,7 +597,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "annotation marker and name: @main def run = ()" in run {
+    "annotation marker and name: @main def run = ()" in {
         for html <- highlightScalaHtml("@main def run = ()")
         yield
             // @ should be in tok-annotation.
@@ -610,7 +610,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "operator punctuation: val f: Int => Int = _ + 1" in run {
+    "operator punctuation: val f: Int => Int = _ + 1" in {
         for html <- highlightScalaHtml("val f: Int => Int = _ + 1")
         yield
             // : should be in tok-operator.
@@ -627,7 +627,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "Type heuristic arm (a) capitalized idents" in run {
+    "Type heuristic arm (a) capitalized idents" in {
         for html <- highlightScalaHtml("val o: Option = ???\nval n = Int.MaxValue")
         yield
             // Option and Int should be classified as tok-type (arm a: uppercase first char).
@@ -638,7 +638,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "Type heuristic arm (b) lowercase after context tokens" in run {
+    "Type heuristic arm (b) lowercase after context tokens" in {
         // type alias = Int: 'alias' after KwType -> tok-type (arm b).
         // extends Foo with Bar: Bar after KwWith -> tok-type.
         // def f[a](x: a): a = x: 'a' after [ and : -> tok-type.
@@ -656,7 +656,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "Type arm (b) supertype/subtype bounds: type T >: lo <: hi" in run {
+    "Type arm (b) supertype/subtype bounds: type T >: lo <: hi" in {
         for html <- highlightScalaHtml("type T >: lo <: hi")
         yield
             // lo (after >:) and hi (after <:) should both be in tok-type via arm (b).
@@ -668,7 +668,7 @@ class DocsMarkdownTest extends Test:
     // Regression: boolean and null literals must classify as tok-keyword.
     // KwTrue, KwFalse, KwNull extend BooleanConstant/Literal, not Token$Keyword in scalameta 4.13.4.
     // Without the dedicated arm they fall through to Absent and render unhighlighted.
-    "boolean and null literals classify as tok-keyword" in run {
+    "boolean and null literals classify as tok-keyword" in {
         val snippet = "val b = true\nval n = null\nval f = false"
         for html <- highlightScalaHtml(snippet)
         yield
@@ -678,7 +678,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "any snippet completes without exception or Abort" in run {
+    "any snippet completes without exception or Abort" in {
         // No input may panic the build. Scalameta 4.13.4 in Scala3 dialect is
         // lenient and returns Right (tokens) even for partial/malformed snippets (empirically
         // verified: unterminated strings, multi-char char literals, invalid unicode escapes all
@@ -705,7 +705,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "partial expression still tokenizes (not a degrade)" in run {
+    "partial expression still tokenizes (not a degrade)" in {
         // scalameta can tokenize expressions like x.map(_ + 1) even without a complete compilation
         // unit. The result should be a fragment with tok- spans, not a single Ast.Text degrade.
         for html <- highlightScalaHtml("x.map(_ + 1)")
@@ -717,7 +717,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "byte-preserving fold round-trip" in run {
+    "byte-preserving fold round-trip" in {
         // All token texts are emitted (including whitespace/trivia), so stripping HTML tags from
         // the rendered output recovers the original body. We verify each element is present in
         // the HTML: tokens are in spans and trivia/whitespace is plain text between them.
@@ -737,7 +737,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "sbt fence uses the scala highlighter" in run {
+    "sbt fence uses the scala highlighter" in {
         val source = "```sbt\nversion := \"1.0\"\n```\n"
         for html <- transpileHtml(source)
         yield
@@ -748,7 +748,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "large-README highlight pass does not panic" in run {
+    "large-README highlight pass does not panic" in {
         // Build a large source with many scala fences.
         val sb = new StringBuilder()
         sb.append("# Large README\n\n")
@@ -777,7 +777,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- renderArticleHtml + renderArticle + transpile sentinel ----
 
-    "renderArticleHtml renders a static article to HTML" in run {
+    "renderArticleHtml renders a static article to HTML" in {
         for
             rendered <- DocsMarkdownRender.transpile("# Intro\n\nHello.")
             html     <- DocsMarkdownRender.renderArticleHtml(rendered.article)
@@ -791,7 +791,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "renderArticle fills articleHtml on Rendered" in run {
+    "renderArticle fills articleHtml on Rendered" in {
         for
             rendered      <- DocsMarkdownRender.renderArticle("## A\n\nB")
             htmlViaHelper <- renderHtml(rendered.article)
@@ -808,7 +808,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "transpile leaves articleHtml as empty sentinel" in run {
+    "transpile leaves articleHtml as empty sentinel" in {
         for rendered <- DocsMarkdownRender.transpile("# X")
         yield
             assert(rendered.articleHtml == "", s"transpile must leave articleHtml as empty sentinel, got: ${rendered.articleHtml}")
@@ -816,7 +816,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "empty source renders empty article HTML via renderArticle" in run {
+    "empty source renders empty article HTML via renderArticle" in {
         for rendered <- DocsMarkdownRender.renderArticle("")
         yield assert(
             rendered == DocsMarkdownRender.Rendered(UI.empty, "", Chunk.empty),
@@ -825,7 +825,7 @@ class DocsMarkdownTest extends Test:
         end for
     }
 
-    "SSG article HTML equals injected article HTML (parity unit assertion)" in run {
+    "SSG article HTML equals injected article HTML (parity unit assertion)" in {
         // The SSG-emitted article HTML equals the client-injected article, byte-identical.
         // Unit assertion: renderArticle produces articleHtml == renderHtml(article). This is trivially
         // true by construction (renderArticleHtml IS runRender(article).take(1)...), but is pinned as a
@@ -843,7 +843,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- sectionSnippets excludes RawEmbed from the snippet ----
 
-    "sectionSnippets excludes a RawEmbed block from the snippet" in run {
+    "sectionSnippets excludes a RawEmbed block from the snippet" in {
         // A section whose only following block is a raw HTML embed yields an empty snippet.
         // The embed content must not appear in the snippet (RawEmbed is excluded, same as Fence).
         val embedContent = """<img src="kyo.png" width="200" alt="Kyo">"""
@@ -862,7 +862,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- sectionSnippets returns one pair per heading in document order ----
 
-    "sectionSnippets returns one pair per heading in document order with slugs matching parseArticle" in run {
+    "sectionSnippets returns one pair per heading in document order with slugs matching parseArticle" in {
         val source = "## Alpha\nAlpha text.\n### Beta\nBeta.\n## Gamma\nGamma text.\n"
         for
             snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
@@ -890,7 +890,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- sectionSnippets excludes fenced code from the snippet ----
 
-    "sectionSnippets excludes fenced code blocks from the snippet" in run {
+    "sectionSnippets excludes fenced code blocks from the snippet" in {
         val source = "## Section\n```\nxyzzy\n```\n"
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield
@@ -903,7 +903,7 @@ class DocsMarkdownTest extends Test:
 
     // ---- a heading with no following prose maps to an empty snippet ----
 
-    "a heading with no following prose maps to an empty snippet" in run {
+    "a heading with no following prose maps to an empty snippet" in {
         val source = "## First\n## Second\n"
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield

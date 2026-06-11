@@ -13,7 +13,7 @@ class BrowserEmulationTest extends BrowserTest:
 
     // colorScheme = Dark applies prefers-color-scheme: dark inside the body. The single setEmulatedMedia send
     // composes the prefers-color-scheme feature; matchMedia reports the emulated value.
-    "withEmulation dark color-scheme matches inside the body" in run {
+    "withEmulation dark color-scheme matches inside the body" in {
         withBrowser {
             onPage("<html><body>emulation-dark</body></html>") {
                 Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Dark)) {
@@ -28,7 +28,7 @@ class BrowserEmulationTest extends BrowserTest:
     // nested withEmulation restores the prior scheme on exit (LIFO). Outer Light wraps inner Dark; after the inner
     // block exits, the outer block reads prefers-color-scheme: dark as false because the inner Dark was restored to the
     // outer Light from the per-tab cache.
-    "withEmulation restores the prior scheme after the body" in run {
+    "withEmulation restores the prior scheme after the body" in {
         withBrowser {
             onPage("<html><body>emulation-lifo</body></html>") {
                 Browser.withEmulation(colorScheme = Present(Browser.ColorScheme.Light)) {
@@ -47,7 +47,7 @@ class BrowserEmulationTest extends BrowserTest:
 
     // media = Print applies the print media type inside the body. matchMedia('print') reports the emulated media
     // type.
-    "withEmulation media=print is applied" in run {
+    "withEmulation media=print is applied" in {
         withBrowser {
             onPage("<html><body>emulation-print</body></html>") {
                 Browser.withEmulation(media = Present(Browser.MediaType.Print)) {
@@ -61,7 +61,7 @@ class BrowserEmulationTest extends BrowserTest:
 
     // reducedMotion = true sends prefers-reduced-motion: reduce inside the body. matchMedia reports the emulated
     // value, proving the reduced-motion feature rides the single setEmulatedMedia send.
-    "withEmulation reducedMotion is applied" in run {
+    "withEmulation reducedMotion is applied" in {
         withBrowser {
             onPage("<html><body>emulation-reduced-motion</body></html>") {
                 Browser.withEmulation(reducedMotion = true) {
@@ -86,7 +86,7 @@ class BrowserEmulationTest extends BrowserTest:
     // interrupted fiber's Result can resolve before that finalizer chain has run its `.set(Absent)` (the ordering only holds
     // on the JVM). So the cache is read by polling until the clear lands, bounded by a fixed schedule, then asserted
     // concretely. The poll re-reads the AtomicRef directly; the tab object outlives its CDP teardown.
-    "withEmulation restores on interruption" in run {
+    "withEmulation restores on interruption" in {
         val p = page("<html><body>emulation-interrupt</body></html>")
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Promise.init[BrowserTab, Any].map { tabRef =>
@@ -151,7 +151,7 @@ class BrowserEmulationTest extends BrowserTest:
     // A color-scheme-only withEmulation composes ONLY the prefers-color-scheme feature, so it must not perturb the page's
     // real prefers-reduced-motion. The body reads matchMedia('(prefers-reduced-motion: reduce)') before and inside the block
     // and asserts the value is identical, while also confirming the color-scheme emulation actually took effect inside.
-    "withEmulation color-scheme-only leaves prefers-reduced-motion untouched" in run {
+    "withEmulation color-scheme-only leaves prefers-reduced-motion untouched" in {
         withBrowser {
             onPage("<html><body>emulation-cs-only</body></html>") {
                 Browser.eval("String(window.matchMedia('(prefers-reduced-motion: reduce)').matches)").map { hostReduce =>
@@ -179,7 +179,7 @@ class BrowserEmulationTest extends BrowserTest:
     // value (which is no-preference in headless Chrome), a raw CDP override forces prefers-color-scheme: dark BEFORE the block; the
     // block's emulationOverride cache is still Absent, so its release takes the clear path. After the block, both prefers-color-scheme
     // and prefers-reduced-motion report their host values, proving the clear removed every media override, not just some of them.
-    "withEmulation restore with no prior clears all media emulation back to host" in run {
+    "withEmulation restore with no prior clears all media emulation back to host" in {
         withBrowser {
             onPage("<html><body>emulation-clear</body></html>") {
                 Browser.use { tab =>
@@ -231,7 +231,7 @@ class BrowserEmulationTest extends BrowserTest:
     // inner exit, not clear it: the inner exit re-applies the outer's prior state from the per-tab cache. Inside the inner block
     // the reduced-motion is the host value (the inner color-scheme-only apply replaces the feature set); after the inner exits but
     // still inside the outer body, prefers-reduced-motion: reduce matches again because the outer state was re-applied.
-    "withEmulation inner color-scheme-only restores the outer reduced-motion on exit" in run {
+    "withEmulation inner color-scheme-only restores the outer reduced-motion on exit" in {
         withBrowser {
             onPage("<html><body>emulation-nested-rm</body></html>") {
                 Browser.withEmulation(reducedMotion = true) {
@@ -259,7 +259,7 @@ class BrowserEmulationTest extends BrowserTest:
     // the highlights overlay is settlement-transparent. The observer is installed via a
     // no-op afterAction so __kyoMutCount is initialized; injecting the data-kyo-internal overlay does NOT change the
     // counter (the observer filters the tagged-subtree insertion), and the overlay is removed after the body.
-    "withHighlights overlay is settlement-transparent" in run {
+    "withHighlights overlay is settlement-transparent" in {
         withBrowser {
             onPage("<html><body><div id='cta'>cta</div></body></html>") {
                 // Install the observer via a no-op afterAction so __kyoMutCount exists.
@@ -285,7 +285,7 @@ class BrowserEmulationTest extends BrowserTest:
     // withHighlights draws a box at the matched element and removes it on exit.
     // Inside the body exactly one data-kyo-internal highlight box exists for the single annotation; after the body the
     // overlay is removed by the Scope.acquireRelease release.
-    "withHighlights draws a box at the element and removes it after" in run {
+    "withHighlights draws a box at the element and removes it after" in {
         withBrowser {
             onPage("<html><body><div id='cta'>CTA</div></body></html>") {
                 Browser.withHighlights(Span(Browser.Annotation(Browser.Selector.css("#cta"), label = Present("CTA")))) {
@@ -310,7 +310,7 @@ class BrowserEmulationTest extends BrowserTest:
     //     (exactly 1 [data-kyo-internal="highlights"]); the inner exit did not clobber it,
     //   - after the outer scope exits: ZERO [data-kyo-internal] nodes remain (no leak).
     // Under the old single-global-slot model the inner exit deleted the slot and the outer overlay leaked.
-    "nested withHighlights each remove only their own overlay and leave no leak" in run {
+    "nested withHighlights each remove only their own overlay and leave no leak" in {
         withBrowser {
             onPage("<html><body><div id='a'>A</div><div id='b'>B</div></body></html>") {
                 val highlightsCount = "String(document.querySelectorAll('[data-kyo-internal=\"highlights\"]').length)"

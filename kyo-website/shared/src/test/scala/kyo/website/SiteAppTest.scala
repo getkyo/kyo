@@ -5,7 +5,7 @@ import kyo.*
 /** Tests for the unified `SiteApp` shell: the persistent header structure, the relocated version
   * dropdown, and the always-present inert search-results region (the hydration-parity contract).
   */
-class SiteAppTest extends Test:
+class SiteAppTest extends WebsiteTest:
 
     private val v1        = WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true)
     private val v0        = WebsiteVersion("v0.9.3", "0.9.3", false)
@@ -71,7 +71,7 @@ class SiteAppTest extends Test:
         end for
     end renderWithQuery
 
-    "header carries the unified site-header chrome with the brand linking to /" in run {
+    "header carries the unified site-header chrome with the brand linking to /" in {
         render(versions2, home).map { html =>
             assert(html.contains("class=\"site-header\""), s"site-header bar missing: $html")
             assert(html.contains("site-header-inner"), s"site-header-inner row missing: $html")
@@ -82,7 +82,7 @@ class SiteAppTest extends Test:
         }
     }
 
-    "Docs targets the overview intro route, with no separate Modules link; Get started targets the first module" in run {
+    "Docs targets the overview intro route, with no separate Modules link; Get started targets the first module" in {
         render(versions2, home).map { html =>
             // Get started targets docsHome (the first module).
             val homeRefCount = countOccurrences(html, s"""href="$home"""")
@@ -100,7 +100,7 @@ class SiteAppTest extends Test:
         }
     }
 
-    "API and GitHub are external links opening in a new tab (Target.Blank)" in run {
+    "API and GitHub are external links opening in a new tab (Target.Blank)" in {
         render(versions2, home).map { html =>
             assert(html.contains("javadoc.io/doc/io.getkyo/kyo-core_3"), s"API javadoc link missing: $html")
             assert(html.contains("github.com/getkyo/kyo"), s"GitHub link missing: $html")
@@ -109,7 +109,7 @@ class SiteAppTest extends Test:
         }
     }
 
-    "version dropdown lists one option per version (INV-010), relocated from the apps" in run {
+    "version dropdown lists one option per version (INV-010), relocated from the apps" in {
         render(versions2, home).map { html =>
             assert(html.contains("1.0.0-RC2"), "first version label must appear")
             assert(html.contains("0.9.3"), "second version label must appear")
@@ -119,14 +119,14 @@ class SiteAppTest extends Test:
         }
     }
 
-    "version dropdown option count equals the number of versions (5)" in run {
+    "version dropdown option count equals the number of versions (5)" in {
         render(versions5, home).map { html =>
             val optionCount = countOccurrences(html, "data-kyo-dropdown-opt=")
             assert(optionCount == 5, s"expected 5 dropdown options, got $optionCount")
         }
     }
 
-    "empty versions yields a header with an empty dropdown" in run {
+    "empty versions yields a header with an empty dropdown" in {
         render(Chunk.empty, home).map { html =>
             assert(html.contains("class=\"site-header\""), "header must render with empty versions")
             val optionCount = countOccurrences(html, "data-kyo-dropdown-opt=")
@@ -134,7 +134,7 @@ class SiteAppTest extends Test:
         }
     }
 
-    "the inert empty search-results region is always present (hydration parity)" in run {
+    "the inert empty search-results region is always present (hydration parity)" in {
         render(versions2, home).map { html =>
             // The search input is present (inert until the search-wiring phase) and the
             // search-results container is rendered empty, so the SSG shell and the bundle's first
@@ -146,14 +146,14 @@ class SiteAppTest extends Test:
         }
     }
 
-    "the content slot renders the caller's body in a reactive boundary" in run {
+    "the content slot renders the caller's body in a reactive boundary" in {
         render(versions2, home).map { html =>
             assert(html.contains("data-kyo-reactive"), s"content slot must be a reactive boundary: $html")
             assert(html.contains("content-marker"), s"content slot must render the caller's body: $html")
         }
     }
 
-    "a title query renders one search-result row per hit with the module route href" in run {
+    "a title query renders one search-result row per hit with the module route href" in {
         renderWithQuery("kyo").map { html =>
             // Both module titles contain "kyo": two title hits, each a search-result row.
             val rowCount = countOccurrences(html, "class=\"search-result\"")
@@ -165,7 +165,7 @@ class SiteAppTest extends Test:
         }
     }
 
-    "a heading query renders a heading hit with a #anchor href and a sub-label" in run {
+    "a heading query renders a heading hit with a #anchor href and a sub-label" in {
         // "channels" matches the kyo-core heading text "Channels and queues" but no module title.
         renderWithQuery("channels").map { html =>
             val rowCount = countOccurrences(html, "class=\"search-result\"")

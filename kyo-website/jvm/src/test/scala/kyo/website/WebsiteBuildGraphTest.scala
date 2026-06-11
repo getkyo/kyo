@@ -3,7 +3,7 @@ package kyo.website
 import java.nio.file.Files
 import java.nio.file.Paths
 
-class WebsiteBuildGraphTest extends Test:
+class WebsiteBuildGraphTest extends WebsiteTest:
 
     // Locate the repo root by walking up from user.dir until we find build.sbt.
     private def repoRoot(): java.nio.file.Path =

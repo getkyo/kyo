@@ -2,7 +2,7 @@ package kyo.website
 
 import kyo.*
 
-class LandingAppTest extends Test:
+class LandingAppTest extends WebsiteTest:
 
     private val home = "/latest/kyo-core/"
 
@@ -12,7 +12,7 @@ class LandingAppTest extends Test:
             html <- UI.runRender(view).take(1).run
         yield html.headMaybe.getOrElse("")
 
-    "all named sections present with data-section hooks and class=feat-grid (INV-012 consumer)" in run {
+    "all named sections present with data-section hooks and class=feat-grid (INV-012 consumer)" in {
         renderLanding.map { html =>
             assert(html.contains("data-section=\"hero\""))
             assert(html.contains("data-section=\"problem\""))
@@ -28,7 +28,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "body renders no header (the header is owned by SiteApp, D5)" in run {
+    "body renders no header (the header is owned by SiteApp, D5)" in {
         renderLanding.map { html =>
             // The landing body must NOT carry its own header chrome: no data-section="header",
             // no version dropdown, no search input. Those belong to the unified SiteApp shell.
@@ -38,7 +38,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "hero carries the headline copy" in run {
+    "hero carries the headline copy" in {
         renderLanding.map { html =>
             assert(html.contains("Build with AI."))
             assert(html.contains("Ship something that "))
@@ -46,7 +46,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "outcomes grid has 6 cards each with module attribution hook" in run {
+    "outcomes grid has 6 cards each with module attribution hook" in {
         renderLanding.map { html =>
             val cellCount = countOccurrences(html, "class=\"cell\"")
             assert(cellCount == 6, s"expected 6 outcome cells, got $cellCount")
@@ -57,7 +57,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "platforms band names all three platforms" in run {
+    "platforms band names all three platforms" in {
         renderLanding.map { html =>
             assert(html.contains("JVM"))
             assert(html.contains("Browser and Node"))
@@ -65,7 +65,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io (D2)" in run {
+    "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io (D2)" in {
         renderLanding.map { html =>
             // The hero/depth/final-CTA/footer internal links now route locally to docsHome.
             assert(html.contains(s"""href="$home""""), s"in-body CTAs must target $home: $html")
@@ -76,14 +76,14 @@ class LandingAppTest extends Test:
         }
     }
 
-    "footer keeps the external Community getkyo.io identity link (D2)" in run {
+    "footer keeps the external Community getkyo.io identity link (D2)" in {
         renderLanding.map { html =>
             // The Community column's getkyo.io link is an external identity link and stays external.
             assert(html.contains("getkyo.io"), "footer Community getkyo.io identity link must remain")
         }
     }
 
-    "all content present without JS (INV-002 consumer)" in run {
+    "all content present without JS (INV-002 consumer)" in {
         renderLanding.map { html =>
             // kyo-ui HTML-encodes text: apostrophes become &#39;
             assert(html.contains("Failures don&#39;t stay hidden"))
@@ -97,7 +97,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "body carries no DOM or IO in effect row" in run {
+    "body carries no DOM or IO in effect row" in {
         // LandingApp.body returns UI < Sync (not UI < Async). Asserting via explicit annotation:
         // if the row widened to include Async the type annotation below would fail to compile.
         val _: String => Frame ?=> UI < Sync = h => LandingApp.body(h)
@@ -107,7 +107,7 @@ class LandingAppTest extends Test:
         }
     }
 
-    "logo hook present with relative path (footer brand, not raw.githubusercontent URL)" in run {
+    "logo hook present with relative path (footer brand, not raw.githubusercontent URL)" in {
         renderLanding.map { html =>
             assert(html.contains("/kyo.svg"), "logo src must use the relative vector path /kyo.svg")
             assert(!html.contains("raw.githubusercontent"), "logo must NOT use raw.githubusercontent URL")

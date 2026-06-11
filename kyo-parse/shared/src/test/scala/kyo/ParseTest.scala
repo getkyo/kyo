@@ -4,7 +4,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
     "combinators" - {
         "firstOf" - {
-            "takes first match" in run {
+            "takes first match" in {
                 val parser = Parse.firstOf(
                     Parse.literal("test").andThen(1),
                     Parse.literal("test").andThen(2)
@@ -14,7 +14,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "tries alternatives" in run {
+            "tries alternatives" in {
                 val parser = Parse.firstOf(
                     Parse.literal("hello").andThen(1),
                     Parse.literal("world").andThen(2),
@@ -25,7 +25,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "handles recursive parsers" in run {
+            "handles recursive parsers" in {
                 def nested: String < Parse[Char] =
                     Parse.firstOf(
                         Parse.between(
@@ -49,7 +49,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 end for
             }
 
-            "handles mutually recursive parsers" in run {
+            "handles mutually recursive parsers" in {
                 def term: Int < Parse[Char] =
                     Parse.firstOf(
                         Parse.int,
@@ -87,7 +87,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 end for
             }
 
-            "lazy evaluation prevents stack overflow" in run {
+            "lazy evaluation prevents stack overflow" in {
                 def nested: String < Parse[Char] =
                     Parse.firstOf(
                         Parse.between(
@@ -99,11 +99,11 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     )
 
                 val deeplyNested = "[" * lazyTestLength + "]" * lazyTestLength
-                Parse.runOrAbort(deeplyNested)(nested).map(_ => succeed)
+                Parse.runOrAbort(deeplyNested)(nested).map(result => assert(result == "[]"))
             }
 
             "overloads" - {
-                "2 parsers" in run {
+                "2 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2)
@@ -117,7 +117,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     end for
                 }
 
-                "3 parsers" in run {
+                "3 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2),
@@ -134,7 +134,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     end for
                 }
 
-                "4 parsers" in run {
+                "4 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2),
@@ -154,7 +154,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     end for
                 }
 
-                "5 parsers" in run {
+                "5 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2),
@@ -177,7 +177,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     end for
                 }
 
-                "6 parsers" in run {
+                "6 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2),
@@ -203,7 +203,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     end for
                 }
 
-                "7 parsers" in run {
+                "7 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2),
@@ -232,7 +232,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     end for
                 }
 
-                "8 parsers" in run {
+                "8 parsers" in {
                     val parser = Parse.firstOf(
                         Parse.literal("one").andThen(1),
                         Parse.literal("two").andThen(2),
@@ -267,27 +267,27 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "skipUntil" - {
-            "skips until pattern" in run {
+            "skips until pattern" in {
                 val parser = Parse.skipUntil(Parse.literal("end").andThen("found"))
                 Parse.runOrAbort("abc123end")(parser).map { result =>
                     assert(result == "found")
                 }
             }
 
-            "empty input" in run {
+            "empty input" in {
                 Parse.runResult("")(Parse.skipUntil(Parse.literal("end"))).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "large skip" in run {
+            "large skip" in {
                 val input = "a" * 10000 + "end"
                 Parse.runOrAbort(input)(Parse.skipUntil(Parse.literal("end").andThen("found"))).map { result =>
                     assert(result == "found")
                 }
             }
 
-            "pattern never matches" in run {
+            "pattern never matches" in {
                 Parse.runResult("abcdef")(Parse.skipUntil(Parse.literal("xyz"))).map { result =>
                     assert(result.isFailure)
                 }
@@ -295,7 +295,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "attempt" - {
-            "backtracks on failure" in run {
+            "backtracks on failure" in {
                 val parser =
                     Parse.attempt(Parse.literal("hello")).map { r =>
                         assert(r.isEmpty)
@@ -306,7 +306,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "preserves success" in run {
+            "preserves success" in {
                 val parser = Parse.attempt(Parse.literal("hello"))
                 Parse.runOrAbort("hello")(parser).map { r =>
                     assert(r.isDefined)
@@ -315,16 +315,16 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "peek" - {
-            "doesn't consume input on success" in run {
+            "doesn't consume input on success" in {
                 val parser =
                     for
                         _      <- Parse.peek(Parse.literal("hello"))
                         result <- Parse.literal("hello")
                     yield result
-                Parse.runOrAbort("hello")(parser).map(_ => succeed)
+                Parse.runOrAbort("hello")(parser).map(result => assert(result == "hello"))
             }
 
-            "doesn't consume input on failure" in run {
+            "doesn't consume input on failure" in {
                 val parser =
                     for
                         r      <- Parse.peek(Parse.literal("hello"))
@@ -337,40 +337,40 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "repeat" - {
-            "repeats until failure" in run {
+            "repeats until failure" in {
                 val parser = Parse.repeat(Parse.literal("a")).andThen(Parse.literal("b"))
                 Parse.runOrAbort("aaab")(parser).map { result =>
                     assert(result == ("b"))
                 }
             }
 
-            "fixed repetitions" in run {
+            "fixed repetitions" in {
                 val parser = Parse.repeat(3)(Parse.literal("a"))
                 Parse.runOrAbort("aaa")(parser).map { result =>
                     assert(result.length == 3)
                 }
             }
 
-            "fails if not enough repetitions" in run {
+            "fails if not enough repetitions" in {
                 val parser = Parse.repeat(3)(Parse.literal("a"))
                 Parse.runResult("aa")(parser).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "empty input" in run {
+            "empty input" in {
                 Parse.runOrAbort("")(Parse.repeat(Parse.literal("a"))).map { result =>
                     assert(result.isEmpty)
                 }
             }
 
-            "exceeds fixed count" in run {
+            "exceeds fixed count" in {
                 Parse.runOrAbort("aaaa")(Parse.repeat(3)(Parse.literal("a")).map(r => Parse.literal("a").andThen(r))).map { result =>
                     assert(result.length == 3)
                 }
             }
 
-            "large repetition" in run {
+            "large repetition" in {
                 val parser = Parse.repeat(1000)(Parse.literal("a"))
                 Parse.runOrAbort("a" * 1000)(parser).map { result =>
                     assert(result.length == 1000)
@@ -379,12 +379,12 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "require" - {
-            "succeeds with match" in run {
+            "succeeds with match" in {
                 val parser = Parse.require(Parse.literal("test"))
-                Parse.runOrAbort("test")(parser).map(_ => succeed)
+                Parse.runOrAbort("test")(parser).map(result => assert(result == "test"))
             }
 
-            "fails without backtracking" in run {
+            "fails without backtracking" in {
                 val parser =
                     Parse.firstOf(
                         Parse.require(Parse.literal("test")),
@@ -397,7 +397,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "separatedBy" - {
-            "comma separated numbers" in run {
+            "comma separated numbers" in {
                 val parser = Parse.separatedBy(
                     Parse.int,
                     Parse.literal(',')
@@ -407,7 +407,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "with whitespace" in run {
+            "with whitespace" in {
                 val parser = Parse.separatedBy(
                     Parse.int,
                     for
@@ -421,21 +421,21 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "single element" in run {
+            "single element" in {
                 val parser = Parse.separatedBy(Parse.int, Parse.literal(','))
                 Parse.runOrAbort("42")(parser).map { result =>
                     assert(result == Chunk(42))
                 }
             }
 
-            "empty input" in run {
+            "empty input" in {
                 val parser = Parse.separatedBy(Parse.int, Parse.literal(','))
                 Parse.runOrAbort("")(parser).map { result =>
                     assert(result.isEmpty)
                 }
             }
 
-            "missing separator fails" in run {
+            "missing separator fails" in {
                 val parser = Parse
                     .separatedBy(Parse.int.andThen(Parse.literal(' ')), Parse.literal(','))
                     .andThen(Parse.end[Char])
@@ -445,7 +445,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "multiple missing separators fails" in run {
+            "multiple missing separators fails" in {
                 val parser = Parse
                     .separatedBy(Parse.int.andThen(Parse.literal(' ')), Parse.literal(','))
                     .andThen(Parse.end[Char])
@@ -456,7 +456,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
 
             "allowTrailing" - {
-                "accepts trailing separator when enabled" in run {
+                "accepts trailing separator when enabled" in {
                     val parser = Parse.separatedBy(
                         Parse.int,
                         Parse.literal(','),
@@ -467,7 +467,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "rejects trailing separator when disabled" in run {
+                "rejects trailing separator when disabled" in {
                     val parser = Parse.separatedBy(
                         Parse.int,
                         Parse.literal(','),
@@ -478,7 +478,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "handles empty input with trailing enabled" in run {
+                "handles empty input with trailing enabled" in {
                     val parser = Parse.separatedBy(
                         Parse.int,
                         Parse.literal(','),
@@ -489,7 +489,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "handles single element with trailing enabled" in run {
+                "handles single element with trailing enabled" in {
                     val parser = Parse.separatedBy(
                         Parse.int,
                         Parse.literal(','),
@@ -500,7 +500,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "multiple trailing separators fail even when enabled" in run {
+                "multiple trailing separators fail even when enabled" in {
                     val parser = Parse.separatedBy(
                         Parse.int,
                         Parse.literal(','),
@@ -515,7 +515,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "between" - {
-            "parentheses" in run {
+            "parentheses" in {
                 val parser = Parse.between(
                     Parse.literal('('),
                     Parse.int,
@@ -526,7 +526,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "with whitespace" in run {
+            "with whitespace" in {
                 val parser = Parse.between(
                     Parse.literal('[').andThen(Parse.whitespaces),
                     Parse.int,
@@ -537,7 +537,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "nested" in run {
+            "nested" in {
                 val parser = Parse.between(
                     Parse.literal('('),
                     Parse.between(
@@ -552,7 +552,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "missing right delimiter" in run {
+            "missing right delimiter" in {
                 val parser = Parse.between(
                     Parse.literal('('),
                     Parse.int,
@@ -563,7 +563,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "missing left delimiter" in run {
+            "missing left delimiter" in {
                 val parser = Parse.between(
                     Parse.literal('('),
                     Parse.int,
@@ -576,7 +576,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "inOrder" - {
-            "two parsers" in run {
+            "two parsers" in {
                 val parser = Parse.inOrder(
                     Parse.literal("hello").andThen(1),
                     Parse.literal("world").andThen(2)
@@ -587,7 +587,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "three parsers" in run {
+            "three parsers" in {
                 val parser = Parse.inOrder(
                     Parse.literal("hello").andThen(1),
                     Parse.literal("world").andThen(2),
@@ -600,7 +600,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "four parsers" in run {
+            "four parsers" in {
                 val parser = Parse.inOrder(
                     Parse.literal("hello").andThen(1),
                     Parse.literal("world").andThen(2),
@@ -615,7 +615,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "sequence of parsers" in run {
+            "sequence of parsers" in {
                 val parser = Parse.inOrder(
                     Parse.literal("hello").andThen(1),
                     Parse.literal(" ").andThen(2),
@@ -626,7 +626,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "fails if any parser fails" in run {
+            "fails if any parser fails" in {
                 val parser = Parse.inOrder(
                     Parse.literal("hello").andThen(1),
                     Parse.literal("world").andThen(2),
@@ -637,7 +637,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "consumes input sequentially" in run {
+            "consumes input sequentially" in {
                 val parser = Parse.inOrder(
                     Parse.literal("a").andThen(1),
                     Parse.literal("b").andThen(2),
@@ -649,7 +649,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
 
             "inOrder" - {
-                "two parsers" in run {
+                "two parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("hello").andThen(1),
                         Parse.literal("world").andThen(2)
@@ -660,7 +660,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "three parsers" in run {
+                "three parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("hello").andThen(1),
                         Parse.literal("world").andThen(2),
@@ -673,7 +673,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "four parsers" in run {
+                "four parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("hello").andThen(1),
                         Parse.literal("world").andThen(2),
@@ -688,7 +688,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "five parsers" in run {
+                "five parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("a").andThen(1),
                         Parse.literal("b").andThen(2),
@@ -705,7 +705,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "six parsers" in run {
+                "six parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("a").andThen(1),
                         Parse.literal("b").andThen(2),
@@ -724,7 +724,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "seven parsers" in run {
+                "seven parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("a").andThen(1),
                         Parse.literal("b").andThen(2),
@@ -745,7 +745,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                     }
                 }
 
-                "eight parsers" in run {
+                "eight parsers" in {
                     val parser = Parse.inOrder(
                         Parse.literal("a").andThen(1),
                         Parse.literal("b").andThen(2),
@@ -772,7 +772,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "readWhile" - {
-            "reads digits" in run {
+            "reads digits" in {
                 val parser =
                     for
                         digits <- Parse.readWhile[Char](_.isDigit)
@@ -785,14 +785,14 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "empty input" in run {
+            "empty input" in {
                 val parser = Parse.readWhile[Char](_.isDigit)
                 Parse.runOrAbort("")(parser).map { result =>
                     assert(result.isEmpty)
                 }
             }
 
-            "no matching characters" in run {
+            "no matching characters" in {
                 val parser =
                     for
                         digits <- Parse.readWhile[Char](_.isDigit)
@@ -805,7 +805,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "reads until predicate fails" in run {
+            "reads until predicate fails" in {
                 val parser =
                     for
                         letters <- Parse.readWhile[Char](_.isLetter)
@@ -821,38 +821,38 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "spaced" - {
-            "handles surrounding whitespace" in run {
+            "handles surrounding whitespace" in {
                 val parser = Parse.spaced(Parse.literal("test"))
-                Parse.runOrAbort("  test  ")(parser).map(_ => succeed)
+                Parse.runOrAbort("  test  ")(parser).map(result => assert(result == "test"))
             }
 
-            "preserves inner content" in run {
+            "preserves inner content" in {
                 val parser = Parse.spaced(Parse.literal("hello world"))
-                Parse.runOrAbort("  hello world  ")(parser).map(_ => succeed)
+                Parse.runOrAbort("  hello world  ")(parser).map(result => assert(result == "hello world"))
             }
 
-            "handles no whitespace" in run {
+            "handles no whitespace" in {
                 val parser = Parse.spaced(Parse.int)
                 Parse.runOrAbort("42")(parser).map { result =>
                     assert(result == 42)
                 }
             }
 
-            "handles different whitespace types" in run {
+            "handles different whitespace types" in {
                 val parser = Parse.spaced(Parse.int)
                 Parse.runOrAbort("\t\n\r 42 \t\n\r")(parser).map { result =>
                     assert(result == 42)
                 }
             }
 
-            "preserves failure" in run {
+            "preserves failure" in {
                 val parser = Parse.spaced(Parse.literal("test"))
                 Parse.runResult("  fail  ")(parser).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "composes with other parsers" in run {
+            "composes with other parsers" in {
                 val parser = Parse.inOrder(
                     Parse.spaced(Parse.int),
                     Parse.spaced(Parse.literal("+")),
@@ -864,7 +864,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "mathematical expression with optional whitespace" in run {
+            "mathematical expression with optional whitespace" in {
                 def eval(left: Double, op: Char, right: Double): Double = op match
                     case '+' => left + right
                     case '-' => left - right
@@ -923,14 +923,14 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "custom whitespace predicate" - {
-            "only spaces" in run {
+            "only spaces" in {
                 val parser = Parse.spaced(Parse.int, _ == ' ')
                 Parse.runOrAbort("  42  ")(parser).map { result =>
                     assert(result == 42)
                 }
             }
 
-            "custom multi-char predicate" in run {
+            "custom multi-char predicate" in {
                 val customWhitespace = Set('_', '-', '~')
                 val parser           = Parse.spaced(Parse.int, customWhitespace.contains)
                 Parse.runOrAbort("__42~~--")(parser).map { result =>
@@ -938,7 +938,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
                 }
             }
 
-            "complex parser with custom whitespace" in run {
+            "complex parser with custom whitespace" in {
                 val customWhitespace = Set('.', '*')
                 val parser = Parse.spaced(
                     Parse.inOrder(
@@ -959,19 +959,19 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
     "standard parsers" - {
 
         "whitespaces" - {
-            "empty string" in run {
+            "empty string" in {
                 Parse.runOrAbort("")(Parse.whitespaces).map { result =>
                     assert(result == (""))
                 }
             }
 
-            "mixed whitespace types" in run {
+            "mixed whitespace types" in {
                 Parse.runOrAbort(" \t\n\r ")(Parse.whitespaces).map { result =>
                     assert(result == (" \t\n\r "))
                 }
             }
 
-            "large whitespace input" in run {
+            "large whitespace input" in {
                 Parse.runOrAbort(" " * 10000)(Parse.whitespaces).map { result =>
                     assert(result == (" " * 10000))
                 }
@@ -979,31 +979,31 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "int" - {
-            "positive" in run {
+            "positive" in {
                 Parse.runOrAbort("123")(Parse.int).map { result =>
                     assert(result == 123)
                 }
             }
 
-            "negative" in run {
+            "negative" in {
                 Parse.runOrAbort("-123")(Parse.int).map { result =>
                     assert(result == -123)
                 }
             }
 
-            "invalid" in run {
+            "invalid" in {
                 Parse.runResult("abc")(Parse.int).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "max int" in run {
+            "max int" in {
                 Parse.runOrAbort(s"${Int.MaxValue}")(Parse.int).map { result =>
                     assert(result == Int.MaxValue)
                 }
             }
 
-            "min int" in run {
+            "min int" in {
                 Parse.runOrAbort(s"${Int.MinValue}")(Parse.int).map { result =>
                     assert(result == Int.MinValue)
                 }
@@ -1011,41 +1011,41 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "boolean" - {
-            "true" in run {
+            "true" in {
                 Parse.runOrAbort("true")(Parse.boolean).map { result =>
                     assert(result == true)
                 }
             }
 
-            "false" in run {
+            "false" in {
                 Parse.runOrAbort("false")(Parse.boolean).map { result =>
                     assert(result == false)
                 }
             }
 
-            "invalid" in run {
+            "invalid" in {
                 Parse.runResult("xyz")(Parse.boolean).map { result =>
                     assert(result.isFailure)
                 }
             }
         }
 
-        "char" in run {
-            Parse.runOrAbort("a")(Parse.literal('a')).map(_ => succeed)
+        "char" in {
+            Parse.runOrAbort("a")(Parse.literal('a')).map(result => assert(result == 'a'))
         }
 
         "literal" - {
-            "empty literal" in run {
-                Parse.runOrAbort("")(Parse.literal("")).map(_ => succeed)
+            "empty literal" in {
+                Parse.runOrAbort("")(Parse.literal("")).map(result => assert(result == ""))
             }
 
-            "partial match" in run {
+            "partial match" in {
                 Parse.runResult("hell")(Parse.literal("hello").andThen(Parse.end[Char])).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "case sensitive" in run {
+            "case sensitive" in {
                 Parse.runResult("HELLO")(Parse.literal("hello")).map { result =>
                     assert(result.isFailure)
                 }
@@ -1053,61 +1053,61 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "decimal" - {
-            "positive" in run {
+            "positive" in {
                 Parse.runOrAbort("123.45")(Parse.decimal).map { result =>
                     assert(result == 123.45)
                 }
             }
 
-            "negative" in run {
+            "negative" in {
                 Parse.runOrAbort("-123.45")(Parse.decimal).map { result =>
                     assert(result == -123.45)
                 }
             }
 
-            "integer" in run {
+            "integer" in {
                 Parse.runOrAbort("123")(Parse.decimal).map { result =>
                     assert(result == 123.0)
                 }
             }
 
-            "invalid" in run {
+            "invalid" in {
                 Parse.runResult("abc")(Parse.decimal).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "leading dot" in run {
+            "leading dot" in {
                 Parse.runOrAbort(".123")(Parse.decimal).map { result =>
                     assert(result == 0.123)
                 }
             }
 
-            "trailing dot" in run {
+            "trailing dot" in {
                 Parse.runOrAbort("123.")(Parse.decimal).map { result =>
                     assert(result == 123.0)
                 }
             }
 
-            "multiple dots" in run {
+            "multiple dots" in {
                 Parse.runResult("1.2.3")(Parse.decimal).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "multiple leading dots" in run {
+            "multiple leading dots" in {
                 Parse.runResult("..123")(Parse.decimal).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "malformed negative" in run {
+            "malformed negative" in {
                 Parse.runResult(".-123")(Parse.decimal).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "very large precision" in run {
+            "very large precision" in {
                 Parse.runOrAbort("123.45678901234567890")(Parse.decimal).map { result =>
                     assert(result == 123.45678901234567890)
                 }
@@ -1115,38 +1115,38 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "identifier" - {
-            "valid identifiers" in run {
+            "valid identifiers" in {
                 Parse.runOrAbort("_hello123")(Parse.identifier).map { result =>
                     assert(result == ("_hello123"))
                 }
             }
 
-            "starting with number" in run {
+            "starting with number" in {
                 Parse.runResult("123abc")(Parse.identifier).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "special characters" in run {
+            "special characters" in {
                 Parse.runResult("hello@world")(Parse.identifier.andThen(Parse.end)).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "very long identifier" in run {
+            "very long identifier" in {
                 val longId = "a" * 1000
                 Parse.runOrAbort(longId)(Parse.identifier).map { result =>
                     assert(result == (longId))
                 }
             }
 
-            "unicode letters" in run {
+            "unicode letters" in {
                 Parse.runOrAbort("αβγ123")(Parse.identifier).map { result =>
                     assert(result == ("αβγ123"))
                 }
             }
 
-            "empty string" in run {
+            "empty string" in {
                 Parse.runResult("")(Parse.identifier).map { result =>
                     assert(result.isFailure)
                 }
@@ -1154,19 +1154,19 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "regex" - {
-            "simple pattern" in run {
+            "simple pattern" in {
                 Parse.runOrAbort("abc123")(Parse.regex("[a-z]+[0-9]+")).map { result =>
                     assert(result == ("abc123"))
                 }
             }
 
-            "no match" in run {
+            "no match" in {
                 Parse.runResult("123abc")(Parse.regex("[a-z]+[0-9]+")).map { result =>
                     assert(result.isFailure)
                 }
             }
 
-            "empty match pattern" in run {
+            "empty match pattern" in {
                 Parse.runOrAbort("")(Parse.regex(".*")).map { result =>
                     assert(result == (""))
                 }
@@ -1174,13 +1174,13 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "oneOf" - {
-            "single match" in run {
+            "single match" in {
                 Parse.runOrAbort("a")(Parse.anyIn("abc")).map { result =>
                     assert(result == 'a')
                 }
             }
 
-            "no match" in run {
+            "no match" in {
                 Parse.runResult("d")(Parse.anyIn("abc")).map { result =>
                     assert(result.isFailure)
                 }
@@ -1188,13 +1188,13 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "noneOf" - {
-            "valid char" in run {
+            "valid char" in {
                 Parse.runOrAbort("d")(Parse.anyNotIn("abc")).map { result =>
                     assert(result == 'd')
                 }
             }
 
-            "invalid char" in run {
+            "invalid char" in {
                 Parse.runResult("a")(Parse.anyNotIn("abc")).map { result =>
                     assert(result.isFailure)
                 }
@@ -1202,11 +1202,11 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         }
 
         "end" - {
-            "empty string" in run {
-                Parse.runOrAbort("")(Parse.end).map(_ => succeed)
+            "empty string" in {
+                Parse.runOrAbort("")(Parse.end).map(result => assert(result == ()))
             }
 
-            "non-empty string" in run {
+            "non-empty string" in {
                 Parse.runResult("abc")(Parse.end).map { result =>
                     assert(result.isFailure)
                 }
@@ -1215,7 +1215,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
     }
 
     "complex parsers" - {
-        "arithmetic expression" in run {
+        "arithmetic expression" in {
 
             def eval(left: Int, op: Char, right: Int): Int = op match
                 case '+' => left + right
@@ -1268,7 +1268,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
     "integration with other effects" - {
         "Parse with Emit" - {
-            "emit parsed values" in run {
+            "emit parsed values" in {
                 def parseAndEmit: Unit < (Parse[Char] & Emit[Int]) =
                     for
                         n1 <- Parse.int
@@ -1287,7 +1287,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             trait NumberParser:
                 def parseNumber: Int < Parse[Char]
 
-            "configurable number parsing" in run {
+            "configurable number parsing" in {
                 val hexParser = new NumberParser:
                     def parseNumber =
                         Parse.read: in =>
@@ -1311,7 +1311,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "Two Parse of different input type" in run {
+        "Two Parse of different input type" in {
             val intCharZipParser: Chunk[(Char, Int)] < (Parse[Int] & Parse[Char]) =
                 for
                     chars <- Parse.repeat(Parse.any[Char])
@@ -1326,7 +1326,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
 
     "streaming" - {
 
-        "basic streaming" in run {
+        "basic streaming" in {
             val parser = Parse.int
             val input  = Stream.init(Seq("1", "2", "3"))
             Parse.runStream(input)(parser).run.map { result =>
@@ -1334,7 +1334,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "partial inputs" in run {
+        "partial inputs" in {
             val parser =
                 for
                     r <- Parse.int
@@ -1346,7 +1346,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "with whitespace" in run {
+        "with whitespace" in {
             val parser =
                 for
                     _ <- Parse.whitespaces
@@ -1360,7 +1360,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "error handling" in run {
+        "error handling" in {
             val parser = Parse.int
             val input  = Stream.init(Seq("1", "abc", "3"))
 
@@ -1369,7 +1369,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "incomplete parse" in run {
+        "incomplete parse" in {
             val parser = Parse.literal("abc")
             val input  = Stream.init(Seq("ab"))
 
@@ -1379,7 +1379,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "large input stream" in run {
+        "large input stream" in {
             val size = 20
             val parser =
                 for
@@ -1395,7 +1395,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "empty chunks handling" in run {
+        "empty chunks handling" in {
             val parser = Parse.int
             val input  = Stream.init(Seq("", "1", "", "2", ""))
             Parse.runStream(input)(parser).run.map { result =>
@@ -1403,7 +1403,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "partial token across chunks" in run {
+        "partial token across chunks" in {
             val parser = Parse.int
             val input  = Stream.init(Seq("1", "2", "34", "5"))
             Parse.runStream(input)(parser).run.map { result =>
@@ -1411,7 +1411,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "complex token splitting" in run {
+        "complex token splitting" in {
             val parser = Parse.literal("hello world")
             val input  = Stream.init(Seq("he", "llo", " wo", "rld"))
             Parse.runStream(input)(parser).run.map { result =>
@@ -1420,7 +1420,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "accumulated state handling" in run {
+        "accumulated state handling" in {
             val parser =
                 for
                     _ <- Parse.whitespaces
@@ -1435,7 +1435,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "nested parsers with streaming" in run {
+        "nested parsers with streaming" in {
             val numberList =
                 for
                     _ <- Parse.literal('[')
@@ -1449,7 +1449,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "backtracking across chunks" in run {
+        "backtracking across chunks" in {
             val parser = Parse.firstOf(
                 Parse.literal("foo bar").andThen(1),
                 Parse.literal("foo baz").andThen(2)
@@ -1460,7 +1460,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "with Var effect" in run {
+        "with Var effect" in {
             val parser =
                 for
                     r <- Parse.int
@@ -1474,7 +1474,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "with Env effect" in run {
+        "with Env effect" in {
             val parser =
                 for
                     r         <- Parse.int
@@ -1495,15 +1495,14 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
         // under a second. The 30s wall-clock bound fails against the bug with a wide margin and passes
         // comfortably after the fix on the JVM/JS/Native runners.
         val perfLen = 500000
-        def withinBudget(label: String)(body: => Assertion): Assertion =
-            val start   = java.lang.System.nanoTime()
-            val result  = body
+        def withinBudget(label: String)(body: kyo.test.AssertScope ?=> Unit)(using kyo.test.AssertScope): Unit =
+            val start = java.lang.System.nanoTime()
+            body
             val elapsed = (java.lang.System.nanoTime() - start) / 1000000L
             assert(elapsed < 30000L, s"$label took ${elapsed}ms (budget 30000ms): repeat is not linear")
-            result
         end withinBudget
 
-        "repeat(any) over a large input is linear" in run {
+        "repeat(any) over a large input is linear" in {
             val text   = "a" * perfLen
             val parser = Parse.repeat(Parse.any[Char])
             Parse.runOrAbort(text)(parser).map { result =>
@@ -1513,7 +1512,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "readWhile over a large input is linear" in run {
+        "readWhile over a large input is linear" in {
             val text   = "a" * perfLen
             val parser = Parse.readWhile[Char](_ == 'a')
             Parse.runOrAbort(text)(parser).map { result =>
@@ -1523,7 +1522,7 @@ trait ParseTest(lazyTestLength: Int) extends ParseTestBase:
             }
         }
 
-        "literal in a repeat over a large input is linear" in run {
+        "literal in a repeat over a large input is linear" in {
             // Each iteration probes a 1-char literal then consumes a char; the literal check must be
             // O(prefix), not O(remaining).
             val text   = "a" * perfLen

@@ -8,26 +8,26 @@ import scala.language.implicitConversions
 // and visual properties) via the JVM browser test infrastructure.
 class DomStyleSheetTest extends UITest:
 
-    "element with background-color style has style attribute" in run {
+    "element with background-color style has style attribute" in {
         withUI(UI.div("styled").id("s").style(Style.bg(Style.Color.red))) {
             // The style must be rendered as an inline style or kyo-s* class
             // Either way, the element must exist and render correctly
-            Browser.assertExists(Selector.id("s")).andThen(succeed)
+            Browser.assertExists(Selector.id("s")).unit
         }
     }
 
-    "element with hover style renders and does not crash" in run {
+    "element with hover style renders and does not crash" in {
         withUI(UI.div(
             UI.span("hover-me").id("hm").style(Style.hover(Style.bold))
         )) {
             for
                 _ <- Browser.assertExists(Selector.id("hm"))
                 _ <- Browser.assertText(Selector.id("hm"), "hover-me")
-            yield succeed
+            yield ()
         }
     }
 
-    "element with focus style renders without error" in run {
+    "element with focus style renders without error" in {
         withUI(UI.div(
             UI.input.id("inp").style(Style.focus(Style.color(Style.Color.blue)))
         )) {
@@ -35,11 +35,11 @@ class DomStyleSheetTest extends UITest:
                 _ <- Browser.assertExists(Selector.id("inp"))
                 _ <- Browser.focus(Selector.id("inp"))
                 _ <- Browser.assertFocused(Selector.id("inp"))
-            yield succeed
+            yield ()
         }
     }
 
-    "two styled siblings each render independently" in run {
+    "two styled siblings each render independently" in {
         withUI(UI.div(
             UI.span("A").id("a").style(Style.bg(Style.Color.red)),
             UI.span("B").id("b").style(Style.bg(Style.Color.blue))
@@ -47,11 +47,11 @@ class DomStyleSheetTest extends UITest:
             for
                 _ <- Browser.assertText(Selector.id("a"), "A")
                 _ <- Browser.assertText(Selector.id("b"), "B")
-            yield succeed
+            yield ()
         }
     }
 
-    "styled element inside reactive zone preserves style after signal update" in run {
+    "styled element inside reactive zone preserves style after signal update" in {
         val app: UI < Async =
             for label <- Signal.initRef("before")
             yield UI.div(
@@ -65,11 +65,11 @@ class DomStyleSheetTest extends UITest:
                 _ <- Browser.assertText(Selector.id("styled"), "after")
                 // Element is still present with same id after reactive update
                 _ <- Browser.assertExists(Selector.id("styled"))
-            yield succeed
+            yield ()
         }
     }
 
-    "active style does not crash on click" in run {
+    "active style does not crash on click" in {
         withUI(UI.div(
             UI.button("Press").id("btn").style(Style.active(Style.bold))
         )) {
@@ -77,11 +77,11 @@ class DomStyleSheetTest extends UITest:
                 _ <- Browser.assertExists(Selector.id("btn"))
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("btn"), "Press")
-            yield succeed
+            yield ()
         }
     }
 
-    "displayNone style hides element from visible layout" in run {
+    "displayNone style hides element from visible layout" in {
         withUI(UI.div(
             UI.span("hidden").id("h").style(Style.displayNone),
             UI.span("visible").id("v")
@@ -89,11 +89,11 @@ class DomStyleSheetTest extends UITest:
             for
                 // The hidden span should still be in DOM (display: none, not hidden attr)
                 _ <- Browser.assertText(Selector.id("v"), "visible")
-            yield succeed
+            yield ()
         }
     }
 
-    "nested styled elements all render" in run {
+    "nested styled elements all render" in {
         withUI(UI.div.id("outer").style(Style.bg(Style.Color.Hex("#eeeeee")))(
             UI.div.id("inner").style(Style.bg(Style.Color.Hex("#cccccc")))(
                 UI.span("deep").id("deep").style(Style.color(Style.Color.black))
@@ -103,7 +103,7 @@ class DomStyleSheetTest extends UITest:
                 _ <- Browser.assertExists(Selector.id("outer"))
                 _ <- Browser.assertExists(Selector.id("inner"))
                 _ <- Browser.assertText(Selector.id("deep"), "deep")
-            yield succeed
+            yield ()
         }
     }
 

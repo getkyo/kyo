@@ -5,15 +5,15 @@ import scala.language.implicitConversions
 
 class SelectTest extends UITest:
 
-    "select exists" in run {
+    "select exists" in {
         withUI(UI.div(
             UI.select(UI.option("Alpha").value("a"), UI.option("Beta").value("b")).id("s")
         )) {
-            Browser.assertVisible(Selector.id("s")).andThen(succeed)
+            Browser.assertVisible(Selector.id("s")).unit
         }
     }
 
-    "select onChange fires" in run {
+    "select onChange fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -28,17 +28,17 @@ class SelectTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "Selected:")
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "Selected:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "select disabled" in run {
+    "select disabled" in {
         withUI(UI.div(UI.select.id("s").disabled(true))) {
-            Browser.assertDisabled(Selector.id("s")).andThen(succeed)
+            Browser.assertDisabled(Selector.id("s")).unit
         }
     }
 
-    "select with initial value" in run {
+    "select with initial value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("b")
             yield UI.div(
@@ -49,11 +49,11 @@ class SelectTest extends UITest:
                 ref.map(v => UI.span(s"Val:$v").id("v"))
             )
         withUI(app) {
-            Browser.assertText(Selector.id("v"), "Val:b").andThen(succeed)
+            Browser.assertText(Selector.id("v"), "Val:b").unit
         }
     }
 
-    "select onChange updates display" in run {
+    "select onChange updates display" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -69,11 +69,11 @@ class SelectTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "Current:a")
                 _ <- Browser.select(Selector.id("s"), "c")
                 _ <- Browser.assertText(Selector.id("v"), "Current:c")
-            yield succeed
+            yield ()
         }
     }
 
-    "opt children render selected option visible" in run {
+    "opt children render selected option visible" in {
         withUI(UI.div(
             UI.select(
                 UI.option("Alpha").value("a"),
@@ -81,11 +81,11 @@ class SelectTest extends UITest:
                 UI.option("Gamma").value("c")
             ).id("s")
         )) {
-            Browser.assertVisible(Selector.id("s")).andThen(succeed)
+            Browser.assertVisible(Selector.id("s")).unit
         }
     }
 
-    "opt value separate from text" in run {
+    "opt value separate from text" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -98,22 +98,22 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.select(Selector.id("s"), "internal-val")
                 _ <- Browser.assertText(Selector.id("v"), "Got:internal-val")
-            yield succeed
+            yield ()
         }
     }
 
-    "opt selected true pre-selects" in run {
+    "opt selected true pre-selects" in {
         withUI(UI.div(
             UI.select(
                 UI.option("Alpha").value("a"),
                 UI.option("Beta").value("b").selected(true)
             ).id("s")
         )) {
-            Browser.assertVisible(Selector.id("s")).andThen(succeed)
+            Browser.assertVisible(Selector.id("s")).unit
         }
     }
 
-    "value signalRef binding" in run {
+    "value signalRef binding" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -128,11 +128,11 @@ class SelectTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "Bound:a")
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "Bound:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "value initial assertValue" in run {
+    "value initial assertValue" in {
         val app: UI < Async =
             for ref <- Signal.initRef("b")
             yield UI.div(
@@ -142,11 +142,11 @@ class SelectTest extends UITest:
                 ).id("s").value(ref)
             )
         withUI(app) {
-            Browser.assertVisible(Selector.id("s")).andThen(succeed)
+            Browser.assertVisible(Selector.id("s")).unit
         }
     }
 
-    "select each option in sequence" in run {
+    "select each option in sequence" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -165,11 +165,11 @@ class SelectTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "S:b")
                 _ <- Browser.select(Selector.id("s"), "c")
                 _ <- Browser.assertText(Selector.id("v"), "S:c")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange fires correct value" in run {
+    "onChange fires correct value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -183,20 +183,20 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "Changed:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus select" in run {
+    "focus select" in {
         withUI(UI.div(UI.select(UI.option("A").value("a")).id("s"))) {
             for
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertVisible(Selector.id("s"))
-            yield succeed
+            yield ()
         }
     }
 
-    "select onFocus fires" in run {
+    "select onFocus fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -207,11 +207,11 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "select onBlur fires" in run {
+    "select onBlur fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -224,11 +224,11 @@ class SelectTest extends UITest:
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled select no fire" in run {
+    "disabled select no fire" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -242,11 +242,11 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "disabled signal toggle" in run {
+    "disabled signal toggle" in {
         val app: UI < Async =
             for
                 disabled <- Signal.initRef(true)
@@ -268,13 +268,13 @@ class SelectTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("s"))
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from SelectKeyboardTest ----
 
-    "select changes value" in run {
+    "select changes value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -286,11 +286,11 @@ class SelectTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:a")
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "val:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "select fires onChange (keyboard)" in run {
+    "select fires onChange (keyboard)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -302,11 +302,11 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.select(Selector.id("s"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "changed:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "select disabled no change" in run {
+    "select disabled no change" in {
         val app: UI < Async =
             for ref <- Signal.initRef("a")
             yield UI.div(
@@ -318,11 +318,11 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("v"), "val:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "select with 1 option selectable" in run {
+    "select with 1 option selectable" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -333,11 +333,11 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.select(Selector.id("s"), "only")
                 _ <- Browser.assertText(Selector.id("v"), "val:only")
-            yield succeed
+            yield ()
         }
     }
 
-    "Tab from select moves focus" in run {
+    "Tab from select moves focus" in {
         withUI(UI.div(
             UI.select(UI.option("A").value("a")).id("s"),
             UI.input.id("i")
@@ -346,17 +346,17 @@ class SelectTest extends UITest:
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.press(Selector.id("s"), Key.Tab)
                 _ <- Browser.assertVisible(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
-    "select with 0 options no crash" in run {
+    "select with 0 options no crash" in {
         withUI(UI.div(UI.select().id("s"))) {
-            Browser.assertVisible(Selector.id("s")).andThen(succeed)
+            Browser.assertVisible(Selector.id("s")).unit
         }
     }
 
-    "focus select Space opens dropdown" in run {
+    "focus select Space opens dropdown" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(UI.dropdown("Alpha" -> "a", "Beta" -> "b").id("d").value(selected))
@@ -364,11 +364,11 @@ class SelectTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("d-trigger"))
                 _ <- Browser.assertVisible(Selector.id("d-options"))
-            yield succeed
+            yield ()
         }
     }
 
-    "open dropdown ArrowDown highlights next" in run {
+    "open dropdown ArrowDown highlights next" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(UI.dropdown("Alpha" -> "a", "Beta" -> "b").id("d").value(selected))
@@ -382,11 +382,11 @@ class SelectTest extends UITest:
                     "data-kyo-dropdown-hl",
                     "option 1 highlighted"
                 )(_.nonEmpty)
-            yield succeed
+            yield ()
         }
     }
 
-    "open dropdown ArrowUp highlights previous" in run {
+    "open dropdown ArrowUp highlights previous" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(UI.dropdown("Alpha" -> "a", "Beta" -> "b").id("d").value(selected))
@@ -401,11 +401,11 @@ class SelectTest extends UITest:
                     "data-kyo-dropdown-hl",
                     "option 0 highlighted"
                 )(_.nonEmpty)
-            yield succeed
+            yield ()
         }
     }
 
-    "open dropdown Enter confirms selection" in run {
+    "open dropdown Enter confirms selection" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(
@@ -420,11 +420,11 @@ class SelectTest extends UITest:
                 _ <- Browser.press(Selector.id("d-trigger"), Key.ArrowDown)
                 _ <- Browser.press(Selector.id("d-trigger"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "val:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "open dropdown Escape cancels" in run {
+    "open dropdown Escape cancels" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(
@@ -439,11 +439,11 @@ class SelectTest extends UITest:
                 _ <- Browser.press(Selector.id("d-trigger"), Key.Escape)
                 _ <- Browser.assertNotVisible(Selector.id("d-options"))
                 _ <- Browser.assertText(Selector.id("v"), "val:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "open dropdown type m jumps to option starting with m" in run {
+    "open dropdown type m jumps to option starting with m" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(
@@ -459,11 +459,11 @@ class SelectTest extends UITest:
                     "data-kyo-dropdown-hl",
                     "option 1 (Mango) highlighted"
                 )(_.nonEmpty)
-            yield succeed
+            yield ()
         }
     }
 
-    "select with 100 options scrollable" in run {
+    "select with 100 options scrollable" in {
         val opts = (1 to 100).map(i => s"Option$i" -> s"v$i")
         val app: UI < Async =
             for selected <- Signal.initRef("v1")
@@ -482,11 +482,11 @@ class SelectTest extends UITest:
                     "data-kyo-dropdown-hl",
                     "option 5 highlighted after 5 ArrowDowns"
                 )(_.nonEmpty)
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple selects only one open at a time" in run {
+    "multiple selects only one open at a time" in {
         withUI(UI.div(
             UI.dropdown("X" -> "x").id("d1"),
             UI.dropdown("Y" -> "y").id("d2")
@@ -497,11 +497,11 @@ class SelectTest extends UITest:
                 _ <- Browser.press(Selector.id("d2-trigger"), Key.Space)
                 _ <- Browser.assertVisible(Selector.id("d2-options"))
                 _ <- Browser.assertNotVisible(Selector.id("d1-options"))
-            yield succeed
+            yield ()
         }
     }
 
-    "select inside form Enter does not submit while open" in run {
+    "select inside form Enter does not submit while open" in {
         val app: UI < Async =
             for submitted <- Signal.initRef(false)
             yield UI.div(
@@ -517,11 +517,11 @@ class SelectTest extends UITest:
                 _ <- Browser.assertVisible(Selector.id("d-options"))
                 _ <- Browser.press(Selector.id("d-trigger"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("s"), "not-submitted")
-            yield succeed
+            yield ()
         }
     }
 
-    "Tab from open select closes dropdown" in run {
+    "Tab from open select closes dropdown" in {
         val app: UI < Async =
             for selected <- Signal.initRef("a")
             yield UI.div(
@@ -534,7 +534,7 @@ class SelectTest extends UITest:
                 _ <- Browser.assertVisible(Selector.id("d-options"))
                 _ <- Browser.press(Selector.id("d-trigger"), Key.Tab)
                 _ <- Browser.assertNotVisible(Selector.id("d-options"))
-            yield succeed
+            yield ()
         }
     }
 

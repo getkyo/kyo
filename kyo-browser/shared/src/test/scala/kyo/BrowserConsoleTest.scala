@@ -6,7 +6,7 @@ class BrowserConsoleTest extends BrowserTest:
 
     // ---- consoleLogs ----
 
-    "consoleLogs captures console.log messages" in run {
+    "consoleLogs captures console.log messages" in {
         withBrowser {
             onPage("<html><body><div id='content'>hello</div></body></html>") {
                 // Log some messages and read them back
@@ -23,7 +23,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs clears after reading" in run {
+    "consoleLogs clears after reading" in {
         withBrowser {
             onPage("<html><body><div>test</div></body></html>") {
                 Browser.eval("console.log('first'); 'ok'").andThen {
@@ -41,7 +41,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs returns the first console.log emitted at page load" in run {
+    "consoleLogs returns the first console.log emitted at page load" in {
         withBrowser {
             // The script runs immediately at page load, before any consoleLogs call
             onPage("""<html><body>
@@ -57,7 +57,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs across two reads returns disjoint batches and clears the buffer between them" in run {
+    "consoleLogs across two reads returns disjoint batches and clears the buffer between them" in {
         withBrowser {
             onPage("<html><body><div>test</div></body></html>") {
                 // Drain any logs from page load
@@ -85,7 +85,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs captures warn and error entries in addition to log" in run {
+    "consoleLogs captures warn and error entries in addition to log" in {
         withBrowser {
             onPage("<html><body><div>test</div></body></html>") {
                 // Drain any logs from page load
@@ -111,7 +111,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs distinguishes log, warn, error levels with correct ordering" in run {
+    "consoleLogs distinguishes log, warn, error levels with correct ordering" in {
         // ConsoleMessage is a typed value with an explicit level field, not a prefix-smuggled string.
         withBrowser {
             onPage("<html><body><div>levels</div></body></html>") {
@@ -130,7 +130,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs(Level.Error) filters the drain to errors only" in run {
+    "consoleLogs(Level.Error) filters the drain to errors only" in {
         withBrowser {
             onPage("<html><body><div>filter</div></body></html>") {
                 Browser.consoleLogs.unit.andThen {
@@ -146,7 +146,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs inside withPopup captures page-load messages from the popup tab" in run {
+    "consoleLogs inside withPopup captures page-load messages from the popup tab" in {
         withBrowser {
             onPage("""<html><body>
                 <button id='openBtn' onclick="window.open('about:blank', '_blank');">Open</button>
@@ -169,7 +169,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs inside withNewTab captures page-load messages from the new tab" in run {
+    "consoleLogs inside withNewTab captures page-load messages from the new tab" in {
         withBrowser {
             onPage("<html><body><div>parent</div></body></html>") {
                 Browser.withNewTab {
@@ -188,7 +188,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "consoleLogs inside withFork captures page-load messages from the forked tab" in run {
+    "consoleLogs inside withFork captures page-load messages from the forked tab" in {
         withBrowserOnLocalhost {
             Browser.withFork {
                 onPage("""<html><body>
@@ -207,7 +207,7 @@ class BrowserConsoleTest extends BrowserTest:
 
     // ---- recordConsole (Chrome-backed) ----
 
-    "recordConsole captures log/warn/error emitted during the body" in run {
+    "recordConsole captures log/warn/error emitted during the body" in {
         withBrowser {
             onPage("<html><body><div>rec</div></body></html>") {
                 Browser.recordConsole {
@@ -232,7 +232,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "recordConsole captures uncaught errors via exceptionThrown" in run {
+    "recordConsole captures uncaught errors via exceptionThrown" in {
         withBrowser {
             onPage("<html><body><div>throw</div></body></html>") {
                 Browser.recordConsole {
@@ -247,7 +247,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "recordConsole captures the new Info and Debug levels" in run {
+    "recordConsole captures the new Info and Debug levels" in {
         withBrowser {
             onPage("<html><body><div>levels</div></body></html>") {
                 Browser.recordConsole {
@@ -268,7 +268,7 @@ class BrowserConsoleTest extends BrowserTest:
         }
     }
 
-    "recordConsole tears down the dispatcher on body exit" in run {
+    "recordConsole tears down the dispatcher on body exit" in {
         withBrowser {
             onPage("<html><body><div>teardown</div></body></html>") {
                 Browser.recordConsole {

@@ -10,7 +10,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- click ----
 
-    "click button triggers handler" in run {
+    "click button triggers handler" in {
         withBrowser {
             onPage(
                 "<button id='btn' onclick='document.getElementById(\"result\").textContent=\"clicked\"'>Click Me</button><div id='result'>not clicked</div>"
@@ -24,7 +24,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "single click dispatches exactly one DOM click event" in run {
+    "single click dispatches exactly one DOM click event" in {
         withBrowser {
             onPage("""<!DOCTYPE html><html><body>
                 <button id="btn">click me</button>
@@ -36,12 +36,12 @@ class BrowserMutationTest extends BrowserTest:
                 for
                     _ <- Browser.click(Browser.Selector.css("#btn"))
                     _ <- evalAssert("window.__clicks", "1")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "click on a missing selector fails with BrowserElementNotActionableException(NotAttached)" in run {
+    "click on a missing selector fails with BrowserElementNotActionableException(NotAttached)" in {
         withBrowser {
             onPage("<div>Nothing clickable</div>") {
                 tight {
@@ -50,7 +50,7 @@ class BrowserMutationTest extends BrowserTest:
                     }.map { result =>
                         result match
                             case Result.Failure(BrowserElementNotActionableException(_, Reason.NotAttached)) =>
-                                succeed
+                                ()
                             case other =>
                                 fail(s"Expected BrowserElementNotActionableException(NotAttached) for missing selector but got $other")
                     }
@@ -59,7 +59,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "click element appearing after delay retries" in run {
+    "click element appearing after delay retries" in {
         val html = """<div id="container"></div><div id="result">waiting</div>""" +
             """<script>setTimeout(function(){var b=document.createElement('button');b.id='delayed';""" +
             """b.onclick=function(){document.getElementById('result').textContent='clicked'};""" +
@@ -77,7 +77,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- fill ----
 
-    "fill empty input sets value" in run {
+    "fill empty input sets value" in {
         withBrowser {
             onPage("<input id='name' type='text' value='' />") {
                 Browser.fill(Browser.Selector.css("#name"), "Alice").andThen {
@@ -89,7 +89,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill replaces existing text" in run {
+    "fill replaces existing text" in {
         withBrowser {
             onPage("<input id='name' type='text' value='Bob' />") {
                 Browser.fill(Browser.Selector.css("#name"), "Alice").andThen {
@@ -101,7 +101,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill with unicode" in run {
+    "fill with unicode" in {
         withBrowser {
             onPage("<input id='name' type='text' value='' />") {
                 Browser.fill(Browser.Selector.css("#name"), "caf\u00e9").andThen {
@@ -119,7 +119,7 @@ class BrowserMutationTest extends BrowserTest:
     // CR, tab) must be escaped. The escape contract covers all control characters and mixed/unicode/emoji content.
     // These tests round-trip the input through the live DOM to lock preservation.
 
-    "fill preserves backslash" in run {
+    "fill preserves backslash" in {
         withBrowser {
             onPage("<input id='i' type='text' />") {
                 Browser.fill(Browser.Selector.css("#i"), "a\\b").andThen {
@@ -131,7 +131,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill preserves single quote" in run {
+    "fill preserves single quote" in {
         withBrowser {
             onPage("<input id='i' type='text' />") {
                 Browser.fill(Browser.Selector.css("#i"), "can't").andThen {
@@ -143,7 +143,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill preserves double quote" in run {
+    "fill preserves double quote" in {
         withBrowser {
             onPage("<input id='i' type='text' />") {
                 Browser.fill(Browser.Selector.css("#i"), "he said \"hi\"").andThen {
@@ -155,7 +155,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill with carriage return does not cause a JS syntax error" in run {
+    "fill with carriage return does not cause a JS syntax error" in {
         // The unified JS-fallback path drives the prototype `value` setter, which per HTML spec normalizes
         // `\r` to `\n` for `<textarea>` (the storage normalization happens at set-time, the getter then returns the
         // stored string). What we test here is that the fill does *not* crash with a JS SyntaxError and that the
@@ -174,7 +174,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill preserves tab character in the inserted text" in run {
+    "fill preserves tab character in the inserted text" in {
         withBrowser {
             onPage("<input id='i' type='text' />") {
                 Browser.fill(Browser.Selector.css("#i"), "a\tb").andThen {
@@ -186,7 +186,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill preserves a mix of all escape-sensitive chars" in run {
+    "fill preserves a mix of all escape-sensitive chars" in {
         // The unified JS-fallback path drives the value setter on the element prototype, which per HTML spec normalizes
         // `\r\n` and lone `\r` to `\n` for `<textarea>` / `<input>`.
         // All other escape-sensitive chars (backslash, quotes, tab, embedded `\n`) round-trip exactly.
@@ -203,7 +203,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill preserves emoji (supplementary plane)" in run {
+    "fill preserves emoji (supplementary plane)" in {
         withBrowser {
             onPage("<input id='i' type='text' />") {
                 Browser.fill(Browser.Selector.css("#i"), "hi \uD83D\uDE00 bye").andThen {
@@ -215,7 +215,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill preserves a JSON-shaped payload with quotes and escapes" in run {
+    "fill preserves a JSON-shaped payload with quotes and escapes" in {
         withBrowser {
             val json = """{"name":"don't","value":"a\\b"}"""
             onPage("<input id='i' type='text' />") {
@@ -228,7 +228,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on a textarea preserves multiline content" in run {
+    "fill on a textarea preserves multiline content" in {
         withBrowser {
             onPage("<textarea id='t'></textarea>") {
                 Browser.fill(Browser.Selector.css("#t"), "first\nsecond\nthird").andThen {
@@ -246,7 +246,7 @@ class BrowserMutationTest extends BrowserTest:
     // the framework compatibility goal (React / Vue controlled inputs), the settlement composition (debounced validation), the gate
     // contract (NotFillable), the readback contract (FillDesync on mismatch), and the CDP transport contract (long strings, IME events).
 
-    "fill on a vanilla input sets value" in run {
+    "fill on a vanilla input sets value" in {
         withBrowser {
             onPage("<input id='i' type='text' />") {
                 Browser.fill(Browser.Selector.css("#i"), "hello world").andThen {
@@ -258,7 +258,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on vanilla input fires input and change events" in run {
+    "fill on vanilla input fires input and change events" in {
         // Install listeners that record each `input` / `change` event. `fill` clears then types, so we expect >=1 of each; the exact
         // count is implementation-dependent (Backspace deletion fires `input`; each `Input.insertText` batch fires at least one `input`
         // and a `change` on blur).
@@ -282,7 +282,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on a React-like controlled input updates via framework state" in run {
+    "fill on a React-like controlled input updates via framework state" in {
         // Simulate a React-style controlled input: on every `input` event we commit the DOM value into `window.__reactState.value`; an
         // outer tick re-assigns the DOM value FROM state so the input is truly controlled by state rather than the DOM. For the fill to
         // be seen by the framework, the `input` event must fire, which `Input.insertText` guarantees.
@@ -307,7 +307,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on a Vue-like v-model input updates via framework state" in run {
+    "fill on a Vue-like v-model input updates via framework state" in {
         // Vue's `v-model` syncs on `input`. Same shape as the React fixture but we only commit to state on `input`; no re-assignment
         // loop. The DOM value IS the canonical state, but the framework's observable is the state object, so we read that back.
         withBrowser {
@@ -330,7 +330,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill clears the existing value before typing" in run {
+    "fill clears the existing value before typing" in {
         withBrowser {
             onPage("<input id='i' type='text' value='old-value-here' />") {
                 Browser.fill(Browser.Selector.css("#i"), "new").andThen {
@@ -342,7 +342,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill triggers a debounced validation that awaits mutation settlement" in run {
+    "fill triggers a debounced validation that awaits mutation settlement" in {
         // On `input`, schedule a setTimeout that writes to #validation 50ms later. MutationSettlement should have awaited the
         // quiescence window past the setTimeout, so reading #validation immediately after fill returns sees the "valid" text.
         withBrowser {
@@ -365,7 +365,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on a non-INPUT target fails with NotActionable(NotFillable)" in run {
+    "fill on a non-INPUT target fails with NotActionable(NotFillable)" in {
         val p = page("<div id='d'>not an input</div>")
         withBrowser {
             Browser.goto(p).andThen {
@@ -376,8 +376,9 @@ class BrowserMutationTest extends BrowserTest:
                         result match
                             case Result.Failure(ex: BrowserElementNotActionableException) =>
                                 ex.reason match
-                                    case Reason.NotFillable("div") => succeed
-                                    case other                     => fail(s"Expected NotFillable(\"div\") but got $other")
+                                    case r @ Reason.NotFillable("div") =>
+                                        assert(r == Reason.NotFillable("div"), s"expected NotFillable(div) but got $r")
+                                    case other => fail(s"Expected NotFillable(\"div\") but got $other")
                             case other =>
                                 fail(s"Expected BrowserElementNotActionableException(NotFillable) but got $other")
                         end match
@@ -387,7 +388,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill with a very long string types all characters (no truncation)" in run {
+    "fill with a very long string types all characters (no truncation)" in {
         // 5000 chars exercises the single-shot Input.insertText path well beyond typical form field lengths.
         val long = "abcde" * 1000
         val p    = page("<input id='i' type='text' />")
@@ -409,7 +410,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill value readback fails fast when framework rejects the value" in run {
+    "fill value readback fails fast when framework rejects the value" in {
         // Fixture: on every `input` event the framework resets `el.value = ''`. The readback sees the empty string (not `text`), so
         // `FillDesync` fires, the Retry loop exhausts the schedule, and the final abort surfaces as a NotActionable(FillDesync).
         withBrowser {
@@ -448,7 +449,7 @@ class BrowserMutationTest extends BrowserTest:
     // and was rejected, or never got there at all. Embedding "tried '...' but got '...'" makes the diff visible.
     // -------------------------------------------------------------------------
 
-    "FillDesync exception message embeds the attempted and observed values" in run {
+    "FillDesync exception message embeds the attempted and observed values" in {
         withBrowser {
             onPage(
                 """<input id='i' type='text' />
@@ -476,7 +477,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill round-trips CJK text via the JS-fallback path" in run {
+    "fill round-trips CJK text via the JS-fallback path" in {
         // The unified JS-fallback path does NOT fire `compositionstart` / `compositionend` events for plain text fills.
         // IME-aware frameworks must subscribe to `input` events instead. This test pins the value-preservation contract
         // for non-ASCII input AND verifies that composition events do NOT fire (preventing accidental re-introduction
@@ -515,7 +516,7 @@ class BrowserMutationTest extends BrowserTest:
     // end. The tests below cover input-type coverage (date/time/number/range/color/textarea) and the event-count +
     // caret contract.
 
-    "fill on input type=date sets ISO date value" in run {
+    "fill on input type=date sets ISO date value" in {
         // Input.insertText rejects non-printable characters that the date editor synthesizes; fill must use
         // a keyboard-event path that the date editor accepts.
         withBrowser {
@@ -529,7 +530,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=time sets HH:MM value" in run {
+    "fill on input type=time sets HH:MM value" in {
         withBrowser {
             onPage("<input id='t' type='time' />") {
                 Browser.fill(Browser.Selector.id("t"), "13:45").andThen {
@@ -541,7 +542,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=datetime-local sets full timestamp" in run {
+    "fill on input type=datetime-local sets full timestamp" in {
         withBrowser {
             onPage("<input id='dt' type='datetime-local' />") {
                 Browser.fill(Browser.Selector.id("dt"), "2025-12-31T13:45").andThen {
@@ -553,7 +554,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=month sets YYYY-MM" in run {
+    "fill on input type=month sets YYYY-MM" in {
         withBrowser {
             onPage("<input id='m' type='month' />") {
                 Browser.fill(Browser.Selector.id("m"), "2025-12").andThen {
@@ -565,7 +566,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=week sets YYYY-Www" in run {
+    "fill on input type=week sets YYYY-Www" in {
         withBrowser {
             onPage("<input id='w' type='week' />") {
                 Browser.fill(Browser.Selector.id("w"), "2025-W52").andThen {
@@ -577,7 +578,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=number sets numeric string" in run {
+    "fill on input type=number sets numeric string" in {
         withBrowser {
             onPage("<input id='n' type='number' />") {
                 Browser.fill(Browser.Selector.id("n"), "42").andThen {
@@ -593,7 +594,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=number with non-numeric text aborts FillDesync after retry timeout" in run {
+    "fill on input type=number with non-numeric text aborts FillDesync after retry timeout" in {
         // Per HTML spec the value setter stores '' for non-numeric input. The unified shim sets via the prototype
         // setter, then verifyFilledValue reads el.value === '' which doesn't match the requested 'abc' and raises
         // BrowserElementNotActionableException(_, FillDesync). The withRetry envelope retries until the schedule
@@ -620,7 +621,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=range sets the slider value and dispatches input event" in run {
+    "fill on input type=range sets the slider value and dispatches input event" in {
         // Contract: exactly one input event per fill.
         withBrowser {
             onPage(
@@ -640,7 +641,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=color sets hex color" in run {
+    "fill on input type=color sets hex color" in {
         withBrowser {
             onPage("<input id='c' type='color' />") {
                 Browser.fill(Browser.Selector.id("c"), "#ff0000").andThen {
@@ -652,7 +653,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on textarea preserves embedded newlines" in run {
+    "fill on textarea preserves embedded newlines" in {
         // Input.insertText rejects newlines; fill must use a separate key-dispatch path to deliver them.
         withBrowser {
             onPage("<textarea id='t'></textarea>") {
@@ -665,7 +666,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=text preserves leading whitespace" in run {
+    "fill on input type=text preserves leading whitespace" in {
         // Input.insertText trims leading whitespace; fill must preserve it via a different input path.
         withBrowser {
             onPage("<input id='t' type='text' />") {
@@ -678,7 +679,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on input type=text preserves trailing whitespace" in run {
+    "fill on input type=text preserves trailing whitespace" in {
         withBrowser {
             onPage("<input id='t' type='text' />") {
                 Browser.fill(Browser.Selector.id("t"), "hello  ").andThen {
@@ -690,7 +691,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on empty input fires exactly one input and one change event" in run {
+    "fill on empty input fires exactly one input and one change event" in {
         // Contract: exactly one `input` and one `change` event per fill, regardless of prior content.
         withBrowser {
             onPage(
@@ -716,7 +717,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on non-empty input fires exactly one input and one change event" in run {
+    "fill on non-empty input fires exactly one input and one change event" in {
         // There is no clear-then-type intermediate `input` event; the unified path replaces
         // the value in a single setter call.
         withBrowser {
@@ -743,7 +744,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill('') fires exactly one input event with empty value" in run {
+    "fill('') fires exactly one input event with empty value" in {
         // Even an empty fill MUST produce a single observable `input` event so frameworks see the cleared state.
         withBrowser {
             onPage(
@@ -770,7 +771,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "sequential fill('a') + fill('b') fires exactly 2 input events total" in run {
+    "sequential fill('a') + fill('b') fires exactly 2 input events total" in {
         // Each fill is its own observable transition (onInput called for each fill, not batched).
         withBrowser {
             onPage(
@@ -795,7 +796,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill leaves the input focused with caret at end" in run {
+    "fill leaves the input focused with caret at end" in {
         // Prerequisite for press-after-fill correctness: fill leaves the input focused with caret at end.
         withBrowser {
             onPage("<input id='t' type='text' />") {
@@ -816,7 +817,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on a select element delegates to Browser.select" in run {
+    "fill on a select element delegates to Browser.select" in {
         // SELECT elements short-circuit to Browser.select before the JS-fallback path runs.
         withBrowser {
             onPage(
@@ -831,7 +832,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill on <input> silently strips embedded newlines per HTML value-sanitization" in run {
+    "fill on <input> silently strips embedded newlines per HTML value-sanitization" in {
         // HTML spec: the value-sanitization algorithm for `<input type=text>` (and most other input types) strips
         // any `\n` from the assigned value. `<textarea>` keeps newlines (covered by H.10). The unified JS-fallback
         // calls the prototype `value` setter, which goes through the sanitization algorithm, so the readback in
@@ -847,7 +848,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "focus event delivery: click(a) then click(b) emits focus:a, blur:a, focus:b on the page" in run {
+    "focus event delivery: click(a) then click(b) emits focus:a, blur:a, focus:b on the page" in {
         // Regression coverage for the click → click focus event-delivery contract. A page-side listener records every focus/blur
         // event; if mutation settlement closed before the second click's focus event ran, the recorded sequence would be missing
         // the trailing "focus:b" entry.
@@ -877,7 +878,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- check / uncheck ----
 
-    "check sets checkbox to checked" in run {
+    "check sets checkbox to checked" in {
         withBrowser {
             onPage("<input id='cb' type='checkbox' role='checkbox' />") {
                 Browser.check(Browser.Selector.css("#cb")).andThen {
@@ -889,7 +890,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "check is idempotent" in run {
+    "check is idempotent" in {
         withBrowser {
             onPage("<input id='cb' type='checkbox' role='checkbox' checked />") {
                 Browser.check(Browser.Selector.css("#cb")).andThen {
@@ -901,7 +902,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "uncheck clears checkbox" in run {
+    "uncheck clears checkbox" in {
         withBrowser {
             onPage("<input id='cb' type='checkbox' role='checkbox' checked />") {
                 Browser.uncheck(Browser.Selector.css("#cb")).andThen {
@@ -913,7 +914,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "uncheck is idempotent" in run {
+    "uncheck is idempotent" in {
         withBrowser {
             onPage("<input id='cb' type='checkbox' role='checkbox' />") {
                 Browser.uncheck(Browser.Selector.css("#cb")).andThen {
@@ -927,7 +928,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- select ----
 
-    "select valid option changes value" in run {
+    "select valid option changes value" in {
         withBrowser {
             onPage("<select id='color'><option value='red'>Red</option><option value='blue'>Blue</option></select>") {
                 Browser.select(Browser.Selector.css("#color"), "blue").andThen {
@@ -941,7 +942,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- typeText ----
 
-    "typeText characters appear in focused input" in run {
+    "typeText characters appear in focused input" in {
         withBrowser {
             onPage("<input id='input' type='text' value='' />") {
                 Browser.focus(Browser.Selector.css("#input")).andThen {
@@ -958,7 +959,7 @@ class BrowserMutationTest extends BrowserTest:
     // typeText must enter every character in order. A mixed-case string with digits exercises the
     // substring-per-index path; the assertion verifies both length and ordering, i.e. no characters
     // dropped, duplicated, or reordered.
-    "typeText preserves order across mixed-case + digits" in run {
+    "typeText preserves order across mixed-case + digits" in {
         withBrowser {
             onPage("<input id='input' type='text' value='' />") {
                 Browser.focus(Browser.Selector.css("#input")).andThen {
@@ -974,7 +975,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- doubleClick ----
 
-    "doubleClick fires both ondblclick and click events on the target" in run {
+    "doubleClick fires both ondblclick and click events on the target" in {
         withBrowser {
             onPage(
                 """<button id='btn'
@@ -998,14 +999,15 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "doubleClick on a hidden element raises BrowserElementNotActionableException" in run {
+    "doubleClick on a hidden element raises BrowserElementNotActionableException" in {
         withBrowser {
             onPage("<button id='hidden-btn' style='display:none;width:80px;height:30px'>x</button>") {
                 tight {
                     Abort.run[BrowserElementException] {
                         Browser.doubleClick(Browser.Selector.id("hidden-btn"))
                     }.map {
-                        case Result.Failure(_: BrowserElementNotActionableException) => succeed
+                        case Result.Failure(ex: BrowserElementNotActionableException) =>
+                            assert(ex.reason.isInstanceOf[BrowserElementNotActionableException.Reason.NotVisible])
                         case other =>
                             fail(s"Expected BrowserElementNotActionableException for hidden element but got $other")
                     }
@@ -1016,7 +1018,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- scrollToTop / scrollToBottom ----
 
-    "scrollToBottom changes scrollY" in run {
+    "scrollToBottom changes scrollY" in {
         withBrowser {
             onPage("<div style='height:5000px'>Tall page</div>") {
                 Browser.scrollToBottom.andThen {
@@ -1029,7 +1031,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "scrollToTop resets scrollY" in run {
+    "scrollToTop resets scrollY" in {
         withBrowser {
             onPage("<div style='height:5000px'>Tall page</div>") {
                 Browser.scrollToBottom.andThen {
@@ -1046,7 +1048,7 @@ class BrowserMutationTest extends BrowserTest:
 
     // ---- fill / press contract coverage ----
 
-    "sequential fill('a') + fill('b') emits exactly 2 input events total (no batching)" in run {
+    "sequential fill('a') + fill('b') emits exactly 2 input events total (no batching)" in {
         // Each fill emits exactly one input event; sequential fills MUST NOT merge into a single event.
         withBrowser {
             onPage("<input id='inp' />") {
@@ -1062,7 +1064,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill('') on a non-empty input clears it and emits exactly one input event" in run {
+    "fill('') on a non-empty input clears it and emits exactly one input event" in {
         // `fill("")` clears the input AND fires exactly one input event with the empty value: always exactly one input event
         // with the final value, regardless of the prior content.
         withBrowser {
@@ -1078,7 +1080,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "Browser.fill leaves the input as document.activeElement (no implicit blur)" in run {
+    "Browser.fill leaves the input as document.activeElement (no implicit blur)" in {
         // After `fill`, focus stays on the input: a follow-up `press` on the same element sees focus already set.
         withBrowser {
             onPage("<input id='inp' /><input id='other' />") {
@@ -1091,7 +1093,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill leaves textarea focused with caret at end of value" in run {
+    "fill leaves textarea focused with caret at end of value" in {
         // Symmetric to the `<input>` contract: textareas preserve newlines per HTML spec, so caret position is the text length
         // even with embedded `\n`.
         withBrowser {
@@ -1115,7 +1117,7 @@ class BrowserMutationTest extends BrowserTest:
     // setFileInputFiles is accepted), inject a `<input type="file" multiple>` into the DOM, write two
     // small temp files, call `setFiles`, then assert via a single multi-field `Browser.eval` that
     // `input.files.length == paths.length` and the basenames round-trip.
-    "setFiles attaches the requested files to a multi-file input" in run {
+    "setFiles attaches the requested files to a multi-file input" in {
         withBrowserOnLocalhost {
             // Replace document body with a multi-file input. The page is on a real http://localhost origin
             // so CDP's setFileInputFiles is accepted (data: URLs reject it).
@@ -1152,7 +1154,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "setFiles rejects a non-absolute Path with BrowserInvalidArgumentException" in run {
+    "setFiles rejects a non-absolute Path with BrowserInvalidArgumentException" in {
         // Pre-validation: setFiles validates every path is absolute (mirrors setDownloadBehavior) BEFORE any CDP call.
         // A Path constructed from a relative segment fails the validation; reported as BrowserInvalidArgumentException.
         withBrowserOnLocalhost {
@@ -1167,7 +1169,6 @@ class BrowserMutationTest extends BrowserTest:
                 }.map {
                     case Result.Failure(ex: BrowserInvalidArgumentException) =>
                         assert(ex.method == "setFiles", s"expected method=setFiles but got: ${ex.method}")
-                        succeed
                     case other =>
                         fail(s"expected Result.Failure(BrowserInvalidArgumentException) but got $other")
                 }
@@ -1175,7 +1176,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "setFiles accepts a Seq[Path] of paths" in run {
+    "setFiles accepts a Seq[Path] of paths" in {
         // Verifies the public parameter type is Seq[Path]: passing a non-Chunk Seq (List) compiles
         // and round-trips through CDP setFileInputFiles correctly.
         withBrowserOnLocalhost {
@@ -1219,7 +1220,7 @@ class BrowserMutationTest extends BrowserTest:
     // must re-resolve the selector each tick and complete fill within the active retry budget once the input reappears.
     // -------------------------------------------------------------------------
 
-    "fill recovers when the input is transiently detached then reattached" in run {
+    "fill recovers when the input is transiently detached then reattached" in {
         withBrowser {
             onPage(
                 """<input id='q'>
@@ -1250,7 +1251,7 @@ class BrowserMutationTest extends BrowserTest:
     // that suppression, so framework listeners (kyo-ui, React onFocus, etc.) observe a real focus event after a fill.
     // -------------------------------------------------------------------------
 
-    "fill fires a focus DOM event on the filled input" in run {
+    "fill fires a focus DOM event on the filled input" in {
         withBrowser {
             onPage(
                 """<input id='a' />
@@ -1271,7 +1272,7 @@ class BrowserMutationTest extends BrowserTest:
         }
     }
 
-    "fill fires a focus event observable by a capture-phase listener on document.body" in run {
+    "fill fires a focus event observable by a capture-phase listener on document.body" in {
         withBrowser {
             onPage(
                 """<input id='a' />
@@ -1298,7 +1299,7 @@ class BrowserMutationTest extends BrowserTest:
     // leaves on the (possibly-recreated) input, making this the canonical "type-then-submit" shape.
     // -------------------------------------------------------------------------
 
-    "fill then no-selector press(Key.Enter) survives a DOM-churn re-render of the input" in run {
+    "fill then no-selector press(Key.Enter) survives a DOM-churn re-render of the input" in {
         withBrowser {
             // The page wraps the input in a container that gets re-rendered on the first input event:
             // the old #q is removed, and a NEW input with no id is appended. The form's submit handler
@@ -1350,7 +1351,7 @@ class BrowserMutationTest extends BrowserTest:
     // without wrapping in Browser.Selector.css(...).
     // -------------------------------------------------------------------------
 
-    "Browser.click accepts a raw CSS-selector String (auto-converts to Selector.css)" in run {
+    "Browser.click accepts a raw CSS-selector String (auto-converts to Selector.css)" in {
         withBrowser {
             onPage(
                 """<button id='go' onclick="document.getElementById('out').textContent='clicked'">Go</button>

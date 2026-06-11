@@ -7,7 +7,7 @@ import kyo.*
   * All tests drive the real Doctest.check public API. Internal types appear only on the RHS for verification. Fixture markdown is written
   * to temp directories to keep tests self-contained.
   */
-class OrchestratorTest extends Test:
+class OrchestratorTest extends kyo.test.Test[Any]:
 
     // Real JVM classpath so the compiler can resolve kyo types in blocks.
     private def testClasspath(using Frame): Chunk[kyo.Path] < Sync =
@@ -41,7 +41,7 @@ class OrchestratorTest extends Test:
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
         yield res
 
-    "empty sources raises NoSourcesConfigured" in run {
+    "empty sources raises NoSourcesConfigured" in {
         withTempCacheDir { cacheDir =>
             for
                 cp    <- testClasspath
@@ -56,7 +56,7 @@ class OrchestratorTest extends Test:
                 result <- Abort.run(Scope.run(Doctest.check(config)))
             yield result match
                 case Result.Failure(Doctest.Error.NoSourcesConfigured) =>
-                    succeed
+                    succeed("correct error raised for empty sources")
                 case Result.Success(report) =>
                     fail(s"expected NoSourcesConfigured but got success: $report")
                 case Result.Failure(other) =>
@@ -66,7 +66,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "single passing block returns report with 1 compiled, 0 failures" in run {
+    "single passing block returns report with 1 compiled, 0 failures" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -101,7 +101,7 @@ class OrchestratorTest extends Test:
     }
 
     // The block starts at line 3 of the markdown (the ``` opening is line 3, body on line 4).
-    "single failing block returns report with 1 failure and mapped position" in run {
+    "single failing block returns report with 1 failure and mapped position" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -145,7 +145,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "mixed pass/fail blocks reported correctly" in run {
+    "mixed pass/fail blocks reported correctly" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -182,7 +182,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "warm run has cacheHits == totalBlocks and compiled == 0" in run {
+    "warm run has cacheHits == totalBlocks and compiled == 0" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -226,7 +226,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "editing one block causes only that block to recompile" in run {
+    "editing one block causes only that block to recompile" in {
         withTempCacheDir { cacheDir =>
             for
                 id <- Random.uuid
@@ -295,7 +295,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "editing a non-first env-grouped block invalidates the unit cache" in run {
+    "editing a non-first env-grouped block invalidates the unit cache" in {
         withTempCacheDir { cacheDir =>
             for
                 id <- Random.uuid
@@ -366,7 +366,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "expect=fails-compile behaviour" in run {
+    "expect=fails-compile behaviour" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -409,7 +409,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "expect=warns behaviour" in run {
+    "expect=warns behaviour" in {
         withTempCacheDir { cacheDir =>
             // This test needs a block that actually emits a warning.
             // Using -deprecation with a deprecated method call.
@@ -465,7 +465,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "expect=skipped block is not compiled or cached" in run {
+    "expect=skipped block is not compiled or cached" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -499,7 +499,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "invalid classpath surfaces Abort DriverInitFailed" in run {
+    "invalid classpath surfaces Abort DriverInitFailed" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Test
                         |
@@ -520,8 +520,7 @@ class OrchestratorTest extends Test:
                     result <- Abort.run(Scope.run(Doctest.check(config)))
                 yield result match
                     case Result.Failure(_: Doctest.Error.DriverInitFailed) =>
-                        // Primary expected outcome: DriverInitFailed wraps the classpath error.
-                        succeed
+                        succeed("DriverInitFailed wraps the classpath error")
                     case Result.Success(report) =>
                         // Some dotty versions accept a bad classpath at init time and fail at compile time.
                         // In that case the block must have failed (kyo types are unavailable on the bogus path).
@@ -551,7 +550,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "non-existent source file surfaces Abort SourceNotFound" in run {
+    "non-existent source file surfaces Abort SourceNotFound" in {
         withTempCacheDir { cacheDir =>
             for
                 cp    <- testClasspath
@@ -566,7 +565,7 @@ class OrchestratorTest extends Test:
                 result <- Abort.run(Scope.run(Doctest.check(config)))
             yield result match
                 case Result.Failure(_: Doctest.Error.SourceNotFound) =>
-                    succeed
+                    succeed("correct error raised for non-existent source file")
                 case Result.Success(report) =>
                     fail(s"expected SourceNotFound but got success: $report")
                 case Result.Failure(other) =>
@@ -576,7 +575,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "parallel=1 produces the same report as parallel=N" in run {
+    "parallel=1 produces the same report as parallel=N" in {
         withTempCacheDir { cacheDir1 =>
             withTempCacheDir { cacheDir2 =>
                 val md = """|# Test
@@ -634,7 +633,7 @@ class OrchestratorTest extends Test:
                                                 s"failure line mismatch: ${sf.line} vs ${pf.line}"
                                             )
                                         }
-                                        succeed
+                                        ()
                                     case Result.Failure(e) =>
                                         fail(s"par run unexpected failure: $e")
                                     case Result.Panic(t) =>
@@ -650,7 +649,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "predef: import visible to plain Isolated block" in run {
+    "predef: import visible to plain Isolated block" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Predef Test
                         |
@@ -686,7 +685,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "predef: import visible inside scope=env:NAME group" in run {
+    "predef: import visible inside scope=env:NAME group" in {
         withTempCacheDir { cacheDir =>
             val md = """|# Predef Env Test
                         |
@@ -722,7 +721,7 @@ class OrchestratorTest extends Test:
         }
     }
 
-    "predef: empty Chunk preserves existing behavior" in run {
+    "predef: empty Chunk preserves existing behavior" in {
         withTempCacheDir { cacheDir =>
             // Block uses Try without an import; with no predef this must fail to compile.
             val md = """|# Empty Predef Test

@@ -5,6 +5,7 @@ import kyo.*
 import kyo.UI.Href
 import kyo.UI.ImgSrc
 import kyo.UI.Target
+import scala.language.implicitConversions
 
 /** The evergreen marketing landing content as a kyo-ui `UI` value, structured into the mock's
   * sections: hero, problem+stat, promise, outcomes grid, "built for AI", one-foundation +

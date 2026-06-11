@@ -2,14 +2,16 @@ package kyo
 
 import kyo.internal.Platform
 
-class QueueTest extends Test:
+class QueueTest extends kyo.test.Test[Any]:
+
+    override def config = super.config.sequential
 
     val access = Access.values.toList
 
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in run {
+                "initWith" in {
                     val effect = Queue.initWith[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -24,7 +26,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in run {
+                "use" in {
                     val effect = Queue.use[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -39,27 +41,27 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "isEmpty" in run {
+                "isEmpty" in {
                     for
                         q <- Queue.init[Int](2, access)
                         b <- q.empty
                     yield assert(b && q.capacity == 2)
                 }
-                "offer and poll" in run {
+                "offer and poll" in {
                     for
                         q <- Queue.init[Int](2, access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Maybe(1))
                 }
-                "peek" in run {
+                "peek" in {
                     for
                         q <- Queue.init[Int](2, access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Maybe(1))
                 }
-                "full" in run {
+                "full" in {
                     for
                         q <- Queue.init[Int](2, access)
                         _ <- q.offer(1)
@@ -67,7 +69,7 @@ class QueueTest extends Test:
                         b <- q.offer(3)
                     yield assert(!b)
                 }
-                "full 4" in run {
+                "full 4" in {
                     for
                         q <- Queue.init[Int](4, access)
                         _ <- q.offer(1)
@@ -77,7 +79,7 @@ class QueueTest extends Test:
                         b <- q.offer(5)
                     yield assert(!b)
                 }
-                "zero capacity" in run {
+                "zero capacity" in {
                     for
                         q <- Queue.init[Int](0, access)
                         b <- q.offer(1)
@@ -88,7 +90,7 @@ class QueueTest extends Test:
         }
     }
 
-    "close" in run {
+    "close" in {
         for
             q  <- Queue.init[Int](2)
             b  <- q.offer(1)
@@ -114,7 +116,7 @@ class QueueTest extends Test:
         )
     }
 
-    "drain" in run {
+    "drain" in {
         for
             q <- Queue.init[Int](2)
             _ <- q.offer(1)
@@ -123,7 +125,7 @@ class QueueTest extends Test:
         yield assert(v == Seq(1, 2))
     }
 
-    "drainUpTo" in run {
+    "drainUpTo" in {
         for
             q <- Queue.init[Int](4)
             _ <- Kyo.foreach(1 to 4)(q.offer)
@@ -134,7 +136,7 @@ class QueueTest extends Test:
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in run {
+                "initWith" in {
                     val effect = Queue.Unbounded.initWith[Int](access) { q =>
                         for
                             b <- q.offer(1)
@@ -149,7 +151,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in run {
+                "use" in {
                     val effect = Queue.Unbounded.use[Int](access) { q =>
                         for
                             b <- q.offer(1)
@@ -164,27 +166,27 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "isEmpty" in run {
+                "isEmpty" in {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         b <- q.empty
                     yield assert(b)
                 }
-                "offer and poll" in run {
+                "offer and poll" in {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Maybe(1))
                 }
-                "peek" in run {
+                "peek" in {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Maybe(1))
                 }
-                "add and poll" in run {
+                "add and poll" in {
                     for
                         q <- Queue.Unbounded.init[Int](access)
                         _ <- q.add(1)
@@ -198,7 +200,7 @@ class QueueTest extends Test:
     "dropping" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in run {
+                "initWith" in {
                     val effect = Queue.Unbounded.initDropping[Int](2, access).map { q =>
                         for
                             b <- q.offer(1)
@@ -213,7 +215,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in run {
+                "use" in {
                     val effect = Queue.Unbounded.useDropping[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -228,7 +230,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "add/poll" in run {
+                "add/poll" in {
                     for
                         q <- Queue.Unbounded.initDropping[Int](2)
                         _ <- q.add(1)
@@ -247,7 +249,7 @@ class QueueTest extends Test:
     "sliding" - {
         access.foreach { access =>
             access.toString() - {
-                "initWith" in run {
+                "initWith" in {
                     val effect = Queue.Unbounded.initSliding[Int](2, access).map { q =>
                         for
                             b <- q.offer(1)
@@ -262,7 +264,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "use" in run {
+                "use" in {
                     val effect = Queue.Unbounded.useSliding[Int](2, access) { q =>
                         for
                             b <- q.offer(1)
@@ -277,7 +279,7 @@ class QueueTest extends Test:
                             q.closed.map: isClosed =>
                                 assert(isClosed && b && v == Maybe(1))
                 }
-                "add/poll" in run {
+                "add/poll" in {
                     for
                         q <- Queue.Unbounded.initSliding[Int](2, access)
                         _ <- q.add(1)
@@ -349,7 +351,7 @@ class QueueTest extends Test:
 
         val repeats = 100
 
-        "offer and close" in run {
+        "offer and close" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -359,7 +361,6 @@ class QueueTest extends Test:
                 )
                 closeFiber  <- Fiber.initUnscoped(latch.await.andThen(queue.close))
                 _           <- latch.release
-                _           <- Async.sleep(100.millis)
                 offered     <- offerFiber.get
                 backlog     <- closeFiber.get
                 closedQueue <- queue.close
@@ -373,10 +374,10 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "offer and poll" in run {
+        "offer and poll" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -393,10 +394,10 @@ class QueueTest extends Test:
                 left    <- queue.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + left))
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "offer to full queue during close" in run {
+        "offer to full queue during close" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -416,10 +417,10 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "concurrent close attempts" in run {
+        "concurrent close attempts" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -440,10 +441,10 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
 
-        "offer, poll and close" in run {
+        "offer, poll and close" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -466,7 +467,7 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                .andThen(succeed)
+                .unit
         }
     }
 
@@ -476,7 +477,9 @@ class QueueTest extends Test:
 
             def testCapacity(accessType: Access) =
                 List(3, 7, 15, 31).foreach { requestedCapacity =>
-                    s"$accessType with requested capacity $requestedCapacity" in pendingUntilFixed {
+                    s"$accessType with requested capacity $requestedCapacity".pendingUntilFixed(
+                        "queue capacity is rounded up to the next power of two, so a non-power-of-two requested capacity accepts offers beyond the requested count"
+                    ) in {
                         val queue          = Queue.Unsafe.init[Int](requestedCapacity, accessType)
                         val actualCapacity = queue.capacity
 
@@ -500,14 +503,14 @@ class QueueTest extends Test:
     end if
 
     "Kyo computations" - {
-        "Sync" in run {
+        "Sync" in {
             for
                 queue  <- Queue.init[Int < Sync](2)
                 _      <- queue.offer(Sync.defer(42))
                 result <- queue.poll.map(_.get)
             yield assert(result == 42)
         }
-        "AtomicBoolean" in run {
+        "AtomicBoolean" in {
             for
                 flag   <- AtomicBoolean.init(false)
                 queue  <- Queue.init[Int < Sync](2)
@@ -517,7 +520,7 @@ class QueueTest extends Test:
                 after  <- flag.get
             yield assert(!before && result == 42 && after)
         }
-        "Env" in run {
+        "Env" in {
             for
                 queue  <- Queue.init[Int < Env[Int]](2)
                 _      <- queue.offer(Env.use[Int](_ + 22))
@@ -527,7 +530,7 @@ class QueueTest extends Test:
     }
 
     "closeAwaitEmpty" - {
-        "allowed following ops when empty" in run {
+        "allowed following ops when empty" in {
             for
                 q  <- Queue.init[Int](2)
                 c1 <- q.closeAwaitEmpty
@@ -552,7 +555,7 @@ class QueueTest extends Test:
             )
         }
 
-        "allowed following ops when not empty" in run {
+        "allowed following ops when not empty" in {
             for
                 gate <- Promise.init[Unit, Any]
                 q    <- Queue.init[Int](2)
@@ -582,14 +585,14 @@ class QueueTest extends Test:
             )
         }
 
-        "returns true when queue is already empty" in run {
+        "returns true when queue is already empty" in {
             for
                 queue  <- Queue.init[Int](10)
                 result <- queue.closeAwaitEmpty
             yield assert(result)
         }
 
-        "returns true when queue becomes empty after closing" in run {
+        "returns true when queue becomes empty after closing" in {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- queue.offer(1)
@@ -601,7 +604,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "returns false if queue is already closed" in run {
+        "returns false if queue is already closed" in {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- queue.close
@@ -610,14 +613,14 @@ class QueueTest extends Test:
         }
 
         "unbounded queue" - {
-            "returns true when queue is already empty" in run {
+            "returns true when queue is already empty" in {
                 for
                     queue  <- Queue.Unbounded.init[Int]()
                     result <- queue.closeAwaitEmpty
                 yield assert(result)
             }
 
-            "returns true when queue becomes empty after closing" in run {
+            "returns true when queue becomes empty after closing" in {
                 for
                     queue  <- Queue.Unbounded.init[Int]()
                     _      <- queue.add(1)
@@ -630,7 +633,7 @@ class QueueTest extends Test:
             }
         }
 
-        "concurrent polling and waiting" in run {
+        "concurrent polling and waiting" in {
             for
                 queue  <- Queue.init[Int](10)
                 _      <- Kyo.foreach(1 to 5)(i => queue.offer(i))
@@ -640,7 +643,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "sliding queue" in run {
+        "sliding queue" in {
             for
                 queue  <- Queue.Unbounded.initSliding[Int](2)
                 _      <- queue.add(1)
@@ -652,7 +655,7 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "dropping queue" in run {
+        "dropping queue" in {
             for
                 queue  <- Queue.Unbounded.initDropping[Int](2)
                 _      <- queue.add(1)
@@ -664,14 +667,14 @@ class QueueTest extends Test:
             yield assert(result)
         }
 
-        "zero capacity queue" in run {
+        "zero capacity queue" in {
             for
                 queue  <- Queue.init[Int](0)
                 result <- queue.closeAwaitEmpty
             yield assert(result)
         }
 
-        "race between closeAwaitEmpty and close" in run {
+        "race between closeAwaitEmpty and close" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -693,10 +696,10 @@ class QueueTest extends Test:
                 assert((result1 && result2.isEmpty) || (!result1 && result2.isDefined))
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
-                .andThen(succeed)
+                .unit
         }
 
-        "two producers calling closeAwaitEmpty" in run {
+        "two producers calling closeAwaitEmpty" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -717,7 +720,7 @@ class QueueTest extends Test:
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
+                        Async.fill(100, 10)(assertEventually(queue.poll.map(_.isDefined)))
                     )
                 )
 
@@ -732,10 +735,10 @@ class QueueTest extends Test:
                 assert(Seq(result1, result2).count(r => r.contains(false) || r.isFailure) == 1)
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
-                .andThen(succeed)
+                .unit
         }
 
-        "producer calling closeAwaitEmpty and another calling close" in run {
+        "producer calling closeAwaitEmpty and another calling close" in {
             (for
                 size  <- Choice.eval(0, 1, 2, 10, 100)
                 queue <- Queue.init[Int](size)
@@ -756,7 +759,7 @@ class QueueTest extends Test:
 
                 consumerFiber <- Fiber.initUnscoped(
                     latch.await.andThen(
-                        Async.fill(100, 10)(untilTrue(queue.poll.map(_.isDefined)))
+                        Async.fill(100, 10)(assertEventually(queue.poll.map(_.isDefined)))
                     )
                 )
 
@@ -773,7 +776,7 @@ class QueueTest extends Test:
                 )
             )
                 .handle(Choice.run, _.unit, Loop.repeat(10))
-                .andThen(succeed)
+                .unit
         }
     }
 

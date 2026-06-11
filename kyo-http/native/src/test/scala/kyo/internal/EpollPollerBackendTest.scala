@@ -7,7 +7,7 @@ import kyo.*
 // EPOLLERR=0x08, EPOLLHUP=0x10), and `isRead/isWrite` are pure CInt => Boolean. So even on macOS
 // Native (where the epoll backend is wired to stubs) the Scala arithmetic exercises the same logic
 // that runs on Linux.
-class EpollPollerBackendTest extends Test:
+class EpollPollerBackendTest extends BaseHttpTest:
 
     "isRead detects EPOLLIN (0x01)" in {
         assert(EpollPollerBackend.isRead(0x01))

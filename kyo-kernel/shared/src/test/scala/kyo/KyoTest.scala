@@ -1,13 +1,12 @@
 package kyo
 
-import Tagged.*
 import kyo.kernel.*
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.collection.Iterable
 import scala.collection.IterableOps
 
-class KyoTest extends Test:
+class KyoTest extends kyo.test.Test[Any]:
 
     sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
     object TestEffect1:
@@ -29,12 +28,12 @@ class KyoTest extends Test:
 
     def widen[A](v: A): A < Any = v
 
-    "toString" in run {
+    "toString" in {
         assert(TestEffect1(1).map(_ + 1).toString ==
-            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:33:41, assert(TestEffect1(1).map(_ + 1))")
+            "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:32:41, assert(TestEffect1(1).map(_ + 1))")
         assert(
             TestEffect1(1).map(_ + 1).map(_ + 2).toString ==
-                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:36:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
+                "Kyo(kyo.KyoTest.TestEffect1, Input(1), KyoTest.scala:35:49, TestEffect1(1).map(_ + 1).map(_ + 2))"
         )
     }
 
@@ -157,7 +156,9 @@ class KyoTest extends Test:
                 assert(incr(0, n).eval == n)
             }
 
-            "suspension at the start" taggedAs notNative in pendingUntilFixed {
+            "suspension at the start".notNative.notWasm.pendingUntilFixed(
+                "deep effect suspension is not yet stack-safe (StackOverflowError)"
+            ) in {
                 try
                     assert(TestEffect1.run(incr(TestEffect1(n), n)).eval == 0)
                 catch
@@ -170,7 +171,7 @@ class KyoTest extends Test:
                 assert(TestEffect1.run(incr(n, n).map(n => TestEffect1(n + n))).eval == n * 4 + 1)
             }
 
-            "multiple effects" taggedAs notNative in pendingUntilFixed {
+            "multiple effects".notNative.notWasm.pendingUntilFixed("deep effect suspension is not yet stack-safe (StackOverflowError)") in {
                 @tailrec def incr(v: Int < TestEffect1, n: Int): Int < TestEffect1 =
                     n match
                         case 0 => v

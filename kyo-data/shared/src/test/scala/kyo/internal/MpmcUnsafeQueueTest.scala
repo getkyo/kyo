@@ -20,7 +20,47 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(q.capacity >= 2)
         }
 
-        "highContentionMPMC" in runNotJS {
+        "capacity2EdgeCase" in {
+            val q = new MpmcUnsafeQueue[Int](2)
+            assert(q.capacity == 2)
+            q.offer(1)
+            q.offer(2)
+            assert(!q.offer(3))
+            assert(q.poll() == Maybe(1))
+            assert(q.poll() == Maybe(2))
+            assert(q.poll().isEmpty)
+        }
+
+        "batchDrainSequential" in {
+            for cap <- Seq(4, 8, 16, 64) do
+                val q = new MpmcUnsafeQueue[Int](cap)
+                val n = q.capacity
+                for i <- 0 until n do q.offer(i)
+                val buf = scala.collection.mutable.ArrayBuffer[Int]()
+                val r   = q.drain(v => buf += v, n)
+                assert(r == n, s"cap=$cap: drained $r, expected $n")
+                assert(buf.toSeq == (0 until n), s"cap=$cap: FIFO violation")
+                assert(q.isEmpty())
+        }
+
+        "capacity2WrapAround" in {
+            val q = new MpmcUnsafeQueue[Int](2)
+            assert(q.capacity == 2)
+            // Wrap around at minimum capacity multiple times
+            for round <- 0 until 100 do
+                q.offer(round * 2)
+                q.offer(round * 2 + 1)
+                assert(!q.offer(999), s"round=$round: should be full")
+                assert(q.isFull(), s"round=$round: should be full")
+                assert(q.poll() == Maybe(round * 2), s"round=$round first")
+                assert(q.poll() == Maybe(round * 2 + 1), s"round=$round second")
+                assert(q.isEmpty(), s"round=$round: should be empty")
+            end for
+        }
+    }
+
+    "MpmcUnsafeQueue-specific concurrent".notJs - {
+        "highContentionMPMC" in {
             val q        = new MpmcUnsafeQueue[Long](16)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -64,30 +104,7 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
             assert(consumed.get() + remaining > 0, "Nothing was consumed")
         }
 
-        "capacity2EdgeCase" in {
-            val q = new MpmcUnsafeQueue[Int](2)
-            assert(q.capacity == 2)
-            q.offer(1)
-            q.offer(2)
-            assert(!q.offer(3))
-            assert(q.poll() == Maybe(1))
-            assert(q.poll() == Maybe(2))
-            assert(q.poll().isEmpty)
-        }
-
-        "batchDrainSequential" in {
-            for cap <- Seq(4, 8, 16, 64) do
-                val q = new MpmcUnsafeQueue[Int](cap)
-                val n = q.capacity
-                for i <- 0 until n do q.offer(i)
-                val buf = scala.collection.mutable.ArrayBuffer[Int]()
-                val r   = q.drain(v => buf += v, n)
-                assert(r == n, s"cap=$cap: drained $r, expected $n")
-                assert(buf.toSeq == (0 until n), s"cap=$cap: FIFO violation")
-                assert(q.isEmpty())
-        }
-
-        "batchDrainConcurrent" in runNotJS {
+        "batchDrainConcurrent" in {
             val q        = new MpmcUnsafeQueue[Long](16)
             val stop     = new AtomicBoolean(false)
             val start    = new CountDownLatch(1)
@@ -133,21 +150,6 @@ class MpmcUnsafeQueueTest extends UnsafeQueueBaseTest:
                 consumed.get() + remaining == offered.get(),
                 s"Batch drain data loss: offered=${offered.get()}, consumed=${consumed.get()}, remaining=$remaining"
             )
-        }
-
-        "capacity2WrapAround" in {
-            val q = new MpmcUnsafeQueue[Int](2)
-            assert(q.capacity == 2)
-            // Wrap around at minimum capacity multiple times
-            for round <- 0 until 100 do
-                q.offer(round * 2)
-                q.offer(round * 2 + 1)
-                assert(!q.offer(999), s"round=$round: should be full")
-                assert(q.isFull(), s"round=$round: should be full")
-                assert(q.poll() == Maybe(round * 2), s"round=$round first")
-                assert(q.poll() == Maybe(round * 2 + 1), s"round=$round second")
-                assert(q.isEmpty(), s"round=$round: should be empty")
-            end for
         }
     }
 end MpmcUnsafeQueueTest

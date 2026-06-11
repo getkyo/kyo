@@ -1,19 +1,21 @@
 package kyo.internal
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kyo.*
 import kyo.AllowUnsafe.embrace.danger
-import org.scalatest.Assertion
-import org.scalatest.Succeeded
-import org.scalatest.freespec.AnyFreeSpec
 
-/** Base test class for all UnsafeQueue implementations. Each concrete test class extends this with appropriate queue factory.
+/** Base test class for all UnsafeQueue implementations. Each concrete test class extends this with the appropriate queue factory.
+  *
+  * This base holds all tests for all platforms. The thread-based concurrency stress tests are gated `.notJs` (compile-excluded on JS) because
+  * they use `java.lang.Thread`, `CountDownLatch`, and real multithreading which is meaningless on single-threaded Scala.js.
   */
-abstract class UnsafeQueueBaseTest extends AnyFreeSpec:
+abstract class UnsafeQueueBaseTest extends kyo.test.Test[Any]:
+
+    // The queue concurrency stress tests spawn real producer/consumer threads and block on CountDownLatch.await; run a suite's
+    // leaves sequentially so a blocking leaf does not starve the bounded worker pool shared with other leaves.
+    override def config = super.config.sequential
 
     def queueName: String
     def isBounded: Boolean
@@ -22,18 +24,12 @@ abstract class UnsafeQueueBaseTest extends AnyFreeSpec:
     def testSizes: Seq[Int]
     def makeQueue[A](size: Int): UnsafeQueue[A]
 
-    private val testDurationMs = 200L
-    private val testTimeout    = 10000L
-
     // ---- Helpers ----
 
-    protected inline def runNotJS(inline body: => Any): Unit =
-        inline if !Platform.isJS then discard(body)
-
-    private def fill[A](q: UnsafeQueue[A], values: Seq[A]): Unit =
+    protected def fill[A](q: UnsafeQueue[A], values: Seq[A])(using kyo.test.AssertScope): Unit =
         values.foreach(v => assert(q.offer(v)))
 
-    private def pollAll[A](q: UnsafeQueue[A]): Seq[A] =
+    protected def pollAll[A](q: UnsafeQueue[A]): Seq[A] =
         val buf = Seq.newBuilder[A]
         var r   = q.poll()
         while r.isDefined do
@@ -42,35 +38,11 @@ abstract class UnsafeQueueBaseTest extends AnyFreeSpec:
         buf.result()
     end pollAll
 
-    private def drainAll[A](q: UnsafeQueue[A]): Seq[A] =
+    protected def drainAll[A](q: UnsafeQueue[A]): Seq[A] =
         val buf = Seq.newBuilder[A]
         q.drain(v => buf += v)
         buf.result()
     end drainAll
-
-    private def concurrentTest(body: (AtomicBoolean, CountDownLatch) => Seq[Thread]): Unit =
-        val stop    = new AtomicBoolean(false)
-        val start   = new CountDownLatch(1)
-        val threads = body(stop, start)
-        threads.foreach(_.start())
-        start.countDown()
-        Thread.sleep(testDurationMs)
-        stop.set(true)
-        threads.foreach(_.join(testTimeout))
-        threads.foreach(t => assert(!t.isAlive, s"Thread ${t.getName} did not terminate"))
-    end concurrentTest
-
-    private def thread(name: String, start: CountDownLatch, stop: AtomicBoolean)(body: => Unit): Thread =
-        val t = new Thread(
-            () =>
-                start.await()
-                while !stop.get() do body
-            ,
-            name
-        )
-        t.setDaemon(true)
-        t
-    end thread
 
     // ---- A. Sequential Core API ----
 
@@ -464,248 +436,6 @@ abstract class UnsafeQueueBaseTest extends AnyFreeSpec:
                     }
                 end if
 
-                // ---- E. Concurrent — Memory Visibility ----
-
-                "happensBefore_poll" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q       = makeQueue[Array[Int]](cap)
-                        val failure = new AtomicBoolean(false)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                val arr = new Array[Int](1)
-                                arr(0) = 42
-                                if !q.offer(arr) then Thread.`yield`()
-                            }
-                        }
-                        val consumers = (0 until nConsumers).map { cid =>
-                            thread(s"consumer-$cid", start, stop) {
-                                q.poll() match
-                                    case Maybe.Present(arr) =>
-                                        if arr(0) != 42 then failure.set(true)
-                                    case _ => Thread.`yield`()
-                            }
-                        }
-                        (producers ++ consumers).map { t =>
-                            assert(!failure.get(), "Saw uninitialized value"); t
-                        }
-                    }
-                }
-
-                "happensBefore_peek" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q       = makeQueue[Array[Int]](cap)
-                        val failure = new AtomicBoolean(false)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                val arr = new Array[Int](1)
-                                arr(0) = 42
-                                if !q.offer(arr) then Thread.`yield`()
-                            }
-                        }
-                        val consumers = (0 until nConsumers).map { cid =>
-                            thread(s"consumer-$cid", start, stop) {
-                                q.peek() match
-                                    case Maybe.Present(arr) =>
-                                        if arr(0) != 42 then failure.set(true)
-                                    case _ =>
-                                end match
-                                q.poll()
-                                Thread.`yield`()
-                            }
-                        }
-                        (producers ++ consumers).map { t =>
-                            assert(!failure.get()); t
-                        }
-                    }
-                }
-
-                // ---- F. Concurrent — Size/State Invariants ----
-
-                "sizeNeverNegative" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q       = makeQueue[Int](cap)
-                        val failure = new AtomicBoolean(false)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                if !q.offer(pid) then Thread.`yield`()
-                            }
-                        }
-                        val consumers = (0 until nConsumers).map { cid =>
-                            thread(s"consumer-$cid", start, stop) {
-                                q.poll()
-                                Thread.`yield`()
-                            }
-                        }
-                        val observer = thread("observer", start, stop) {
-                            if q.size() < 0 then failure.set(true)
-                        }
-                        (producers ++ consumers :+ observer).map { t =>
-                            assert(!failure.get()); t
-                        }
-                    }
-                }
-
-                if isBounded then
-                    "sizeNeverExceedsCapacity" in runNotJS {
-                        concurrentTest { (stop, start) =>
-                            val q       = makeQueue[Int](cap)
-                            val failure = new AtomicBoolean(false)
-                            val producers = (0 until nProducers).map { pid =>
-                                thread(s"producer-$pid", start, stop) {
-                                    q.offer(pid)
-                                    Thread.`yield`()
-                                }
-                            }
-                            val consumers = (0 until nConsumers).map { cid =>
-                                thread(s"consumer-$cid", start, stop) {
-                                    q.poll()
-                                    Thread.`yield`()
-                                }
-                            }
-                            val observer = thread("observer", start, stop) {
-                                val s = q.size()
-                                if s > q.capacity then failure.set(true)
-                            }
-                            (producers ++ consumers :+ observer).map { t =>
-                                assert(!failure.get()); t
-                            }
-                        }
-                    }
-                end if
-
-                // ---- G. Concurrent — isEmpty/poll consistency ----
-
-                "pollAfterIsEmpty" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q       = makeQueue[Int](cap)
-                        val failure = new AtomicBoolean(false)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                q.offer(pid)
-                                Thread.`yield`()
-                            }
-                        }
-                        val checker = thread("checker", start, stop) {
-                            if !q.isEmpty() then
-                                // There may be a race here, so we don't assert strictly
-                                discard(q.poll())
-                        }
-                        producers :+ checker
-                    }
-                }
-
-                // ---- H. Concurrent — Ordering and Data Integrity ----
-
-                "noDataLoss" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q        = makeQueue[Long](cap)
-                        val offered  = new AtomicLong(0)
-                        val consumed = new AtomicLong(0)
-                        val done     = new AtomicBoolean(false)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                if q.offer(offered.incrementAndGet()) then ()
-                                else Thread.`yield`()
-                            }
-                        }
-                        val consumers = (0 until nConsumers).map { cid =>
-                            thread(s"consumer-$cid", start, stop) {
-                                q.poll() match
-                                    case Maybe.Present(_) => discard(consumed.incrementAndGet())
-                                    case _                => Thread.`yield`()
-                            }
-                        }
-                        producers ++ consumers
-                    }
-                    // Note: after the test, offered - consumed = remaining in queue
-                    // This is a smoke test, not an exact count verification
-                }
-
-                "perProducerFIFO" in runNotJS {
-                    if nProducers > 1 && nConsumers == 1 then
-                        concurrentTest { (stop, start) =>
-                            val q        = makeQueue[Long](cap)
-                            val failure  = new AtomicBoolean(false)
-                            val counters = Array.fill(nProducers)(new AtomicLong(0))
-                            val producers = (0 until nProducers).map { pid =>
-                                thread(s"producer-$pid", start, stop) {
-                                    val v = pid.toLong * 1000000 + counters(pid).incrementAndGet()
-                                    if !q.offer(v) then Thread.`yield`()
-                                }
-                            }
-                            val lastSeen = Array.fill(nProducers)(0L)
-                            val consumer = thread("consumer", start, stop) {
-                                q.poll() match
-                                    case Maybe.Present(v) =>
-                                        val pid = (v / 1000000).toInt
-                                        val seq = v % 1000000
-                                        if pid >= 0 && pid < nProducers then
-                                            if seq <= lastSeen(pid) then failure.set(true)
-                                            lastSeen(pid) = seq
-                                    case _ => Thread.`yield`()
-                            }
-                            (producers :+ consumer).map { t =>
-                                assert(!failure.get()); t
-                            }
-                        }
-                }
-
-                // ---- I. Concurrent — Contention ----
-
-                "highContention" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q = makeQueue[Int](if isBounded then Math.min(cap, 8) else cap)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                if !q.offer(pid) then Thread.`yield`()
-                            }
-                        }
-                        val consumers = (0 until nConsumers).map { cid =>
-                            thread(s"consumer-$cid", start, stop) {
-                                q.poll()
-                                Thread.`yield`()
-                            }
-                        }
-                        producers ++ consumers
-                    }
-                }
-
-                "singleElementPingPong" in runNotJS {
-                    if isBounded then
-                        concurrentTest { (stop, start) =>
-                            val q       = makeQueue[Int](4)
-                            val failure = new AtomicBoolean(false)
-                            val producer = thread("producer", start, stop) {
-                                if !q.offer(1) then Thread.`yield`()
-                            }
-                            val consumer = thread("consumer", start, stop) {
-                                q.poll()
-                                Thread.`yield`()
-                            }
-                            Seq(producer, consumer)
-                        }
-                }
-
-                // ---- J. Concurrent — Drain ----
-
-                "concurrentDrainNoLoss" in runNotJS {
-                    concurrentTest { (stop, start) =>
-                        val q       = makeQueue[Int](cap)
-                        val offered = new AtomicLong(0)
-                        val drained = new AtomicLong(0)
-                        val producers = (0 until nProducers).map { pid =>
-                            thread(s"producer-$pid", start, stop) {
-                                if q.offer(pid) then discard(offered.incrementAndGet())
-                                else Thread.`yield`()
-                            }
-                        }
-                        val consumer = thread("drainer", start, stop) {
-                            discard(drained.addAndGet(q.drain(_ => (), Math.max(1, cap / 4))))
-                        }
-                        producers :+ consumer
-                    }
-                }
-
                 // ---- K. Edge Cases ----
 
                 "freshQueueAllMethodsConsistent" in {
@@ -775,6 +505,7 @@ abstract class UnsafeQueueBaseTest extends AnyFreeSpec:
                         for i <- 0 until borrowed do
                             q.offer(local(i))
                         discard(assert(q.size() == 3))
+                    else succeed("unbounded queues skip the borrow/trace pattern: not applicable for this configuration")
                 }
 
                 "channelClosePattern" in {
@@ -785,9 +516,295 @@ abstract class UnsafeQueueBaseTest extends AnyFreeSpec:
                         q.drain(v => closed += v)
                         assert(closed.result() == (0 until 100))
                         discard(assert(q.isEmpty()))
+                    else succeed("bounded queues skip the drain-on-close pattern: not applicable for this configuration")
                 }
 
             } // capacity
     }         // queueName
+
+    // ---- Concurrency helpers (JVM + Native only, not linked on JS) ----
+
+    protected val testDurationMs = 200L
+    protected val testTimeout    = 10000L
+
+    protected def concurrentTest(body: (AtomicBoolean, CountDownLatch) => Seq[Thread])(using kyo.test.AssertScope): Unit =
+        val stop    = new AtomicBoolean(false)
+        val start   = new CountDownLatch(1)
+        val threads = body(stop, start)
+        threads.foreach(_.start())
+        start.countDown()
+        Thread.sleep(testDurationMs)
+        stop.set(true)
+        threads.foreach(_.join(testTimeout))
+        threads.foreach(t => assert(!t.isAlive, s"Thread ${t.getName} did not terminate"))
+    end concurrentTest
+
+    protected def thread(name: String, start: CountDownLatch, stop: AtomicBoolean)(body: => Unit): Thread =
+        val t = new Thread(
+            () =>
+                start.await()
+                while !stop.get() do body
+            ,
+            name
+        )
+        t.setDaemon(true)
+        t
+    end thread
+
+    // ---- E-J. Concurrent tests (gated .notJs: no-emit on JS) ----
+
+    "concurrent".notJs - {
+        s"$queueName" - {
+            for cap <- testSizes do
+                s"capacity=$cap" - {
+
+                    // ---- E. Concurrent — Memory Visibility ----
+
+                    "happensBefore_poll" in {
+                        concurrentTest { (stop, start) =>
+                            val q       = makeQueue[Array[Int]](cap)
+                            val failure = new AtomicBoolean(false)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    val arr = new Array[Int](1)
+                                    arr(0) = 42
+                                    if !q.offer(arr) then Thread.`yield`()
+                                }
+                            }
+                            val consumers = (0 until nConsumers).map { cid =>
+                                thread(s"consumer-$cid", start, stop) {
+                                    q.poll() match
+                                        case Maybe.Present(arr) =>
+                                            if arr(0) != 42 then failure.set(true)
+                                        case _ => Thread.`yield`()
+                                }
+                            }
+                            (producers ++ consumers).map { t =>
+                                assert(!failure.get(), "Saw uninitialized value"); t
+                            }
+                        }
+                    }
+
+                    "happensBefore_peek" in {
+                        concurrentTest { (stop, start) =>
+                            val q       = makeQueue[Array[Int]](cap)
+                            val failure = new AtomicBoolean(false)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    val arr = new Array[Int](1)
+                                    arr(0) = 42
+                                    if !q.offer(arr) then Thread.`yield`()
+                                }
+                            }
+                            val consumers = (0 until nConsumers).map { cid =>
+                                thread(s"consumer-$cid", start, stop) {
+                                    q.peek() match
+                                        case Maybe.Present(arr) =>
+                                            if arr(0) != 42 then failure.set(true)
+                                        case _ =>
+                                    end match
+                                    q.poll()
+                                    Thread.`yield`()
+                                }
+                            }
+                            (producers ++ consumers).map { t =>
+                                assert(!failure.get()); t
+                            }
+                        }
+                    }
+
+                    // ---- F. Concurrent — Size/State Invariants ----
+
+                    "sizeNeverNegative" in {
+                        concurrentTest { (stop, start) =>
+                            val q       = makeQueue[Int](cap)
+                            val failure = new AtomicBoolean(false)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    if !q.offer(pid) then Thread.`yield`()
+                                }
+                            }
+                            val consumers = (0 until nConsumers).map { cid =>
+                                thread(s"consumer-$cid", start, stop) {
+                                    q.poll()
+                                    Thread.`yield`()
+                                }
+                            }
+                            val observer = thread("observer", start, stop) {
+                                if q.size() < 0 then failure.set(true)
+                            }
+                            (producers ++ consumers :+ observer).map { t =>
+                                assert(!failure.get()); t
+                            }
+                        }
+                    }
+
+                    if isBounded then
+                        "sizeNeverExceedsCapacity" in {
+                            concurrentTest { (stop, start) =>
+                                val q       = makeQueue[Int](cap)
+                                val failure = new AtomicBoolean(false)
+                                val producers = (0 until nProducers).map { pid =>
+                                    thread(s"producer-$pid", start, stop) {
+                                        q.offer(pid)
+                                        Thread.`yield`()
+                                    }
+                                }
+                                val consumers = (0 until nConsumers).map { cid =>
+                                    thread(s"consumer-$cid", start, stop) {
+                                        q.poll()
+                                        Thread.`yield`()
+                                    }
+                                }
+                                val observer = thread("observer", start, stop) {
+                                    val s = q.size()
+                                    if s > q.capacity then failure.set(true)
+                                }
+                                (producers ++ consumers :+ observer).map { t =>
+                                    assert(!failure.get()); t
+                                }
+                            }
+                        }
+                    end if
+
+                    // ---- G. Concurrent — isEmpty/poll consistency ----
+
+                    "pollAfterIsEmpty" in {
+                        concurrentTest { (stop, start) =>
+                            val q       = makeQueue[Int](cap)
+                            val failure = new AtomicBoolean(false)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    q.offer(pid)
+                                    Thread.`yield`()
+                                }
+                            }
+                            val checker = thread("checker", start, stop) {
+                                if !q.isEmpty() then
+                                    // There may be a race here, so we don't assert strictly
+                                    discard(q.poll())
+                            }
+                            producers :+ checker
+                        }
+                    }
+
+                    // ---- H. Concurrent — Ordering and Data Integrity ----
+
+                    "noDataLoss" in {
+                        concurrentTest { (stop, start) =>
+                            val q        = makeQueue[Long](cap)
+                            val offered  = new AtomicLong(0)
+                            val consumed = new AtomicLong(0)
+                            val done     = new AtomicBoolean(false)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    if q.offer(offered.incrementAndGet()) then ()
+                                    else Thread.`yield`()
+                                }
+                            }
+                            val consumers = (0 until nConsumers).map { cid =>
+                                thread(s"consumer-$cid", start, stop) {
+                                    q.poll() match
+                                        case Maybe.Present(_) => discard(consumed.incrementAndGet())
+                                        case _                => Thread.`yield`()
+                                }
+                            }
+                            producers ++ consumers
+                        }
+                        // Note: after the test, offered - consumed = remaining in queue
+                        // This is a smoke test, not an exact count verification
+                    }
+
+                    "perProducerFIFO" in {
+                        if nProducers > 1 && nConsumers == 1 then
+                            concurrentTest { (stop, start) =>
+                                val q        = makeQueue[Long](cap)
+                                val failure  = new AtomicBoolean(false)
+                                val counters = Array.fill(nProducers)(new AtomicLong(0))
+                                val producers = (0 until nProducers).map { pid =>
+                                    thread(s"producer-$pid", start, stop) {
+                                        val v = pid.toLong * 1000000 + counters(pid).incrementAndGet()
+                                        if !q.offer(v) then Thread.`yield`()
+                                    }
+                                }
+                                val lastSeen = Array.fill(nProducers)(0L)
+                                val consumer = thread("consumer", start, stop) {
+                                    q.poll() match
+                                        case Maybe.Present(v) =>
+                                            val pid = (v / 1000000).toInt
+                                            val seq = v % 1000000
+                                            if pid >= 0 && pid < nProducers then
+                                                if seq <= lastSeen(pid) then failure.set(true)
+                                                lastSeen(pid) = seq
+                                        case _ => Thread.`yield`()
+                                }
+                                (producers :+ consumer).map { t =>
+                                    assert(!failure.get()); t
+                                }
+                            }
+                        else
+                            succeed("per-producer FIFO requires multi-producer+single-consumer: not applicable for this configuration")
+                    }
+
+                    // ---- I. Concurrent — Contention ----
+
+                    "highContention" in {
+                        concurrentTest { (stop, start) =>
+                            val q = makeQueue[Int](if isBounded then Math.min(cap, 8) else cap)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    if !q.offer(pid) then Thread.`yield`()
+                                }
+                            }
+                            val consumers = (0 until nConsumers).map { cid =>
+                                thread(s"consumer-$cid", start, stop) {
+                                    q.poll()
+                                    Thread.`yield`()
+                                }
+                            }
+                            producers ++ consumers
+                        }
+                    }
+
+                    "singleElementPingPong" in {
+                        if isBounded then
+                            concurrentTest { (stop, start) =>
+                                val q       = makeQueue[Int](4)
+                                val failure = new AtomicBoolean(false)
+                                val producer = thread("producer", start, stop) {
+                                    if !q.offer(1) then Thread.`yield`()
+                                }
+                                val consumer = thread("consumer", start, stop) {
+                                    q.poll()
+                                    Thread.`yield`()
+                                }
+                                Seq(producer, consumer)
+                            }
+                        else succeed("single-element ping-pong requires a bounded queue: not applicable for unbounded")
+                    }
+
+                    // ---- J. Concurrent — Drain ----
+
+                    "concurrentDrainNoLoss" in {
+                        concurrentTest { (stop, start) =>
+                            val q       = makeQueue[Int](cap)
+                            val offered = new AtomicLong(0)
+                            val drained = new AtomicLong(0)
+                            val producers = (0 until nProducers).map { pid =>
+                                thread(s"producer-$pid", start, stop) {
+                                    if q.offer(pid) then discard(offered.incrementAndGet())
+                                    else Thread.`yield`()
+                                }
+                            }
+                            val consumer = thread("drainer", start, stop) {
+                                discard(drained.addAndGet(q.drain(_ => (), Math.max(1, cap / 4))))
+                            }
+                            producers :+ consumer
+                        }
+                    }
+
+                } // capacity
+        }         // queueName
+    }             // concurrent group
 
 end UnsafeQueueBaseTest

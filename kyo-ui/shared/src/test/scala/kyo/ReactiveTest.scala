@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Browser.*
+import kyo.UI.Ast.HtmlContent
 import kyo.UI.foreach
 import kyo.UI.foreachIndexed
 import kyo.UI.foreachKeyed
@@ -9,16 +10,16 @@ import scala.language.implicitConversions
 
 class ReactiveTest extends UITest:
 
-    "signal shows initial value" in run {
+    "signal shows initial value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(ref.map(v => UI.span(v).id("v")))
         withUI(app) {
-            Browser.assertText(Selector.id("v"), "initial").andThen(succeed)
+            Browser.assertText(Selector.id("v"), "initial").unit
         }
     }
 
-    "signal updates on click" in run {
+    "signal updates on click" in {
         val app: UI < Async =
             for ref <- Signal.initRef("before")
             yield UI.div(
@@ -30,11 +31,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "before")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "after")
-            yield succeed
+            yield ()
         }
     }
 
-    "counter increment and decrement" in run {
+    "counter increment and decrement" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -52,11 +53,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("count"), "Count: 2")
                 _ <- Browser.click(Selector.id("dec"))
                 _ <- Browser.assertText(Selector.id("count"), "Count: 1")
-            yield succeed
+            yield ()
         }
     }
 
-    "boolean toggle" in run {
+    "boolean toggle" in {
 
         val app: UI < Async =
             for flag <- Signal.initRef(false)
@@ -71,11 +72,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "true")
                 _ <- Browser.click(Selector.id("t"))
                 _ <- Browser.assertText(Selector.id("v"), "false")
-            yield succeed
+            yield ()
         }
     }
 
-    "conditional rendering" in run {
+    "conditional rendering" in {
 
         val app: UI < Async =
             for show <- Signal.initRef(false)
@@ -83,7 +84,7 @@ class ReactiveTest extends UITest:
                 UI.button("Show").id("b").onClick(show.set(true)),
                 show.map(s =>
                     if s then UI.span("visible").id("vis")
-                    else UI.span("hidden").id("hid"): UI
+                    else UI.span("hidden").id("hid")
                 )
             )
         withUI(app) {
@@ -91,11 +92,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("hid"), "hidden")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("vis"), "visible")
-            yield succeed
+            yield ()
         }
     }
 
-    "two signals update independently" in run {
+    "two signals update independently" in {
 
         val app: UI < Async =
             for
@@ -115,11 +116,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vb"), "b:0")
                 _ <- Browser.click(Selector.id("ib"))
                 _ <- Browser.assertText(Selector.id("vb"), "b:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "derived signal" in run {
+    "derived signal" in {
 
         val app: UI < Async =
             for
@@ -137,19 +138,19 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("vn"), "n:1")
                 _ <- Browser.assertText(Selector.id("vd"), "d:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal changes element type" in run {
+    "signal changes element type" in {
 
         val app: UI < Async =
             for flag <- Signal.initRef(false)
             yield UI.div(
                 UI.button("Toggle").id("t").onClick(flag.getAndUpdate(!_).unit),
                 flag.map { b =>
-                    if b then UI.div("DIV"): UI
-                    else UI.span("SPAN"): UI
+                    if b then UI.div("DIV"): HtmlContent
+                    else UI.span("SPAN"): HtmlContent
                 }
             )
         withUI(app) {
@@ -157,11 +158,11 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("SPAN")
                 _ <- Browser.click(Selector.id("t"))
                 _ <- assertContains("DIV")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal controls number of children" in run {
+    "signal controls number of children" in {
 
         val app: UI < Async =
             for items <- Signal.initRef(Seq("A", "B"))
@@ -175,11 +176,11 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("B")
                 _ <- Browser.click(Selector.id("add"))
                 _ <- assertContains("C")
-            yield succeed
+            yield ()
         }
     }
 
-    "same signal drives two spans" in run {
+    "same signal drives two spans" in {
 
         val app: UI < Async =
             for counter <- Signal.initRef(0)
@@ -193,13 +194,13 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("va"), "A=1")
                 _ <- Browser.assertText(Selector.id("vb"), "B=1")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from AdvancedReactiveTest ----
 
-    "input with SignalRef updates on fill" in run {
+    "input with SignalRef updates on fill" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -210,11 +211,11 @@ class ReactiveTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.assertText(Selector.id("v"), "abc")
-            yield succeed
+            yield ()
         }
     }
 
-    "element with onClick + onKeyDown + onFocus" in run {
+    "element with onClick + onKeyDown + onFocus" in {
         val app: UI < Async =
             for
                 clicks <- Signal.initRef(0)
@@ -234,11 +235,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("vc"), "c:1")
                 _ <- Browser.assertText(Selector.id("vf"), "f:true")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler appears via signal" in run {
+    "handler appears via signal" in {
         val app: UI < Async =
             for
                 active  <- Signal.initRef(false)
@@ -261,11 +262,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal toggles between div and span (advanced)" in run {
+    "signal toggles between div and span (advanced)" in {
         val app: UI < Async =
             for flag <- Signal.initRef(false)
             yield UI.div(
@@ -282,11 +283,11 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("DIV")
                 _ <- Browser.click(Selector.id("t"))
                 _ <- assertContains("SPAN")
-            yield succeed
+            yield ()
         }
     }
 
-    "unicode in reactive" in run {
+    "unicode in reactive" in {
         val app: UI < Async =
             for ref <- Signal.initRef("hello")
             yield UI.div(
@@ -298,11 +299,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "hello")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "world")
-            yield succeed
+            yield ()
         }
     }
 
-    "one handler updates two signals" in run {
+    "one handler updates two signals" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(0)
@@ -319,11 +320,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("va"), "a:1")
                 _ <- Browser.assertText(Selector.id("vb"), "b:10")
-            yield succeed
+            yield ()
         }
     }
 
-    "sibling input still works after reactive update" in run {
+    "sibling input still works after reactive update" in {
         val app: UI < Async =
             for
                 counter <- Signal.initRef(0)
@@ -340,11 +341,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vc"), "c:1")
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.assertText(Selector.id("vt"), "t:test")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler reads signal A sets signal B" in run {
+    "handler reads signal A sets signal B" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(10)
@@ -362,20 +363,20 @@ class ReactiveTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "20")
-            yield succeed
+            yield ()
         }
     }
 
-    "input with SignalRef shows initial value" in run {
+    "input with SignalRef shows initial value" in {
         val app: UI < Async =
             for ref <- Signal.initRef("hello")
             yield UI.div(UI.input.value(ref).id("i"))
         withUI(app) {
-            Browser.assertAttribute(Selector.id("i"), "value", "hello").andThen(succeed)
+            Browser.assertAttribute(Selector.id("i"), "value", "hello").unit
         }
     }
 
-    "error in handler does not break page (advanced)" in run {
+    "error in handler does not break page (advanced)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -388,34 +389,34 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("bad"))
                 _ <- Browser.click(Selector.id("good"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "style last wins for same property" in run {
+    "style last wins for same property" in {
         withUI(UI.div(UI.div.id("d").style(s => s.width(100.px) ++ s.width(200.px)))) {
-            Browser.assertAttributeSatisfies(Selector.id("d"), "style", "ignore")(_.contains("200")).andThen(succeed)
+            Browser.assertAttributeSatisfies(Selector.id("d"), "style", "ignore")(_.contains("200")).unit
         }
     }
 
-    "input empty string value" in run {
+    "input empty string value" in {
         withUI(UI.div(UI.input.value("").id("i"))) {
-            Browser.assertVisible(Selector.id("i")).andThen(succeed)
+            Browser.assertVisible(Selector.id("i")).unit
         }
     }
 
     // ---- Merged from ConditionalTest ----
 
-    "when true shows content" in run {
+    "when true shows content" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(UI.when(show)(UI.span("visible").id("v")))
         withUI(app) {
-            Browser.assertText(Selector.id("v"), "visible").andThen(succeed)
+            Browser.assertText(Selector.id("v"), "visible").unit
         }
     }
 
-    "when false hides content" in run {
+    "when false hides content" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
@@ -426,11 +427,11 @@ class ReactiveTest extends UITest:
             for
                 _ <- Browser.assertVisible(Selector.id("sentinel"))
                 _ <- Browser.assertNotExists(Selector.id("h"))
-            yield succeed
+            yield ()
         }
     }
 
-    "toggle true to false disappears" in run {
+    "toggle true to false disappears" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
@@ -442,11 +443,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("c"), "content")
                 _ <- Browser.click(Selector.id("hide"))
                 _ <- Browser.assertNotExists(Selector.id("c"))
-            yield succeed
+            yield ()
         }
     }
 
-    "toggle false to true appears" in run {
+    "toggle false to true appears" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
@@ -458,11 +459,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("c"))
                 _ <- Browser.click(Selector.id("show"))
                 _ <- Browser.assertText(Selector.id("c"), "content")
-            yield succeed
+            yield ()
         }
     }
 
-    "toggle true false true reappears" in run {
+    "toggle true false true reappears" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
@@ -476,11 +477,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("c"))
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertText(Selector.id("c"), "content")
-            yield succeed
+            yield ()
         }
     }
 
-    "when false siblings still visible" in run {
+    "when false siblings still visible" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
@@ -493,11 +494,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("before"), "before")
                 _ <- Browser.assertText(Selector.id("after"), "after")
                 _ <- Browser.assertNotExists(Selector.id("cond"))
-            yield succeed
+            yield ()
         }
     }
 
-    "interactive content works after toggle" in run {
+    "interactive content works after toggle" in {
         val app: UI < Async =
             for
                 show    <- Signal.initRef(false)
@@ -515,11 +516,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("show"))
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "two when blocks independent" in run {
+    "two when blocks independent" in {
         val app: UI < Async =
             for
                 showA <- Signal.initRef(true)
@@ -540,11 +541,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("ta"))
                 _ <- Browser.assertNotExists(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("b"), "beta")
-            yield succeed
+            yield ()
         }
     }
 
-    "UI.when wrapping foreach" in run {
+    "UI.when wrapping foreach" in {
         val app: UI < Async =
             for
                 show  <- Signal.initRef(false)
@@ -559,11 +560,11 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("v:A")
                 _ <- assertContains("v:B")
                 _ <- assertContains("v:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach inside UI.when list appears disappears" in run {
+    "foreach inside UI.when list appears disappears" in {
         val app: UI < Async =
             for
                 show  <- Signal.initRef(true)
@@ -581,20 +582,20 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- assertContains("v:X")
                 _ <- assertContains("v:Y")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal render shows initial" in run {
+    "signal render shows initial" in {
         val app: UI < Async =
             for ref <- Signal.initRef("hello")
             yield UI.div(ref.render(v => UI.span(v).id("v")))
         withUI(app) {
-            Browser.assertText(Selector.id("v"), "hello").andThen(succeed)
+            Browser.assertText(Selector.id("v"), "hello").unit
         }
     }
 
-    "signal render updates on change" in run {
+    "signal render updates on change" in {
         val app: UI < Async =
             for ref <- Signal.initRef("before")
             yield UI.div(
@@ -606,11 +607,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "before")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "after")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal render updates when the ref is set from a separate forked fiber (route-driven pattern)" in run {
+    "signal render updates when the ref is set from a separate forked fiber (route-driven pattern)" in {
         val app: UI < Async =
             for
                 trigger <- Signal.initRef(0)
@@ -636,7 +637,7 @@ class ReactiveTest extends UITest:
         }
     }
 
-    "signal render switches element type" in run {
+    "signal render switches element type" in {
         val app: UI < Async =
             for flag <- Signal.initRef(false)
             yield UI.div(
@@ -651,11 +652,11 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("span-mode")
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- assertContains("div-mode")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal render complex UI" in run {
+    "signal render complex UI" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -674,24 +675,24 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- assertContains("Value: 1")
                 _ <- assertContains("positive")
-            yield succeed
+            yield ()
         }
     }
 
-    "Signal[String] as child" in run {
+    "Signal[String] as child" in {
         val app: UI < Async =
             for ref <- Signal.initRef("text content")
-            yield UI.div(ref: UI)
+            yield UI.div(ref)
         withUI(app) {
-            assertContains("text content").andThen(succeed)
+            assertContains("text content").unit
         }
     }
 
-    "Signal[String] updates" in run {
+    "Signal[String] updates" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
-                ref: UI,
+                ref,
                 UI.button("Change").id("btn").onClick(ref.set("updated"))
             )
         withUI(app) {
@@ -699,22 +700,22 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("initial")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- assertContains("updated")
-            yield succeed
+            yield ()
         }
     }
 
-    "Signal[UI] as child" in run {
+    "Signal[SpanElement] as child" in {
         val app: UI < Async =
-            for ref <- Signal.initRef[UI](UI.span("from signal").id("s"))
+            for ref <- Signal.initRef[UI.Ast.SpanElement](UI.span("from signal").id("s"))
             yield UI.div(ref)
         withUI(app) {
-            Browser.assertText(Selector.id("s"), "from signal").andThen(succeed)
+            Browser.assertText(Selector.id("s"), "from signal").unit
         }
     }
 
-    "Signal[UI] updates" in run {
+    "Signal[SpanElement] updates" in {
         val app: UI < Async =
-            for ref <- Signal.initRef[UI](UI.span("first"))
+            for ref <- Signal.initRef[UI.Ast.SpanElement](UI.span("first"))
             yield UI.div(
                 ref,
                 UI.button("Change").id("btn").onClick(ref.set(UI.span("second")))
@@ -724,11 +725,11 @@ class ReactiveTest extends UITest:
                 _ <- assertContains("first")
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- assertContains("second")
-            yield succeed
+            yield ()
         }
     }
 
-    "appear then assertExists" in run {
+    "appear then assertExists" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
@@ -740,11 +741,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("el"))
                 _ <- Browser.click(Selector.id("show"))
                 _ <- Browser.assertText(Selector.id("el"), "appeared")
-            yield succeed
+            yield ()
         }
     }
 
-    "disappear then assertNotExists" in run {
+    "disappear then assertNotExists" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
@@ -756,11 +757,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("el"), "here")
                 _ <- Browser.click(Selector.id("hide"))
                 _ <- Browser.assertNotExists(Selector.id("el"))
-            yield succeed
+            yield ()
         }
     }
 
-    "appear interact then disappear" in run {
+    "appear interact then disappear" in {
         val app: UI < Async =
             for
                 show    <- Signal.initRef(true)
@@ -779,11 +780,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertNotExists(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("v"), "count:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "appear focus element disappear element gone" in run {
+    "appear focus element disappear element gone" in {
         val app: UI < Async =
             for
                 show    <- Signal.initRef(true)
@@ -801,13 +802,13 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "focused:true")
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertNotExists(Selector.id("fbtn"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from DynamicInteractionTest ----
 
-    "click button inside foreach item" in run {
+    "click button inside foreach item" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -824,11 +825,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "clicked:B")
                 _ <- Browser.click(Selector.id("btn-A"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:A")
-            yield succeed
+            yield ()
         }
     }
 
-    "fill input inside foreach item" in run {
+    "fill input inside foreach item" in {
         val app: UI < Async =
             for
                 items <- Signal.initRef(Chunk.from(Seq("x", "y")))
@@ -845,11 +846,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "x:hello")
                 _ <- Browser.fill(Selector.id("inp-y"), "world")
                 _ <- Browser.assertText(Selector.id("v"), "y:world")
-            yield succeed
+            yield ()
         }
     }
 
-    "add item to foreach list then interact with new item" in run {
+    "add item to foreach list then interact with new item" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A")))
@@ -868,11 +869,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.click(Selector.id("btn-B"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "remove item from foreach list remaining items still work" in run {
+    "remove item from foreach list remaining items still work" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -891,11 +892,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "clicked:B")
                 _ <- Browser.click(Selector.id("btn-C"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach with indexed items buttons work" in run {
+    "foreach with indexed items buttons work" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -912,11 +913,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "0:A")
                 _ <- Browser.click(Selector.id("btn-1"))
                 _ <- Browser.assertText(Selector.id("v"), "1:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "toggle section then fill input inside" in run {
+    "toggle section then fill input inside" in {
         val app: UI < Async =
             for
                 show <- Signal.initRef(false)
@@ -931,11 +932,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("show"))
                 _ <- Browser.fill(Selector.id("i"), "data")
                 _ <- Browser.assertText(Selector.id("v"), "data")
-            yield succeed
+            yield ()
         }
     }
 
-    "conditional checkbox works after toggle" in run {
+    "conditional checkbox works after toggle" in {
         val app: UI < Async =
             for
                 show <- Signal.initRef(false)
@@ -950,11 +951,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("show"))
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "external signal update changes UI while focused on input" in run {
+    "external signal update changes UI while focused on input" in {
         val app: UI < Async =
             for
                 ref     <- Signal.initRef("")
@@ -969,11 +970,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "typed")
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("v"), "c:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal update replaces foreach items while interacting" in run {
+    "signal update replaces foreach items while interacting" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -990,11 +991,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("rep"))
                 _ <- Browser.click(Selector.id("btn-X"))
                 _ <- Browser.assertText(Selector.id("v"), "c:X")
-            yield succeed
+            yield ()
         }
     }
 
-    "derived signal chain A to B to display" in run {
+    "derived signal chain A to B to display" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(1)
@@ -1009,11 +1010,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("inc"))
                 _ <- Browser.assertText(Selector.id("va"), "a:2")
                 _ <- Browser.assertText(Selector.id("vb"), "b:4")
-            yield succeed
+            yield ()
         }
     }
 
-    "computed disabled from signal" in run {
+    "computed disabled from signal" in {
         val app: UI < Async =
             for
                 ref     <- Signal.initRef("")
@@ -1034,11 +1035,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertEnabled(Selector.id("sub"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "c:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "two way binding input and button update same signal" in run {
+    "two way binding input and button update same signal" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -1053,11 +1054,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "r:hi")
                 _ <- Browser.assertAttribute(Selector.id("i"), "value", "hi")
-            yield succeed
+            yield ()
         }
     }
 
-    "two inputs bound to same signal stay in sync" in run {
+    "two inputs bound to same signal stay in sync" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -1071,11 +1072,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("b"), "value", "from-a")
                 _ <- Browser.fill(Selector.id("b"), "from-b")
                 _ <- Browser.assertAttribute(Selector.id("a"), "value", "from-b")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach remove first item others shift and work" in run {
+    "foreach remove first item others shift and work" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -1090,11 +1091,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.click(Selector.id("btn-B"))
                 _ <- Browser.assertText(Selector.id("v"), "c:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach remove last item others unchanged" in run {
+    "foreach remove last item others unchanged" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -1110,11 +1111,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("btn-C"))
                 _ <- Browser.click(Selector.id("btn-A"))
                 _ <- Browser.assertText(Selector.id("v"), "c:A")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach clear all items empty state" in run {
+    "foreach clear all items empty state" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -1130,11 +1131,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("btn-A"))
                 _ <- Browser.assertNotExists(Selector.id("btn-B"))
                 _ <- Browser.assertVisible(Selector.id("d"))
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach 100 items all clickable" in run {
+    "foreach 100 items all clickable" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from((1 to 100).map(_.toString)))
@@ -1147,11 +1148,11 @@ class ReactiveTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("btn-50"))
                 _ <- Browser.assertText(Selector.id("v"), "50")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach signal replaces entire list new items interactive" in run {
+    "foreach signal replaces entire list new items interactive" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -1166,11 +1167,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("rep"))
                 _ <- Browser.click(Selector.id("btn-Y"))
                 _ <- Browser.assertText(Selector.id("v"), "c:Y")
-            yield succeed
+            yield ()
         }
     }
 
-    "UI when false element not focusable" in run {
+    "UI when false element not focusable" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
@@ -1183,11 +1184,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("hidden"))
                 _ <- Browser.assertVisible(Selector.id("a"))
                 _ <- Browser.assertVisible(Selector.id("c"))
-            yield succeed
+            yield ()
         }
     }
 
-    "rapid toggle 10 times final state correct" in run {
+    "rapid toggle 10 times final state correct" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
@@ -1199,11 +1200,11 @@ class ReactiveTest extends UITest:
                 _ <- Kyo.foreachDiscard(0 until 10)(_ => Browser.click(Selector.id("tog")))
                 // 10 toggles starting from false: even count → still false (hidden)
                 _ <- Browser.assertNotExists(Selector.id("v"))
-            yield succeed
+            yield ()
         }
     }
 
-    "two UI when blocks independent (dynamic)" in run {
+    "two UI when blocks independent (dynamic)" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef(true)
@@ -1222,11 +1223,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("ta"))
                 _ <- Browser.assertNotExists(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("b"), "beta")
-            yield succeed
+            yield ()
         }
     }
 
-    "nested UI when outer false hides all" in run {
+    "nested UI when outer false hides all" in {
         val app: UI < Async =
             for
                 outer <- Signal.initRef(false)
@@ -1240,11 +1241,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("n"))
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("n"), "nested")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal update adds element Tab order updated" in run {
+    "signal update adds element Tab order updated" in {
         val app: UI < Async =
             for
                 show    <- Signal.initRef(false)
@@ -1259,11 +1260,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.click(Selector.id("new"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox enables input fill then uncheck preserves signal" in run {
+    "checkbox enables input fill then uncheck preserves signal" in {
         val app: UI < Async =
             for
                 enabled <- Signal.initRef(false)
@@ -1280,11 +1281,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.fill(Selector.id("i"), "data")
                 _ <- Browser.assertText(Selector.id("v"), "data")
-            yield succeed
+            yield ()
         }
     }
 
-    "conditional inside foreach each item independent" in run {
+    "conditional inside foreach each item independent" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B")))
@@ -1305,11 +1306,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.click(Selector.id("act-B"))
                 _ <- Browser.assertText(Selector.id("v"), "c:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal changes element type input to span no crash" in run {
+    "signal changes element type input to span no crash" in {
         val app: UI < Async =
             for flag <- Signal.initRef(false)
             yield UI.div(
@@ -1324,11 +1325,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("e"), "text")
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertVisible(Selector.id("e"))
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach inside conditional toggle on interact off on fresh" in run {
+    "foreach inside conditional toggle on interact off on fresh" in {
         val app: UI < Async =
             for
                 show    <- Signal.initRef(true)
@@ -1348,11 +1349,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.click(Selector.id("btn-B"))
                 _ <- Browser.assertText(Selector.id("v"), "c:B")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach remove middle item others intact" in run {
+    "foreach remove middle item others intact" in {
         val app: UI < Async =
             for
                 items   <- Signal.initRef(Chunk.from(Seq("A", "B", "C")))
@@ -1370,11 +1371,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "c:A")
                 _ <- Browser.click(Selector.id("btn-C"))
                 _ <- Browser.assertText(Selector.id("v"), "c:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "foreach keyed remove from middle keys preserved" in run {
+    "foreach keyed remove from middle keys preserved" in {
         import kyo.UI.foreachKeyed
         val app: UI < Async =
             for
@@ -1392,11 +1393,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "c:A")
                 _ <- Browser.click(Selector.id("btn-C"))
                 _ <- Browser.assertText(Selector.id("v"), "c:C")
-            yield succeed
+            yield ()
         }
     }
 
-    "hide section then show again preserves nothing" in run {
+    "hide section then show again preserves nothing" in {
         val app: UI < Async =
             for
                 show <- Signal.initRef(true)
@@ -1414,13 +1415,13 @@ class ReactiveTest extends UITest:
                 _ <- Browser.assertNotExists(Selector.id("i"))
                 _ <- Browser.click(Selector.id("tog"))
                 _ <- Browser.assertVisible(Selector.id("i"))
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from ErrorResilienceTest ----
 
-    "onInput throws next pressKey works" in run {
+    "onInput throws next pressKey works" in {
         val app: UI < Async =
             for
                 broken  <- Signal.initRef(true)
@@ -1442,11 +1443,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.fill(Selector.id("i"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick throws next click works" in run {
+    "onClick throws next click works" in {
         val app: UI < Async =
             for
                 broken  <- Signal.initRef(true)
@@ -1468,11 +1469,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onFocus throws focus still set" in run {
+    "onFocus throws focus still set" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -1485,11 +1486,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "onBlur throws blur completes next focus works" in run {
+    "onBlur throws blur completes next focus works" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -1502,11 +1503,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "b focused")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyDown throws keyUp still fires" in run {
+    "onKeyDown throws keyUp still fires" in {
         val app: UI < Async =
             for upFired <- Signal.initRef(false)
             yield UI.div(
@@ -1519,11 +1520,11 @@ class ReactiveTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('x'))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange throws state consistent" in run {
+    "onChange throws state consistent" in {
         val app: UI < Async =
             for
                 broken  <- Signal.initRef(true)
@@ -1545,11 +1546,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.fill(Selector.id("i"), "test2")
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onSubmit throws form still submittable" in run {
+    "onSubmit throws form still submittable" in {
         val app: UI < Async =
             for
                 broken  <- Signal.initRef(true)
@@ -1571,11 +1572,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler throws first call succeeds second" in run {
+    "handler throws first call succeeds second" in {
         val app: UI < Async =
             for callCount <- Signal.initRef(0)
             yield UI.div(
@@ -1592,11 +1593,11 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "2")
-            yield succeed
+            yield ()
         }
     }
 
-    "multiple handlers first throws second succeeds both run" in run {
+    "multiple handlers first throws second succeeds both run" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -1609,11 +1610,11 @@ class ReactiveTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "outer")
-            yield succeed
+            yield ()
         }
     }
 
-    "signal subscription continues after sibling error" in run {
+    "signal subscription continues after sibling error" in {
         val app: UI < Async =
             for
                 good <- Signal.initRef(0)
@@ -1628,7 +1629,7 @@ class ReactiveTest extends UITest:
                 _ <- Browser.click(Selector.id("good"))
                 _ <- Browser.click(Selector.id("good"))
                 _ <- Browser.assertText(Selector.id("v"), "good:2")
-            yield succeed
+            yield ()
         }
     }
 

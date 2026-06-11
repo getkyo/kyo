@@ -29,7 +29,8 @@ object HtmlSnapshot extends KyoApp:
             UI.h1("Product Catalog"),
             UI.p("Server-side rendered by UI.runRender, no DOM and no browser."),
             UI.table(
-                (UI.tr(UI.th("Product"), UI.th("Price")) +: catalog.map(p => UI.tr(UI.td(p.name), UI.td(p.price))))*
+                (UI.tr(UI.th("Product"), UI.th("Price")) +: catalog.map(p => UI.tr(UI.td(p.name), UI.td(p.price))))
+                    .map(UI.Ast.HtmlChildVal.lift(_))*
             ),
             UI.footer.style(Style.color(Color.gray).fontSize(13.px))(UI.p(s"${catalog.size} products"))
         )

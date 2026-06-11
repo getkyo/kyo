@@ -18,7 +18,7 @@ import kyo.internal.SetEmulatedMediaParams
   * asserted. Feature comparisons decompose to `(name, value)` String pairs because the internal CDP case classes
   * derive `Schema` but not `CanEqual`.
   */
-class BrowserEmulationParamsTest extends Test:
+class BrowserEmulationParamsTest extends BrowserTest:
 
     // Convenience accessors for the CDP wire strings of the public enums, the exact values withEmulation feeds
     // into emulatedMediaParams (it calls colorScheme.map(_.wire) / media.map(_.wire)).
@@ -27,7 +27,7 @@ class BrowserEmulationParamsTest extends Test:
     private val screen: Maybe[String] = Present(Browser.MediaType.Screen).map(_.wire)
 
     // Decompose the feature list into comparable (name, value) String pairs.
-    private def pairsOf(params: SetEmulatedMediaParams): Seq[(String, String)] =
+    private def pairsOf(params: SetEmulatedMediaParams)(using kyo.test.AssertScope): Seq[(String, String)] =
         params.features match
             case Present(fs) => fs.map(f => (f.name, f.value))
             case Absent      => fail(s"expected features to be Present but got Absent in $params")

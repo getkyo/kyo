@@ -2,7 +2,7 @@ package kyo.website
 
 import kyo.*
 
-class DocsSearchTest extends Test:
+class DocsSearchTest extends WebsiteTest:
 
     private def mkModule(slug: String, group: String, title: String, readme: String): WebsiteModule =
         WebsiteModule(slug, group, title, readme, WebsiteModule.Platforms(true, true, true))
@@ -11,7 +11,7 @@ class DocsSearchTest extends Test:
         WebsiteContent(intro = "", groups = groups, version = WebsiteVersion("latest", "latest", true))
 
     // index has one entry per module
-    "index has one entry per module" in run {
+    "index has one entry per module" in {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -38,7 +38,7 @@ class DocsSearchTest extends Test:
     }
 
     // filter matches title substring
-    "filter matches title substring" in run {
+    "filter matches title substring" in {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -56,7 +56,7 @@ class DocsSearchTest extends Test:
     }
 
     // filter ranks title before text hits
-    "filter ranks title match before text-only match" in run {
+    "filter ranks title match before text-only match" in {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -77,7 +77,7 @@ class DocsSearchTest extends Test:
     }
 
     // empty query yields no hits
-    "empty query yields no hits" in run {
+    "empty query yields no hits" in {
         val content = mkContent(Chunk(
             WebsiteContent.Group(
                 "Foundation",
@@ -93,7 +93,7 @@ class DocsSearchTest extends Test:
 
     // headingIndex: title matches rank before heading matches, and a heading hit carries the
     // #<heading-slug> anchor route plus the heading text as the sub-label.
-    "headingIndex ranks title matches before heading matches and builds anchor routes" in run {
+    "headingIndex ranks title matches before heading matches and builds anchor routes" in {
         val modules = Chunk(
             mkModule("kyo-core", "Effects", "kyo-core", ""),
             mkModule("kyo-stream", "Effects", "kyo-stream", "")
@@ -117,7 +117,7 @@ class DocsSearchTest extends Test:
     }
 
     // headingIndex matches a heading even when the title does not, with the right prefix in the route.
-    "headingIndex matches a heading-only query and respects the prefix" in run {
+    "headingIndex matches a heading-only query and respects the prefix" in {
         val modules  = Chunk(mkModule("kyo-core", "Effects", "kyo-core", ""))
         val headings = Map("kyo-core" -> Chunk(DocsSearch.Heading("Fibers and forks", "fibers-and-forks")))
         val idx      = DocsSearch.headingIndex("v0.9.0", modules, s => headings.getOrElse(s, Chunk.empty))
@@ -128,7 +128,7 @@ class DocsSearchTest extends Test:
     }
 
     // filter searches stripped plaintext, not code
-    "filter does not match terms inside fenced code blocks" in run {
+    "filter does not match terms inside fenced code blocks" in {
         val codeOnlyReadme =
             """Some prose about effects.
               |
@@ -153,7 +153,7 @@ class DocsSearchTest extends Test:
     }
 
     // within the title band, exact title match ranks above prefix title match
-    "within the title band an exact match ranks above a prefix match" in run {
+    "within the title band an exact match ranks above a prefix match" in {
         val modules = Chunk(
             mkModule("kyo-core", "Effects", "kyo-core", ""),
             mkModule("kyo", "Foundation", "kyo", "")
@@ -168,7 +168,7 @@ class DocsSearchTest extends Test:
 
     // within the heading band, a higher matchClass heading hit ranks above a lower one
     // (levelWeight=0 because Heading carries no level; ordering is matchClass-driven, not level-driven)
-    "within the heading band higher matchClass ranks above lower matchClass" in run {
+    "within the heading band higher matchClass ranks above lower matchClass" in {
         val modules = Chunk(mkModule("kyo-core", "Effects", "kyo-core", ""))
         val headings = Map(
             "kyo-core" -> Chunk(
@@ -200,7 +200,7 @@ class DocsSearchTest extends Test:
     // the key is (isProse, -matchClass, ...) so kyo-alpha (isProse=0) sorts before kyo-beta
     // (isProse=1) regardless of matchClass. The assertion [kyo-alpha, kyo-beta] FAILS under the old
     // uniform-key filter and PASSES only with the isProse tier.
-    "heading-band: per-heading hit ranks above prose-fallback hit regardless of matchClass" in run {
+    "heading-band: per-heading hit ranks above prose-fallback hit regardless of matchClass" in {
         // kyo-beta (idx 0): no headings; text "fibers" matches query "fibers" exactly (matchClass 3).
         // kyo-alpha (idx 1): heading "fibers overview" prefix-matches query "fibers" (matchClass 2).
         // Neither title matches "fibers", so both entries go to the heading/text band.
@@ -234,7 +234,7 @@ class DocsSearchTest extends Test:
     }
 
     // filter is deterministic (same input produces same output)
-    "filter is deterministic" in run {
+    "filter is deterministic" in {
         val modules = Chunk(
             mkModule("kyo-core", "Effects", "kyo-core", ""),
             mkModule("kyo-data", "Foundation", "kyo-data", ""),

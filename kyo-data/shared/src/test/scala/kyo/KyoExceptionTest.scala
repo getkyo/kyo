@@ -1,6 +1,6 @@
 package kyo
 
-class KyoExceptionTest extends Test:
+class KyoExceptionTest extends kyo.test.Test[Any]:
 
     "getMessage" - {
         "includes Throwable cause class and message" in {

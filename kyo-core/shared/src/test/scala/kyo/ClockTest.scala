@@ -3,18 +3,22 @@ package kyo
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
 
-class ClockTest extends Test:
+class ClockTest extends kyo.test.Test[Any]:
+
+    // Wall-clock timing assertions (Clock.sleep/withTimeShift bounds) cannot tolerate being
+    // preempted by concurrent leaves, so run this suite's leaves sequentially.
+    override def config = super.config.sequential
 
     "Clock" - {
         def javaNow() = Instant.fromJava(java.time.Instant.now())
 
-        "now" in run {
+        "now" in {
             Clock.now.map { now =>
                 assert(now - javaNow() < 1.milli)
             }
         }
 
-        "nowWith" in run {
+        "nowWith" in {
             Clock.nowWith { now =>
                 assert(now - javaNow() < 1.milli)
             }
@@ -26,7 +30,7 @@ class ClockTest extends Test:
             assert(now - javaNow() < 1.milli)
         }
 
-        "now at epoch" in run {
+        "now at epoch" in {
             Clock.withTimeControl { control =>
                 for
                     _   <- control.set(Instant.Epoch)
@@ -35,7 +39,7 @@ class ClockTest extends Test:
             }
         }
 
-        "now at max instant" in run {
+        "now at max instant" in {
             Clock.withTimeControl { control =>
                 for
                     _   <- control.set(Instant.Max)
@@ -44,7 +48,7 @@ class ClockTest extends Test:
             }
         }
 
-        "nested time control reuses current control" in run {
+        "nested time control reuses current control" in {
             Clock.withTimeControl { outer =>
                 for
                     _ <- outer.set(Instant.Epoch)
@@ -63,7 +67,7 @@ class ClockTest extends Test:
     }
 
     "Stopwatch" - {
-        "elapsed time" in run {
+        "elapsed time" in {
             Clock.withTimeControl { control =>
                 for
                     stopwatch <- Clock.stopwatch
@@ -74,7 +78,7 @@ class ClockTest extends Test:
             }
         }
 
-        "unsafe elapsed time" in run {
+        "unsafe elapsed time" in {
             import AllowUnsafe.embrace.danger
             Clock.withTimeControl { control =>
                 for
@@ -86,7 +90,7 @@ class ClockTest extends Test:
             }
         }
 
-        "zero elapsed time" in run {
+        "zero elapsed time" in {
             Clock.withTimeControl { control =>
                 for
                     stopwatch <- Clock.stopwatch
@@ -98,7 +102,7 @@ class ClockTest extends Test:
     }
 
     "Deadline" - {
-        "timeLeft" in run {
+        "timeLeft" in {
             Clock.withTimeControl { control =>
                 for
                     deadline <- Clock.deadline(10.seconds)
@@ -109,7 +113,7 @@ class ClockTest extends Test:
             }
         }
 
-        "isOverdue" in run {
+        "isOverdue" in {
             Clock.withTimeControl { control =>
                 for
                     deadline   <- Clock.deadline(5.seconds)
@@ -120,7 +124,7 @@ class ClockTest extends Test:
             }
         }
 
-        "unsafe timeLeft" in run {
+        "unsafe timeLeft" in {
             import AllowUnsafe.embrace.danger
             Clock.withTimeControl { control =>
                 for
@@ -131,7 +135,7 @@ class ClockTest extends Test:
             }
         }
 
-        "unsafe isOverdue" in run {
+        "unsafe isOverdue" in {
             import AllowUnsafe.embrace.danger
             Clock.withTimeControl { control =>
                 for
@@ -142,7 +146,7 @@ class ClockTest extends Test:
             }
         }
 
-        "zero duration deadline" in run {
+        "zero duration deadline" in {
             Clock.withTimeControl { control =>
                 for
                     deadline  <- Clock.deadline(Duration.Zero)
@@ -152,7 +156,7 @@ class ClockTest extends Test:
             }
         }
 
-        "deadline exactly at expiration" in run {
+        "deadline exactly at expiration" in {
             Clock.withTimeControl { control =>
                 for
                     deadline  <- Clock.deadline(5.seconds)
@@ -163,7 +167,7 @@ class ClockTest extends Test:
             }
         }
 
-        "handle Zero timeLeft" in run {
+        "handle Zero timeLeft" in {
             Clock.withTimeControl { control =>
                 for
                     deadline  <- Clock.deadline(1.second)
@@ -176,7 +180,7 @@ class ClockTest extends Test:
             }
         }
 
-        "handle Infinity timeLeft" in run {
+        "handle Infinity timeLeft" in {
             Clock.withTimeControl { control =>
                 for
                     deadline  <- Clock.deadline(Duration.Infinity)
@@ -189,7 +193,7 @@ class ClockTest extends Test:
         }
 
         "handle Duration.Zero and Duration.Infinity" - {
-            "deadline with Zero duration" in run {
+            "deadline with Zero duration" in {
                 Clock.withTimeControl { control =>
                     for
                         deadline  <- Clock.deadline(Duration.Zero)
@@ -201,7 +205,7 @@ class ClockTest extends Test:
                 }
             }
 
-            "deadline with Infinity duration" in run {
+            "deadline with Infinity duration" in {
                 Clock.withTimeControl { control =>
                     for
                         deadline  <- Clock.deadline(Duration.Infinity)
@@ -216,7 +220,7 @@ class ClockTest extends Test:
     }
 
     "Integration" - {
-        "using stopwatch with deadline" in run {
+        "using stopwatch with deadline" in {
             Clock.withTimeControl { control =>
                 for
                     stopwatch <- Clock.stopwatch
@@ -228,7 +232,7 @@ class ClockTest extends Test:
             }
         }
 
-        "multiple stopwatches and deadlines" in run {
+        "multiple stopwatches and deadlines" in {
             Clock.withTimeControl { control =>
                 for
                     stopwatch1 <- Clock.stopwatch
@@ -251,7 +255,7 @@ class ClockTest extends Test:
     }
 
     "Sleep" - {
-        "sleep for specified duration" in run {
+        "sleep for specified duration" in {
             for
                 clock     <- Clock.get
                 stopwatch <- Clock.stopwatch
@@ -261,7 +265,7 @@ class ClockTest extends Test:
             yield assert(elapsed >= 3.millis && elapsed < 100.millis)
         }
 
-        "multiple sequential sleeps" in run {
+        "multiple sequential sleeps" in {
             for
                 clock     <- Clock.get
                 stopwatch <- Clock.stopwatch
@@ -276,7 +280,7 @@ class ClockTest extends Test:
                 assert(end >= 8.millis)
         }
 
-        "sleep with zero duration" in run {
+        "sleep with zero duration" in {
             for
                 clock     <- Clock.get
                 stopwatch <- Clock.stopwatch
@@ -286,7 +290,7 @@ class ClockTest extends Test:
             yield assert(elapsed < 10.millis)
         }
 
-        "concurrency" in run {
+        "concurrency" in {
             for
                 clock     <- Clock.get
                 stopwatch <- Clock.stopwatch
@@ -298,7 +302,7 @@ class ClockTest extends Test:
     }
 
     "TimeShift" - {
-        "speed up time" in run {
+        "speed up time" in {
             for
                 wallStart  <- Clock.now
                 shiftedEnd <- Clock.withTimeShift(2)(Clock.sleep(10.millis).map(_.get.andThen(Clock.now)))
@@ -310,7 +314,7 @@ class ClockTest extends Test:
                 assert(elapsedShifted > elapsedWall)
         }
 
-        "slow down time" in run {
+        "slow down time" in {
             for
                 wallStart  <- Clock.now
                 shiftedEnd <- Clock.withTimeShift(0.1)(Clock.sleep(2.millis).map(_.get.andThen(Clock.now)))
@@ -322,7 +326,7 @@ class ClockTest extends Test:
                 assert(elapsedShifted < elapsedWall)
         }
 
-        "with time control" in run {
+        "with time control" in {
             Clock.withTimeControl { control =>
                 Clock.withTimeShift(2.0) {
                     for
@@ -338,7 +342,7 @@ class ClockTest extends Test:
     }
 
     "TimeControl wallClockDelay" - {
-        "custom delay" in run {
+        "custom delay" in {
             Clock.withTimeControl { control =>
                 for
                     executed    <- AtomicBoolean.init(false)
@@ -349,7 +353,7 @@ class ClockTest extends Test:
             }
         }
 
-        "default behavior" in run {
+        "default behavior" in {
             Clock.withTimeControl { control =>
                 for
                     executed    <- AtomicBoolean.init(false)
@@ -365,7 +369,7 @@ class ClockTest extends Test:
         instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
 
     "repeatAtInterval" - {
-        "executes function at interval" in run {
+        "executes function at interval" in {
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatAtInterval(5.millis)(Clock.now.map(channel.put))
@@ -375,17 +379,17 @@ class ClockTest extends Test:
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
                 assert(avgInterval >= 4.millis && avgInterval < 100.millis)
         }
-        "respects interrupt" in run {
+        "respects interrupt" in {
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
                 _        <- Async.sleep(2.millis)
-                _        <- untilTrue(channel.poll.map(_.isEmpty))
-            yield succeed
+                _        <- assertEventually(channel.poll.map(_.isEmpty))
+            yield ()
         }
-        "with Schedule parameter" in run {
+        "with Schedule parameter" in {
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatAtInterval(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
@@ -395,7 +399,7 @@ class ClockTest extends Test:
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
                 assert(avgInterval >= 4.millis && avgInterval < 100.millis)
         }
-        "with Schedule and state" in run {
+        "with Schedule and state" in {
             for
                 channel <- Channel.init[Int](10)
                 task    <- Clock.repeatAtInterval(Schedule.fixed(1.millis), 0)(st => channel.put(st).andThen(st + 1))
@@ -403,7 +407,7 @@ class ClockTest extends Test:
                 _       <- task.interrupt
             yield assert(numbers.toSeq == (0 until 10))
         }
-        "completes when schedule completes" in run {
+        "completes when schedule completes" in {
             for
                 channel <- Channel.init[Int](10)
                 task    <- Clock.repeatAtInterval(Schedule.fixed(1.millis).maxDuration(10.millis), 0)(st => channel.put(st).andThen(st + 1))
@@ -414,7 +418,7 @@ class ClockTest extends Test:
     }
 
     "repeatWithDelay" - {
-        "executes function with delay" in run {
+        "executes function with delay" in {
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatWithDelay(5.millis)(Clock.now.map(channel.put))
@@ -425,17 +429,17 @@ class ClockTest extends Test:
                 assert(avgDelay >= 4.millis && avgDelay < 100.millis)
         }
 
-        "respects interrupt" in run {
+        "respects interrupt" in {
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
-                _        <- untilTrue(channel.poll.map(_.isEmpty))
-            yield succeed
+                _        <- assertEventually(channel.poll.map(_.isEmpty))
+            yield ()
         }
 
-        "with time control" in runNotJS {
+        "with time control".notJs in {
             Clock.withTimeControl { control =>
                 for
                     running  <- Latch.init(1)
@@ -449,11 +453,11 @@ class ClockTest extends Test:
                     instants <- queue.drain
                 yield
                     intervals(instants).foreach(v => assert(v <= 2.millis))
-                    succeed
+                    ()
             }
         }
 
-        "works with Schedule parameter" in run {
+        "works with Schedule parameter" in {
             for
                 channel  <- Channel.init[Instant](10)
                 task     <- Clock.repeatWithDelay(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
@@ -464,7 +468,7 @@ class ClockTest extends Test:
                 assert(avgDelay >= 4.millis && avgDelay < 100.millis)
         }
 
-        "works with Schedule and state" in run {
+        "works with Schedule and state" in {
             for
                 channel <- Channel.init[Int](10)
                 task <- Clock.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
@@ -476,7 +480,7 @@ class ClockTest extends Test:
             end for
         }
 
-        "completes when schedule completes" in run {
+        "completes when schedule completes" in {
             for
                 channel <- Channel.init[Int](10)
                 task    <- Clock.repeatWithDelay(Schedule.fixed(1.millis).maxDuration(10.millis), 0)(st => channel.put(st).andThen(st + 1))
@@ -487,7 +491,7 @@ class ClockTest extends Test:
     }
 
     "Monotonic Time" - {
-        "nowMonotonic" in run {
+        "nowMonotonic" in {
             for
                 time1 <- Clock.nowMonotonic
                 _     <- Clock.sleep(5.millis).map(_.get)
@@ -498,7 +502,7 @@ class ClockTest extends Test:
                 assert(time2 - time1 < 40.millis)
         }
 
-        "with time control" in run {
+        "with time control" in {
             Clock.withTimeControl { control =>
                 for
                     time1 <- Clock.nowMonotonic
@@ -508,7 +512,7 @@ class ClockTest extends Test:
             }
         }
 
-        "with time shift" in run {
+        "with time shift" in {
             Clock.withTimeShift(2.0) {
                 for
                     time1 <- Clock.nowMonotonic

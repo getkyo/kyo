@@ -24,7 +24,7 @@ object Signup extends KyoApp:
     private val errStyle   = Style.color(Color.red).fontSize(13.px)
     private val okStyle    = Style.color(Color.green).padding(12.px).bg(Color.slate).rounded(8.px)
 
-    private def error(show: Signal[Boolean], message: String): UI =
+    private def error(show: Signal[Boolean], message: String) =
         when(show)(p(message).style(errStyle))
 
     private def formUI: UI < Async =
