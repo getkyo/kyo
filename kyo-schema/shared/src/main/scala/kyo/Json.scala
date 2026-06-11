@@ -104,7 +104,7 @@ object Json:
         val base = JsonSchema.fromStructure(schema.structure)
         base match
             case obj: JsonSchema.Obj =>
-                Schema.enrichObj(
+                Json.enrichJsonSchemaObj(
                     obj,
                     schema.documentation,
                     schema.fieldDocs,
@@ -118,6 +118,29 @@ object Json:
             case other => other
         end match
     end jsonSchema
+
+    import scala.annotation.publicInBinary
+    @publicInBinary private[kyo] def enrichJsonSchemaObj(
+        obj: JsonSchema.Obj,
+        doc: Maybe[String],
+        fieldDocs: Map[Seq[String], String],
+        fieldDeprecated: Map[Seq[String], String],
+        examples: Chunk[Structure.Value],
+        constraints: Seq[Schema.Constraint],
+        droppedFields: Set[String],
+        renamedFields: Map[String, String]
+    ): JsonSchema.Obj =
+        kyo.internal.JsonSchemaEnricher.enrichObj(
+            obj,
+            doc,
+            fieldDocs,
+            fieldDeprecated,
+            examples,
+            constraints,
+            droppedFields,
+            renamedFields
+        )
+    end enrichJsonSchemaObj
 
     /** JSON Schema representation generated from Scala types.
       *

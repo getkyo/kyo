@@ -323,7 +323,7 @@ import scala.quoted.*
       * @param sourceFieldsExpr
       *   the fields list expression (from Fields[A].fields for metaApply, Nil for derived)
       * @param checkSerializability
-      *   if true, checks isSerializableType and falls back to no-serialization Schema; if false, always generates serialization
+      *   if true, checks MacroSchemaClassifier.fieldKindFor and falls back to no-serialization Schema; if false, always generates serialization
       */
     private def generateCaseClassSchema[A: Type, F: Type](
         sourceFieldsExpr: Expr[List[Field[?, ?]]],
@@ -355,10 +355,10 @@ import scala.quoted.*
             if maybeFields.contains(idx) then
                 fieldType.dealias match
                     case AppliedType(_, List(innerType)) =>
-                        SerializationMacro.isSerializableType(innerType)
+                        MacroUtils.MacroSchemaClassifier.fieldKindFor(innerType) != MacroUtils.MacroSchemaClassifier.FieldKind.Generic
                     case _ => false
             else
-                SerializationMacro.isSerializableType(fieldType)
+                MacroUtils.MacroSchemaClassifier.fieldKindFor(fieldType) != MacroUtils.MacroSchemaClassifier.FieldKind.Generic
             end if
         }
 
@@ -499,7 +499,7 @@ import scala.quoted.*
       * @param sourceFieldsExpr
       *   the fields list expression (from Fields[A].fields for metaApply, Nil for derived)
       * @param checkSerializability
-      *   if true, checks isSerializableType and falls back to no-serialization Schema; if false, always generates serialization
+      *   if true, checks MacroSchemaClassifier.fieldKindFor and falls back to no-serialization Schema; if false, always generates serialization
       */
     private def generateSealedTraitSchema[A: Type, F: Type](
         sourceFieldsExpr: Expr[List[Field[?, ?]]],
@@ -520,7 +520,7 @@ import scala.quoted.*
         val cannotSerialize = checkSerializability && !children.forall { child =>
             val childType = child.typeRef
             if childType =:= tpe then true // self-referential - will use self schema
-            else SerializationMacro.isSerializableType(childType)
+            else MacroUtils.MacroSchemaClassifier.fieldKindFor(childType) != MacroUtils.MacroSchemaClassifier.FieldKind.Generic
         }
 
         if cannotSerialize then
@@ -2145,12 +2145,11 @@ import scala.quoted.*
     /** Walks the type tree at compile time to produce a `Structure.Type` literal.
       *
       * This is the inlined fallback used for cyclic fields: it carries the compile-time
-      * type-tree-walk logic formerly in StructureMacro so that Phase 11 can delete
-      * that object without leaving any callers behind.
+      * type-tree-walk logic formerly in StructureMacro (deleted in Phase 11).
       *
       * The four symbol sets (extendedPrimitiveSymbols, optionalSymbols,
-      * collectionSymbols, mapSymbols) are inlined as local vals because Phase 11
-      * will delete them from MacroUtils.
+      * collectionSymbols, mapSymbols) are inlined as local vals because the
+      * MacroUtils-level defs were deleted in Phase 11.
       */
     private def deriveTypeFallback(using
         Quotes

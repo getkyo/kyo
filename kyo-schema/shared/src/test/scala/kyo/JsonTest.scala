@@ -2201,4 +2201,39 @@ class JsonTest extends kyo.test.Test[Any]:
 
     }
 
+    "jsonSchema enrichment via JsonSchemaEnricher" - {
+
+        // Pins INV-28: after Schema.enrichObj is removed from Schema.scala,
+        // Json.jsonSchema must still enrich the result via internal.JsonSchemaEnricher.enrichObj directly.
+
+        "jsonSchema carries root doc when Schema has doc annotation" in {
+            given schema: Schema[MTUser] = Schema[MTUser].doc("a person")
+            val js                       = Json.jsonSchema[MTUser]
+            js match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.description == Maybe("a person"))
+                case other =>
+                    fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
+        "jsonSchema carries field doc for name field" in {
+            given schema: Schema[MTUser] = Schema[MTUser].doc(_.name)("person name")
+            val js                       = Json.jsonSchema[MTUser]
+            js match
+                case obj: JsonSchema.Obj =>
+                    val nameProp = obj.properties.find(_._1 == "name").map(_._2)
+                    nameProp match
+                        case Some(np: JsonSchema.Str) =>
+                            assert(np.description == Maybe("person name"))
+                        case other =>
+                            fail(s"Expected name property as Str with description, got $other")
+                    end match
+                case other =>
+                    fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
+    }
+
 end JsonTest

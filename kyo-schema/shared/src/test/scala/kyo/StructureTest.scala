@@ -1507,4 +1507,86 @@ class StructureTest extends kyo.test.Test[Any]:
 
     }
 
+    // Path resolution for deletion-guard tests: the sbt test JVM's user.dir is the module's platform
+    // subdir (e.g. kyo-schema/jvm/). Navigate up 5 levels from the test-class directory to reach
+    // the project root: test-classes -> scala-x.y.z -> target -> jvm -> kyo-schema -> worktree-root.
+    private def worktreeRoot: java.nio.file.Path =
+        val classUrl = getClass.getProtectionDomain.getCodeSource.getLocation
+        java.nio.file.Paths.get(classUrl.toURI)
+            .getParent // scala-x.y.z
+            .getParent // target
+            .getParent // jvm
+            .getParent // kyo-schema
+            .getParent // worktree root
+    end worktreeRoot
+
+    "deletion-target structural test" - {
+
+        // These tests pin INV-27, INV-29, INV-30: deleted files and symbol-set defs must not exist in the source tree.
+        // They run file IO and are therefore JVM-only (guarded by Platform.isJVM).
+
+        "StructureMacro.scala is deleted (INV-27)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root = worktreeRoot
+                val f    = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/StructureMacro.scala")
+                assert(!java.nio.file.Files.exists(f))
+            else
+                assert(true) // non-JVM platforms cannot access local filesystem
+            end if
+        }
+
+        "MacroUtils.basePrimitiveSymbols def is deleted (INV-29)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val macroF  = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/MacroUtils.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(macroF))
+                assert(!content.contains("def basePrimitiveSymbols"))
+            else
+                assert(true)
+            end if
+        }
+
+        "MacroUtils extended symbol-set defs are deleted (INV-29)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val macroF  = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/MacroUtils.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(macroF))
+                assert(!content.contains("def extendedPrimitiveSymbols"))
+                assert(!content.contains("def collectionSymbols"))
+                assert(!content.contains("def optionalSymbols"))
+                assert(!content.contains("def mapSymbols"))
+            else
+                assert(true)
+            end if
+        }
+
+        "Schema.scala has no import kyo.Json.JsonSchema (INV-30)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val schemaF = root.resolve("kyo-schema/shared/src/main/scala/kyo/Schema.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(schemaF))
+                assert(!content.contains("import kyo.Json.JsonSchema"))
+            else
+                assert(true)
+            end if
+        }
+
+        "Schema.scala has no def enrichObj (INV-30)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val schemaF = root.resolve("kyo-schema/shared/src/main/scala/kyo/Schema.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(schemaF))
+                assert(!content.contains("def enrichObj"))
+            else
+                assert(true)
+            end if
+        }
+
+    }
+
 end StructureTest

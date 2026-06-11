@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Codec.Reader
 import kyo.Codec.Writer
-import kyo.Json.JsonSchema
 import kyo.internal.JsonWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
@@ -1956,22 +1955,6 @@ object Schema:
         constraint: Constraint
     ): Schema[A] { type Focused = meta.Focused } =
         internal.SchemaValidation.fieldConstraintOnly(meta, constraint)
-
-    /** Enriches a JsonSchema.Obj with runtime metadata: doc, field docs, field deprecations, examples, and constraints.
-      *
-      * Separated from the inline enrichJsonSchema method so that all operations on the Obj are typed at the concrete JsonSchema.Obj level.
-      */
-    private[kyo] def enrichObj(
-        obj: Json.JsonSchema.Obj,
-        doc: Maybe[String],
-        fieldDocs: Map[Seq[String], String],
-        fieldDeprecated: Map[Seq[String], String],
-        examples: Chunk[Structure.Value],
-        constraints: Seq[Constraint] = Seq.empty,
-        droppedFields: Set[String] = Set.empty,
-        renamedFields: Map[String, String] = Map.empty
-    ): Json.JsonSchema.Obj =
-        internal.JsonSchemaEnricher.enrichObj(obj, doc, fieldDocs, fieldDeprecated, examples, constraints, droppedFields, renamedFields)
 
     /** Internal helper for field-level doc accumulation. Called from inline doc method. */
     private[kyo] def withFieldDoc[A](
