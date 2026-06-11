@@ -35,4 +35,14 @@ class AssertionFailedMakeTest extends AnyFunSuite with NonImplicitAssertions:
         assert(af.getCause eq t, s"expected getCause eq t, got ${af.getCause}")
     }
 
+    // ── Test 18: a huge diagram is bounded in getMessage (Scala Native writeUTF RPC safety) ────────
+
+    test("test-18: a ~500KB diagram is bounded in getMessage with a total-length marker") {
+        val huge = "x" * 500000
+        val af   = new AssertionFailed(huge, frame, Maybe.empty, Maybe.empty)
+        // writeUTF caps at 65535 bytes; the bounded message stays well under that.
+        assert(af.getMessage.length < 20000, s"expected bounded message, got length ${af.getMessage.length}")
+        assert(af.getMessage.contains("(500000 chars total, truncated)"), "expected total-length marker in message")
+    }
+
 end AssertionFailedMakeTest

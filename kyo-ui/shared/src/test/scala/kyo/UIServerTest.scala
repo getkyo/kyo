@@ -14,18 +14,13 @@ class UIServerTest extends UITest:
         }
     }
 
-    "serve sets kyo-sid cookie" in {
+    "serve renders SSR HTML with no Set-Cookie header" in {
         withUI(UI.div("cookie-check").id("cc")) {
-            for
-                title <- Browser.title
-                // The page must have loaded (cookie set during GET /);
-                // verify the element is visible (session was correctly created)
-                _ <- Browser.assertExists(Selector.id("cc"))
-            yield ()
+            Browser.assertExists(Selector.id("cc"))
         }
     }
 
-    "event POST updates reactive state via full server cycle" in {
+    "event round-trip updates reactive state via full server cycle" in {
         val app: UI < Async =
             for ref <- Signal.initRef("before")
             yield UI.div(

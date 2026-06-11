@@ -79,22 +79,19 @@ private[kyo] object ReactiveUI:
                 end for
 
             case ui: Element =>
-                // If the element has SignalRef-bound attributes (e.g. .value(ref) or .checked(ref)),
-                // it must re-render when those signals change. We expose a "reactive" signal that
-                // emits whenever any bound SignalRef updates; rendering reads each ref's current value
-                // afresh, so the new HTML reflects the updated signal state.
-                val refs = collectSignalRefs(ui)
-                if refs.isEmpty then
-                    for (kids, hdl) <- walkStatic(ui, path, svg)
-                    yield ReactiveUI(path, Signal.initConst(ui), isConst = true, kids, hdl, svgContext = svg)
-                else
-                    val elementSignal = Signal.initRaw[UI](
-                        currentWith = [B, S] => g => g(ui),
-                        nextWith = [B, S] => g => Signal.awaitAny(refs).andThen(g(ui))
-                    )
-                    for (kids, hdl) <- walkStatic(ui, path, svg)
-                    yield ReactiveUI(path, elementSignal, isConst = false, kids, hdl, svgContext = svg)
-                end if
+                // An element with a SignalRef-bound attribute (`.value(ref)` xor `.checked(ref)`; an element binds at most
+                // one, see collectSignalRef) must re-render when that signal changes. The change is carried by the ref
+                // (read afresh at render time), not by the rendered value's identity: the value is always the same `ui`
+                // object, kept with its `Bound.Ref` attributes so the rendered HTML carries the auto-binding event markers
+                // `data-kyo-ev="input"/"change"` the client needs and the dispatch handler resolves the ref. The region's
+                // signal is that ref mapped to the constant `ui`; mapping the leaf `SignalRef` keeps the signal exact, so
+                // subscribeScoped's `observe` delegates to the ref's register-before-read leaf loop (lossless, no
+                // deferred next-capture, no repair timer / idle churn), and each ref edit is a distinct ref VALUE that
+                // re-renders without the value-dedup ever suppressing a real edit. An element with no bound ref is const.
+                val (elementSignal, isConstNode) =
+                    collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
+                for (kids, hdl) <- walkStatic(ui, path, svg)
+                yield ReactiveUI(path, elementSignal, isConst = isConstNode, kids, hdl, svgContext = svg)
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
@@ -106,24 +103,22 @@ private[kyo] object ReactiveUI:
         end match
     end normalize
 
-    /** Collects all SignalRef-bound attributes from an Element, so the element can be made reactive over those signals (its HTML re-renders
-      * when any of them change).
+    /** Returns the element's single SignalRef-bound attribute (its `.value` or `.checked`), if any, so the element can be made reactive over
+      * it (its HTML re-renders when that signal changes). An element binds at most one such ref.
       */
-    private def collectSignalRefs(elem: Element): Seq[Signal[?]] =
-        val builder = Seq.newBuilder[Signal[?]]
-        def addValue(v: Maybe[Bound[?]]): Unit = v match
-            case Present(Bound.Ref(ref)) => builder += ref
-            case _                       => ()
+    private def collectSignalRef(elem: Element): Maybe[Signal[?]] =
+        def refOf(v: Maybe[Bound[?]]): Maybe[Signal[?]] = v match
+            case Present(Bound.Ref(ref)) => Present(ref)
+            case _                       => Absent
         elem match
-            case ti: TextInput    => addValue(ti.value)
-            case ri: RangeInput   => addValue(ri.value)
-            case pi: PickerInput  => addValue(pi.value)
-            case bi: BooleanInput => addValue(bi.checked)
-            case h: HiddenInput   => addValue(h.value)
-            case _                =>
+            case ti: TextInput    => refOf(ti.value)
+            case ri: RangeInput   => refOf(ri.value)
+            case pi: PickerInput  => refOf(pi.value)
+            case bi: BooleanInput => refOf(bi.checked)
+            case h: HiddenInput   => refOf(h.value)
+            case _                => Absent
         end match
-        builder.result()
-    end collectSignalRefs
+    end collectSignalRef
 
     private type Handler = (Seq[String], UIEvent) => Boolean < Async
 
@@ -143,7 +138,7 @@ private[kyo] object ReactiveUI:
                             case _: Reactive[?] | _: Foreach[?, ?] =>
                                 for rui <- normalize(child, childPath, childSvg)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
-                            case childElem: Element if collectSignalRefs(childElem).nonEmpty =>
+                            case childElem: Element if collectSignalRef(childElem).nonEmpty =>
                                 // Element with SignalRef-bound attributes is reactive over those signals;
                                 // normalize it so subscribeNode wires updates.
                                 for rui <- normalize(childElem, childPath, childSvg)
@@ -573,72 +568,64 @@ private[kyo] object ReactiveUI:
 
     // ---- Subscribe ----
 
-    /** Result of subscribe: dispatch handler + fibers + signal change tracking. */
-    case class Subscription(handle: Handler, fibers: Seq[Fiber[Unit, Any]], lastSignalChangeTime: AtomicRef[Instant])
+    /** Result of subscribe: dispatch handler + signal change tracking. The enclosing Scope owns every
+      * region fiber's lifecycle; the per-value Scope (opened by observe) owns each region's children,
+      * so closing the root scope cascade-tears-down the tree.
+      */
+    case class Subscription(handle: Handler, lastSignalChangeTime: AtomicRef[Instant])
 
-    /** Subscribe all reactive boundaries. Returns dispatch handle + fibers for cleanup. */
-    def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < Async =
+    /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
+      * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
+      */
+    def subscribe(rui: ReactiveUI, exchange: UIExchange)(using Frame): Subscription < (Async & Scope) =
         for
             signalChangeTime <- AtomicRef.init(Instant.Epoch)
-            fibers           <- subscribeNode(rui, exchange, signalChangeTime)
-        yield Subscription(rui.handle, fibers, signalChangeTime)
+            _                <- subscribeScoped(rui, exchange, signalChangeTime)
+        yield Subscription(rui.handle, signalChangeTime)
 
-    private def subscribeNode(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
+    // Each reactive region forks a Fiber.init (scoped to the enclosing Scope) running observe. Each
+    // value opens a fresh per-value Scope; the region renders, re-walks, and forks its children INTO that
+    // per-value Scope via the recursive subscribeScoped, so the next value (or an interrupt) closes them by
+    // cascade. A const node has no signal: it subscribes its children in the enclosing scope. The prior manual
+    // interrupt-old bookkeeping (a ref of live child fibers, interrupted one level per change) is gone; the
+    // per-value Scope does interrupt-old transitively (every descendant), fixing the climbing-waiters leak the
+    // one-level interrupt left.
+    private def subscribeScoped(rui: ReactiveUI, exchange: UIExchange, signalChangeTime: AtomicRef[Instant])(using
         Frame
-    ): Seq[Fiber[Unit, Any]] < Async =
+    ): Unit < (Async & Scope) =
         if rui.isConst then
-            for children <- Kyo.foreach(rui.children)(subscribeNode(_, exchange, signalChangeTime))
-            yield children.flatten
+            Kyo.foreachDiscard(rui.children)(subscribeScoped(_, exchange, signalChangeTime))
         else
-            // Reactive node: subscribe self + dynamically (re)subscribe descendants whenever the signal
-            // emits. The descendant set can change between emissions (e.g. nested `UI.when(outer)` whose
-            // body contains another `UI.when(inner)`. When `outer` flips true, the inner reactive
-            // didn't exist at normalize time so its signal would never get subscribed without this
-            // re-walk). We track the live descendant fibers in a ref and interrupt them on each change.
-            // Don't use streamChanges here; for derived signals (e.g. items.map(items => Fragment(...))),
-            // currentWith may produce new instances on every read (closures, mutable Style arrays don't
-            // structurally compare), causing streamChanges to emit infinitely. Drive updates directly
-            // off `next` (Promise-based, only completes on actual upstream change).
-            for
-                childFibersRef <- AtomicRef.init(Seq.empty[Fiber[Unit, Any]])
-                selfFiber <- Fiber.initUnscoped {
-                    Abort.run[Throwable] {
-                        val emitAndResubscribe: Unit < Async =
-                            for
-                                now          <- Clock.now
-                                _            <- signalChangeTime.set(now)
-                                current      <- rui.signal.current
-                                _            <- exchange.onChange(rui.path, current)
-                                (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
-                                oldFibers    <- childFibersRef.get
-                                _            <- Kyo.foreachDiscard(oldFibers)(_.interrupt)
-                                newFibers    <- Kyo.foreach(newKids)(subscribeNode(_, exchange, signalChangeTime))
-                                _            <- childFibersRef.set(newFibers.flatten)
-                            yield ()
-                        // Fork the next-change wait BEFORE emitting, then await it. Signal conflates
-                        // intermediate values (latest-wins by design), so the loop only needs to be
-                        // woken once and re-read `current`. The hazard is a lost wakeup of the final
-                        // change: if a change lands after `current` is read but before the waiter is
-                        // registered, it completes a waiterless promise and, when it is the last
-                        // change, the region never re-renders. Forking `next` ahead of `emit`
-                        // registers the waiter first, closing that window.
-                        Loop.forever {
-                            for
-                                nextFiber <- Fiber.initUnscoped(rui.signal.next)
-                                _         <- emitAndResubscribe
-                                _         <- nextFiber.get
-                            yield Loop.continue(())
-                        }
-                    }.map { result =>
-                        result.foldError(
-                            _ => (),
-                            err => Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", err.exception)
-                        )
-                    }
+            // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
+            // that scope, so the next value (or an interrupt) tears them down by cascade.
+            def renderValue(current: UI): Unit < (Async & Scope) =
+                for
+                    now          <- Clock.now
+                    _            <- signalChangeTime.set(now)
+                    _            <- exchange.onChange(rui.path, current)
+                    (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
+                    _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
+                yield ()
+            // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
+            // children into it), held open until the next change, then closed by cascade. SignalRef-bound element
+            // regions (normalize maps the bound leaf to the constant `ui`) ride the SignalRef's exact register-before-
+            // read observe: each ref edit is a distinct ref value that re-renders the region, with no deferred
+            // next-capture, no repair timer, and no idle re-render churn (an unchanged input never re-emits).
+            Fiber.init {
+                Abort.run[Throwable] {
+                    rui.signal.observe(renderValue)
+                }.map { result =>
+                    result.fold(
+                        _ => (),
+                        err => Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", err),
+                        panic =>
+                            if panic.isInstanceOf[Interrupted] then ()
+                            else Log.error(s"Reactive subscription fiber failed at path=${rui.path.mkString(".")}", panic)
+                    )
                 }
-            yield Seq(selfFiber)
+            }.unit
         end if
-    end subscribeNode
+    end subscribeScoped
 
     // ---- Shared UI tree utilities (used by both backends) ----
 

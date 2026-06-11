@@ -1828,16 +1828,21 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 outer <- AtomicInt.init(0)
                 inner <- AtomicInt.init(0)
+                ready <- Promise.init[Unit, Any]
                 fiber <- Fiber.initUnscoped {
                     Scope.run {
                         Scope.ensure(outer.incrementAndGet.unit).andThen {
                             Scope.run {
-                                Scope.ensure(inner.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                                Scope.ensure(inner.incrementAndGet.unit)
+                                    .andThen(ready.completeUnit)
+                                    .andThen(Async.sleep(1.day))
                             }
                         }
                     }
                 }
-                _           <- Async.sleep(10.millis)
+                // Both finalizers are registered and the fiber is parked once `ready` completes;
+                // this replaces a racy Async.sleep(10.millis) that could interrupt before setup.
+                _           <- ready.get
                 interrupted <- fiber.interrupt
                 _           <- assertEventually(inner.get.map(_ == 1))
                 _           <- assertEventually(outer.get.map(_ == 1))

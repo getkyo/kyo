@@ -35,10 +35,28 @@ final class AssertionFailed(
     val msg: Maybe[String],
     val cause: Maybe[Throwable]
 // Unsafe: null sentinel, RuntimeException ctor accepts null Throwable to signal absence
-) extends RuntimeException(s"\n$diagram", cause.getOrElse(null))
+) extends RuntimeException(AssertionFailed.message(diagram), cause.getOrElse(null))
 end AssertionFailed
 
 object AssertionFailed:
+
+    /** Upper bound (in characters) on the exception message. The message carries the failure diagram and is
+      * what test frameworks serialize; the Scala Native test interface ships it back to the JVM via
+      * `DataOutputStream.writeUTF`, which caps at 65535 bytes. ~16K characters stays under that even at the
+      * ~3 bytes/char worst case of modified UTF-8, so an assertion (or snapshot) failure on a very large
+      * value (a rendered SVG, a big collection) can never overflow and crash that RPC channel. Every
+      * assertion failure flows through this constructor, so bounding here covers the power-assert, `==`
+      * diff, and snapshot paths uniformly.
+      */
+    private val MaxMessageChars = 16384
+
+    private def message(diagram: String): String =
+        val bounded =
+            if diagram.length <= MaxMessageChars then diagram
+            else diagram.substring(0, MaxMessageChars) + s"...(${diagram.length} chars total, truncated)"
+        s"\n$bounded"
+    end message
+
     /** Construct an [[AssertionFailed]] from its components.
       *
       * Preferred over the primary constructor when callers hold the components individually; the `make` name signals that this is a
