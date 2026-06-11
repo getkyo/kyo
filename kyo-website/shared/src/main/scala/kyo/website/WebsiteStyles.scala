@@ -879,8 +879,10 @@ object WebsiteStyles:
             // 3-over-2 bottom row uneven). A fixed basis keeps all five on one column track, so the last
             // row is two cards left-aligned under the first two, not two stretched half-width cards.
             .rule(
+                // justify center makes the orphan last row (2 cards) a centered 3-over-2 pyramid at the
+                // same card width as the top row, instead of leaving an empty cell in the bottom corner.
                 "feat-grid",
-                Style.row.flexWrap(_.wrap).gap(16.px).margin(44.px, 0.px, 0.px, 0.px)
+                Style.row.flexWrap(_.wrap).justify(_.center).gap(16.px).margin(44.px, 0.px, 0.px, 0.px)
                     .bg(Color.transparent).border(0.px, Color.transparent).rounded(0.px).overflow(_.visible)
             )
             .rule(
@@ -912,10 +914,12 @@ object WebsiteStyles:
             .rule(Selector.cls("hero-text").descendant(Selector.cls("hero-cta")), Style.justify(_.start))
             .rule(Selector.cls("hero-text").descendant(Selector.cls("trust")), Style.justify(_.start))
             .rule(
+                // textAlign left: the code must NOT inherit the hero section's centering (it would center
+                // each line and destroy the source indentation).
                 "hero-code",
-                Style.flexGrow(1.0).flexBasis(420.px).minWidth(0.px).margin(0.px)
+                Style.flexGrow(1.0).flexBasis(420.px).minWidth(0.px).margin(0.px).textAlign(_.left)
             )
-            .rule("gap-grid", Style.row.flexWrap(_.wrap).gap(44.px).align(_.start))
+            .rule("gap-grid", Style.row.flexWrap(_.wrap).gap(44.px).align(_.center))
             .rule("gap-text", Style.column.flexGrow(1.0).flexBasis(440.px).minWidth(0.px))
             .rule(Selector.cls("gap-text").descendant(Selector.cls("sec-head")), Style.maxWidth(Length.Pct(100)))
             .rule(
