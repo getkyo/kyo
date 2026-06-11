@@ -221,4 +221,77 @@ class SummaryTest extends kyo.test.Test[Any]:
         assert(!summary.contains("MixedSuite > ign"), s"Ignored leaf must not appear in TOTAL FAILURES:\n$summary"): Unit
     }
 
+    "a huge single-line failure diagram is bounded in the summary (native writeUTF RPC safety)" in {
+        // The summary string is what Runner.done() returns; on Scala Native sbt ships it back over the
+        // test-interface RPC via DataOutputStream.writeUTF, which caps at 65535 bytes. A failing leaf
+        // whose diagram is a single ~500KB line (e.g. a rendered SVG with no newlines) must not make the
+        // per-leaf reason carry the whole thing, or the summary overflows that RPC and crashes the
+        // entire suite's transport.
+        val hugeLine = "x" * 500000
+        val summary = Summary.render(
+            reportOf(leafResult(TestResult.Failed(hugeLine, Maybe.empty, oneMilli))),
+            Chunk.empty,
+            Chunk.empty
+        )
+        assert(summary.contains("TOTAL FAILURES (1)"), s"expected TOTAL FAILURES (1)"): Unit
+        assert(summary.length < 64000, s"summary length ${summary.length} exceeds the 64KB writeUTF cap"): Unit
+    }
+
+    "many failing leaves keep the summary under the writeUTF cap (the real native crash)" in {
+        // The actual Scala Native crash: when very many leaves fail/cancel (e.g. ~1300 kyo-ui leaves
+        // cancelled because Chrome is unavailable on linux-arm64, each with a long reason), the TOTAL
+        // FAILURES block lists them all and the summary overflows writeUTF. Per-line capping alone is not
+        // enough; the whole block must be bounded.
+        val reason = "chrome-headless-shell unavailable on linux-arm64; install chromium and pass Browser.LaunchConfig.chromium. " * 3
+        val leaves = (1 to 3000).map(i => (Chunk("Suite", s"leaf$i"), TestResult.Cancelled(reason, oneMilli): TestResult))
+        val summary = Summary.render(
+            Iterable(TestReport(Chunk(SuiteReport("Suite", Chunk.from(leaves), zeroDuration)))),
+            Chunk.empty,
+            Chunk.empty
+        )
+        assert(summary.contains("TOTAL FAILURES (3000)"), s"expected the full count in the header"): Unit
+        assert(
+            summary.contains("[CANCELLED] x3000"),
+            s"expected the 3000 same-reason cancellations collapsed into one grouped line:\n${summary.take(500)}"
+        ): Unit
+        assert(!summary.contains("leaf2999"), s"grouped leaves should not list individual paths:\n${summary.take(500)}"): Unit
+        assert(summary.length < 64000, s"summary length ${summary.length} exceeds the 64KB writeUTF cap"): Unit
+    }
+
+    "distinct reasons are not grouped (each failing leaf keeps its own line + path)" in {
+        val summary = Summary.render(
+            reportOf(
+                leafResult(TestResult.Failed("a == b", Maybe.empty, oneMilli)),
+                leafResult(TestResult.Failed("c == d", Maybe.empty, oneMilli))
+            ),
+            Chunk.empty,
+            Chunk.empty
+        )
+        assert(summary.contains("TOTAL FAILURES (2)"), summary): Unit
+        assert(summary.contains("a == b") && summary.contains("c == d"), s"distinct reasons must both appear:\n$summary"): Unit
+        assert(!summary.contains(" x2"), s"distinct reasons must not be grouped:\n$summary"): Unit
+    }
+
+    "many DISTINCT multi-byte failures stay under the writeUTF byte cap (not just the char cap)" in {
+        // Grouping does not help when every failure is distinct, so the backstop must hold. writeUTF caps at
+        // 65535 *bytes* of modified UTF-8 (up to 3 bytes/char), so a char-only bound is not enough: 5000
+        // distinct reasons built from 3-byte CJK characters would be ~150KB of bytes while well under any
+        // character cap. The byte-aware guard must keep the rendered summary under the real byte cap.
+        val leaves = (1 to 5000).map { i =>
+            val reason = ("中" * 300) + i.toString // 300 CJK chars (3 bytes each) + a unique suffix
+            (Chunk("Suite", s"leaf$i"), TestResult.Cancelled(reason, oneMilli): TestResult)
+        }
+        val summary = Summary.render(
+            Iterable(TestReport(Chunk(SuiteReport("Suite", Chunk.from(leaves), zeroDuration)))),
+            Chunk.empty,
+            Chunk.empty
+        )
+        val byteLen = summary.foldLeft(0) { (acc, c) =>
+            val code = c.toInt
+            acc + (if code >= 0x0001 && code <= 0x007f then 1 else if code <= 0x07ff then 2 else 3)
+        }
+        assert(byteLen < 65535, s"summary modified-UTF-8 byte length $byteLen exceeds the 65535 writeUTF cap"): Unit
+        assert(summary.contains("TOTAL FAILURES (5000)"), s"header must still carry the true count:\n${summary.take(200)}"): Unit
+    }
+
 end SummaryTest
