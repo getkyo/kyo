@@ -1515,6 +1515,18 @@ object WebsiteStyles:
                     .rule("fcat", Style.flexBasis(Length.Pct(100)))
                     .rule("stat", Style.column.align(_.center).textAlign(_.center).gap(14.px))
             )
+            // The ladder rungs are a two-column [beat | body] row on wide viewports; the fixed 150px
+            // beat plus the 380px body (and its code panel) overflow a phone, so below 640px stack each
+            // rung to a single column. The beat label sits above its body, which claims the full row
+            // width, and the code panel scrolls within its own bounds instead of clipping the page. The
+            // base `.rung` flex-basis values (150px beat, 380px body) become heights in a column, so
+            // reset both to auto here to size by content.
+            .media(Stylesheet.MediaQuery.maxWidth(640.px))(
+                Stylesheet.empty
+                    .rule("rung", Style.column.gap(10.px).padding(26.px, 0.px))
+                    .rule("beat", Style.flexBasis(Length.Auto).margin(0.px, 0.px, 2.px, 0.px))
+                    .rule("rung-body", Style.flexBasis(Length.Auto))
+            )
             // docs 2-pane is side-by-side on wide viewports (rail + content); below 860px the rail
             // collapses into a toggle-revealed drawer (handled by the <860px block further down).
             .media(Stylesheet.MediaQuery.minWidth(1024.px))(
