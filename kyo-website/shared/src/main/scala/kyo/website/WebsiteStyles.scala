@@ -1174,25 +1174,42 @@ object WebsiteStyles:
                     .maxWidth(860.px)
                     .overflow(_.auto).padding(40.px, 52.px, 90.px, 52.px)
             )
-            // prev/next footer (two boxes)
+            // prev/next pager: two cards. The prev card aligns its content left behind a leading
+            // chevron; the next card aligns right with a trailing chevron. A small direction eyebrow
+            // ("Previous"/"Next") sits above the target module name. A missing side is an invisible
+            // `pn-spacer` holding the slot so the present card stays on its own edge.
             .rule(
                 "prev-next",
-                Style.row.justify(_.spaceBetween).align(_.center).gap(14.px)
-                    .margin(56.px, 0.px, 0.px, 0.px)
+                Style.row.justify(_.spaceBetween).align(_.stretch).gap(16.px).margin(56.px, 0.px, 0.px, 0.px)
             )
             .rule(
-                Selector.cls("prev-next").descendant(Selector.tag("a")),
-                Style.flexGrow(1.0).flexBasis(0.px)
-                    .border(1.px, _.variable("line-soft")).rounded(16.px).padding(16.px, 18.px)
-                    .color(_.variable("text")).fontSize(15.px).fontWeight(_.w500).cursor(_.pointer)
-                    .hover(_.borderColor(_.variable("accent-line")))
+                "pn",
+                Style.row.align(_.center).gap(14.px).flexGrow(1.0).flexBasis(0.px).minWidth(0.px)
+                    .border(1.px, _.variable("line")).rounded(14.px).padding(13.px, 18.px)
+                    .textDecoration(_.none).color(_.variable("ink")).cursor(_.pointer)
+                    .hover(_.borderColor(_.variable("accent-line")).bg(_.variable("accent-ghost")))
             )
+            // The prose rule `.docs-content a { display: inline }` (specificity 0,1,1) outranks the kyo-ui
+            // reset's `a { display: flex }`, which would leave the card in normal flow with the chevron
+            // and body stacked. Force it back to a flex row with a more specific `.docs-content .pn`
+            // (0,2,0) rule. (`Style.display(_.flex)`, added to kyo-ui for exactly this kind of override.)
+            .rule(Selector.cls("docs-content").descendant(Selector.cls("pn")), Style.display(_.flex))
+            // next card: push the body + trailing chevron to the right edge of the card
+            .rule("pn-next", Style.justify(_.end))
+            // the chevron wrapper carries the icon color (faint by default); stroke=currentColor on the
+            // svg inside follows it, and the whole card turns accent on hover.
+            .rule("pn-chev", Style.row.align(_.center).flexShrink(0.0).color(_.variable("faint")))
+            .rule(Selector.cls("pn").pseudo("hover").descendant(Selector.cls("pn-chev")), Style.color(_.variable("accent")))
+            .rule("pn-body", Style.column.gap(2.px).minWidth(0.px))
+            // next card body: right-align the eyebrow + name under the right-pushed content
+            .rule(Selector.cls("pn-next").descendant(Selector.cls("pn-body")), Style.align(_.end).textAlign(_.right))
             .rule(
-                "prev-next-disabled",
-                Style.flexGrow(1.0).flexBasis(0.px)
-                    .border(1.px, _.variable("line-soft")).rounded(16.px).padding(16.px, 18.px)
-                    .color(_.variable("faint"))
+                "pn-dir",
+                Style.fontSize(12.px).color(_.variable("faint")).fontWeight(_.w500).letterSpacing(0.03.em)
             )
+            .rule("pn-name", Style.fontSize(15.5.px).fontWeight(_.w600).color(_.variable("ink")))
+            .rule(Selector.cls("pn").pseudo("hover").descendant(Selector.cls("pn-name")), Style.color(_.variable("accent")))
+            .rule("pn-spacer", Style.flexGrow(1.0).flexBasis(0.px))
     end docsContent
 
     // ---- Docs: prose (content article), callouts, blockquote, tables ----

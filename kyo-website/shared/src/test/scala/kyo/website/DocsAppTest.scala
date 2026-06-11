@@ -414,15 +414,16 @@ class DocsAppTest extends WebsiteTest:
             firstRoute <- fixedRoute("/latest/mod-a/")
             firstHtml  <- rendered(content, firstRoute, Chunk.empty, UI.empty)
         yield
-            // The overview pager: a disabled prev and a next link to the first module.
-            // Scope to the prev-next nav to avoid matching the sidebar Overview item.
+            // The overview pager: an empty prev slot (pn-spacer) and a next card linking to the first
+            // module. Scope to the prev-next nav to avoid matching the sidebar Overview item.
             val overviewPager = overviewHtml.substring(overviewHtml.indexOf("prev-next"))
-            assert(overviewPager.contains("prev-next-disabled"), s"overview must have a disabled prev: $overviewPager")
+            assert(overviewPager.contains("pn-spacer"), s"overview must have an empty prev slot: $overviewPager")
             assert(overviewPager.contains("/latest/mod-a/"), s"overview next must link to the first module: $overviewPager")
-            // The first module's pager: prev links back to the overview /latest/, next to mod-b. The
-            // `<` in the label is HTML-escaped to `&lt;` in the rendered output.
+            // The first module's pager: a "Previous" card labelled "Overview" linking to /latest/, and a
+            // next card to mod-b.
             val firstPager = firstHtml.substring(firstHtml.indexOf("prev-next"))
-            assert(firstPager.contains("&lt; Overview"), s"first module prev must be labelled Overview: $firstPager")
+            assert(firstPager.contains("Overview"), s"first module prev must be labelled Overview: $firstPager")
+            assert(firstPager.contains("Previous"), s"first module prev must carry the Previous eyebrow: $firstPager")
             assert(firstPager.contains("""href="/latest/""""), s"first module prev must link to the overview /latest/: $firstPager")
             assert(firstPager.contains("/latest/mod-b/"), s"first module next must link to mod-b: $firstPager")
         end for

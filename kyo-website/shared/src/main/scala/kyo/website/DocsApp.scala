@@ -267,31 +267,69 @@ object DocsApp:
 
     private def prevNextNav(modules: Chunk[WebsiteModule], currentRoute: String, prefix: String)(using Frame): UI =
         // The overview/intro route `/<prefix>/` is the FIRST page in the docs sequence: it has no prev
-        // and its next is the first module. A module page's prev/next steps within the module sequence,
-        // and the first module's prev points back to the overview. The overview link is labelled
-        // "Overview" and targets the intro route `/<prefix>/`.
+        // and its next is the first module. A module page's prev/next step within the module sequence,
+        // and the first module's prev points back to the overview ("Overview", targeting `/<prefix>/`).
+        // Each side is a card carrying a direction eyebrow and the target module's name; a missing side
+        // renders an invisible `pn-spacer` so the present card stays pinned to its own edge.
         val overviewRoute = s"/$prefix/"
         val idx           = modules.indexWhere(m => currentRoute.endsWith(s"/${m.slug}/"))
-        if idx < 0 then
-            // On the overview itself: no prev; next is the first module (if any).
-            val nextLink = modules.headMaybe match
-                case Present(first) => UI.a(s"${first.displayName} >").href(Href.Path(s"/$prefix/${first.slug}/"))
-                case Absent         => UI.span.cssClass("prev-next-disabled")(">")
-            UI.nav.cssClass("prev-next")(
-                UI.span.cssClass("prev-next-disabled")("<"),
-                nextLink
-            )
-        else
-            val next: Maybe[WebsiteModule] = if idx < modules.size - 1 then Present(modules(idx + 1)) else Absent
-            // At index 0 the prev is the overview; otherwise it is the previous module.
-            val prevLink =
-                if idx > 0 then UI.a(s"< ${modules(idx - 1).displayName}").href(Href.Path(s"/$prefix/${modules(idx - 1).slug}/"))
-                else UI.a("< Overview").href(Href.Path(overviewRoute))
-            val nextLink = next match
-                case Present(m) => UI.a(s"${m.displayName} >").href(Href.Path(s"/$prefix/${m.slug}/"))
-                case Absent     => UI.span.cssClass("prev-next-disabled")(">")
-            UI.nav.cssClass("prev-next")(prevLink, nextLink)
-        end if
+        val (prevSlot, nextSlot) =
+            if idx < 0 then
+                val next = modules.headMaybe match
+                    case Present(first) => pnCard("Next", first.displayName, s"/$prefix/${first.slug}/", isPrev = false)
+                    case Absent         => pnSpacer
+                (pnSpacer, next)
+            else
+                val prev =
+                    if idx > 0 then
+                        pnCard("Previous", modules(idx - 1).displayName, s"/$prefix/${modules(idx - 1).slug}/", isPrev = true)
+                    else pnCard("Previous", "Overview", overviewRoute, isPrev = true)
+                val next =
+                    if idx < modules.size - 1 then
+                        pnCard("Next", modules(idx + 1).displayName, s"/$prefix/${modules(idx + 1).slug}/", isPrev = false)
+                    else pnSpacer
+                (prev, next)
+        UI.nav.cssClass("prev-next")(prevSlot, nextSlot)
     end prevNextNav
+
+    /** One pager card: a direction eyebrow ("Previous"/"Next") above the target module's display name,
+      * with a chevron on the card's outer edge (left for a prev card, right for a next card). The next
+      * card carries `pn-next` so its content right-aligns; the prev card is the default.
+      */
+    private def pnCard(dir: String, name: String, href: String, isPrev: Boolean)(using Frame): UI =
+        val chev = UI.span.cssClass("pn-chev")(chevron(pointsLeft = isPrev))
+        // pn-body is a div (not a span): the kyo-ui reset makes `span { display: inline }`, so a span
+        // would not be a flex column and the eyebrow + name would run together inline. A div defaults to
+        // a flex column, stacking the direction eyebrow above the module name. UI.a accepts block
+        // children (the landing's `fcat` anchor wraps a heading + list the same way).
+        val body = UI.div.cssClass("pn-body")(UI.span.cssClass("pn-dir")(dir), UI.span.cssClass("pn-name")(name))
+        val link = (if isPrev then UI.a.cssClass("pn") else UI.a.cssClass("pn").cssClass("pn-next")).href(Href.Path(href))
+        if isPrev then link(chev, body) else link(body, chev)
+    end pnCard
+
+    /** An empty, borderless slot that holds a missing side's place so the present card stays on its own
+      * edge (the nav's `space-between` positions the pair).
+      */
+    private def pnSpacer(using Frame): UI = UI.span.cssClass("pn-spacer")()
+
+    /** A single chevron glyph drawn with the kyo-ui `Svg` DSL; `stroke = currentColor` makes it follow
+      * the card's text color (and its accent hover tone). Sized in CSS via `.pn-chev svg`.
+      */
+    private def chevron(pointsLeft: Boolean)(using Frame): UI =
+        val d =
+            if pointsLeft then Svg.PathData.from(15, 6).lineTo(9, 12).lineTo(15, 18)
+            else Svg.PathData.from(9, 6).lineTo(15, 12).lineTo(9, 18)
+        Svg.svg
+            .viewBox(Svg.ViewBox(0, 0, 24, 24))
+            .width(20)
+            .height(20)(
+                Svg.g
+                    .fill(Svg.Paint.None)
+                    .stroke(Svg.Paint.CurrentColor)
+                    .strokeWidth(2.0)
+                    .strokeLinecap(Svg.StrokeLinecap.Round)
+                    .strokeLinejoin(Svg.StrokeLinejoin.Round)(Svg.path.d(d))
+            )
+    end chevron
 
 end DocsApp
