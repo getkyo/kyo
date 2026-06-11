@@ -231,6 +231,17 @@ class DocsMarkdownTest extends WebsiteTest:
         end for
     }
 
+    "[..](MANIFESTO.md) rewrites to the manifesto docs page" in {
+        // The generator appends the repo-root MANIFESTO.md as the docs page <prefix>/manifesto/, so the
+        // README's repo-relative link must resolve there instead of 404ing on the raw .md file.
+        val source = "This project exists because of a belief. [Read the manifesto](MANIFESTO.md).\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("manifesto/"), s"MANIFESTO.md should rewrite to manifesto/: $html")
+            assert(!html.contains("MANIFESTO.md"), s"the .md filename should be stripped: $html")
+        end for
+    }
+
     "external http(s) links are left untouched by README rewriting (B2)" in {
         val source = "Visit [site](https://example.com/README.md) now.\n"
         for html <- transpileHtml(source)

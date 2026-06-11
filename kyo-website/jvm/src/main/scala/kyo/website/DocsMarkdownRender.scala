@@ -753,6 +753,9 @@ object DocsMarkdownRender:
       *   - `../kyo-prelude/README.md` -> `../kyo-prelude/` (strip the filename, keep the trailing slash)
       *   - `README.md` -> `./` (the current directory)
       *   - `README.md#anchor` (or `dir/README.md#anchor`) -> `#anchor` / `dir/#anchor` (keep the fragment)
+      *   - `MANIFESTO.md` -> `manifesto/` (the manifesto docs page: the generator appends the repo-root
+      *     MANIFESTO.md as the final docs page at `<prefix>/manifesto/`, so the README's repo-relative
+      *     link resolves to that page on the site instead of 404ing on the raw `.md` file)
       *
       * Any other path is returned unchanged.
       */
@@ -760,7 +763,8 @@ object DocsMarkdownRender:
         val hashIdx  = url.indexOf('#')
         val path     = if hashIdx >= 0 then url.substring(0, hashIdx) else url
         val fragment = if hashIdx >= 0 then url.substring(hashIdx) else ""
-        if path == "README.md" then
+        if path == "MANIFESTO.md" then "manifesto/" + fragment
+        else if path == "README.md" then
             if fragment.isEmpty then "./" else fragment
         else if path.endsWith("/README.md") then
             path.dropRight("README.md".length) + fragment

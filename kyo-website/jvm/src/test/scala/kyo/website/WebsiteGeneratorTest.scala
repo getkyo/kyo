@@ -1364,14 +1364,18 @@ class WebsiteGeneratorTest extends WebsiteTest:
     // ---- manifest.json is byte-unchanged after adding search-index emit ----
 
     "manifest.json is byte-unchanged after adding the search-index emit" in {
-        // Golden string: the exact deterministic output of writeManifest for vWithModules
-        // (two modules, kyo-data then kyo-kernel, each with their own TOC from the fixture READMEs).
-        // This guards against any future manifest reformatting and proves the search-index emit is
-        // purely additive (the manifest bytes are identical before and after adding writeSearchIndex).
+        // Golden string: the exact deterministic output of writeManifest for vWithModules. The two
+        // fixture modules (kyo-data then kyo-kernel) are followed by the manifesto, which emit appends
+        // as the final docs page of every version that has a module table (read from the repo-root
+        // MANIFESTO.md, whose only heading is the level-1 "After Scarcity"). The pager chains through
+        // it: kyo-kernel's `next` is now "manifesto", and the manifesto's `prev` is "kyo-kernel". This
+        // guards against any future manifest reformatting and proves the search-index emit is purely
+        // additive (the manifest bytes are identical before and after adding writeSearchIndex).
         val expectedManifest =
             """|[
                |  {"slug": "kyo-data", "group": "Foundation", "title": "kyo-data", "prev": null, "next": "kyo-kernel", "toc": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}]},
-               |  {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel", "prev": "kyo-data", "next": null, "toc": [{"level": 1, "text": "kyo-kernel", "slug": "kyo-kernel"}, {"level": 2, "text": "Effects", "slug": "effects"}]}
+               |  {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel", "prev": "kyo-data", "next": "manifesto", "toc": [{"level": 1, "text": "kyo-kernel", "slug": "kyo-kernel"}, {"level": 2, "text": "Effects", "slug": "effects"}]},
+               |  {"slug": "manifesto", "group": "Manifesto", "title": "Manifesto", "prev": "kyo-kernel", "next": null, "toc": [{"level": 1, "text": "After Scarcity", "slug": "after-scarcity"}]}
                |]""".stripMargin
         for
             out       <- tmpDir
@@ -1410,6 +1414,55 @@ class WebsiteGeneratorTest extends WebsiteTest:
             assert(json.startsWith("["), s"must start with [: $json")
             assert(json.endsWith("]"), s"must end with ]: $json")
             assert(json.contains("\"slug\": \"kyo-esc\""), s"module slug must be present: $json")
+        end for
+    }
+
+    // ---- manifesto: appended as the final docs page of a version with a module menu ----
+
+    "the manifesto is appended as the final docs page of versions with a module menu" in {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            vManPage  <- (out / "v1.0.0-RC2" / "manifesto" / "index.html").exists
+            latestMan <- (out / "latest" / "manifesto" / "index.html").exists
+            manHtml   <- readFile(out / "latest" / "manifesto" / "index.html")
+            manMd     <- readFile(out / "latest" / "manifesto" / "content.md")
+            manifest  <- readFile(out / "latest" / "manifest.json")
+        yield
+            assert(vManPage, "v1.0.0-RC2/manifesto/index.html must exist (the manifesto is a docs page)")
+            assert(latestMan, "latest/manifesto/index.html must exist")
+            // It renders like any other docs page: the article carries the manifesto's heading, and the
+            // sidebar shows the Manifesto group.
+            assert(manHtml.contains("After Scarcity"), s"manifesto page must render its title: ${manHtml.take(400)}")
+            assert(manHtml.contains("sidebar-group-name"), "manifesto page must carry the docs sidebar chrome")
+            // content.md is the raw MANIFESTO.md, exactly like a module page ships its README.
+            assert(
+                manMd.contains("After Scarcity") && manMd.contains("Scarcity built the world"),
+                s"manifesto content.md must be the raw markdown, got: ${manMd.take(200)}"
+            )
+            // It is the LAST manifest entry, in its own "Manifesto" group, after the modules.
+            val dataIdx = manifest.indexOf("\"slug\": \"kyo-data\"")
+            val manIdx  = manifest.indexOf("\"slug\": \"manifesto\"")
+            assert(dataIdx >= 0 && manIdx > dataIdx, s"manifesto must come after the modules in the manifest: $manifest")
+            assert(manifest.contains("\"group\": \"Manifesto\""), s"manifesto must be in the Manifesto group: $manifest")
+        end for
+    }
+
+    "a missing MANIFESTO.md aborts the emit (the manifesto is required, not optional)" in {
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            noManifesto <- Sync.defer(Path(Files.createTempDirectory("kyo-no-manifesto").toString))
+            result <- Abort.run[WebsiteException](
+                WebsiteGenerator.emit(Chunk(vWithModules), out, WebsiteGenerator.Config(noManifesto, bundleDir))
+            )
+        yield
+            val aborted = result match
+                case Result.Failure(e: WebsiteReadmeException) =>
+                    e.detail == WebsiteReadmeException.ReadmeFailure.Missing && e.path.toString.endsWith("MANIFESTO.md")
+                case _ => false
+            assert(aborted, s"a missing MANIFESTO.md must abort with WebsiteReadmeException(Missing) naming the file, got: $result")
         end for
     }
 

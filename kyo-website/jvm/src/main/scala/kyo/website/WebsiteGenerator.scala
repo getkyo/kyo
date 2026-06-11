@@ -78,18 +78,55 @@ object WebsiteGenerator:
             // DECISION-SEO-C: sitemap `<lastmod>` is the build date, computed ONCE here and threaded
             // to the pure builders so the emitted artifacts are deterministic for a given run.
             lastmod <- Sync.defer(java.time.LocalDate.now().toString)
-            _       <- emitLanding(content, versions, outDir)
-            _       <- emit404(content, versions, outDir)
-            _       <- Kyo.foreachDiscard(content)(c => emitVersion(c, versions, latestTag, outDir))
-            _       <- emitLatest(content, versions, outDir)
-            _       <- writeVersionsJson(versions, outDir)
-            _       <- writeArtifactRootFiles(outDir)
-            _       <- writeSitemap(content, lastmod, outDir)
-            _       <- writeRobots(outDir)
-            _       <- copyAssets(outDir, config.repoRoot, config.bundleDir)
+            // The manifesto renders as an ordinary docs page (full chrome, sidebar, SPA hydration,
+            // theme), placed as the final sidebar group of every version so it sits last in the docs
+            // menu. It is read once from the repo root (not a versioned tag tree) and is REQUIRED: a
+            // missing MANIFESTO.md aborts the build rather than silently shipping a site without it.
+            manifesto <- readRequiredManifesto(config.repoRoot)
+            // Append the manifesto only to versions that actually have a docs menu (a module table). An
+            // intro-only legacy tag (empty groups, no sidebar) gains no manifesto page; the manifesto is
+            // the last entry of the docs menu, and those versions have none.
+            withManifesto = content.map(c => if c.groups.nonEmpty then withManifestoGroup(c, manifesto) else c)
+            _ <- emitLanding(withManifesto, versions, outDir)
+            _ <- emit404(withManifesto, versions, outDir)
+            _ <- Kyo.foreachDiscard(withManifesto)(c => emitVersion(c, versions, latestTag, outDir))
+            _ <- emitLatest(withManifesto, versions, outDir)
+            _ <- writeVersionsJson(versions, outDir)
+            _ <- writeArtifactRootFiles(outDir)
+            _ <- writeSitemap(withManifesto, lastmod, outDir)
+            _ <- writeRobots(outDir)
+            _ <- copyAssets(outDir, config.repoRoot, config.bundleDir)
         yield ()
         end for
     end emit
+
+    /** Read the repo-root MANIFESTO.md. The manifesto is a required site page, so a missing file aborts
+      * (`WebsiteReadmeException.Missing`) instead of degrading: a build that silently drops the
+      * manifesto would hide a real problem (a moved or deleted file) behind a green deploy.
+      */
+    private def readRequiredManifesto(repoRoot: Path)(using Frame): String < (Sync & Abort[WebsiteException]) =
+        val path = repoRoot / "MANIFESTO.md"
+        Abort.run[FileReadException](path.read).map {
+            case Result.Success(md) => md
+            case Result.Failure(_)  => Abort.fail(WebsiteReadmeException(path, WebsiteReadmeException.ReadmeFailure.Missing))
+            case p: Result.Panic    => Abort.error(p)
+        }
+    end readRequiredManifesto
+
+    /** Append the manifesto to `c` as a final one-page group named "Manifesto", so it renders as a
+      * normal docs page and appears last in the sidebar. The same statement (read from the repo root)
+      * is appended to every version, since the manifesto is global rather than versioned.
+      */
+    private def withManifestoGroup(c: WebsiteContent, manifestoMarkdown: String): WebsiteContent =
+        val module = WebsiteModule(
+            slug = "manifesto",
+            group = "Manifesto",
+            title = "Manifesto",
+            readme = manifestoMarkdown,
+            platforms = WebsiteModule.Platforms(jvm = true, js = true, native = true)
+        )
+        c.copy(groups = c.groups.append(WebsiteContent.Group("Manifesto", Chunk(module))))
+    end withManifestoGroup
 
     // ---- Private helpers: docs routes ----
 
