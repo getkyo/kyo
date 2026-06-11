@@ -23,11 +23,19 @@ trait Task {
       */
     def needsInterrupt(): Boolean = false
 
-    protected def runtime(): Int =
+    private[scheduler] def runtime(): Int =
         state.runtime
 
     def addRuntime(v: Int) =
         this.state = state.addRuntime(v)
+
+    /** Drops accumulated runtime to the minimum so this task is scheduled ahead of tasks that have
+      * run longer. Used when a fiber is interrupted: it must run promptly to observe the interrupt
+      * and release its worker and finalizers, but its accumulated runtime would otherwise
+      * deprioritize it.
+      */
+    def resetRuntime(): Unit =
+        this.state = state.resetRuntime
 }
 
 object Task {
@@ -35,8 +43,8 @@ object Task {
     /** Bit-packed task state encoding preemption and runtime priority in a single Int.
       *
       *   - **bits 0-30**: runtime — accumulated execution time, used for priority ordering (lower = higher priority)
-      *   - **bit 31 (sign)**: preempting — when negative, the task should yield at the next effect boundary so the worker can serve other
-      *     queued tasks (time-slice fairness)
+      *   - **bit 31 (sign)**: preempting — set by `preempt` (a bit-set, not a negation, so it is valid even at runtime 0) to signal the
+      *     task should yield at the next effect boundary so the worker can serve other queued tasks (time-slice fairness)
       *
       * `state` is mutated by non-atomic read-modify-writes from two threads — the worker (addRuntime) and the coordinator (doPreempt, via
       * Worker.checkStalling). A lost update can only drop a best-effort time-slice preemption (retried on the next checkStalling pass) or a
@@ -52,24 +60,29 @@ object Task {
 
         implicit class StateOps(private val s: State) extends AnyVal {
             def preempting: Boolean = s < 0
-            def runtime: Int        = if (s < 0) -s else s
+            def runtime: Int        = s & Int.MaxValue
 
-            /** Sets the preemption flag (negates). No-op if already preempting. */
-            def preempt: State = -s
+            /** Sets the preemption flag by setting bit 31. No-op if already preempting. Uses a bit-set rather than
+              * negation so it works for every runtime including 0: negating 0 yields 0 (`-0 == 0`), which is not
+              * negative, so a 0-runtime task could never be flagged for preemption and would hog its worker until
+              * it completed or was interrupted, wedging the scheduler under a 0-runtime CPU-bound loop.
+              */
+            def preempt: State = s | Int.MinValue
 
-            /** Adds execution time, clearing the preemption flag (flips to positive): a time-slice preemption has been consumed by the time
-              * runtime is recorded.
+            /** Adds execution time, clearing the preemption flag (clears bit 31): a time-slice preemption has been
+              * consumed by the time runtime is recorded.
               */
             def addRuntime(v: Int): State =
-                (if (s < 0) -s else s) + v
+                (s & Int.MaxValue) + v
+
+            /** Drops accumulated runtime to 0, the minimum, giving the task the highest scheduling priority so an
+              * interrupted fiber is rescheduled ahead of all others (including freshly-submitted runtime-1 tasks) to
+              * observe the interrupt and run its finalizers. Safe at 0 because preemption is a dedicated bit set by
+              * `preempt`, not the sign of a negation.
+              */
+            def resetRuntime: State = 0
         }
     }
-
-    implicit val taskOrdering: Ordering[Task] =
-        new Ordering[Task] {
-            def compare(x: Task, y: Task) =
-                y.runtime() - x.runtime()
-        }
 
     type Result = Boolean
     val Preempted: Result = true
