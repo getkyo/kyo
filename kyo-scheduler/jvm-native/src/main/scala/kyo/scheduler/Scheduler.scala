@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.LongAdder
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.regulator.Admission
@@ -122,8 +123,13 @@ final class Scheduler(
 
     private[scheduler] val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
 
+    private val interruptEpoch = new AtomicLong(0L)
+
     /** Notifies the blocking monitor that a fiber was interrupted, triggering an immediate scan. */
-    def notifyInterrupt(): Unit = blockingMonitor.wake()
+    def notifyInterrupt(): Unit = {
+        interruptEpoch.incrementAndGet()
+        blockingMonitor.wake()
+    }
 
     /** Schedules a task for execution by the scheduler.
       *
