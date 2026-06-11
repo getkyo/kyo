@@ -3,7 +3,7 @@ package kyo
 import kyo.*
 import scala.language.implicitConversions
 
-class HttpServerTest extends Test:
+class HttpServerTest extends BaseHttpTest:
 
     import HttpPath.*
 
@@ -17,9 +17,9 @@ class HttpServerTest extends Test:
       * timeout). Tracked separately.
       */
     def runServer(handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
-        "plain" in runNotNative {
+        "plain".notNative in {
             HttpClient.init().map { httpClient =>
                 HttpServer.init(0, "localhost")(handlers*).map(s =>
                     HttpClient.let(httpClient) {
@@ -28,7 +28,7 @@ class HttpServerTest extends Test:
                 )
             }
         }
-        "tls" in runNotNative /* OpenSSL's recursive ASN.1 parser overflows Scala Native thread stacks */ {
+        "tls".notNative in /* OpenSSL's recursive ASN.1 parser overflows Scala Native thread stacks */ {
             initTrustAllClient().map { httpClient =>
                 HttpServer.init(
                     HttpServerConfig.default.port(0).host("localhost").tls(internal.HttpTestPlatformBackend.serverTlsConfig)
@@ -42,9 +42,9 @@ class HttpServerTest extends Test:
     end runServer
 
     def runCorsServer(cors: HttpServerConfig.Cors, handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
     )(using Frame): Unit =
-        "plain" in runNotNative {
+        "plain".notNative in {
             HttpClient.init().map { httpClient =>
                 HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
                     HttpClient.let(httpClient) {
@@ -55,8 +55,8 @@ class HttpServerTest extends Test:
         }
 
     def withServer(handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
-    )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         HttpClient.init().map { httpClient =>
             HttpServer.init(0, "localhost")(handlers*).map(s =>
                 HttpClient.let(httpClient) {
@@ -66,8 +66,8 @@ class HttpServerTest extends Test:
         }
 
     def withCorsServer(cors: HttpServerConfig.Cors, handlers: HttpHandler[?, ?, ?]*)(
-        test: HttpUrl => Assertion < (Async & Abort[Any] & Scope)
-    )(using Frame): Assertion < (Scope & Async & Abort[Any]) =
+        test: kyo.test.AssertScope ?=> HttpUrl => Unit < (Async & Abort[Any] & Scope)
+    )(using Frame, kyo.test.AssertScope): Unit < (Scope & Async & Abort[Any]) =
         HttpClient.init().map { httpClient =>
             HttpServer.init(HttpServerConfig.default.port(0).host("localhost").cors(cors))(handlers*).map(s =>
                 HttpClient.let(httpClient) {
@@ -239,11 +239,11 @@ class HttpServerTest extends Test:
             }
         }
 
-        "rest capture must be last segment" in runNotNative {
+        "rest capture must be last segment".notNative in {
             val route = HttpRoute.getRaw("api" / Capture.Rest("mid") / "suffix").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("unreachable"))
             Abort.run[Throwable] {
-                withServer(ep) { _ => succeed }
+                withServer(ep) { _ => () }
             }.map { result =>
                 result match
                     case Result.Error(ex: IllegalArgumentException) =>
@@ -1239,7 +1239,7 @@ class HttpServerTest extends Test:
                     results <- Kyo.foreach(fibers)(_.get)
                 yield assert(results.zipWithIndex.forall { case (r, i) => r.fields.body == i.toString }))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1270,7 +1270,7 @@ class HttpServerTest extends Test:
                     _           <- slowFiber.interrupt
                 yield assert(fastResults.forall(_.status == HttpStatus.OK)))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
 
@@ -1322,21 +1322,21 @@ class HttpServerTest extends Test:
                     text.contains(s"m$i-1") && text.contains(s"m$i-2") && text.contains(s"m$i-3")
                 }))
                     .handle(Choice.run, _.unit, Loop.repeat(repeats))
-                    .andThen(succeed)
+                    .unit
             }
         }
     }
 
     "server lifecycle" - {
 
-        "bind to port 0 assigns random port" in runNotNative {
+        "bind to port 0 assigns random port".notNative in {
             HttpServer.init(0, "localhost")().map { server =>
                 assert(server.port > 0)
                 assert(server.host == "localhost" || server.host == "127.0.0.1" || server.host == "::1" || server.host == "0:0:0:0:0:0:0:1")
             }
         }
 
-        "close stops accepting new connections" in runNotNative {
+        "close stops accepting new connections".notNative in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpServer.init(0, "localhost")(ep).map { server =>
@@ -1353,7 +1353,7 @@ class HttpServerTest extends Test:
         val route = HttpRoute.getRaw("health").response(_.bodyText)
         val ep    = route.handler(_ => HttpResponse.ok("ok"))
 
-        "initWith" in runNotNative {
+        "initWith".notNative in {
             HttpServer.initWith(0, "localhost")(ep) { server =>
                 assert(server.port > 0)
                 send(
@@ -1367,10 +1367,10 @@ class HttpServerTest extends Test:
             }
         }
 
-        "initUnscopedWith" in runNotNative {
+        "initUnscopedWith".notNative in {
             HttpServer.initUnscopedWith(0, "localhost")(ep) { server =>
                 assert(server.port > 0)
-                server.closeNow.andThen(succeed)
+                server.closeNow.unit
             }
         }
     }
@@ -1936,7 +1936,7 @@ class HttpServerTest extends Test:
 
     "client disconnect and cleanup" - {
 
-        "streaming response: server stops writing after client disconnects" in runNotNative {
+        "streaming response: server stops writing after client disconnects".notNative in {
             // Server sends an infinite stream. Client reads a few chunks then disconnects.
             // The server should stop writing (not leak the fiber).
             kyo.Latch.init(1).map { handlerDone =>
@@ -1963,12 +1963,12 @@ class HttpServerTest extends Test:
                         }
                     }
                 }.andThen {
-                    handlerDone.await.andThen(succeed)
+                    handlerDone.await.unit
                 }
             }
         }
 
-        "streaming response: blocked stream terminates on client disconnect" in runNotNative {
+        "streaming response: blocked stream terminates on client disconnect".notNative in {
             // Server produces a stream that blocks (via latch). Client disconnects.
             // The write fiber should be interrupted, not leaked.
             kyo.Latch.init(1).map { writeDone =>
@@ -1995,7 +1995,7 @@ class HttpServerTest extends Test:
                                 assert(chunks.size == 1)
                             }
                         }
-                    }.andThen(succeed)
+                    }.unit
                 }
             }
         }
@@ -2048,7 +2048,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "streaming request: request body channel closed on normal completion" in runNotNative {
+        "streaming request: request body channel closed on normal completion".notNative in {
             // Verifies that the streaming request body channel is properly closed
             // after the request completes, and handler doesn't hang.
             kyo.Latch.init(1).map { handlerDone =>
@@ -2081,7 +2081,7 @@ class HttpServerTest extends Test:
                             }
                         }
                     }.andThen {
-                        handlerDone.await.andThen(succeed)
+                        handlerDone.await.unit
                     }
                 }
             }
@@ -2115,7 +2115,6 @@ class HttpServerTest extends Test:
                                 resp.fields.body.run.map { chunks =>
                                     val totalBytes = chunks.foldLeft(0)(_ + _.size)
                                     assert(totalBytes > 0)
-                                    succeed
                                 }
                             }
                         }
@@ -2144,9 +2143,9 @@ class HttpServerTest extends Test:
                                 assert(resp.status == HttpStatus.OK)
                                 Abort.run[Throwable](Abort.catching[Throwable] {
                                     resp.fields.body.run.map { chunks =>
-                                        succeed
+                                        ()
                                     }
-                                }).map(_ => succeed)
+                                }).map(_ => ())
                             }
                         }
                     }
@@ -2221,7 +2220,7 @@ class HttpServerTest extends Test:
                         assert(resp.status == HttpStatus.MethodNotAllowed, s"$method should return 405")
                         assert(resp.fields.body.nonEmpty, s"$method 405 body should not be empty")
                     }
-                }.map(_ => succeed)
+                }.map(_ => ())
             }
         }
 
@@ -2272,7 +2271,7 @@ class HttpServerTest extends Test:
     // (non-OPTIONS) responses.
     "CORS" - {
 
-        "CORS preflight OPTIONS returns 204 with CORS headers (server-level)" in runNotNative {
+        "CORS preflight OPTIONS returns 204 with CORS headers (server-level)".notNative in {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { url =>
@@ -2309,7 +2308,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS preflight on POST-only endpoint returns 204" in runNotNative {
+        "CORS preflight on POST-only endpoint returns 204".notNative in {
             val route = HttpRoute.postRaw("cors-post")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
@@ -2331,7 +2330,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS preflight works for PUT, PATCH, DELETE endpoints" in runNotNative {
+        "CORS preflight works for PUT, PATCH, DELETE endpoints".notNative in {
             val putRoute    = HttpRoute.putRaw("cors-put").request(_.bodyJson[User]).response(_.bodyText)
             val patchRoute  = HttpRoute.patchRaw("cors-patch").request(_.bodyJson[User]).response(_.bodyText)
             val deleteRoute = HttpRoute.deleteRaw("cors-del").response(_.bodyText)
@@ -2348,11 +2347,11 @@ class HttpServerTest extends Test:
                         val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
                         assert(allowOrigin.isDefined, s"CORS preflight on $path should include Access-Control-Allow-Origin")
                     }
-                }.map(_ => succeed)
+                }.map(_ => ())
             }
         }
 
-        "CORS preflight on SSE endpoint returns 204 not SSE stream" in runNotNative {
+        "CORS preflight on SSE endpoint returns 204 not SSE stream".notNative in {
             val corsEp = HttpRoute.getRaw("cors-sse").response(_.bodySseText)
                 .handler { _ =>
                     val events = Stream[HttpSseEvent[String], Async] {
@@ -2377,7 +2376,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS preflight on mixed GET+POST endpoint returns 204 with all methods" in runNotNative {
+        "CORS preflight on mixed GET+POST endpoint returns 204 with all methods".notNative in {
             val getRoute  = HttpRoute.getRaw("cors-mixed").response(_.bodyText)
             val postRoute = HttpRoute.postRaw("cors-mixed").request(_.bodyJson[User]).response(_.bodyText)
             val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
@@ -2404,7 +2403,7 @@ class HttpServerTest extends Test:
 
     "server-level CORS" - {
 
-        "CORS preflight OPTIONS returns 204 with CORS headers" in runNotNative {
+        "CORS preflight OPTIONS returns 204 with CORS headers".notNative in {
             val route = HttpRoute.getRaw("cors-resource").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { url =>
@@ -2424,7 +2423,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS adds Access-Control-Allow-Origin on regular responses" in runNotNative {
+        "CORS adds Access-Control-Allow-Origin on regular responses".notNative in {
             val route = HttpRoute.getRaw("cors-get").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("hello"))
             withCorsServer(HttpServerConfig.Cors.allowAll, ep) { url =>
@@ -2437,7 +2436,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS preflight on POST-only endpoint returns 204" in runNotNative {
+        "CORS preflight on POST-only endpoint returns 204".notNative in {
             val route = HttpRoute.postRaw("cors-post2")
                 .request(_.bodyJson[User])
                 .response(_.bodyText)
@@ -2454,7 +2453,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS preflight works for PUT, PATCH, DELETE endpoints" in runNotNative {
+        "CORS preflight works for PUT, PATCH, DELETE endpoints".notNative in {
             val putRoute    = HttpRoute.putRaw("cors-put2").request(_.bodyJson[User]).response(_.bodyText)
             val patchRoute  = HttpRoute.patchRaw("cors-patch2").request(_.bodyJson[User]).response(_.bodyText)
             val deleteRoute = HttpRoute.deleteRaw("cors-del2").response(_.bodyText)
@@ -2471,11 +2470,11 @@ class HttpServerTest extends Test:
                         val allowOrigin = resp.headers.get("Access-Control-Allow-Origin")
                         assert(allowOrigin.isDefined, s"CORS preflight on $path should include Access-Control-Allow-Origin")
                     }
-                }.map(_ => succeed)
+                }.map(_ => ())
             }
         }
 
-        "CORS preflight on SSE endpoint returns 204 not SSE stream" in runNotNative {
+        "CORS preflight on SSE endpoint returns 204 not SSE stream".notNative in {
             val corsEp = HttpRoute.getRaw("cors-sse2").response(_.bodySseText)
                 .handler { _ =>
                     val events = Stream[HttpSseEvent[String], Async] {
@@ -2500,7 +2499,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS preflight on mixed GET+POST endpoint returns 204 with all methods" in runNotNative {
+        "CORS preflight on mixed GET+POST endpoint returns 204 with all methods".notNative in {
             val getRoute  = HttpRoute.getRaw("cors-mixed2").response(_.bodyText)
             val postRoute = HttpRoute.postRaw("cors-mixed2").request(_.bodyJson[User]).response(_.bodyText)
             val getEp     = getRoute.handler(_ => HttpResponse.ok("get"))
@@ -2521,7 +2520,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS with custom origin" in runNotNative {
+        "CORS with custom origin".notNative in {
             val route = HttpRoute.getRaw("cors-custom").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             val cors  = HttpServerConfig.Cors(allowOrigin = "https://example.com")
@@ -2535,7 +2534,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS with bearerAuth" in runNotNative {
+        "CORS with bearerAuth".notNative in {
             val route = HttpRoute.getRaw("cors-auth")
                 .request(_.headerOpt[String]("authorization"))
                 .response(_.bodyText)
@@ -2551,7 +2550,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "CORS on SSE endpoint adds headers to GET response" in runNotNative {
+        "CORS on SSE endpoint adds headers to GET response".notNative in {
             val route = HttpRoute.getRaw("cors-sse-get2").response(_.bodySseText)
             val ep = route.handler { _ =>
                 val events = Stream.init(Seq(HttpSseEvent("test")))
@@ -2643,7 +2642,7 @@ class HttpServerTest extends Test:
 
     "OpenAPI endpoint" - {
 
-        "OpenAPI endpoint returns Content-Type application/json" in runNotNative {
+        "OpenAPI endpoint returns Content-Type application/json".notNative in {
             val route  = HttpRoute.getRaw("items").response(_.bodyText)
             val ep     = route.handler(_ => HttpResponse.ok("ok"))
             val config = HttpServerConfig.default.port(0).host("localhost").openApi("/openapi.json", "Test API")
@@ -3158,7 +3157,7 @@ class HttpServerTest extends Test:
                                     s"HEAD Content-Length should not be 0 when GET body is $getBodyLen bytes"
                                 )
                             case Absent =>
-                                succeed
+                                ()
                         end match
                     }
                 }
@@ -3379,7 +3378,7 @@ class HttpServerTest extends Test:
 
     "operational error quality" - {
 
-        "multiple servers on different ports" in runNotNative {
+        "multiple servers on different ports".notNative in {
             val route1 = HttpRoute.getRaw("s1").response(_.bodyText)
             val ep1    = route1.handler(_ => HttpResponse.ok("server1"))
             val route2 = HttpRoute.getRaw("s2").response(_.bodyText)
@@ -3455,12 +3454,12 @@ class HttpServerTest extends Test:
                                 }
                             }
                         }
-                    ).map((_, _) => succeed)
+                    ).map((_, _) => ())
                 }
             }
         }
 
-        "handler error after client disconnect does not crash" in runNotNative {
+        "handler error after client disconnect does not crash".notNative in {
             val route = HttpRoute.getRaw("slow-fail").response(_.bodyText)
             Latch.init(1).map { handlerDone =>
                 Promise.init[Unit, Any].map { clientDisconnected =>
@@ -3485,7 +3484,7 @@ class HttpServerTest extends Test:
                             // Signal handler that client has disconnected
                             clientDisconnected.complete(Result.succeed(())).andThen {
                                 // Wait for handler to complete and potentially try to write to closed connection
-                                handlerDone.await.andThen(succeed)
+                                handlerDone.await.map(_ => succeed("handler completed after client disconnect without crashing"))
                             }
                         }
                     }
@@ -3493,7 +3492,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "binding to in-use port fails with HttpBindException" in runNotNative {
+        "binding to in-use port fails with HttpBindException".notNative in {
             val route = HttpRoute.getRaw("test").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             HttpServer.init(0, "localhost")(ep).map { server =>
@@ -3518,7 +3517,7 @@ class HttpServerTest extends Test:
 
     "expanded coverage" - {
 
-        "server recovers after 500 error" in runNotNative {
+        "server recovers after 500 error".notNative in {
             val route   = HttpRoute.getRaw("maybe-fail").response(_.bodyText)
             var counter = 0
             val ep = route.handler { _ =>
@@ -3580,7 +3579,7 @@ class HttpServerTest extends Test:
 
     "pump pipeline" - {
 
-        "connection tracking: Binding.close closes all connections" in runNotNative {
+        "connection tracking: Binding.close closes all connections".notNative in {
             val route = HttpRoute.getRaw("pump-close").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("alive"))
             HttpServer.initUnscoped(0, "localhost")(ep).map { server =>
@@ -3603,7 +3602,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "concurrent connections" in runNotNative {
+        "concurrent connections".notNative in {
             val route = HttpRoute.getRaw("pump-concurrent").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("ok"))
             withServer(ep) { url =>
@@ -3617,7 +3616,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "keep-alive: sequential requests on same connection" in runNotNative {
+        "keep-alive: sequential requests on same connection".notNative in {
             val route = HttpRoute.getRaw("pump-keepalive").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("pong"))
             withServer(ep) { url =>
@@ -3646,7 +3645,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "server handles malformed request gracefully" in runNotNative {
+        "server handles malformed request gracefully".notNative in {
             val route = HttpRoute.getRaw("pump-healthy").response(_.bodyText)
             val ep    = route.handler(_ => HttpResponse.ok("healthy"))
             withServer(ep) { url =>
@@ -3662,7 +3661,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "large response body" in runNotNative {
+        "large response body".notNative in {
             // Use 200KB — larger than the existing 100KB test but within pump pipeline limits
             val largeBody = "x" * (200 * 1024)
             val route     = HttpRoute.getRaw("pump-large").response(_.bodyText)
@@ -3676,7 +3675,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "streaming response via chunked encoding" in runNotNative {
+        "streaming response via chunked encoding".notNative in {
             val route = HttpRoute.getRaw("pump-chunked").response(_.bodyStream)
             val ep = route.handler { _ =>
                 val chunks = Stream.init((1 to 10).map(i =>
@@ -3706,7 +3705,7 @@ class HttpServerTest extends Test:
             }
         }
 
-        "graceful shutdown with inflight request" in runNotNative {
+        "graceful shutdown with inflight request".notNative in {
             val route       = HttpRoute.getRaw("pump-slow").response(_.bodyText)
             val handlerDone = new java.util.concurrent.atomic.AtomicBoolean(false)
             Promise.init[Unit, Any].map { started =>

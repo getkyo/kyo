@@ -5,21 +5,21 @@ import scala.language.implicitConversions
 
 class TextTest extends UITest:
 
-    "text renders" in run {
+    "text renders" in {
         withUI(UI.div("hello").id("d")) {
-            Browser.assertText(Selector.id("d"), "hello").andThen(succeed)
+            Browser.assertText(Selector.id("d"), "hello").unit
         }
     }
 
-    "adjacent text" in run {
+    "adjacent text" in {
         withUI(UI.div("a", "b").id("d")) {
-            Browser.assertText(Selector.id("d"), "ab").andThen(succeed)
+            Browser.assertText(Selector.id("d"), "ab").unit
         }
     }
 
-    "html escaped" in run {
+    "html escaped" in {
         withUI(UI.div("<b>not bold</b>").id("d")) {
-            Browser.assertText(Selector.id("d"), "<b>not bold</b>").andThen(succeed)
+            Browser.assertText(Selector.id("d"), "<b>not bold</b>").unit
         }
     }
 

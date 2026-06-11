@@ -4,7 +4,7 @@ import kyo.*
 import kyo.doctest.*
 
 /** Tests for BlockCache covering directory creation, cache lookup and recording, cache key components, and concurrent safety. */
-class BlockCacheTest extends Test:
+class BlockCacheTest extends kyo.test.Test[Any]:
 
     private def makeBlock(body: String, lineStart: Int = 1): Block =
         Block(
@@ -31,7 +31,7 @@ class BlockCacheTest extends Test:
             res <- Scope.acquireRelease(Sync.defer(dir))(_ => Abort.run[FileFsException](dir.removeAll).unit).flatMap(f)
         yield res
 
-    "BlockCache.init creates the cache directory if missing" in run {
+    "BlockCache.init creates the cache directory if missing" in {
         withTempDir { dir =>
             val subDir = dir / "new-subdir"
             subDir.exists.flatMap { existsBefore =>
@@ -48,7 +48,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "lookup returns Absent for an unknown key" in run {
+    "lookup returns Absent for an unknown key" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val x = 42")
@@ -59,7 +59,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "record Ok then lookup returns Present(Ok)" in run {
+    "record Ok then lookup returns Present(Ok)" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val answer = 42")
@@ -81,7 +81,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "record Failed stores diagnostics and lookup replays them" in run {
+    "record Failed stores diagnostics and lookup replays them" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block  = makeBlock("val x: Int = \"oops\"")
@@ -109,7 +109,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "different block bodies produce different cache entries" in run {
+    "different block bodies produce different cache entries" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block1 = makeBlock("val x = 1")
@@ -125,7 +125,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "changing scope-closure bodies invalidates cache entry" in run {
+    "changing scope-closure bodies invalidates cache entry" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block  = makeBlock("val y = x + 1")
@@ -141,7 +141,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "changing classpath fingerprint invalidates cache entry" in run {
+    "changing classpath fingerprint invalidates cache entry" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val z = 42")
@@ -155,7 +155,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "changing scalaVersion invalidates cache entry" in run {
+    "changing scalaVersion invalidates cache entry" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val v = true")
@@ -169,7 +169,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "changing scalac options invalidates cache entry" in run {
+    "changing scalac options invalidates cache entry" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val w = 0")
@@ -185,7 +185,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "scalac option ordering does not affect cache key" in run {
+    "scalac option ordering does not affect cache key" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val opts = 0")
@@ -195,7 +195,7 @@ class BlockCacheTest extends Test:
                 cache.record(block, Chunk.empty, "fp1", "3.8.3", opts1, ok).flatMap { _ =>
                     cache.lookup(block, Chunk.empty, "fp1", "3.8.3", opts2).map { result =>
                         result match
-                            case Maybe.Present(_) => succeed
+                            case Maybe.Present(_) => succeed("cache hit confirms option order does not affect key")
                             case Maybe.Absent =>
                                 fail("expected same cache key regardless of scalac option ordering")
                     }
@@ -204,7 +204,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "two concurrent lookups for the same key are safe" in run {
+    "two concurrent lookups for the same key are safe" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val concurrent1 = 1")
@@ -224,7 +224,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "cache key is preimage-resistant to delimiter ambiguity" in run {
+    "cache key is preimage-resistant to delimiter ambiguity" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 // Under naive space-concat these two produce identical hash input:
@@ -244,7 +244,7 @@ class BlockCacheTest extends Test:
         }
     }
 
-    "concurrent recordFailure and lookup for the same key are safe" in run {
+    "concurrent recordFailure and lookup for the same key are safe" in {
         withTempDir { dir =>
             BlockCache.init(dir).flatMap { cache =>
                 val block  = makeBlock("val concurrent2 = 2")
@@ -256,10 +256,10 @@ class BlockCacheTest extends Test:
                 ).map { case (_, result) =>
                     // Either Absent (lookup ran before record) or Present(Failed) is valid; no panics.
                     result match
-                        case Maybe.Absent => succeed
+                        case Maybe.Absent => succeed("lookup won the race: valid outcome")
                         case Maybe.Present(e) =>
                             e.result match
-                                case _: Driver.Outcome.Failed => succeed
+                                case _: Driver.Outcome.Failed => succeed("record won the race: Failed entry present")
                                 case other                    => fail(s"unexpected result: $other")
                 }
             }

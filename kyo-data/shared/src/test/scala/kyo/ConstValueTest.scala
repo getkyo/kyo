@@ -1,6 +1,6 @@
 package kyo
 
-class ConstValueTest extends Test:
+class ConstValueTest extends kyo.test.Test[Any]:
 
     "summon string literal" in {
         val v = summon[ConstValue["hello"]]

@@ -4,7 +4,7 @@ import kyo.internal.Platform
 
 case class CustomInt(value: Int) extends AnyVal
 
-class ConcreteTagTest extends Test:
+class ConcreteTagTest extends kyo.test.Test[Any]:
 
     trait Animal
     trait Mammal  extends Animal

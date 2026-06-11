@@ -12,6 +12,50 @@ Five gates run in this order. If a gate fails, report the failure and stop. Down
 
 Gate 4 (source-coverage) and Gate 5 (catalog detection) are the load-bearing gates. Gates 1-3 check self-consistency, skim experience, and structural shape; they pass even when the README is missing entire chapters of public surface (Gate 4 catches that) or reads as a catalog rather than teaching (Gate 5 catches that). Gate 5 is the mechanical sibling of `readme-critique`: it surfaces signals; the critique skill makes the gestalt judgment.
 
+## Gate 0: sbt doctest (MANDATORY, hard gate, runs first)
+
+This gate is non-negotiable. EVERY fenced ```scala block in the README must compile via the project's sbt-kyo-doctest plugin. The script-level checks below are NOT a substitute. A README that the structural-script declares clean can still contain fabricated API names, hallucinated type syntax, dead `val` placeholders, or `.copy` calls on `private[kyo]` constructors. Only the compiler catches those.
+
+Run:
+
+```
+sbt '<module-sbt-name>/doctest' 2>&1 | tee /tmp/doctest-verify.log
+```
+
+For kyo-jsonrpc that is `sbt 'kyo-jsonrpc/doctest'`. For kyo-http that is `sbt 'kyo-http/doctest'`. Use the project name `git grep -nE "^lazy val ..kyo-<name>." build.sbt` resolves to ; do not invent the sbt module name.
+
+Parse the log's last summary line:
+
+```
+[info] doctest: total=N compiled=N cacheHits=N failures=N
+```
+
+Pass conditions (ALL must hold):
+
+- sbt exit code == 0.
+- `failures=0` in the summary.
+- The string `doctest: validation failed` does NOT appear anywhere in the log.
+
+Fail conditions (ANY triggers BLOCK):
+
+- sbt exit code != 0.
+- `failures=` value > 0.
+- The phrase `doctest: validation failed` appears.
+- Doctest reports "skipped: <module> not wired to kyo-doctest" AND the module SHOULD be wired (kyo-* modules under the kyo monorepo are wired by default unless explicitly disabled via `.disablePlugins(KyoDoctestPlugin)`; if the verify agent encounters "skipped" for such a module, that is a build-config bug, not a pass).
+
+The verify report MUST echo the summary line literally and the exit code. Do NOT declare PASS without these two pieces of evidence in the report.
+
+If sbt is unavailable in the agent's environment (rare), the agent MUST explicitly report `Gate 0: BLOCKED — sbt not available, cannot validate doctest` and exit 1. The supervisor then runs doctest manually before re-dispatch. NEVER silently skip Gate 0.
+
+### "Where applicable" is NOT an escape hatch
+
+Earlier versions of this skill said "run with-doctest where applicable." That language was a footgun: it let agents declare PASS when they couldn't be bothered to figure out the sbt project name, or when the structural script reported "doctest cache: skipped." Both shipped broken READMEs. The rule now: every README that ships into a sbt-kyo-doctest-wired build MUST pass `sbt '<module>/doctest'` before verify PASS. The only exceptions:
+
+- The module is in `.disablePlugins(KyoDoctestPlugin)` in build.sbt (verifiable via `grep`).
+- The README has zero fenced ```scala blocks (verifiable via `grep -c '^```scala' <readme>` returning 0).
+
+In either case, document the exception in the verify report.
+
 ## Gate 1: companion script
 
 Run:
@@ -20,7 +64,7 @@ Run:
 bash .claude/skills/readme/readme-check.sh <readme-path> --chunks --callouts --intro-order
 ```
 
-Then run with-doctest where applicable:
+The script's `--with-doctest` flag is a CHEAP pre-check (e.g. counts blocks, scans for obvious syntax errors). It is NOT a substitute for Gate 0's full `sbt doctest` run. Run both; Gate 0 is the load-bearing one.
 
 ```
 bash .claude/skills/readme/readme-check.sh <readme-path> --with-doctest
@@ -121,9 +165,15 @@ If any signal trips SUSPECT, emit a `[CATALOG-SUSPECT]` line in the Gate 5 repor
 
 ## Output
 
-A single report with five sections:
+A single report with six sections (Gate 0 first):
 
 ```
+## Gate 0: sbt doctest (MANDATORY)
+sbt command: <full command>
+sbt exit code: <0 | non-zero>
+doctest summary: total=N compiled=N cacheHits=N failures=N
+<PASS | BLOCK with the relevant compiler errors quoted>
+
 ## Gate 1: script check
 <STRONG findings with line numbers, or "PASS">
 
@@ -144,17 +194,22 @@ A single report with five sections:
 <one paragraph: if BLOCK, what readme-edit (or readme-draft for severe drift, or readme-analyze-source for repeated inventory gaps, or readme-critique for catalog-suspect) must address>
 ```
 
+Gate 0 fail = automatic BLOCK; Gates 1-5 still run for completeness but the overall verdict is BLOCK. The supervisor reads Gate 0 first.
+
 ## Execution
 
 This sub-skill runs as a single Opus agent dispatched by the supervisor. You do NOT dispatch further sub-agents. All verification happens in your own context:
 
-1. Run the script (Gate 1).
-2. Walk chunks sequentially using `Read` with explicit offsets (Gate 2).
-3. Perform the skim-reader checkpoints with line-grounded spine quotes (Gate 3).
-4. Run the source-coverage grep against the README (Gate 4). Read the source-analysis output (passed in `$ARGUMENTS`) to power the `[INVENTORY-GAP]` vs `[DRAFT-OMISSION]` distinction.
-5. Run the catalog-detection signal (Gate 5): count API-named sections, distinct case-class declarations, and `##` headings vs clusters. Emit `[CATALOG-SUSPECT]` if any signal trips.
-6. Emit the structured report.
+1. **Run `sbt '<module>/doctest'` (Gate 0)**. This is the hard gate. If it fails, the entire verify verdict is BLOCK regardless of what Gates 1-5 say. Still run Gates 1-5 so the supervisor has the full picture for routing, but the verdict line in `## Summary` is BLOCK.
+2. Run the script (Gate 1).
+3. Walk chunks sequentially using `Read` with explicit offsets (Gate 2).
+4. Perform the skim-reader checkpoints with line-grounded spine quotes (Gate 3).
+5. Run the source-coverage grep against the README (Gate 4). Read the source-analysis output (passed in `$ARGUMENTS`) to power the `[INVENTORY-GAP]` vs `[DRAFT-OMISSION]` distinction.
+6. Run the catalog-detection signal (Gate 5): count API-named sections, distinct case-class declarations, and `##` headings vs clusters. Emit `[CATALOG-SUSPECT]` if any signal trips.
+7. Emit the structured report.
 
 Do not run Gates 2 and 3 in parallel even though they appear independent. Gate 2 builds the section index that Gate 3's heading scan checkpoint reuses; running them sequentially in one context avoids re-reading the README twice. Gate 4 can run after Gate 1 (it doesn't depend on Gates 2 or 3) but in practice run them in order so a single STRONG script finding short-circuits the rest.
 
 Verification is a high-judgment call: never report PASS if any gate has unresolved findings. The supervisor will use the report to decide whether to re-dispatch `readme-edit` (for small fixes), `readme-draft` (for severe spine drift or many drafter omissions), or `readme-analyze-source` (for repeated inventory gaps the analyzer must re-do).
+
+**Gate 0 failure routing**: Doctest failures usually map to either fabricated APIs (handled by `readme-edit` per-block) or stale source assumptions (the source has changed since the analyzer ran, requires `readme-analyze-source` re-dispatch + redraft). The supervisor reads the compiler errors quoted in Gate 0's BLOCK report and decides which to re-dispatch.

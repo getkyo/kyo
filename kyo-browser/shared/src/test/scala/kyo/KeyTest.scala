@@ -8,7 +8,7 @@ import kyo.internal.KeyInfo
   * Observable shape tested: the underlying WebDriver string (`.value`) that flows into CDP `Input.dispatchKeyEvent` as `key` /
   * `windowsVirtualKeyCode`. All expected encodings are taken from the W3C WebDriver key table and the CDP mapping in `kyo.internal.mapKey`.
   */
-class KeyTest extends Test:
+class KeyTest extends BaseBrowserTest:
 
     // ── Key.apply(char) ────────────────────────────────────────────────────
 

@@ -2,20 +2,19 @@ package kyo
 
 // TODO: Process tests use Unix commands (sleep, sh -c, kill) extensively.
 // Needs cross-platform process helpers for Windows support.
-class ProcessTest extends Test:
+class ProcessTest extends kyo.test.Test[Any]:
 
-    import scala.concurrent.Future
-
-    override def run(v: Future[Assertion] < (Abort[Any] & Async & Scope))(using Frame): Future[Assertion] =
-        if kyo.internal.Platform.isWindows then
-            Future.successful(cancel("ProcessTest uses Unix commands (sleep, sh, kill)"))
-        else super.run(v)
+    // ProcessTest exercises Unix commands (sleep, sh -c, kill); each leaf cancels (not fails) on Windows.
+    // Called as the first statement of every leaf body (the ScalaTest version skipped all via a `run` override).
+    private def unixOnly(using Frame): Unit =
+        assume(!kyo.internal.Platform.isWindows, "ProcessTest uses Unix commands (sleep, sh, kill)")
 
     // ---------------------------------------------------------------------------
     // Process lifecycle
     // ---------------------------------------------------------------------------
 
-    "exitCode returns Absent while process is running" in run {
+    "exitCode returns Absent while process is running" in {
+        unixOnly
         Scope.run {
             for
                 proc    <- Command("sleep", "60").spawn
@@ -24,7 +23,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "exitCode returns Present(Success) after process exits normally" in run {
+    "exitCode returns Present(Success) after process exits normally" in {
+        unixOnly
         Scope.run {
             for
                 proc    <- Command("true").spawn
@@ -34,7 +34,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "pid returns a positive long after spawn" in run {
+    "pid returns a positive long after spawn" in {
+        unixOnly
         Scope.run {
             for
                 proc <- Command("sleep", "60").spawn
@@ -43,7 +44,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "destroy causes waitFor to return non-Success exit code" in run {
+    "destroy causes waitFor to return non-Success exit code" in {
+        unixOnly
         Scope.run {
             for
                 proc   <- Command("sleep", "5").spawn
@@ -54,7 +56,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "destroyForcibly force-kills a process" in run {
+    "destroyForcibly force-kills a process" in {
+        unixOnly
         Scope.run {
             for
                 proc   <- Command("sleep", "60").spawn
@@ -65,7 +68,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "isAlive is true before exit and false after" in run {
+    "isAlive is true before exit and false after" in {
+        unixOnly
         Scope.run {
             for
                 proc       <- Command("true").spawn
@@ -79,7 +83,8 @@ class ProcessTest extends Test:
     // Process spawn independence
     // ---------------------------------------------------------------------------
 
-    "same Command can be spawned multiple times producing independent processes" in run {
+    "same Command can be spawned multiple times producing independent processes" in {
+        unixOnly
         Scope.run {
             val cmd = Command("sleep", "60")
             for
@@ -96,7 +101,8 @@ class ProcessTest extends Test:
     // redirectErrorStream
     // ---------------------------------------------------------------------------
 
-    "redirectErrorStream(true) merges stderr into stdout leaving stderr stream empty" in run {
+    "redirectErrorStream(true) merges stderr into stdout leaving stderr stream empty" in {
+        unixOnly
         val cmd = Command("sh", "-c", "echo stdout_data; echo stderr_data >&2")
             .redirectErrorStream(true)
         Scope.run {
@@ -112,7 +118,8 @@ class ProcessTest extends Test:
     // collectOutput
     // ---------------------------------------------------------------------------
 
-    "collectOutput drains both streams concurrently without deadlock" in run {
+    "collectOutput drains both streams concurrently without deadlock" in {
+        unixOnly
         val bigOutput = "x" * 50000
         val cmd       = Command("sh", "-c", s"printf '%s' '$bigOutput'; printf '%s' '$bigOutput' >&2")
         Scope.run {
@@ -126,7 +133,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "collectOutput returns correct content for both streams" in run {
+    "collectOutput returns correct content for both streams" in {
+        unixOnly
         val cmd = Command("sh", "-c", "echo stdout; echo stderr >&2")
         Scope.run {
             for
@@ -141,7 +149,8 @@ class ProcessTest extends Test:
 
     // collectOutput does not call waitFor
 
-    "collectOutput may return while process is still alive" in run {
+    "collectOutput may return while process is still alive" in {
+        unixOnly
         // Process that prints quickly but sleeps before exiting
         Scope.run {
             for
@@ -157,7 +166,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "exitCode may be Absent immediately after collectOutput returns" in run {
+    "exitCode may be Absent immediately after collectOutput returns" in {
+        unixOnly
         // Process with post-output delay
         Scope.run {
             for
@@ -172,7 +182,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "collectOutput handles large stdout without truncation" in run {
+    "collectOutput handles large stdout without truncation" in {
+        unixOnly
         Scope.run {
             for
                 proc       <- Command("seq", "1", "10000").spawn
@@ -189,7 +200,8 @@ class ProcessTest extends Test:
     // stdout / stderr streams
     // ---------------------------------------------------------------------------
 
-    "process.stdout emits all bytes" in run {
+    "process.stdout emits all bytes" in {
+        unixOnly
         Scope.run {
             for
                 proc  <- Command("echo", "hello stdout").spawn
@@ -201,7 +213,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "process.stderr emits stderr bytes" in run {
+    "process.stderr emits stderr bytes" in {
+        unixOnly
         Scope.run {
             for
                 proc  <- Command("sh", "-c", "echo err >&2").spawn
@@ -217,7 +230,8 @@ class ProcessTest extends Test:
     // Process.Unsafe
     // ---------------------------------------------------------------------------
 
-    "Unsafe process.waitFor(timeout)" in run {
+    "Unsafe process.waitFor(timeout)" in {
+        unixOnly
         import AllowUnsafe.embrace.danger
         val spawnResult = Command("true").unsafe.spawn()
         spawnResult match
@@ -232,7 +246,8 @@ class ProcessTest extends Test:
         end match
     }
 
-    "Process.Unsafe.waitFor returns Fiber.Unsafe resolving with ExitCode.Success" in run {
+    "Process.Unsafe.waitFor returns Fiber.Unsafe resolving with ExitCode.Success" in {
+        unixOnly
         import AllowUnsafe.embrace.danger
         val spawnResult = Command("true").unsafe.spawn()
         spawnResult match
@@ -251,17 +266,20 @@ class ProcessTest extends Test:
     // Additional lifecycle tests
     // ---------------------------------------------------------------------------
 
-    "destroy on already-exited process does not throw" in run {
+    "destroy on already-exited process does not throw" in {
+        unixOnly
         Scope.run {
             for
-                proc <- Command("true").spawn
-                _    <- proc.waitFor
-                _    <- proc.destroy
-            yield succeed
+                proc  <- Command("true").spawn
+                _     <- proc.waitFor
+                _     <- proc.destroy
+                alive <- proc.isAlive
+            yield assert(!alive) // process is no longer alive after exit and destroy
         }
     }
 
-    "pid returns a valid long after process has exited" in run {
+    "pid returns a valid long after process has exited" in {
+        unixOnly
         Scope.run {
             for
                 proc <- Command("true").spawn
@@ -271,7 +289,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "collectOutput on process with empty stdout and stderr returns empty chunks" in run {
+    "collectOutput on process with empty stdout and stderr returns empty chunks" in {
+        unixOnly
         val cmd = Command("sh", "-c", "true")
         Scope.run {
             for
@@ -284,7 +303,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "waitFor(timeout) returns Absent when process does not exit within deadline" in run {
+    "waitFor(timeout) returns Absent when process does not exit within deadline" in {
+        unixOnly
         Scope.run {
             for
                 proc   <- Command("sleep", "60").spawn
@@ -294,7 +314,8 @@ class ProcessTest extends Test:
         }
     }
 
-    "destroyed process exits with non-Success exit code" in run {
+    "destroyed process exits with non-Success exit code" in {
+        unixOnly
         Scope.run {
             for
                 proc   <- Command("sleep", "60").spawn
@@ -315,7 +336,8 @@ class ProcessTest extends Test:
 
     // Inspired by os-lib #27: waitFor(timeout) must actually return within a
     // reasonable multiple of the deadline, not block indefinitely.
-    "waitFor(timeout) terminates within a reasonable multiple of the deadline" in run {
+    "waitFor(timeout) terminates within a reasonable multiple of the deadline" in {
+        unixOnly
         Scope.run {
             for
                 stopwatch <- Clock.stopwatch
@@ -331,7 +353,8 @@ class ProcessTest extends Test:
 
     // Inspired by zio-process #425: stdout stream from a fast process should
     // complete promptly, not stall waiting for more data that will never arrive.
-    "stdout stream completes promptly for short-lived process" in run {
+    "stdout stream completes promptly for short-lived process" in {
+        unixOnly
         Scope.run {
             for
                 stopwatch <- Clock.stopwatch
@@ -347,7 +370,8 @@ class ProcessTest extends Test:
 
     // Inspired by fs2 #3693: the scope-managed process handle must be destroyed
     // when the enclosing Scope closes, even if the process is still running.
-    "scope cleanup destroys process after scope closes" in run {
+    "scope cleanup destroys process after scope closes" in {
+        unixOnly
         for
             pidHolder <- AtomicLong.init(0L)
             _ <- Scope.run {
@@ -364,7 +388,7 @@ class ProcessTest extends Test:
             )
         yield result match
             case Result.Success(code) => assert(!code.isSuccess, s"Process $pid still alive after scope closed")
-            case Result.Failure(_)    => succeed // kill itself failed — process is gone
+            case Result.Failure(_)    => () // kill itself failed — process is gone
         end for
     }
 
@@ -375,7 +399,8 @@ class ProcessTest extends Test:
 
     // Inspired by os-lib #27: waitFor(timeout) must enforce its deadline and not
     // block indefinitely regardless of the process state.
-    "waitFor(timeout) enforces deadline without deadlock" in run {
+    "waitFor(timeout) enforces deadline without deadlock" in {
+        unixOnly
         Scope.run {
             for
                 stopwatch <- Clock.stopwatch
@@ -391,7 +416,8 @@ class ProcessTest extends Test:
 
     // Inspired by zio-process #425: stdout stream must drain and complete when the
     // process exits normally, not stall waiting for data that will never arrive.
-    "stdout collection completes promptly for short-lived process" in run {
+    "stdout collection completes promptly for short-lived process" in {
+        unixOnly
         Scope.run {
             for
                 stopwatch <- Clock.stopwatch
@@ -407,7 +433,8 @@ class ProcessTest extends Test:
 
     // Inspired by fs2 #3693: the scope-managed process handle must be killed when
     // the enclosing Scope exits, leaving no zombie processes.
-    "scope cleanup kills process when scope closes" in run {
+    "scope cleanup kills process when scope closes" in {
+        unixOnly
         for
             pidHolder <- AtomicLong.init(0L)
             _ <- Scope.run {
@@ -424,7 +451,7 @@ class ProcessTest extends Test:
             )
         yield result match
             case Result.Success(code) => assert(!code.isSuccess, s"Process $pid still alive after scope closed")
-            case Result.Failure(_)    => succeed // kill itself failed — process is gone
+            case Result.Failure(_)    => () // kill itself failed — process is gone
         end for
     }
 
@@ -432,7 +459,8 @@ class ProcessTest extends Test:
     // Scope cleanup — process is destroyed when scope closes
     // ---------------------------------------------------------------------------
 
-    "spawn process is destroyed when scope closes normally" in run {
+    "spawn process is destroyed when scope closes normally" in {
+        unixOnly
         for
             pidRef <- AtomicLong.init(0L)
             _ <- Scope.run {
@@ -449,11 +477,12 @@ class ProcessTest extends Test:
             )
         yield result match
             case Result.Success(code) => assert(!code.isSuccess, s"Process $pid still alive after scope closed")
-            case Result.Failure(_)    => succeed // kill itself failed — process is gone
+            case Result.Failure(_)    => () // kill itself failed — process is gone
         end for
     }
 
-    "spawn process is destroyed when scope closes due to Abort error" in run {
+    "spawn process is destroyed when scope closes due to Abort error" in {
+        unixOnly
         for
             pidRef <- AtomicLong.init(0L)
             _ <- Abort.run[String] {
@@ -473,7 +502,7 @@ class ProcessTest extends Test:
             )
         yield result match
             case Result.Success(code) => assert(!code.isSuccess, s"Process $pid still alive after scope closed")
-            case Result.Failure(_)    => succeed // kill itself failed — process is gone
+            case Result.Failure(_)    => () // kill itself failed — process is gone
         end for
     }
 

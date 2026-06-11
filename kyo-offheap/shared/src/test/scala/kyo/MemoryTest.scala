@@ -2,9 +2,9 @@ package kyo
 
 import kyo.Memory.Unsafe
 
-class MemoryTest extends Test:
+class MemoryTest extends kyo.test.Test[Any]:
 
-    "init" in run {
+    "init" in {
         Arena.run {
             for
                 mem <- Memory.init[Int](5)
@@ -13,13 +13,13 @@ class MemoryTest extends Test:
         }
     }
 
-    "initWith" in run {
+    "initWith" in {
         Arena.run {
             Memory.initWith[Int](5)(_.get(0)).map(v => assert(v == 0))
         }
     }
 
-    "set/get" in run {
+    "set/get" in {
         Arena.run {
             for
                 mem <- Memory.init[Int](5)
@@ -29,7 +29,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "fill" in run {
+    "fill" in {
         Arena.run {
             for
                 mem <- Memory.init[Int](5)
@@ -40,7 +40,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "fold" in run {
+    "fold" in {
         Arena.run {
             for
                 mem <- Memory.init[Int](3)
@@ -52,7 +52,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "findIndex" in run {
+    "findIndex" in {
         Arena.run {
             for
                 mem  <- Memory.init[Int](3)
@@ -65,7 +65,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "exists" in run {
+    "exists" in {
         Arena.run {
             for
                 mem    <- Memory.init[Int](3)
@@ -78,7 +78,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "view" in run {
+    "view" in {
         Arena.run {
             for
                 mem  <- Memory.init[Int](5)
@@ -89,7 +89,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "copy segment" in run {
+    "copy segment" in {
         Arena.run {
             for
                 mem  <- Memory.init[Int](3)
@@ -103,7 +103,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "copy to target" in run {
+    "copy to target" in {
         Arena.run {
             for
                 src    <- Memory.init[Int](3)
@@ -117,7 +117,7 @@ class MemoryTest extends Test:
 
     "unsafe" - {
 
-        "get/set" in run {
+        "get/set" in {
             Arena.run {
                 for
                     mem <- Memory.init[Int](5)
@@ -130,7 +130,7 @@ class MemoryTest extends Test:
             }
         }
 
-        "fill" in run {
+        "fill" in {
             Arena.run {
                 for
                     mem <- Memory.init[Int](5)
@@ -143,7 +143,7 @@ class MemoryTest extends Test:
             }
         }
 
-        "fold" in run {
+        "fold" in {
             Arena.run {
                 for
                     mem <- Memory.init[Int](3)
@@ -159,7 +159,7 @@ class MemoryTest extends Test:
         }
     }
 
-    "cannot use memory after arena closes" in run {
+    "cannot use memory after arena closes" in {
         for
             mem <- Arena.run(Memory.init[Int](5))
             r   <- Abort.run(Arena.run(mem.get(0)))
@@ -167,7 +167,7 @@ class MemoryTest extends Test:
     }
 
     "other supported layouts" - {
-        "byte" in run {
+        "byte" in {
             Arena.run {
                 for
                     mem <- Memory.init[Byte](3)
@@ -181,7 +181,7 @@ class MemoryTest extends Test:
             }
         }
 
-        "short" in run {
+        "short" in {
             Arena.run {
                 for
                     mem <- Memory.init[Short](3)
@@ -195,7 +195,7 @@ class MemoryTest extends Test:
             }
         }
 
-        "float" in run {
+        "float" in {
             Arena.run {
                 for
                     mem <- Memory.init[Float](3)
@@ -209,7 +209,7 @@ class MemoryTest extends Test:
             }
         }
 
-        "double" in run {
+        "double" in {
             Arena.run {
                 for
                     mem <- Memory.init[Double](3)
@@ -223,7 +223,7 @@ class MemoryTest extends Test:
             }
         }
 
-        "long" in run {
+        "long" in {
             Arena.run {
                 for
                     mem <- Memory.init[Long](3)

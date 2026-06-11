@@ -146,11 +146,11 @@ end CdpFixtureServer
   * Lives in the JVM test tree because [[CdpFixtureServer]] is built on kyo-http's `HttpServer`, which is implemented on JVM and Native only
   * There is no `HttpServer` on Scala.js.
   */
-class CdpClientLifecycleJvmTest extends Test:
+class CdpClientLifecycleJvmTest extends BaseBrowserTest:
 
     override def timeout = 2.minutes
 
-    "fixture sanity: Echo replies to a Target.getTargets request" in run {
+    "fixture sanity: Echo replies to a Target.getTargets request" in {
         Abort.run[BrowserConnectionException] {
             Scope.run {
                 CdpFixtureServer.start(CdpFixtureServer.Behavior.Echo).map { fixture =>
@@ -163,7 +163,7 @@ class CdpClientLifecycleJvmTest extends Test:
                                 json.contains("\"result\"") || json == "{}",
                                 s"unexpected: $json"
                             )
-                            succeed
+                            ()
                     }
                 }
             }
@@ -174,7 +174,7 @@ class CdpClientLifecycleJvmTest extends Test:
     // close after relay fiber crashed externally
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close after relay fiber crashed externally does not throw" in run {
+    "close after relay fiber crashed externally does not throw" in {
         Abort.run[BrowserConnectionException] {
             Scope.run {
                 CdpFixtureServer.start(CdpFixtureServer.Behavior.Echo).map { fixture =>
@@ -195,7 +195,9 @@ class CdpClientLifecycleJvmTest extends Test:
                             // close() must not throw or hang post-relay-crash.
                             closeRes <- Abort.run[Timeout](Async.timeout(5.seconds)(client.close(30.seconds)))
                         yield closeRes match
-                            case Result.Success(_)          => succeed
+                            case Result.Success(_) =>
+                                // close() completed without hanging after relay crash.
+                                succeed("close() returns without hanging after the relay fiber crashes")
                             case Result.Failure(_: Timeout) => fail("client.close hung after relay crash")
                             case Result.Panic(ex)           => fail(s"Panic from client.close: ${ex.getMessage}")
                     }
@@ -208,7 +210,7 @@ class CdpClientLifecycleJvmTest extends Test:
     // close(gracePeriod) falls back to closeNow on timeout
     // ─────────────────────────────────────────────────────────────────────────
 
-    "close(gracePeriod) falls back to closeNow when in-flight send is slow" in run {
+    "close(gracePeriod) falls back to closeNow when in-flight send is slow" in {
         Abort.run[BrowserConnectionException] {
             Scope.run {
                 CdpFixtureServer.start(CdpFixtureServer.Behavior.SlowResponses(10.seconds)).map { fixture =>
@@ -237,7 +239,8 @@ class CdpClientLifecycleJvmTest extends Test:
                                 s"close(500ms) should fall back to closeNow within ~grace, took ${elapsedMs}ms"
                             )
                             slowResult match
-                                case Result.Failure(_: BrowserConnectionLostException) => succeed
+                                case Result.Failure(ex: BrowserConnectionLostException) =>
+                                    assert(ex.getMessage.contains("Connection lost"))
                                 case other =>
                                     fail(s"expected ConnectionLost on slow send after closeNow fallback, got $other")
                             end match
@@ -251,13 +254,14 @@ class CdpClientLifecycleJvmTest extends Test:
     // connection drop mid-request
     // ─────────────────────────────────────────────────────────────────────────
 
-    "send raises ConnectionLost when the WebSocket connection is dropped mid-request" in run {
+    "send raises ConnectionLost when the WebSocket connection is dropped mid-request" in {
         Abort.run[BrowserConnectionException] {
             Scope.run {
                 CdpFixtureServer.start(CdpFixtureServer.Behavior.DropMidRequest).map { fixture =>
                     CdpClient.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { client =>
                         Abort.run[BrowserConnectionException](client.send("Target.getTargets")).map {
-                            case Result.Failure(_: BrowserConnectionLostException) => succeed
+                            case Result.Failure(ex: BrowserConnectionLostException) =>
+                                assert(ex.getMessage.contains("Connection lost"))
                             case other =>
                                 fail(s"expected BrowserConnectionLostException, got $other")
                         }
@@ -271,7 +275,7 @@ class CdpClientLifecycleJvmTest extends Test:
     // top-level dialog with no sessionId
     // ─────────────────────────────────────────────────────────────────────────
 
-    "top-level dialog with no sessionId is auto-dismissed via empty-string handler key" in run {
+    "top-level dialog with no sessionId is auto-dismissed via empty-string handler key" in {
         Abort.run[BrowserConnectionException] {
             Scope.run {
                 CdpFixtureServer.start(CdpFixtureServer.Behavior.Echo).map { fixture =>
@@ -295,7 +299,6 @@ class CdpClientLifecycleJvmTest extends Test:
                                 s"expected post-dialog send to round-trip, got $result"
                             )
                             assert(drainerLive, "dialogDrainer must still be alive after auto-dismiss")
-                            succeed
                     }
                 }
             }

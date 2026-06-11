@@ -2,7 +2,7 @@
 
 kyo-doctest validates the Scala code blocks inside your Markdown by compiling them, so the examples in your docs cannot rot. `KyoDoctestPlugin` auto-enables on every JVM project. Running `sbt doctest` finds the project's `README.md`, extracts every ```scala block, and type-checks each one against the project's own classpath, failing the build on any unexpected outcome. A project opts out with `.disablePlugins(KyoDoctestPlugin)`. Each fenced block is treated as an independent compile unit by default, so examples stay copy-pasteable. An info-string DSL (`doctest:scope=...`, `doctest:expect=...`, `doctest:platform=...`, `doctest:setup`) lets a doc author chain blocks, declare blocks that must fail to compile, hide a setup fixture inside an HTML comment, or restrict a block to a single platform.
 
-There are two surfaces. `sbt-kyo-doctest` is the user-facing sbt plugin: it exposes the task and setting keys that almost every user touches. `kyo-doctest` is the JVM-only runner library that the plugin forks into over a temp JSON config, never called directly by users. Anyone wiring doctest into a non-sbt build (Mill, a CI script, an editor integration) calls `kyo.doctest.Doctest.check` directly with a `Doctest.Config`.
+There are two surfaces. `kyo-doctest-plugin` is the user-facing sbt plugin: it exposes the task and setting keys that almost every user touches. `kyo-doctest` is the JVM-only runner library that the plugin forks into over a temp JSON config, never called directly by users. Anyone wiring doctest into a non-sbt build (Mill, a CI script, an editor integration) calls `kyo.doctest.Doctest.check` directly with a `Doctest.Config`.
 
 A single fenced block is the smallest unit of validation. The block below is type-checked against the project's classpath, and the build fails if it stops compiling:
 
@@ -20,7 +20,7 @@ The 95% path is the sbt plugin. You add the plugin to `project/plugins.sbt` and 
 In `project/plugins.sbt`:
 
 ```text
-addSbtPlugin("io.getkyo" % "sbt-kyo-doctest" % "VERSION")
+addSbtPlugin("io.getkyo" % "kyo-doctest-plugin" % "VERSION")
 ```
 
 That is all the wiring required. The plugin auto-enables on every JVM project, so no `.enablePlugins` call is needed.
@@ -387,7 +387,7 @@ A typical reporter pattern: group `report.failures` by `f.file` for per-file sum
 
 ## How it works
 
-Under sbt, the plugin (`sbt-kyo-doctest`) forks a JVM running the runner (`kyo-doctest`). It writes the run's configuration to a temp JSON file, forks, and reads the result back from a second temp JSON file. That fork is where the actual compilation happens.
+Under sbt, the plugin (`kyo-doctest-plugin`) forks a JVM running the runner (`kyo-doctest`). It writes the run's configuration to a temp JSON file, forks, and reads the result back from a second temp JSON file. That fork is where the actual compilation happens.
 
 Inside the fork, a single warm Dotty `Driver` is built once and reused across every block. Dotty's `ContextBase` pins a compiler context to the thread that created it, so all compiles are dispatched to one dedicated compiler thread regardless of which fiber invoked them. The cost of parsing scalac options and initialising the compiler is paid once, not once per block.
 

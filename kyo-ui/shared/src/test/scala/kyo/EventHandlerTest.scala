@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 class EventHandlerTest extends UITest:
 
-    "onClick fires" in run {
+    "onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -16,11 +16,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick bubbles to parent" in run {
+    "onClick bubbles to parent" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div.id("parent").onClick(ref.getAndUpdate(_ + 1).unit)(
@@ -31,11 +31,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClickSelf does not fire on child click" in run {
+    "onClickSelf does not fire on child click" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -48,11 +48,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick + onClickSelf only onClick on child" in run {
+    "onClick + onClickSelf only onClick on child" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -65,11 +65,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyDown fires with key" in run {
+    "onKeyDown fires with key" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -80,11 +80,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "Enter")
-            yield succeed
+            yield ()
         }
     }
 
-    "onFocus does not bubble" in run {
+    "onFocus does not bubble" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -97,13 +97,13 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from EventBubblingTest ----
 
-    "click on span inside div - div onClick fires" in run {
+    "click on span inside div - div onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -116,11 +116,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "click on span inside div inside section - all ancestors fire" in run {
+    "click on span inside div inside section - all ancestors fire" in {
         val app: UI < Async =
             for
                 divCount     <- Signal.initRef(0)
@@ -139,11 +139,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("target"))
                 _ <- Browser.assertText(Selector.id("dv"), "div:1")
                 _ <- Browser.assertText(Selector.id("sv"), "sec:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "click deep nesting (5 levels) - top-level onClick fires" in run {
+    "click deep nesting (5 levels) - top-level onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -156,11 +156,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("deep"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClickSelf on parent - child click does NOT trigger onClickSelf" in run {
+    "onClickSelf on parent - child click does NOT trigger onClickSelf" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -173,11 +173,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClickSelf on target - direct click DOES trigger" in run {
+    "onClickSelf on target - direct click DOES trigger" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -188,11 +188,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("target"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus on input inside div - div onFocus does NOT fire (bubbling)" in run {
+    "focus on input inside div - div onFocus does NOT fire (bubbling)" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -205,11 +205,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "blur on input - parent onBlur does NOT fire (bubbling)" in run {
+    "blur on input - parent onBlur does NOT fire (bubbling)" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -224,11 +224,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.click(Selector.id("other"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "keyDown on input inside div - div onKeyDown fires (bubbling)" in run {
+    "keyDown on input inside div - div onKeyDown fires (bubbling)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -241,11 +241,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("child"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "Enter")
-            yield succeed
+            yield ()
         }
     }
 
-    "keyDown on input inside div inside section - all ancestors fire (bubbling)" in run {
+    "keyDown on input inside div inside section - all ancestors fire (bubbling)" in {
         val app: UI < Async =
             for
                 divKey <- Signal.initRef("")
@@ -264,11 +264,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.press(Selector.id("child"), Key.Escape)
                 _ <- Browser.assertText(Selector.id("dv"), "div:Escape")
                 _ <- Browser.assertText(Selector.id("sv"), "sec:Escape")
-            yield succeed
+            yield ()
         }
     }
 
-    "keyUp on input - parent onKeyUp fires (bubbling)" in run {
+    "keyUp on input - parent onKeyUp fires (bubbling)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -281,11 +281,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("child"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "Enter")
-            yield succeed
+            yield ()
         }
     }
 
-    "input on child input - correct handler routing" in run {
+    "input on child input - correct handler routing" in {
         val app: UI < Async =
             for
                 inputRef <- Signal.initRef("")
@@ -303,11 +303,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("iv"), "inp:hello")
                 _ <- Browser.press(Selector.id("child"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("kv"), "key:Backspace")
-            yield succeed
+            yield ()
         }
     }
 
-    "click button inside form - form onSubmit fires (bubbling)" in run {
+    "click button inside form - form onSubmit fires (bubbling)" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -321,11 +321,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "click button NOT inside form - no submit event" in run {
+    "click button NOT inside form - no submit event" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -336,11 +336,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "click on button with onClick inside div with onClick - both fire" in run {
+    "click on button with onClick inside div with onClick - both fire" in {
         val app: UI < Async =
             for
                 btnCount <- Signal.initRef(0)
@@ -357,11 +357,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("bv"), "btn:1")
                 _ <- Browser.assertText(Selector.id("dv"), "div:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "click on disabled button inside div with onClick - div onClick fires" in run {
+    "click on disabled button inside div with onClick - div onClick fires" in {
         val app: UI < Async =
             for
                 divCount <- Signal.initRef(0)
@@ -378,11 +378,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertDisabled(Selector.id("btn"))
                 _ <- Browser.assertText(Selector.id("bv"), "btn:0")
                 _ <- Browser.assertText(Selector.id("dv"), "div:0")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClickSelf + onClick on same element - both fire on direct click" in run {
+    "onClickSelf + onClick on same element - both fire on direct click" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -395,13 +395,13 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "2")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from EventConflictTest ----
 
-    "onInput and onChange both set same signal consistent" in run {
+    "onInput and onChange both set same signal consistent" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -414,11 +414,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.assertText(Selector.id("v"), "change:test")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick parent plus onClick child both fire child first" in run {
+    "onClick parent plus onClick child both fire child first" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -431,11 +431,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "child,parent")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClickSelf only on direct click" in run {
+    "onClickSelf only on direct click" in {
         val app: UI < Async =
             for
                 selfCount  <- Signal.initRef(0)
@@ -457,11 +457,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("parent"))
                 _ <- Browser.assertText(Selector.id("vs"), "self:1")
                 _ <- Browser.assertText(Selector.id("vc"), "click:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "onSubmit plus onClick on submit button both fire" in run {
+    "onSubmit plus onClick on submit button both fire" in {
         val app: UI < Async =
             for
                 submitCount <- Signal.initRef(0)
@@ -478,11 +478,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("sub"))
                 _ <- Browser.assertText(Selector.id("vc"), "click:1")
                 _ <- Browser.assertText(Selector.id("vs"), "submit:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onFocus handler sets signal no infinite loop" in run {
+    "onFocus handler sets signal no infinite loop" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -493,11 +493,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange on select re-renders options stable" in run {
+    "onChange on select re-renders options stable" in {
         val app: UI < Async =
             for
                 selected <- Signal.initRef("a")
@@ -515,11 +515,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "selected:b")
                 _ <- Browser.select(Selector.id("s"), "a")
                 _ <- Browser.assertText(Selector.id("v"), "selected:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler removes its own element no crash" in run {
+    "handler removes its own element no crash" in {
         val app: UI < Async =
             for show <- Signal.initRef(true)
             yield UI.div(
@@ -530,11 +530,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("rm"))
                 _ <- Browser.assertVisible(Selector.id("s"))
-            yield succeed
+            yield ()
         }
     }
 
-    "handler adds new elements they become interactive" in run {
+    "handler adds new elements they become interactive" in {
         val app: UI < Async =
             for
                 show    <- Signal.initRef(false)
@@ -549,13 +549,13 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.click(Selector.id("new"))
                 _ <- Browser.assertText(Selector.id("v"), "clicked:true")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from HandlerContractTest ----
 
-    "onInput receives full value not just new char" in run {
+    "onInput receives full value not just new char" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -566,11 +566,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "ab")
                 _ <- Browser.assertText(Selector.id("v"), "ab")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput on backspace receives remaining value" in run {
+    "onInput on backspace receives remaining value" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -582,11 +582,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "xy")
                 _ <- Browser.press(Selector.id("i"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "[xy],[x]")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput with fill receives complete text" in run {
+    "onInput with fill receives complete text" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -597,11 +597,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello")
                 _ <- Browser.assertText(Selector.id("v"), "hello")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChange fires with value on fill" in run {
+    "onChange fires with value on fill" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -612,11 +612,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.assertText(Selector.id("v"), "changed:test")
-            yield succeed
+            yield ()
         }
     }
 
-    "onChangeNumeric receives Double" in run {
+    "onChangeNumeric receives Double" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -627,11 +627,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("n"), "3.14")
                 _ <- Browser.assertText(Selector.id("v"), "num:3.14")
-            yield succeed
+            yield ()
         }
     }
 
-    "set handler pattern works with fill" in run {
+    "set handler pattern works with fill" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -642,11 +642,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "ab")
                 _ <- Browser.assertText(Selector.id("v"), "sig:ab")
-            yield succeed
+            yield ()
         }
     }
 
-    "append handler is antipattern - onInput v is full value not delta" in run {
+    "append handler is antipattern - onInput v is full value not delta" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -657,11 +657,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "a")
                 _ <- Browser.assertText(Selector.id("v"), "sig:a")
-            yield succeed
+            yield ()
         }
     }
 
-    "transform handler pattern works with fill" in run {
+    "transform handler pattern works with fill" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -672,11 +672,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hello")
                 _ <- Browser.assertText(Selector.id("v"), "sig:HELLO")
-            yield succeed
+            yield ()
         }
     }
 
-    "transform handler pattern works with multi fill" in run {
+    "transform handler pattern works with multi fill" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -687,11 +687,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "ab")
                 _ <- Browser.assertText(Selector.id("v"), "sig:AB")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyUp fires after onKeyDown" in run {
+    "onKeyUp fires after onKeyDown" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -704,11 +704,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('x'))
                 _ <- Browser.assertText(Selector.id("v"), "down:Char(x),up:Char(x)")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick on div fires (contract)" in run {
+    "onClick on div fires (contract)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -719,11 +719,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.assertText(Selector.id("v"), "clicks:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox onChange receives boolean (contract)" in run {
+    "checkbox onChange receives boolean (contract)" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -736,11 +736,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "true")
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "true,false")
-            yield succeed
+            yield ()
         }
     }
 
-    "select onChange receives selected value string (contract)" in run {
+    "select onChange receives selected value string (contract)" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -756,11 +756,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "beta")
                 _ <- Browser.select(Selector.id("s"), "alpha")
                 _ <- Browser.assertText(Selector.id("v"), "beta,alpha")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler exception does not break subsequent interactions" in run {
+    "handler exception does not break subsequent interactions" in {
         val app: UI < Async =
             for
                 counter <- Signal.initRef(0)
@@ -782,11 +782,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.click(Selector.id("boom"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "both onInput and onChange fire on fill" in run {
+    "both onInput and onChange fire on fill" in {
         val app: UI < Async =
             for
                 inputLog  <- Signal.initRef("")
@@ -803,11 +803,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "test")
                 _ <- Browser.assertText(Selector.id("vi"), "input:test")
                 _ <- Browser.assertText(Selector.id("vc"), "change:test")
-            yield succeed
+            yield ()
         }
     }
 
-    "focus and blur fire in correct order" in run {
+    "focus and blur fire in correct order" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -825,11 +825,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "focus:a")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "focus:a,blur:a,focus:b")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput called for each fill not batched" in run {
+    "onInput called for each fill not batched" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -841,11 +841,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.fill(Selector.id("i"), "xyz")
                 _ <- Browser.assertText(Selector.id("v"), "calls:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "filter handler strips non digits" in run {
+    "filter handler strips non digits" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -856,11 +856,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "a1b2c3")
                 _ <- Browser.assertText(Selector.id("v"), "sig:123")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyUp has same key as onKeyDown" in run {
+    "onKeyUp has same key as onKeyDown" in {
         val app: UI < Async =
             for
                 downRef <- Signal.initRef("")
@@ -877,11 +877,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.press(Selector.id("i"), Key('z'))
                 _ <- Browser.assertText(Selector.id("vd"), "down:Char(z)")
                 _ <- Browser.assertText(Selector.id("vu"), "up:Char(z)")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick fires on span (contract)" in run {
+    "onClick fires on span (contract)" in {
         val app: UI < Async =
             for counter <- Signal.initRef(0)
             yield UI.div(
@@ -892,11 +892,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("v"), "clicks:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClick on nested child bubbles to parent (contract)" in run {
+    "onClick on nested child bubbles to parent (contract)" in {
         val app: UI < Async =
             for
                 parentClicks <- Signal.initRef(0)
@@ -913,11 +913,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("vc"), "child:1")
                 _ <- Browser.assertText(Selector.id("vp"), "parent:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "onClickSelf fires only on direct target (contract)" in run {
+    "onClickSelf fires only on direct target (contract)" in {
         val app: UI < Async =
             for selfClicks <- Signal.initRef(0)
             yield UI.div(
@@ -932,11 +932,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "self:0")
                 _ <- Browser.click(Selector.id("parent"))
                 _ <- Browser.assertText(Selector.id("v"), "self:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "select onChange receives option value not display text" in run {
+    "select onChange receives option value not display text" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -949,11 +949,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.select(Selector.id("s"), "internal-val")
                 _ <- Browser.assertText(Selector.id("v"), "got:internal-val")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler throws in onInput next fill still dispatches" in run {
+    "handler throws in onInput next fill still dispatches" in {
         val app: UI < Async =
             for
                 counter <- Signal.initRef(0)
@@ -975,11 +975,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.click(Selector.id("fix"))
                 _ <- Browser.fill(Selector.id("i"), "b")
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "two handlers on same element both work" in run {
+    "two handlers on same element both work" in {
         val app: UI < Async =
             for
                 clickRef <- Signal.initRef(0)
@@ -997,11 +997,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.assertText(Selector.id("vc"), "clicks:1")
                 _ <- Browser.press(Selector.id("b"), Key('x'))
                 _ <- Browser.assertText(Selector.id("vk"), "key:Char(x)")
-            yield succeed
+            yield ()
         }
     }
 
-    "handler sets signal that triggers re-render completes" in run {
+    "handler sets signal that triggers re-render completes" in {
         val app: UI < Async =
             for items <- Signal.initRef(Chunk.from(Seq("A")))
             yield UI.div(
@@ -1012,11 +1012,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("add"))
                 _ <- Browser.assertText(Selector.id("v"), "A,B")
-            yield succeed
+            yield ()
         }
     }
 
-    "onInput receives empty string when cleared" in run {
+    "onInput receives empty string when cleared" in {
         val app: UI < Async =
             for log <- Signal.initRef(Chunk.empty[String])
             yield UI.div(
@@ -1029,11 +1029,11 @@ class EventHandlerTest extends UITest:
                 _ <- Browser.fill(Selector.id("i"), "")
                 _ <- assertContains("[abc]")
                 _ <- assertContains("[]")
-            yield succeed
+            yield ()
         }
     }
 
-    "checkbox onChange receives false on uncheck" in run {
+    "checkbox onChange receives false on uncheck" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -1044,13 +1044,13 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("c"))
                 _ <- Browser.assertText(Selector.id("v"), "val:false")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- Merged from ContainerEventsTest ----
 
-    "Div onClick fires on click" in run {
+    "Div onClick fires on click" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1061,11 +1061,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Section onClick fires" in run {
+    "Section onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1078,11 +1078,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Header onClick fires" in run {
+    "Header onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1095,11 +1095,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Span onClick fires" in run {
+    "Span onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1110,11 +1110,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Span onKeyDown fires" in run {
+    "Span onKeyDown fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -1127,11 +1127,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("child"), Key.Escape)
                 _ <- Browser.assertText(Selector.id("v"), "Escape")
-            yield succeed
+            yield ()
         }
     }
 
-    "Nav onClick fires" in run {
+    "Nav onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1144,11 +1144,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "P onClick fires" in run {
+    "P onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1159,11 +1159,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("para"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Li onClick fires - click on child bubbles" in run {
+    "Li onClick fires - click on child bubbles" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1178,11 +1178,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Tr onClick fires - Td click bubbles" in run {
+    "Tr onClick fires - Td click bubbles" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1197,11 +1197,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("cell"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Td onClick fires" in run {
+    "Td onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1212,11 +1212,11 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("cell"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Th onClick fires" in run {
+    "Th onClick fires" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -1227,13 +1227,13 @@ class EventHandlerTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("hcell"))
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Span tabIndex(-1) assertAttribute" in run {
+    "Span tabIndex(-1) assertAttribute" in {
         withUI(UI.div(UI.span.tabIndex(-1).id("s"))) {
-            Browser.assertAttribute(Selector.id("s"), "tabindex", "-1").andThen(succeed)
+            Browser.assertAttribute(Selector.id("s"), "tabindex", "-1").unit
         }
     }
 

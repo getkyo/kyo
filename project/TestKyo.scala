@@ -12,7 +12,7 @@ import scala.sys.process.*
   */
 object TestKyo {
 
-    private val platformNames = Set("JVM", "JS", "Native")
+    private val platformNames = Set("JVM", "JS", "Native", "Wasm")
 
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
@@ -56,16 +56,21 @@ object TestKyo {
         val state2 = runForScala(state1, targetScala)
 
         if (runBothScala) {
-            findScala2Version(extracted) match {
-                case Some(v) =>
-                    log(s"switching to Scala $v for cross-build modules")
-                    val state3 = if (isDryRun) state2 else Command.process(s"++$v", state2, msg => state2.log.error(msg))
-                    val state4 = runForScala(state3, v)
-                    log(s"restoring Scala $scala3")
-                    if (isDryRun) state4 else Command.process(s"++$scala3", state4, msg => state4.log.error(msg))
-                case None =>
+            findScala2Versions(extracted) match {
+                case Nil =>
                     log("no Scala 2.x cross-build modules found")
                     state2
+                case versions =>
+                    // One pass per distinct Scala 2.x version: 2.13 for the cross-build library
+                    // modules, 2.12 for the sbt plugins. This is why the regular test run also
+                    // covers the 2.12-only plugins (kyo-compat-plugin, kyo-doctest-plugin).
+                    val afterScala2 = versions.foldLeft(state2) { (st, v) =>
+                        log(s"switching to Scala $v for cross-build modules")
+                        val switched = if (isDryRun) st else Command.process(s"++$v", st, msg => st.log.error(msg))
+                        runForScala(switched, v)
+                    }
+                    log(s"restoring Scala $scala3")
+                    if (isDryRun) afterScala2 else Command.process(s"++$scala3", afterScala2, msg => afterScala2.log.error(msg))
             }
         } else {
             state2
@@ -80,7 +85,7 @@ object TestKyo {
         val allRefs   = structure.allProjectRefs
 
         // Exclude aggregate projects
-        val excluded = Set("kyoJVM", "kyoJS", "kyoNative")
+        val excluded = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
         val testable = allRefs.filter { ref =>
             val name        = ref.project
             val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
@@ -179,9 +184,10 @@ object TestKyo {
       */
     private def matchesPlatform(name: String, platform: String): Boolean =
         platform match {
-            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native")
+            case "JVM"    => !name.endsWith("JS") && !name.endsWith("Native") && !name.endsWith("Wasm")
             case "JS"     => name.endsWith("JS")
             case "Native" => name.endsWith("Native")
+            case "Wasm"   => name.endsWith("Wasm")
             case _        => false
         }
 
@@ -193,13 +199,19 @@ object TestKyo {
     private def fileToProjects(file: String, allProjectNames: Set[String]): Set[String] = {
         val parts = file.split("/").toList
         parts match {
+            case module :: "plugin" :: _ if allProjectNames.contains(s"$module-plugin") =>
+                Set(s"$module-plugin")
             case module :: sub :: _ =>
+                // Map the platform sub-directory to affected platforms. Handles single
+                // platform dirs (jvm/js/native/wasm), the partially-shared dirs named by
+                // joining identifiers (e.g. js-wasm, jvm-native), shared (all platforms),
+                // and any other layout (all, then filtered by which projects exist).
+                val platformDirs = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native", "wasm" -> "Wasm")
+                val allPlatforms = platformDirs.values.toSeq
                 val affectedPlatforms = sub match {
-                    case "shared" => Seq("JVM", "JS", "Native")
-                    case "jvm"    => Seq("JVM")
-                    case "js"     => Seq("JS")
-                    case "native" => Seq("Native")
-                    case _        => Seq("JVM", "JS", "Native")
+                    case "shared"                                        => allPlatforms
+                    case s if s.split("-").forall(platformDirs.contains) => s.split("-").toList.map(platformDirs)
+                    case _                                               => allPlatforms
                 }
                 affectedPlatforms.flatMap { p =>
                     // JVM projects may use bare name (e.g. "kyo-core") or suffixed (e.g. "kyo-coreJVM")
@@ -265,5 +277,15 @@ object TestKyo {
         structure.allProjectRefs.flatMap { ref =>
             (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
         }.find(_.startsWith("2."))
+    }
+
+    /** All distinct Scala 2.x versions in crossScalaVersions across projects (e.g. 2.13 cross-build
+      * modules and 2.12 sbt plugins), sorted so each gets its own test pass.
+      */
+    private def findScala2Versions(extracted: Extracted): Seq[String] = {
+        val structure = extracted.structure
+        structure.allProjectRefs.flatMap { ref =>
+            (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
+        }.filter(_.startsWith("2.")).distinct.sorted
     }
 }

@@ -9,14 +9,14 @@ import kyo.*
   *
   * The Native implementation is a no-op. This test verifies that the no-op compiles and runs without raising an exception.
   */
-class BrowserLauncherPlatformTest extends Test:
+class BrowserLauncherPlatformTest extends BaseBrowserTest:
 
-    "registerShutdownHook is a no-op on Native (no exception raised)" in run {
+    "registerShutdownHook is a no-op on Native (no exception raised)" in {
         Scope.run {
             // `true` is a POSIX no-op binary that exits 0 immediately.
             Command("true").spawn.map { proc =>
                 BrowserLauncherPlatform.registerShutdownHook(proc).map { _ =>
-                    succeed
+                    ()
                 }
             }
         }

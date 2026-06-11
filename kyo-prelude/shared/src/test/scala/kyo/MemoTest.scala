@@ -1,6 +1,6 @@
 package kyo
 
-class MemoTest extends Test:
+class MemoTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "memoizes pure functions" in {
@@ -277,7 +277,7 @@ class MemoTest extends Test:
     }
 
     "isolate" - {
-        "combines caches from isolated and outer scopes" in run {
+        "combines caches from isolated and outer scopes" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -301,7 +301,7 @@ class MemoTest extends Test:
             assert(count == 3)
         }
 
-        "proper state restoration after nested isolations" in run {
+        "proper state restoration after nested isolations" in {
             var count = 0
             val f = Memo[Int, Int, Any] { x =>
                 count += 1
@@ -326,7 +326,7 @@ class MemoTest extends Test:
         }
 
         "composition" - {
-            "can combine multiple isolates" in run {
+            "can combine multiple isolates" in {
                 var count = 0
                 val f = Memo[Int, Int, Any] { x =>
                     count += 1
@@ -351,7 +351,7 @@ class MemoTest extends Test:
                 assert(count == 2)
             }
 
-            "preserves individual isolation behaviors when composed" in run {
+            "preserves individual isolation behaviors when composed" in {
                 var count = 0
                 val f = Memo[Int, Int, Any] { x =>
                     count += 1

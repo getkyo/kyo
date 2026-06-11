@@ -3,7 +3,7 @@ package kyo
 import java.util.UUID
 import kyo.*
 
-class HttpCodecTest extends Test:
+class HttpCodecTest extends BaseHttpTest:
 
     "Int codec" - {
         "encode" in {

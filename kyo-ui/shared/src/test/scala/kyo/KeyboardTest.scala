@@ -19,129 +19,129 @@ class KeyboardTest extends UITest:
             ref.map(v => UI.span(v).id("v"))
         )
 
-    "Ctrl+a onKeyDown receives ctrl=true" in run {
+    "Ctrl+a onKeyDown receives ctrl=true" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key('a'), KeyModifiers(ctrl = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Char(a)|ctrl=true|alt=false|shift=false|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Ctrl+c onKeyDown receives ctrl=true" in run {
+    "Ctrl+c onKeyDown receives ctrl=true" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key('c'), KeyModifiers(ctrl = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Char(c)|ctrl=true|alt=false|shift=false|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Ctrl+Enter on button reports both ctrl and Enter" in run {
+    "Ctrl+Enter on button reports both ctrl and Enter" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key.Enter, KeyModifiers(ctrl = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Enter|ctrl=true|alt=false|shift=false|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Shift+A onKeyDown receives shift=true" in run {
+    "Shift+A onKeyDown receives shift=true" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key('A'), KeyModifiers(shift = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Char(A)|ctrl=false|alt=false|shift=true|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Shift+Tab onKeyDown fires" in run {
+    "Shift+Tab onKeyDown fires" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.click(Selector.id("i"))
                     _ <- Browser.press(Selector.id("i"), Key.Tab, KeyModifiers(shift = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Tab|ctrl=false|alt=false|shift=true|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Alt+x onKeyDown receives alt=true" in run {
+    "Alt+x onKeyDown receives alt=true" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key('x'), KeyModifiers(alt = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Char(x)|ctrl=false|alt=true|shift=false|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Meta+s onKeyDown receives meta=true" in run {
+    "Meta+s onKeyDown receives meta=true" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key('s'), KeyModifiers(meta = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Char(s)|ctrl=false|alt=false|shift=false|meta=true")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Ctrl+Shift+Enter all three modifiers" in run {
+    "Ctrl+Shift+Enter all three modifiers" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key.Enter, KeyModifiers(ctrl = true, shift = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Enter|ctrl=true|alt=false|shift=true|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Ctrl+Alt+Delete all modifiers reported" in run {
+    "Ctrl+Alt+Delete all modifiers reported" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key.Delete, KeyModifiers(ctrl = true, alt = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=Delete|ctrl=true|alt=true|shift=false|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Ctrl+ArrowRight onKeyDown with ctrl=true and ArrowRight" in run {
+    "Ctrl+ArrowRight onKeyDown with ctrl=true and ArrowRight" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key.ArrowRight, KeyModifiers(ctrl = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=ArrowRight|ctrl=true|alt=false|shift=false|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "Shift+ArrowDown onKeyDown with shift=true" in run {
+    "Shift+ArrowDown onKeyDown with shift=true" in {
         keyEvalApp.flatMap { ui =>
             withUI(ui) {
                 for
                     _ <- Browser.press(Selector.id("i"), Key.ArrowDown, KeyModifiers(shift = true))
                     _ <- Browser.assertText(Selector.id("v"), "key=ArrowDown|ctrl=false|alt=false|shift=true|meta=false")
-                yield succeed
+                yield ()
             }
         }
     }
 
-    "PageUp fires onKeyDown" in run {
+    "PageUp fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -152,11 +152,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.PageUp)
                 _ <- Browser.assertText(Selector.id("v"), "PageUp")
-            yield succeed
+            yield ()
         }
     }
 
-    "PageDown fires onKeyDown" in run {
+    "PageDown fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -167,11 +167,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.PageDown)
                 _ <- Browser.assertText(Selector.id("v"), "PageDown")
-            yield succeed
+            yield ()
         }
     }
 
-    "Home fires onKeyDown" in run {
+    "Home fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -182,11 +182,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Home)
                 _ <- Browser.assertText(Selector.id("v"), "Home")
-            yield succeed
+            yield ()
         }
     }
 
-    "End fires onKeyDown" in run {
+    "End fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -197,13 +197,13 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.End)
                 _ <- Browser.assertText(Selector.id("v"), "End")
-            yield succeed
+            yield ()
         }
     }
 
     // ---- KeyboardFocus ----
 
-    "Enter on button fires onClick" in run {
+    "Enter on button fires onClick" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -214,11 +214,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("b"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Space on button fires onClick" in run {
+    "Space on button fires onClick" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -229,11 +229,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("b"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "1")
-            yield succeed
+            yield ()
         }
     }
 
-    "Escape fires onKeyDown" in run {
+    "Escape fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -244,11 +244,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Escape)
                 _ <- Browser.assertText(Selector.id("v"), "Escape")
-            yield succeed
+            yield ()
         }
     }
 
-    "Backspace fires onKeyDown" in run {
+    "Backspace fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -259,11 +259,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "Backspace")
-            yield succeed
+            yield ()
         }
     }
 
-    "ArrowDown fires onKeyDown" in run {
+    "ArrowDown fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -274,11 +274,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.ArrowDown)
                 _ <- Browser.assertText(Selector.id("v"), "ArrowDown")
-            yield succeed
+            yield ()
         }
     }
 
-    "ArrowUp fires onKeyDown" in run {
+    "ArrowUp fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -289,11 +289,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.ArrowUp)
                 _ <- Browser.assertText(Selector.id("v"), "ArrowUp")
-            yield succeed
+            yield ()
         }
     }
 
-    "ArrowLeft fires onKeyDown" in run {
+    "ArrowLeft fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -304,11 +304,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.ArrowLeft)
                 _ <- Browser.assertText(Selector.id("v"), "ArrowLeft")
-            yield succeed
+            yield ()
         }
     }
 
-    "ArrowRight fires onKeyDown" in run {
+    "ArrowRight fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -319,11 +319,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.ArrowRight)
                 _ <- Browser.assertText(Selector.id("v"), "ArrowRight")
-            yield succeed
+            yield ()
         }
     }
 
-    "Char('1') digit fires onKeyDown" in run {
+    "Char('1') digit fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -334,11 +334,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('1'))
                 _ <- Browser.assertText(Selector.id("v"), "Char(1)")
-            yield succeed
+            yield ()
         }
     }
 
-    "Char('Z') uppercase fires onKeyDown" in run {
+    "Char('Z') uppercase fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -349,11 +349,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('Z'))
                 _ <- Browser.assertText(Selector.id("v"), "Char(Z)")
-            yield succeed
+            yield ()
         }
     }
 
-    "Char('a') fires onKeyDown" in run {
+    "Char('a') fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -364,11 +364,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('a'))
                 _ <- Browser.assertText(Selector.id("v"), "Char(a)")
-            yield succeed
+            yield ()
         }
     }
 
-    "Delete fires onKeyDown" in run {
+    "Delete fires onKeyDown" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -379,11 +379,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Delete)
                 _ <- Browser.assertText(Selector.id("v"), "Delete")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyUp fires (Enter)" in run {
+    "onKeyUp fires (Enter)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -394,11 +394,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "Enter")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyUp fires (Char)" in run {
+    "onKeyUp fires (Char)" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -409,11 +409,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key('x'))
                 _ <- Browser.assertText(Selector.id("v"), "Char(x)")
-            yield succeed
+            yield ()
         }
     }
 
-    "onKeyDown + onKeyUp both fire" in run {
+    "onKeyDown + onKeyUp both fire" in {
         val app: UI < Async =
             for
                 downKey <- Signal.initRef("")
@@ -430,11 +430,11 @@ class KeyboardTest extends UITest:
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("dv"), "down:Enter")
                 _ <- Browser.assertText(Selector.id("uv"), "up:Enter")
-            yield succeed
+            yield ()
         }
     }
 
-    "Focus A then Focus B fires onBlur(A)" in run {
+    "Focus A then Focus B fires onBlur(A)" in {
         val app: UI < Async =
             for blurred <- Signal.initRef(false)
             yield UI.div(
@@ -447,11 +447,11 @@ class KeyboardTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "Focus A then Focus B fires onFocus(B)" in run {
+    "Focus A then Focus B fires onFocus(B)" in {
         val app: UI < Async =
             for focused <- Signal.initRef(false)
             yield UI.div(
@@ -464,11 +464,11 @@ class KeyboardTest extends UITest:
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "Focus + blur + refocus same element" in run {
+    "Focus + blur + refocus same element" in {
         val app: UI < Async =
             for
                 focusCount <- Signal.initRef(0)
@@ -489,39 +489,36 @@ class KeyboardTest extends UITest:
                 _ <- Browser.assertText(Selector.id("bv"), "b:1")
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertText(Selector.id("fv"), "f:2")
-            yield succeed
+            yield ()
         }
     }
 
-    "Focus element that doesn't exist yet (reactive) retries" in run {
+    "Focus element that doesn't exist yet (reactive) retries" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
                 UI.button("Show").id("show").onClick(show.set(true)),
-                show.map { s =>
-                    if s then UI.button("Target").id("target")
-                    else UI.empty
-                }
+                UI.when(show)(UI.button("Target").id("target"))
             )
         withUI(app) {
             for
                 _ <- Browser.click(Selector.id("show"))
                 _ <- Browser.click(Selector.id("target"))
                 _ <- Browser.assertVisible(Selector.id("target"))
-            yield succeed
+            yield ()
         }
     }
 
-    "tabIndex on non-focusable container (Div) makes it focusable" in run {
+    "tabIndex on non-focusable container (Div) makes it focusable" in {
         withUI(UI.div(UI.div.tabIndex(0).id("d")("content"))) {
             for
                 _ <- Browser.click(Selector.id("d"))
                 _ <- Browser.assertVisible(Selector.id("d"))
-            yield succeed
+            yield ()
         }
     }
 
-    "Type chars into input fires onInput per char" in run {
+    "Type chars into input fires onInput per char" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -532,11 +529,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "abc")
                 _ <- Browser.assertText(Selector.id("v"), "abc")
-            yield succeed
+            yield ()
         }
     }
 
-    "Arrow in input fires onKeyDown only" in run {
+    "Arrow in input fires onKeyDown only" in {
         val app: UI < Async =
             for
                 keyRef   <- Signal.initRef("")
@@ -553,11 +550,11 @@ class KeyboardTest extends UITest:
                 _ <- Browser.press(Selector.id("i"), Key.ArrowLeft)
                 _ <- Browser.assertText(Selector.id("kv"), "key:ArrowLeft")
                 _ <- Browser.assertText(Selector.id("iv"), "inp:none")
-            yield succeed
+            yield ()
         }
     }
 
-    "Enter in input inside form fires submit" in run {
+    "Enter in input inside form fires submit" in {
         val app: UI < Async =
             for ref <- Signal.initRef(false)
             yield UI.div(
@@ -568,11 +565,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("i"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "Disabled button + Enter does not fire onClick" in run {
+    "Disabled button + Enter does not fire onClick" in {
         val app: UI < Async =
             for ref <- Signal.initRef(0)
             yield UI.div(
@@ -583,11 +580,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("b"))
                 _ <- Browser.assertText(Selector.id("v"), "0")
-            yield succeed
+            yield ()
         }
     }
 
-    "Disabled input + Char does not fire onInput" in run {
+    "Disabled input + Char does not fire onInput" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -598,11 +595,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.assertDisabled(Selector.id("i"))
                 _ <- Browser.assertText(Selector.id("v"), "none")
-            yield succeed
+            yield ()
         }
     }
 
-    "Disabled checkbox + Enter does not toggle" in run {
+    "Disabled checkbox + Enter does not toggle" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -613,11 +610,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "none")
-            yield succeed
+            yield ()
         }
     }
 
-    "Disabled select + key does not change" in run {
+    "Disabled select + key does not change" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -631,11 +628,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("s"), Key.ArrowDown)
                 _ <- Browser.assertText(Selector.id("v"), "none")
-            yield succeed
+            yield ()
         }
     }
 
-    "Enter on checkbox toggles" in run {
+    "Enter on checkbox toggles" in {
         // TUI semantics: Enter toggles. Browser semantics: only Space toggles checkboxes; Enter
         // on a focused checkbox is a no-op. kyo-ui adds a TUI-style Enter shim in HtmlRenderer.
         val app: UI < Async =
@@ -648,11 +645,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "Enter on radio checks" in run {
+    "Enter on radio checks" in {
         // TUI semantics: Enter checks. Browser semantics: Space (or arrows in a group) selects radios.
         // kyo-ui adds a TUI-style Enter shim in HtmlRenderer.
         val app: UI < Async =
@@ -665,11 +662,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("r"), Key.Enter)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "Three elements - cycle all" in run {
+    "Three elements - cycle all" in {
         withUI(UI.div(
             UI.button("A").id("a"),
             UI.button("B").id("b"),
@@ -684,22 +681,22 @@ class KeyboardTest extends UITest:
                 _ <- Browser.assertFocused(Selector.id("c"))
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.assertFocused(Selector.id("a"))
-            yield succeed
+            yield ()
         }
     }
 
-    "assertFocused(B) + assertNotFocused(A)" in run {
+    "assertFocused(B) + assertNotFocused(A)" in {
         withUI(UI.div(UI.button("A").id("a"), UI.button("B").id("b"))) {
             for
                 _ <- Browser.click(Selector.id("a"))
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertFocused(Selector.id("b"))
                 _ <- Browser.assertNotFocused(Selector.id("a"))
-            yield succeed
+            yield ()
         }
     }
 
-    "Space on checkbox toggles" in run {
+    "Space on checkbox toggles" in {
         val app: UI < Async =
             for ref <- Signal.initRef("none")
             yield UI.div(
@@ -710,11 +707,11 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.press(Selector.id("c"), Key.Space)
                 _ <- Browser.assertText(Selector.id("v"), "true")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey Backspace removes last char" in run {
+    "pressKey Backspace removes last char" in {
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -727,13 +724,13 @@ class KeyboardTest extends UITest:
                 _ <- Browser.assertText(Selector.id("v"), "val:abc")
                 _ <- Browser.press(Selector.id("i"), Key.Backspace)
                 _ <- Browser.assertText(Selector.id("v"), "val:ab")
-            yield succeed
+            yield ()
         }
     }
 
-    "pressKey multiple chars into input" in run {
+    "pressKey multiple chars into input" in {
         // Browser.fill is the canonical way to type a string. Multi-press resets cursor each time
-        // (kyo-browser limitation, see BROWSER-FEEDBACK).
+        // (kyo-browser limitation).
         val app: UI < Async =
             for ref <- Signal.initRef("")
             yield UI.div(
@@ -744,7 +741,7 @@ class KeyboardTest extends UITest:
             for
                 _ <- Browser.fill(Selector.id("i"), "hi!")
                 _ <- Browser.assertText(Selector.id("v"), "got:hi!")
-            yield succeed
+            yield ()
         }
     }
 

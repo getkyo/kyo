@@ -7,7 +7,7 @@ case class Person(name: String, age: Int)
 case class Point(x: Int, y: Int)
 case class Wrapper[A](value: A, label: String)
 
-class FieldsTest extends Test:
+class FieldsTest extends kyo.test.Test[Any]:
 
     // --- Intersection type tests (existing behavior) ---
 
@@ -24,7 +24,7 @@ class FieldsTest extends Test:
 
     "intersection: Have resolves value type" in {
         val have = summon[Fields.Have["name" ~ String & "age" ~ Int, "name"]]
-        assert(true)
+        succeed("Have resolves the value type for an intersection; the summon above is the compile-time check")
     }
 
     // --- Case class support ---
@@ -43,13 +43,13 @@ class FieldsTest extends Test:
     "case class: Have resolves value type" in {
         val have                                                   = summon[Fields.Have[Person, "name"]]
         val _: Fields.Have[Person, "name"] { type Value = String } = have
-        succeed
+        succeed("Have resolves value type is a compile-time property verified by the type ascription above")
     }
 
     "case class: Have resolves all fields" in {
         summon[Fields.Have[Person, "name"]]
         summon[Fields.Have[Person, "age"]]
-        succeed
+        succeed("Have resolves all fields is a compile-time property verified by the summons above")
     }
 
     "case class: Have rejects missing field" in {
@@ -72,12 +72,12 @@ class FieldsTest extends Test:
     "case class: generic Have resolves parameterized type" in {
         val have                                                       = summon[Fields.Have[Wrapper[Int], "value"]]
         val _: Fields.Have[Wrapper[Int], "value"] { type Value = Int } = have
-        succeed
+        succeed("generic Have resolves the parameterized type is a compile-time property verified by the type ascription above")
     }
 
     "case class: Comparable" in {
         val _ = summon[Fields.Comparable[Person]]
-        succeed
+        succeed("Fields.Comparable summon is a compile-time property verified by the summon above")
     }
 
     "case class: Point fields" in {

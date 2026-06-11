@@ -1,8 +1,8 @@
 name: build
 # Reusable workflow: builds + tests one arch with the target axis serialized.
 #
-# Sequential within arch: `max-parallel: 1` on the `target` matrix means JVM → JS →
-# Native run one at a time inside this workflow invocation. Two same-arch jobs never
+# Sequential within arch: `max-parallel: 1` on the `target` matrix means JVM, JS,
+# Native, Wasm run one at a time inside this workflow invocation. Two same-arch jobs never
 # compete for the same runner pool, which previously caused container-stop timeouts
 # and resource starvation on arm64 under contention.
 #
@@ -27,12 +27,17 @@ on:
 
 jobs:
   build:
-    timeout-minutes: 90
+    # The kyo-test PR forces a FULL run on every commit (it changes project/build.sbt &
+    # plugins.sbt vs main, so the testKyo harness runs all modules), and the browser/UI/caliban
+    # suites now run their leaves sequentially (shared Chrome can't take concurrent CDP). That
+    # full run is ~95-100 min on the JVM target, which overran the previous 90. Post-merge, runs
+    # go incremental again and finish well under this. Raised to give the forced full run headroom.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        target: [JVM, JS, Native]
+        target: [JVM, JS, Native, Wasm]
     runs-on: ${{ inputs.runner-image }}
     env:
       JAVA_OPTS: >-
@@ -45,14 +50,17 @@ jobs:
         || '-Xms8G -Xmx12G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8' }}
 
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
 
+      # The WASM target requires Node 24+: it defaults to V8's Turboshaft Wasm pipeline (Node 22/23
+      # miscompile the generated WasmGC code and no longer accept --turboshaft-wasm). JS runs on the
+      # same version to keep a single Node across the matrix.
       - uses: actions/setup-node@v6.4.0
-        if: matrix.target == 'JS'
+        if: matrix.target == 'JS' || matrix.target == 'Wasm'
         with:
-          node-version: '22'
+          node-version: '24'
 
       - uses: actions/cache@v5
         env:
@@ -155,7 +163,7 @@ jobs:
       - uses: coursier/setup-action@v3.0.0
         if: inputs.os != 'windows-arm64'
         with:
-          jvm: temurin:25
+          jvm: corretto:24
           apps: sbt
 
       # Windows ARM64: coursier/setup-action doesn't support this platform yet.
@@ -189,11 +197,3 @@ jobs:
           else
             sbt "$cmd"
           fi
-
-      # The kyo-compat sbt plugin is exercised by scripted tests, not the
-      # testKyo matrix. It is platform-independent, so run it once: on the
-      # JVM target of a single arch rather than every arch/target cell.
-      - name: Scripted tests (kyo-compat plugin)
-        if: matrix.target == 'JVM' && inputs.os == 'linux-x64'
-        shell: bash
-        run: sbt 'kyo-compat/scripted'

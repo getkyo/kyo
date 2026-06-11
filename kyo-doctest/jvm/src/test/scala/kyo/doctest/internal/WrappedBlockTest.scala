@@ -3,7 +3,7 @@ package kyo.doctest.internal
 import kyo.*
 
 /** Tests for WrappedBlock covering synthetic source generation and position-map construction. */
-class WrappedBlockTest extends Test:
+class WrappedBlockTest extends kyo.test.Test[Any]:
 
     private def makeBlock(
         body: String,
@@ -23,7 +23,7 @@ class WrappedBlockTest extends Test:
             carrier = Block.Carrier.Visible
         )
 
-    "init produces an object BlockN containing the block body" in run {
+    "init produces an object BlockN containing the block body" in {
         val block   = makeBlock("val answer = 42")
         val wrapped = WrappedBlock.init(block)
 
@@ -33,10 +33,9 @@ class WrappedBlockTest extends Test:
         assert(wrapped.syntheticContent.contains("val answer = 42"), "block body missing from syntheticContent")
         // The package declaration must be present.
         assert(wrapped.syntheticContent.startsWith("package _doctest_synthetic_"), "missing package declaration")
-        succeed
     }
 
-    "top-level vals in a block are placed inside the object" in run {
+    "top-level vals in a block are placed inside the object" in {
         val block   = makeBlock("val x = 1\nval y = 2\nval z = x + y")
         val wrapped = WrappedBlock.init(block)
 
@@ -49,10 +48,9 @@ class WrappedBlockTest extends Test:
         val objHeaderIdx = content.indexOf("object Block_")
         val val1Idx      = content.indexOf("val x = 1")
         assert(val1Idx > objHeaderIdx, "val x appears before object header")
-        succeed
     }
 
-    "imports in a block body are placed inside the object scope" in run {
+    "imports in a block body are placed inside the object scope" in {
         val body    = "import java.util.UUID\nval id = UUID.randomUUID().toString"
         val block   = makeBlock(body)
         val wrapped = WrappedBlock.init(block)
@@ -62,10 +60,9 @@ class WrappedBlockTest extends Test:
         val objHeaderIdx = content.indexOf("object Block_")
         val importIdx    = content.indexOf("import java.util.UUID")
         assert(importIdx > objHeaderIdx, "import appears before object header")
-        succeed
     }
 
-    "init records correct (synthLine, blockBodyLine) entries in lineMap" in run {
+    "init records correct (synthLine, blockBodyLine) entries in lineMap" in {
         val body    = "val a = 1\nval b = 2\nval c = 3"
         val block   = makeBlock(body)
         val wrapped = WrappedBlock.init(block)
@@ -80,11 +77,10 @@ class WrappedBlockTest extends Test:
         val synthLines = lineMap.map(_._1).toSeq
         val increasing = synthLines.zip(synthLines.tail).forall { case (a, b) => b > a }
         assert(increasing, s"synthLine sequence not strictly increasing: $synthLines")
-        succeed
     }
 
     // Additional: init with setup injects the setup prelude before the block body.
-    "init with setup injects setup prelude with blockBodyLine=0 entries" in run {
+    "init with setup injects setup prelude with blockBodyLine=0 entries" in {
         val setupBody = "val setup = true"
         val blockBody = "val usage = setup"
         val block     = makeBlock(blockBody)
@@ -101,11 +97,10 @@ class WrappedBlockTest extends Test:
         // Block body line mapped with blockBodyLine=1.
         val bodyEntry = lineMap.filter(_._2 == 1)
         assert(bodyEntry.nonEmpty, "expected at least one blockBodyLine=1 entry for block body")
-        succeed
     }
 
     // Additional: synthFile name uses the object name format Block_<hash8>_<lineStart>.scala.
-    "synthFile name follows Block_<hash8>_<lineStart>.scala format" in run {
+    "synthFile name follows Block_<hash8>_<lineStart>.scala format" in {
         val block   = makeBlock("val n = 0", file = "README.md", lineStart = 42)
         val wrapped = WrappedBlock.init(block)
 
@@ -116,7 +111,6 @@ class WrappedBlockTest extends Test:
         val parts = name.stripPrefix("Block_").stripSuffix("_42.scala")
         assert(parts.length == 8, s"expected 8-char hash, got '$parts'")
         assert(parts.forall(c => "0123456789abcdef".contains(c)), s"hash '$parts' contains non-hex chars")
-        succeed
     }
 
 end WrappedBlockTest

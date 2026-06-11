@@ -5,7 +5,7 @@ import kyo.*
 // RFC 6585: Additional HTTP Status Codes
 // Tests validate status code behavior per the RFC specification.
 // Failing tests indicate RFC non-compliance — do NOT adjust assertions to match implementation.
-class Rfc6585Test extends Test:
+class Rfc6585Test extends BaseHttpTest:
 
     val rawRoute = HttpRoute.getRaw("raw").response(_.bodyText)
 
@@ -31,7 +31,7 @@ class Rfc6585Test extends Test:
 
     // ==================== Section 4: 429 Too Many Requests ====================
 
-    "Section 4 - 429 response includes Retry-After header" in runNotNative {
+    "Section 4 - 429 response includes Retry-After header".notNative in {
         // RFC 6585 §4: "The 429 status code indicates that the user has sent too many
         // requests in a given amount of time."
         // "The response representations SHOULD include details explaining the condition,
@@ -46,14 +46,14 @@ class Rfc6585Test extends Test:
                             val retryAfter = resp.headers.get("Retry-After")
                             assert(retryAfter == Present("5"), s"Should have Retry-After: 5, got: $retryAfter")
                         case Result.Failure(_) =>
-                            succeed
+                            ()
                         case _ => fail("Unexpected result")
                 }
             }
         }
     }
 
-    "Section 4 - 429 status code returned when rate limited" in runNotNative {
+    "Section 4 - 429 status code returned when rate limited".notNative in {
         val route = HttpRoute.getRaw("limited").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
             val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 10)).handler(_ => HttpResponse.ok("ok"))
@@ -63,14 +63,14 @@ class Rfc6585Test extends Test:
                         case Result.Success(resp) =>
                             assert(resp.status == HttpStatus.TooManyRequests, s"Should return 429, got: ${resp.status}")
                         case Result.Failure(_) =>
-                            succeed // 429 may be aborted
+                            () // 429 may be aborted
                         case _ => fail("Unexpected result")
                 }
             }
         }
     }
 
-    "Section 4 - 429 with custom Retry-After value" in runNotNative {
+    "Section 4 - 429 with custom Retry-After value".notNative in {
         val route = HttpRoute.getRaw("limited2").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
             val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 120)).handler(_ => HttpResponse.ok("ok"))
@@ -81,14 +81,14 @@ class Rfc6585Test extends Test:
                             val retryAfter = resp.headers.get("Retry-After")
                             assert(retryAfter == Present("120"), s"Should have Retry-After: 120, got: $retryAfter")
                         case Result.Failure(_) =>
-                            succeed
+                            ()
                         case _ => fail("Unexpected result")
                 }
             }
         }
     }
 
-    "Section 4 - Request succeeds when not rate limited" in runNotNative {
+    "Section 4 - Request succeeds when not rate limited".notNative in {
         val route = HttpRoute.getRaw("open").response(_.bodyText)
         Meter.initSemaphore(1).map { meter =>
             val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 1)).handler(_ => HttpResponse.ok("allowed"))
@@ -101,7 +101,7 @@ class Rfc6585Test extends Test:
         }
     }
 
-    "Section 4 - POST request also rate limited" in runNotNative {
+    "Section 4 - POST request also rate limited".notNative in {
         val route = HttpRoute.postRaw("limited-post").response(_.bodyText)
         Meter.initSemaphore(0).map { meter =>
             val ep = route.filter(HttpFilter.server.rateLimit(meter, retryAfter = 3)).handler(_ => HttpResponse.ok("ok"))
@@ -111,7 +111,7 @@ class Rfc6585Test extends Test:
                         case Result.Success(resp) =>
                             assert(resp.status == HttpStatus.TooManyRequests, s"POST should also be rate limited, got: ${resp.status}")
                         case Result.Failure(_) =>
-                            succeed
+                            ()
                         case _ => fail("Unexpected result")
                 }
             }

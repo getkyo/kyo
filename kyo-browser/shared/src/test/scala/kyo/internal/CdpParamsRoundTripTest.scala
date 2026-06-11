@@ -25,7 +25,7 @@ import scala.compiletime.testing.typeChecks
   * instances purely for tests, the round-trip helper compares the re-encoded JSON of the decoded value against the input JSON. This is a
   * sound round-trip check: a stable codec must satisfy `encode(decode(encode(v))) == encode(v)` for any `v`.
   */
-class CdpParamsRoundTripTest extends kyo.Test:
+class CdpParamsRoundTripTest extends kyo.BaseBrowserTest:
 
     /** Round-trip helper: encode → decode → re-encode → compare encoded strings.
       *
@@ -51,7 +51,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
         // does not mask the rest. The driver Seq enumerates all case classes derived `Json` in
         // `CdpParams.scala` plus `CookieWire` (the embedded wire value carried by NetworkGetCookiesResult; the public
         // `Browser.Cookie` is derived from `CookieWire` at the CDP boundary and is not directly serialised).
-        "each CdpParams case class round-trips encode → decode (driver-style)" in run {
+        "each CdpParams case class round-trips encode → decode (driver-style)" in {
             val cases: Seq[(String, Maybe[String])] = Seq(
                 "CreateTargetParams"          -> roundTrip(CreateTargetParams("https://example.com", Present("ctx-1"))),
                 "CreateTargetResult"          -> roundTrip(CreateTargetResult("target-1")),
@@ -158,7 +158,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
 
         // --- Optional field: Absent omits the JSON key, Present writes it; both round-trip. ---
         // Uses CreateTargetParams.browserContextId as the fixture (a `Maybe[String]` field with default Absent).
-        "Maybe = Absent omits the JSON field; Maybe = Present(v) writes it; both round-trip" in run {
+        "Maybe = Absent omits the JSON field; Maybe = Present(v) writes it; both round-trip" in {
             val absent  = CreateTargetParams("https://example.com", browserContextId = Absent)
             val present = CreateTargetParams("https://example.com", browserContextId = Present("ctx-99"))
 
@@ -188,7 +188,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
         // --- EvalParams defaults appear in the encoded JSON. ---
         // The defaults `returnByValue=true` and `awaitPromise=false` must materialise in the wire payload, not
         // be silently elided as zio-schema defaults; the CDP server expects both keys.
-        "EvalParams() defaults: returnByValue=true and awaitPromise=false appear in encoded JSON" in run {
+        "EvalParams() defaults: returnByValue=true and awaitPromise=false appear in encoded JSON" in {
             val params  = EvalParams("1+1")
             val encoded = Json.encode[EvalParams](params)
             assert(
@@ -218,7 +218,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
         // --- BoxModel rejects malformed input as typed Result.Failure. ---
         // The CDP shape is `{"model":{"content":[...]}}`. Feeding a top-level shape that does not match
         // must produce Result.Failure (not Success, not Panic).
-        "BoxModel decoder rejects malformed input as Result.Failure" in run {
+        "BoxModel decoder rejects malformed input as Result.Failure" in {
             val malformed = """{"definitelyNot":"a box model"}"""
             Json.decode[BoxModel](malformed) match
                 case Result.Failure(err) =>
@@ -229,7 +229,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
         }
 
         // --- BoxModelContent rejects malformed input as typed Result.Failure. ---
-        "BoxModelContent decoder rejects malformed input as Result.Failure" in run {
+        "BoxModelContent decoder rejects malformed input as Result.Failure" in {
             val malformed = """{"content":"not-an-array"}"""
             Json.decode[BoxModelContent](malformed) match
                 case Result.Failure(err) =>
@@ -242,7 +242,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
 
     "RemoteObject discriminated decode preserves description across extra wire fields" - {
 
-        "Promise-shaped wire decodes to RemoteObject.object with description even when CDP sends sibling fields" in run {
+        "Promise-shaped wire decodes to RemoteObject.object with description even when CDP sends sibling fields" in {
             // CDP returns a Promise as: {type:"object", subtype:"promise", className:"Promise", description:"Promise", objectId:"..."}.
             // Permissive decoding must skip subtype/className/objectId and pick the `object` variant with description Present.
             val wire =
@@ -254,7 +254,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
             end match
         }
 
-        "description-first wire still decodes correctly when discriminator comes after" in run {
+        "description-first wire still decodes correctly when discriminator comes after" in {
             val wire = """{"description":"Promise","type":"object"}"""
             Json.decode[RemoteObject](wire) match
                 case Result.Success(ro: RemoteObject.`object`) =>
@@ -263,13 +263,14 @@ class CdpParamsRoundTripTest extends kyo.Test:
             end match
         }
 
-        "object wire with value:{} (CDP for unserialisable references) decodes to RemoteObject.object" in run {
+        "object wire with value:{} (CDP for unserialisable references) decodes to RemoteObject.object" in {
             // CDP can emit `value: {}` (no description) for unserialisable references when returnByValue=true.
             // The `object` variant has no `value` field; the permissive decode must skip the embedded object.
             val wire = """{"type":"object","value":{}}"""
             Json.decode[RemoteObject](wire) match
-                case Result.Success(_: RemoteObject.`object`) => succeed
-                case other                                    => fail(s"expected RemoteObject.object but got: $other")
+                case Result.Success(v: RemoteObject.`object`) =>
+                    assert(v.subtype == Absent && v.description == Absent)
+                case other => fail(s"expected RemoteObject.object but got: $other")
             end match
         }
     }
@@ -277,7 +278,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
     "opaque types round-trip and CanEqual safety" - {
 
         // --- TargetId / SessionId / NodeId opaque round-trip via apply / value. ---
-        "TargetId.apply(s).value == s" in run {
+        "TargetId.apply(s).value == s" in {
             val s   = "target-abc"
             val tid = TargetId(s)
             assert(tid.value == s)
@@ -286,7 +287,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
             assert(tid == tid2)
         }
 
-        "SessionId.apply(s).value == s" in run {
+        "SessionId.apply(s).value == s" in {
             val s   = "session-xyz"
             val sid = SessionId(s)
             assert(sid.value == s)
@@ -294,7 +295,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
             assert(sid == sid2)
         }
 
-        "NodeId.apply(i).value == i" in run {
+        "NodeId.apply(i).value == i" in {
             val i  = 42
             val n  = NodeId(i)
             val n2 = NodeId(i)
@@ -306,7 +307,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
         // TargetId/SessionId both erase to String at runtime, but the named CanEqual instances are
         // strictly homogeneous, so `t == s` must fail to typecheck. typeChecks returns false when the
         // snippet would not compile.
-        "TargetId == SessionId fails compile-time CanEqual check" in run {
+        "TargetId == SessionId fails compile-time CanEqual check" in {
             val crossTypeCompiles = typeChecks("""
               import kyo.internal.CdpTypes.*
               val t: TargetId  = TargetId("a")
@@ -316,7 +317,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
             assert(!crossTypeCompiles, "expected `TargetId == SessionId` to be a compile error, but it typechecked")
         }
 
-        "TargetId == NodeId fails compile-time CanEqual check" in run {
+        "TargetId == NodeId fails compile-time CanEqual check" in {
             val crossTypeCompiles = typeChecks("""
               import kyo.internal.CdpTypes.*
               val t: TargetId = TargetId("a")
@@ -330,7 +331,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
     "NodeRef" - {
 
         // --- NodeRef.apply(...) builds; backendNodeId returns the underlying value. ---
-        "NodeRef.apply(7).backendNodeId == 7" in run {
+        "NodeRef.apply(7).backendNodeId == 7" in {
             val ref = NodeRef(7)
             assert(ref.backendNodeId == 7)
             val ref2 = NodeRef(7)
@@ -341,7 +342,7 @@ class CdpParamsRoundTripTest extends kyo.Test:
         // `NodeRef` itself is `private[kyo] opaque type` and does not derive Json. The plan calls for a
         // round-trip "via derives Schema"; exercise the round-trip through the public encoding surface
         // (DescribedNode), which carries `backendNodeId: Int` on the wire and `derives Schema`.
-        "backendNodeId round-trips via DescribedNode (the JSON-bearing wrapper) preserving NodeRef equality" in run {
+        "backendNodeId round-trips via DescribedNode (the JSON-bearing wrapper) preserving NodeRef equality" in {
             val ref     = NodeRef(123)
             val node    = DescribedNode(ref.backendNodeId)
             val encoded = Json.encode[DescribedNode](node)

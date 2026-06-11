@@ -59,7 +59,7 @@ object Search extends KyoApp:
     private val titleStyle   = Style.color(Color.white).bold.fontSize(15.px)
     private val snippetStyle = Style.color(Color.white).fontSize(13.px)
 
-    private def hitRow(h: Hit): UI =
+    private def hitRow(h: Hit): UI.Ast.Li =
         li.style(cardStyle)(
             span(h.title).style(titleStyle),
             span(h.snippet).style(snippetStyle)
@@ -88,7 +88,7 @@ object Search extends KyoApp:
         yield UI.main.style(pageStyle)(
             h1("Wikipedia Search"),
             input.id("q").placeholder("Search Wikipedia...").value(query).onInput(onInput).style(inputStyle),
-            status.render {
+            status.render[UI.Ast.P | UI.Ast.Fragment[Nothing]] {
                 case Status.Loading => p("Searching...").style(mutedStyle)
                 case Status.Error   => p("Search failed. Check your connection and try again.").style(errorStyle)
                 case _              => UI.empty

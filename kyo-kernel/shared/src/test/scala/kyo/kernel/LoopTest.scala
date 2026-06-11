@@ -2,7 +2,7 @@ package kyo.kernel
 
 import kyo.*
 
-class LoopTest extends Test:
+class LoopTest extends kyo.test.Test[Any]:
 
     "apply" - {
         "with a single iteration" in {

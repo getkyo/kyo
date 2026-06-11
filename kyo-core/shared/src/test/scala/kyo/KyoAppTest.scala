@@ -1,12 +1,10 @@
 package kyo
 
-import Tagged.*
 import kyo.internal.Platform
-import org.scalatest.compatible.Assertion
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
-class KyoAppTest extends Test:
+class KyoAppTest extends kyo.test.Test[Any]:
 
     "main" in {
         val app = new KyoApp:
@@ -17,14 +15,14 @@ class KyoAppTest extends Test:
             }
 
         app.main(Array("arg1", "arg2"))
-        succeed
+        succeed("main completes without error")
     }
 
     // KyoApp.main on Native initializes the full runtime per call — "ordered runs"
     // takes ~10 min on Windows Native, so 3 sequential main() calls exceed the timeout.
-    "multiple runs" in {
+    "multiple runs".notJs in {
         assume(!Platform.isNative, "KyoApp.main too slow on Native for repeated calls")
-        runNotJS {
+        {
             for
                 ref <- AtomicInt.init(0)
                 app = new KyoApp:
@@ -43,17 +41,17 @@ class KyoAppTest extends Test:
     "ordered runs" in {
         assume(!Platform.isNative, "KyoApp.main too slow on Native")
         val x       = new ListBuffer[Int]
-        val promise = scala.concurrent.Promise[Assertion]()
+        val promise = scala.concurrent.Promise[Unit]()
         val app = new KyoApp:
             run { Async.delay(10.millis)(Sync.defer(x += 1)) }
             run { Async.delay(10.millis)(Sync.defer(x += 2)) }
             run { Async.delay(10.millis)(Sync.defer(x += 3)) }
             run { Sync.defer(promise.complete(Try(assert(x.toList == List(1, 2, 3))))) }
         app.main(Array.empty)
-        promise.future
+        Async.fromFuture(promise.future)
     }
 
-    "effects" in runNotJS {
+    "effects".notJs in {
         def run: Int < (Async & Scope & Abort[Throwable]) =
             for
                 _ <- Clock.repeatAtInterval(1.second, 1.second)(())
@@ -68,8 +66,8 @@ class KyoAppTest extends Test:
         assert(KyoApp.Unsafe.runAndBlock(Duration.Infinity)(run) == Result.succeed(1))
     }
 
-    "effects in JS" in runNotJS {
-        val promise = scala.concurrent.Promise[Assertion]()
+    "effects in JS".notJs in {
+        val promise = scala.concurrent.Promise[Unit]()
         val app = new KyoApp:
             run {
                 for
@@ -79,13 +77,13 @@ class KyoAppTest extends Test:
                     _ <- Clock.now
                     _ <- Scope.ensure(())
                     _ <- Async.sleep(1.second)
-                yield promise.complete(Try(succeed))
+                yield promise.complete(Try(()))
             }
         app.main(Array.empty)
-        promise.future
+        Async.fromFuture(promise.future).map(_ => succeed("all effects complete without error"))
     }
 
-    "exit on error" in runNotJS {
+    "exit on error".notJs in {
         var exitCode = -1
         def app(fail: Boolean): KyoApp = new KyoApp:
             override def exit(code: Int)(using AllowUnsafe): Unit = exitCode = code
@@ -98,7 +96,7 @@ class KyoAppTest extends Test:
         assert(exitCode == -1)
     }
 
-    "failing effects" in runNotJS {
+    "failing effects".notJs in {
         def run: Unit < (Async & Scope & Abort[Throwable]) =
             for
                 _ <- Clock.now
@@ -112,14 +110,14 @@ class KyoAppTest extends Test:
             case _                                           => fail("Unexpected Success...")
     }
 
-    "non-throwable aborts" in runNotJS {
+    "non-throwable aborts".notJs in {
         val app = new KyoApp:
             run(Abort.fail("Aborts!"))
 
         assert(Result.catching[KyoApp.FailureException](app.main(Array.empty)).isFailure)
     }
 
-    "unsafe non-throwable aborts" in runNotJS {
+    "unsafe non-throwable aborts".notJs in {
         def run: Unit < (Async & Scope & Abort[String]) =
             for
                 _ <- Clock.now

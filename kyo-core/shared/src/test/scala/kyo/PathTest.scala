@@ -3,7 +3,7 @@ package kyo
 import java.nio.charset.StandardCharsets
 import kyo.internal.Platform
 
-class PathTest extends Test:
+class PathTest extends kyo.test.Test[Any]:
 
     // =========================================================================
     // Construction
@@ -100,12 +100,12 @@ class PathTest extends Test:
     // Inspection
     // =========================================================================
 
-    "exists returns false for nonexistent path" in run {
+    "exists returns false for nonexistent path" in {
         val p = Path / "kyo-test-nonexistent-path-should-never-exist-xyzzy-42"
         p.exists.map(e => assert(!e))
     }
 
-    "exists returns true after file is created" in run {
+    "exists returns true after file is created" in {
         for
             dir <- Path.tempDir("kyo-test")
             p = dir / "test-exists.txt"
@@ -117,7 +117,7 @@ class PathTest extends Test:
         end for
     }
 
-    "isDirectory returns true for directory and false for file" in run {
+    "isDirectory returns true for directory and false for file" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "test-isdir.txt"
@@ -129,7 +129,7 @@ class PathTest extends Test:
         end for
     }
 
-    "isRegularFile returns false for directory and true for file" in run {
+    "isRegularFile returns false for directory and true for file" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "test-isfile.txt"
@@ -141,11 +141,109 @@ class PathTest extends Test:
         end for
     }
 
+    "Path.cwd returns a non-empty path" in {
+        Path.cwd.map { cwd =>
+            assert(cwd.parts.nonEmpty, s"expected non-empty cwd, got parts=${cwd.parts.mkString(",")}")
+        }
+    }
+
+    "Path.parent terminates after finite steps" in {
+        Path.cwd.map { cwd =>
+            @scala.annotation.tailrec
+            def loop(cur: Path, depth: Int): Int =
+                if depth > 64 then depth
+                else
+                    cur.parent match
+                        case Maybe.Present(p) => loop(p, depth + 1)
+                        case Maybe.Absent     => depth
+            val depth = loop(cwd, 0)
+            assert(depth < 64, s"parent walk should terminate quickly, but reached depth $depth (cwd=${cwd.toString})")
+        }
+    }
+
+    "ancestors yields self -> parent -> ... -> root and terminates" in {
+        for
+            cwd <- Path.cwd
+            all <- cwd.ancestors.run
+        yield
+            assert(all.size >= 1)
+            assert(all.headOption.exists(_.parts == cwd.parts))
+            assert(all.size <= 50, s"ancestors should be small + finite, got ${all.size}")
+            assert(all.lastOption.exists(_.parts.size <= 1))
+        end for
+    }
+
+    "Stream.find on ancestors finds a matching ancestor and short-circuits" in {
+        for
+            cwd <- Path.cwd
+            // Find the cwd itself (trivial predicate, must match first).
+            hit <- cwd.ancestors.find(p => (p.parts == cwd.parts))
+        yield assert(hit.isDefined)
+        end for
+    }
+
+    "realPath canonicalizes an existing file path" in {
+        for
+            dir <- Path.tempDir("kyo-test")
+            file = dir / "file.txt"
+            _    <- file.write("hi")
+            real <- file.realPath
+            _    <- dir.removeAll
+        yield
+            assert(real.isAbsolute)
+            assert(real.parts.lastOption.contains("file.txt"))
+        end for
+    }
+
+    "realPath fails with FileNotFoundException for non-existent path" in {
+        val ghost = Path / "kyo-test-realpath-does-not-exist-xyzzy-99"
+        Abort.run[FileException](ghost.realPath).map { r =>
+            assert(r.isFailure)
+            assert(r.failure.exists(_.isInstanceOf[FileNotFoundException]))
+        }
+    }
+
+    "confinedTo accepts a path inside root" in {
+        for
+            dir <- Path.tempDir("kyo-test")
+            file = dir / "inside.txt"
+            _        <- file.write("ok")
+            confined <- file.confinedTo(dir)
+            _        <- dir.removeAll
+        yield assert(confined.parts.takeRight(1).headOption.contains("inside.txt"))
+        end for
+    }
+
+    "confinedTo rejects a path equal to root with success (root is contained in itself)" in {
+        for
+            dir      <- Path.tempDir("kyo-test")
+            confined <- dir.confinedTo(dir)
+            _        <- dir.removeAll
+        yield assert(confined.parts.lastOption == dir.parts.lastOption)
+        end for
+    }
+
+    "confinedTo rejects a sibling-of-root path with FileAccessDeniedException" in {
+        for
+            base <- Path.tempDir("kyo-test")
+            // Two siblings: `base/inside` is root; `base/outside.txt` is outside it.
+            root = base / "inside"
+            _ <- root.mkDir
+            outside = base / "outside.txt"
+            _   <- outside.write("escape")
+            res <- Abort.run[FileException](outside.confinedTo(root))
+            _   <- base.removeAll
+        yield
+            assert(res.isFailure)
+            assert(res.failure.exists(_.isInstanceOf[FileAccessDeniedException]))
+        end for
+    }
+
     // =========================================================================
     // Read
     // =========================================================================
 
-    "read round-trips string content" in run {
+    "read round-trips string content" in {
         for
             dir <- Path.tempDir("kyo-path-read-test")
             file = dir / "read-roundtrip.txt"
@@ -157,7 +255,7 @@ class PathTest extends Test:
         end for
     }
 
-    "read with explicit charset round-trips non-ASCII content" in run {
+    "read with explicit charset round-trips non-ASCII content" in {
         val charset = StandardCharsets.ISO_8859_1
         val text    = "caf\u00e9 na\u00efve r\u00e9sum\u00e9"
         for
@@ -171,7 +269,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readBytes returns raw file bytes" in run {
+    "readBytes returns raw file bytes" in {
         val bytes = Span.from(Array[Byte](0, 1, 2, 3, 127, -1))
         for
             dir <- Path.tempDir("kyo-path-read-test")
@@ -183,7 +281,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLines returns one element per line without trailing newlines" in run {
+    "readLines returns one element per line without trailing newlines" in {
         for
             dir <- Path.tempDir("kyo-path-read-test")
             file = dir / "read-lines.txt"
@@ -194,7 +292,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLines with explicit charset decodes lines correctly" in run {
+    "readLines with explicit charset decodes lines correctly" in {
         val charset = StandardCharsets.ISO_8859_1
         val content = "premi\u00e8re\ndeuxi\u00e8me"
         for
@@ -208,7 +306,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readStream emits all content and closes handle" in run {
+    "readStream emits all content and closes handle" in {
         val text = "streaming content"
         for
             dir <- Path.tempDir("kyo-path-read-test")
@@ -220,7 +318,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLinesStream matches readLines" in run {
+    "readLinesStream matches readLines" in {
         for
             dir <- Path.tempDir("kyo-path-read-test")
             file = dir / "read-lines-stream.txt"
@@ -232,7 +330,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readBytesStream matches readBytes" in run {
+    "readBytesStream matches readBytes" in {
         val data = Span.from(Array[Byte](10, 20, 30, 40, 50))
         for
             dir <- Path.tempDir("kyo-path-read-test")
@@ -245,26 +343,26 @@ class PathTest extends Test:
         end for
     }
 
-    "read on a directory raises FileIsADirectoryException" in run {
+    "read on a directory raises FileIsADirectoryException" in {
         for
             dir    <- Path.tempDir("kyo-path-read-test")
             result <- Abort.run[FileReadException](dir.read)
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileIsADirectoryException) => succeed
+            case Result.Failure(_: FileIsADirectoryException) => succeed("expected exception type")
             case other                                        => fail(s"Expected FileIsADirectoryException, got $other")
         end for
     }
 
-    "read on non-existent path raises FileNotFoundException" in run {
+    "read on non-existent path raises FileNotFoundException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-read.txt"
         Abort.run[FileReadException](file.read).map {
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         }
     }
 
-    "readStream with ISO-8859-1 charset decodes content correctly" in run {
+    "readStream with ISO-8859-1 charset decodes content correctly" in {
         val charset = StandardCharsets.ISO_8859_1
         val text    = "caf\u00e9 na\u00efve"
         for
@@ -278,7 +376,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLinesStream with ISO-8859-1 charset matches readLines" in run {
+    "readLinesStream with ISO-8859-1 charset matches readLines" in {
         val charset = StandardCharsets.ISO_8859_1
         val content = "premi\u00e8re\ndeuxi\u00e8me\ntrois\u00eem"
         for
@@ -293,23 +391,23 @@ class PathTest extends Test:
         end for
     }
 
-    "readBytes on non-existent path raises FileNotFoundException" in run {
+    "readBytes on non-existent path raises FileNotFoundException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-readbytes.bin"
         Abort.run[FileReadException](file.readBytes).map {
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         }
     }
 
-    "readLines on non-existent path raises FileNotFoundException" in run {
+    "readLines on non-existent path raises FileNotFoundException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-readlines.txt"
         Abort.run[FileReadException](file.readLines).map {
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         }
     }
 
-    "unsafe size returns correct byte count for a file" in run {
+    "unsafe size returns correct byte count for a file" in {
         for
             dir <- Path.tempDir("kyo-path-size-test")
             file = dir / "size-test.txt"
@@ -324,7 +422,7 @@ class PathTest extends Test:
         end for
     }
 
-    "unsafe size returns 0 for empty file" in run {
+    "unsafe size returns 0 for empty file" in {
         for
             dir <- Path.tempDir("kyo-path-size-test")
             file = dir / "empty-size.txt"
@@ -339,17 +437,17 @@ class PathTest extends Test:
         end for
     }
 
-    "unsafe size on non-existent path returns FileReadException" in run {
+    "unsafe size on non-existent path returns FileReadException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-size.txt"
         val result =
             import AllowUnsafe.embrace.danger
             file.unsafe.size()
         result match
-            case Result.Failure(_: FileReadException) => succeed
+            case Result.Failure(_: FileReadException) => succeed("expected exception type")
             case other                                => fail(s"Expected FileReadException, got $other")
     }
 
-    "readBytesStream collects same bytes as readBytes for large file" in run {
+    "readBytesStream collects same bytes as readBytes for large file" in {
         val data = Span.from(Array.tabulate[Byte](100000)(i => (i % 251).toByte))
         for
             dir <- Path.tempDir("kyo-path-read-test")
@@ -366,7 +464,7 @@ class PathTest extends Test:
     // Write
     // =========================================================================
 
-    "write creates file if absent and sets content" in run {
+    "write creates file if absent and sets content" in {
         val text = "created fresh"
         for
             dir <- Path.tempDir("kyo-path-write-test")
@@ -380,7 +478,7 @@ class PathTest extends Test:
         end for
     }
 
-    "write overwrites existing content" in run {
+    "write overwrites existing content" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "write-overwrite.txt"
@@ -392,7 +490,7 @@ class PathTest extends Test:
         end for
     }
 
-    "writeBytes creates file and content matches readBytes" in run {
+    "writeBytes creates file and content matches readBytes" in {
         val bytes = Span.from(Array[Byte](1, 2, 3, 4, 5))
         for
             dir <- Path.tempDir("kyo-path-write-test")
@@ -404,7 +502,7 @@ class PathTest extends Test:
         end for
     }
 
-    "writeLines readLines round-trip preserves lines" in run {
+    "writeLines readLines round-trip preserves lines" in {
         val lines = Chunk("first", "second", "third")
         for
             dir <- Path.tempDir("kyo-path-write-test")
@@ -416,7 +514,7 @@ class PathTest extends Test:
         end for
     }
 
-    "append creates file if absent and accumulates content" in run {
+    "append creates file if absent and accumulates content" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "append.txt"
@@ -429,19 +527,19 @@ class PathTest extends Test:
         end for
     }
 
-    "append with createFolders=false raises FileNotFoundException when parent missing" in run {
+    "append with createFolders=false raises FileNotFoundException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "missing-parent" / "append-no-create.txt"
             result <- Abort.run[FileWriteException](file.append("data", createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         end for
     }
 
-    "truncate to 0 clears file content" in run {
+    "truncate to 0 clears file content" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "truncate-zero.txt"
@@ -453,7 +551,7 @@ class PathTest extends Test:
         end for
     }
 
-    "write with createFolders=true creates intermediate parent directories" in run {
+    "write with createFolders=true creates intermediate parent directories" in {
         val text = "deep file"
         for
             dir <- Path.tempDir("kyo-path-write-test")
@@ -465,19 +563,19 @@ class PathTest extends Test:
         end for
     }
 
-    "write with createFolders=false raises FileNotFoundException when parent missing" in run {
+    "write with createFolders=false raises FileNotFoundException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "missing" / "write-no-create.txt"
             result <- Abort.run[FileWriteException](file.write("data", createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         end for
     }
 
-    "writeBytes with createFolders=false raises FileNotFoundException when parent missing" in run {
+    "writeBytes with createFolders=false raises FileNotFoundException when parent missing" in {
         val bytes = Span.from(Array[Byte](1, 2, 3))
         for
             dir <- Path.tempDir("kyo-path-write-test")
@@ -485,24 +583,24 @@ class PathTest extends Test:
             result <- Abort.run[FileWriteException](file.writeBytes(bytes, createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         end for
     }
 
-    "writeLines with createFolders=false raises FileNotFoundException when parent missing" in run {
+    "writeLines with createFolders=false raises FileNotFoundException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "missing-lines" / "write-lines-no-create.txt"
             result <- Abort.run[FileWriteException](file.writeLines(Chunk("a", "b"), createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         end for
     }
 
-    "appendBytes accumulates bytes across two calls" in run {
+    "appendBytes accumulates bytes across two calls" in {
         val bytes1 = Span.from(Array[Byte](1, 2, 3))
         val bytes2 = Span.from(Array[Byte](4, 5, 6))
         for
@@ -516,19 +614,19 @@ class PathTest extends Test:
         end for
     }
 
-    "appendBytes with createFolders=false raises FileNotFoundException when parent missing" in run {
+    "appendBytes with createFolders=false raises FileNotFoundException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "missing-appendbytes" / "append-bytes-no-create.bin"
             result <- Abort.run[FileWriteException](file.appendBytes(Span.from(Array[Byte](1)), createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         end for
     }
 
-    "appendLines accumulates lines across two calls" in run {
+    "appendLines accumulates lines across two calls" in {
         val lines1 = Chunk("first", "second")
         val lines2 = Chunk("third", "fourth")
         for
@@ -542,19 +640,19 @@ class PathTest extends Test:
         end for
     }
 
-    "appendLines with createFolders=false raises FileNotFoundException when parent missing" in run {
+    "appendLines with createFolders=false raises FileNotFoundException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "missing-appendlines" / "append-lines-no-create.txt"
             result <- Abort.run[FileWriteException](file.appendLines(Chunk("a"), createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         end for
     }
 
-    "truncate to non-zero size trims file to that many bytes" in run {
+    "truncate to non-zero size trims file to that many bytes" in {
         val bytes = Span.from(Array[Byte](1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
         for
             dir <- Path.tempDir("kyo-path-write-test")
@@ -567,26 +665,26 @@ class PathTest extends Test:
         end for
     }
 
-    "truncate on non-existent file raises FileWriteException" in run {
+    "truncate on non-existent file raises FileWriteException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-truncate.txt"
         Abort.run[FileWriteException](file.truncate(0L)).map {
-            case Result.Failure(_: FileWriteException) => succeed
+            case Result.Failure(_: FileWriteException) => succeed("expected exception type")
             case other                                 => fail(s"Expected FileWriteException, got $other")
         }
     }
 
-    "write on a directory raises FileIsADirectoryException" in run {
+    "write on a directory raises FileIsADirectoryException" in {
         for
             dir    <- Path.tempDir("kyo-path-write-test")
             result <- Abort.run[FileWriteException](dir.write("data"))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileIsADirectoryException) => succeed
+            case Result.Failure(_: FileIsADirectoryException) => succeed("expected exception type")
             case other                                        => fail(s"Expected FileIsADirectoryException, got $other")
         end for
     }
 
-    "truncate with size exceeding Int.MaxValue is a no-op on smaller file" in run {
+    "truncate with size exceeding Int.MaxValue is a no-op on smaller file" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "truncate-large.txt"
@@ -598,7 +696,7 @@ class PathTest extends Test:
         end for
     }
 
-    "writeLines then readLines with different charset shows encoding mismatch" in run {
+    "writeLines then readLines with different charset shows encoding mismatch" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "charset-mismatch.txt"
@@ -611,7 +709,7 @@ class PathTest extends Test:
         end for
     }
 
-    "appendLines always encodes UTF-8 regardless of existing file encoding" in run {
+    "appendLines always encodes UTF-8 regardless of existing file encoding" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "mixed-encoding.bin"
@@ -628,7 +726,7 @@ class PathTest extends Test:
         end for
     }
 
-    "writeLines with empty chunk creates file" in run {
+    "writeLines with empty chunk creates file" in {
         for
             dir <- Path.tempDir("kyo-path-write-test")
             file = dir / "empty-writelines.txt"
@@ -643,7 +741,7 @@ class PathTest extends Test:
     // Directory
     // =========================================================================
 
-    "mkDir creates a directory and isDirectory returns true" in run {
+    "mkDir creates a directory and isDirectory returns true" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             subdir = dir / "mkdir-subdir"
@@ -654,7 +752,7 @@ class PathTest extends Test:
         end for
     }
 
-    "mkDir is idempotent when called twice" in run {
+    "mkDir is idempotent when called twice" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             subdir = dir / "mkdir-idem"
@@ -665,7 +763,7 @@ class PathTest extends Test:
         end for
     }
 
-    "mkFile creates a regular file and isRegularFile returns true" in run {
+    "mkFile creates a regular file and isRegularFile returns true" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "mkfile.txt"
@@ -676,7 +774,7 @@ class PathTest extends Test:
         end for
     }
 
-    "mkFile is idempotent when called twice" in run {
+    "mkFile is idempotent when called twice" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "mkfile-idem.txt"
@@ -687,7 +785,7 @@ class PathTest extends Test:
         end for
     }
 
-    "list returns direct children of a directory" in run {
+    "list returns direct children of a directory" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             child1 = dir / "child-a.txt"
@@ -702,7 +800,7 @@ class PathTest extends Test:
         end for
     }
 
-    "list with glob returns only matching files" in run {
+    "list with glob returns only matching files" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             txt  = dir / "file-glob.txt"
@@ -717,7 +815,7 @@ class PathTest extends Test:
         end for
     }
 
-    "list with glob * matches all files" in run {
+    "list with glob * matches all files" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "a.txt").mkFile
@@ -728,7 +826,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("a.txt", "b.json", "c.log"))
     }
 
-    "list with glob file.* matches all extensions" in run {
+    "list with glob file.* matches all extensions" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "file.txt").mkFile
@@ -739,7 +837,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("file.json", "file.txt"))
     }
 
-    "list with glob *data* matches files containing data" in run {
+    "list with glob *data* matches files containing data" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "data.csv").mkFile
@@ -750,7 +848,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("data.csv", "mydata.txt"))
     }
 
-    "list with glob ? matches exactly one character" in run {
+    "list with glob ? matches exactly one character" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "file1.txt").mkFile
@@ -762,7 +860,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("file1.txt", "fileA.txt"))
     }
 
-    "list with glob character class matches specified characters" in run {
+    "list with glob character class matches specified characters" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "file1.txt").mkFile
@@ -774,7 +872,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("file1.txt", "file2.txt", "file3.txt"))
     }
 
-    "list with glob character range matches range" in run {
+    "list with glob character range matches range" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "filea.txt").mkFile
@@ -786,7 +884,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("filea.txt", "fileb.txt", "filec.txt"))
     }
 
-    "list with glob negated character class excludes matches" in run {
+    "list with glob negated character class excludes matches" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "abc").mkFile
@@ -797,7 +895,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("bcd", "cde"))
     }
 
-    "list with glob brace expansion matches alternatives" in run {
+    "list with glob brace expansion matches alternatives" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "a.txt").mkFile
@@ -808,7 +906,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("a.txt", "b.json"))
     }
 
-    "list with glob brace expansion with specific names" in run {
+    "list with glob brace expansion with specific names" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "foo.txt").mkFile
@@ -819,7 +917,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last).sorted == List("bar.txt", "foo.txt"))
     }
 
-    "list with glob *.* matches files with extensions" in run {
+    "list with glob *.* matches files with extensions" in {
         for
             dir    <- Path.tempDir("kyo-glob-test")
             _      <- (dir / "file.txt").mkFile
@@ -829,7 +927,7 @@ class PathTest extends Test:
         yield assert(result.toList.map(_.parts.last) == List("file.txt"))
     }
 
-    "list on a file raises FileNotADirectoryException" in run {
+    "list on a file raises FileNotADirectoryException" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "list-on-file.txt"
@@ -837,12 +935,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](file.list)
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileNotADirectoryException) => succeed
+            case Result.Failure(_: FileNotADirectoryException) => succeed("expected exception type")
             case other                                         => fail(s"Expected FileNotADirectoryException, got $other")
         end for
     }
 
-    "walk visits the full directory tree including nested files" in run {
+    "walk visits the full directory tree including nested files" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             sub   = dir / "walk-sub"
@@ -859,7 +957,7 @@ class PathTest extends Test:
         end for
     }
 
-    "walk with maxDepth=0 returns only the root" in run {
+    "walk with maxDepth=0 returns only the root" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             sub  = dir / "walk-depth-sub"
@@ -872,7 +970,7 @@ class PathTest extends Test:
         end for
     }
 
-    "move renames a file" in run {
+    "move renames a file" in {
         val text = "move me"
         for
             dir <- Path.tempDir("kyo-path-dir-test")
@@ -888,7 +986,7 @@ class PathTest extends Test:
         end for
     }
 
-    "move with replaceExisting=false raises FileAlreadyExistsException when destination exists" in run {
+    "move with replaceExisting=false raises FileAlreadyExistsException when destination exists" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "move-nooverwrite-src.txt"
@@ -898,12 +996,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](src.move(dst, replaceExisting = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileAlreadyExistsException) => succeed
+            case Result.Failure(_: FileAlreadyExistsException) => succeed("expected exception type")
             case other                                         => fail(s"Expected FileAlreadyExistsException, got $other")
         end for
     }
 
-    "copy creates a duplicate with equal content" in run {
+    "copy creates a duplicate with equal content" in {
         val text = "copy me"
         for
             dir <- Path.tempDir("kyo-path-dir-test")
@@ -920,7 +1018,7 @@ class PathTest extends Test:
         end for
     }
 
-    "remove on existing file returns true and file is gone" in run {
+    "remove on existing file returns true and file is gone" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "remove-exists.txt"
@@ -932,23 +1030,23 @@ class PathTest extends Test:
         end for
     }
 
-    "remove on non-existent path returns false without failure" in run {
+    "remove on non-existent path returns false without failure" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy-remove" / "nosuchfile-remove.txt"
         Abort.run[FileFsException](file.remove).map {
-            case Result.Success(false) => succeed
+            case Result.Success(false) => succeed("expected: non-existent file returns false")
             case other                 => fail(s"Expected Success(false), got $other")
         }
     }
 
-    "removeExisting on non-existent path raises FileNotFoundException" in run {
+    "removeExisting on non-existent path raises FileNotFoundException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy-rmex" / "nosuchfile-rmex.txt"
         Abort.run[FileFsException](file.removeExisting).map {
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         }
     }
 
-    "removeAll deletes a non-empty directory tree" in run {
+    "removeAll deletes a non-empty directory tree" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             sub   = dir / "rmall-sub"
@@ -963,7 +1061,7 @@ class PathTest extends Test:
         end for
     }
 
-    "removeExisting on existing file succeeds" in run {
+    "removeExisting on existing file succeeds" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "rmexisting.txt"
@@ -975,23 +1073,23 @@ class PathTest extends Test:
         end for
     }
 
-    "removeAll on non-existent path succeeds without error" in run {
+    "removeAll on non-existent path succeeds without error" in {
         val missing = Path / "kyo-nonexistent-dir-xyzzy-rmall" / "does-not-exist-rmall"
         Abort.run[FileFsException](missing.removeAll).map {
-            case Result.Success(_) => succeed
+            case Result.Success(_) => succeed("expected: removeAll on non-existent path succeeds")
             case other             => fail(s"Expected success, got $other")
         }
     }
 
-    "list on non-existent path raises FileNotFoundException" in run {
+    "list on non-existent path raises FileNotFoundException" in {
         val missing = Path / "kyo-nonexistent-dir-xyzzy-list" / "missing-list"
         Abort.run[FileFsException](missing.list).map {
-            case Result.Failure(_: FileNotFoundException) => succeed
+            case Result.Failure(_: FileNotFoundException) => succeed("expected exception type")
             case other                                    => fail(s"Expected FileNotFoundException, got $other")
         }
     }
 
-    "walk(maxDepth=1) excludes grandchildren" in run {
+    "walk(maxDepth=1) excludes grandchildren" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             childDir   = dir / "walk-depth1-child"
@@ -1006,15 +1104,15 @@ class PathTest extends Test:
         end for
     }
 
-    "walk on non-existent path raises FileFsException" in run {
+    "walk on non-existent path raises FileFsException" in {
         val missing = Path / "kyo-nonexistent-dir-xyzzy-walk" / "missing-walk"
         Abort.run[FileFsException](Scope.run(missing.walk.run)).map {
-            case Result.Failure(_: FileFsException) => succeed
+            case Result.Failure(_: FileFsException) => succeed("expected exception type")
             case other                              => fail(s"Expected FileFsException, got $other")
         }
     }
 
-    "move with replaceExisting=true overwrites destination" in run {
+    "move with replaceExisting=true overwrites destination" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "move-replace-src.txt"
@@ -1029,7 +1127,7 @@ class PathTest extends Test:
         end for
     }
 
-    "move with atomicMove=true succeeds on same filesystem" in run {
+    "move with atomicMove=true succeeds on same filesystem" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "move-atomic-src.txt"
@@ -1044,7 +1142,7 @@ class PathTest extends Test:
         end for
     }
 
-    "move with createFolders=false raises FileFsException when parent missing" in run {
+    "move with createFolders=false raises FileFsException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "move-nocreate-src.txt"
@@ -1053,12 +1151,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](src.move(dst, createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileFsException) => succeed
+            case Result.Failure(_: FileFsException) => succeed("expected exception type")
             case other                              => fail(s"Expected FileFsException, got $other")
         end for
     }
 
-    "copy with replaceExisting=false raises FileAlreadyExistsException when destination exists" in run {
+    "copy with replaceExisting=false raises FileAlreadyExistsException when destination exists" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "copy-nooverwrite-src.txt"
@@ -1068,12 +1166,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](src.copy(dst, replaceExisting = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileAlreadyExistsException) => succeed
+            case Result.Failure(_: FileAlreadyExistsException) => succeed("expected exception type")
             case other                                         => fail(s"Expected FileAlreadyExistsException, got $other")
         end for
     }
 
-    "copy with replaceExisting=true overwrites destination" in run {
+    "copy with replaceExisting=true overwrites destination" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "copy-replace-src.txt"
@@ -1087,7 +1185,7 @@ class PathTest extends Test:
         end for
     }
 
-    "copy with copyAttributes=true succeeds" in run {
+    "copy with copyAttributes=true succeeds" in {
         val text = "copy-attrs"
         for
             dir <- Path.tempDir("kyo-path-dir-test")
@@ -1103,7 +1201,7 @@ class PathTest extends Test:
         end for
     }
 
-    "copy with createFolders=false raises FileFsException when parent missing" in run {
+    "copy with createFolders=false raises FileFsException when parent missing" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "copy-nocreate-src.txt"
@@ -1112,12 +1210,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](src.copy(dst, createFolders = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileFsException) => succeed
+            case Result.Failure(_: FileFsException) => succeed("expected exception type")
             case other                              => fail(s"Expected FileFsException, got $other")
         end for
     }
 
-    "copy on non-empty directory does not copy children" in run {
+    "copy on non-empty directory does not copy children" in {
         // Files.copy creates an empty dir at destination — children are silently lost
         for
             dir <- Path.tempDir("kyo-path-dir-test")
@@ -1135,7 +1233,7 @@ class PathTest extends Test:
         end for
     }
 
-    "copy on empty directory creates target directory" in run {
+    "copy on empty directory creates target directory" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "empty-src-dir"
@@ -1148,7 +1246,7 @@ class PathTest extends Test:
         end for
     }
 
-    "copy on directory with nested children silently loses nested content" in run {
+    "copy on directory with nested children silently loses nested content" in {
         // nested children are silently not copied
         for
             dir <- Path.tempDir("kyo-path-dir-test")
@@ -1166,7 +1264,7 @@ class PathTest extends Test:
         end for
     }
 
-    "mkFile on existing file with content preserves the content" in run {
+    "mkFile on existing file with content preserves the content" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "mkfile-preserve.txt"
@@ -1178,7 +1276,7 @@ class PathTest extends Test:
         end for
     }
 
-    "copy to existing destination with replaceExisting=false raises FileAlreadyExistsException" in run {
+    "copy to existing destination with replaceExisting=false raises FileAlreadyExistsException" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             src = dir / "copy-dup-src.txt"
@@ -1188,12 +1286,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](src.copy(dst, replaceExisting = false))
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileAlreadyExistsException) => succeed
+            case Result.Failure(_: FileAlreadyExistsException) => succeed("expected exception type")
             case other                                         => fail(s"Expected FileAlreadyExistsException, got $other")
         end for
     }
 
-    "walk on a regular file returns only that file" in run {
+    "walk on a regular file returns only that file" in {
         for
             dir <- Path.tempDir("kyo-path-dir-test")
             file = dir / "walk-file.txt"
@@ -1210,7 +1308,7 @@ class PathTest extends Test:
     // Stream extensions
     // =========================================================================
 
-    "Stream[Byte].writeTo creates file with correct byte content" in run {
+    "Stream[Byte].writeTo creates file with correct byte content" in {
         val bytes = Array[Byte](10, 20, 30, 40, 50)
         for
             dir <- Path.tempDir("kyo-path-stream-test")
@@ -1222,7 +1320,7 @@ class PathTest extends Test:
         end for
     }
 
-    "Stream[String].writeTo writes concatenated strings" in run {
+    "Stream[String].writeTo writes concatenated strings" in {
         val parts = List("hello", ", ", "world")
         for
             dir <- Path.tempDir("kyo-path-stream-test")
@@ -1234,7 +1332,7 @@ class PathTest extends Test:
         end for
     }
 
-    "Stream[String].writeLinesTo writes each element as a line" in run {
+    "Stream[String].writeLinesTo writes each element as a line" in {
         val lines = Chunk("alpha", "beta", "gamma")
         for
             dir <- Path.tempDir("kyo-path-stream-test")
@@ -1246,7 +1344,7 @@ class PathTest extends Test:
         end for
     }
 
-    "Stream[String].writeTo with ISO-8859-1 charset encodes correctly" in run {
+    "Stream[String].writeTo with ISO-8859-1 charset encodes correctly" in {
         val charset = StandardCharsets.ISO_8859_1
         val text    = "caf\u00e9"
         for
@@ -1259,7 +1357,7 @@ class PathTest extends Test:
         end for
     }
 
-    "Stream[String].writeLinesTo with ISO-8859-1 charset encodes correctly" in run {
+    "Stream[String].writeLinesTo with ISO-8859-1 charset encodes correctly" in {
         val charset = StandardCharsets.ISO_8859_1
         val lines   = Chunk("pr\u00e9", "deux\u00e8me")
         for
@@ -1276,7 +1374,7 @@ class PathTest extends Test:
     // Edge cases
     // =========================================================================
 
-    "tail emits only new lines appended after stream opens" in run {
+    "tail emits only new lines appended after stream opens" in {
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-path-edge-test")
@@ -1295,7 +1393,7 @@ class PathTest extends Test:
         }
     }
 
-    "remove on non-empty directory raises FileDirectoryNotEmptyException" in run {
+    "remove on non-empty directory raises FileDirectoryNotEmptyException" in {
         for
             dir <- Path.tempDir("kyo-path-edge-test")
             file = dir / "remove-nonempty.txt"
@@ -1303,12 +1401,12 @@ class PathTest extends Test:
             result <- Abort.run[FileFsException](dir.remove)
             _      <- dir.removeAll
         yield result match
-            case Result.Failure(_: FileDirectoryNotEmptyException) => succeed
+            case Result.Failure(_: FileDirectoryNotEmptyException) => succeed("expected exception type")
             case other                                             => fail(s"Expected FileDirectoryNotEmptyException, got $other")
         end for
     }
 
-    "path / part infix syntax works" in run {
+    "path / part infix syntax works" in {
         val base   = Path / "usr"
         val result = base / "local" / "bin"
         assert(result.parts.last == "bin")
@@ -1316,7 +1414,7 @@ class PathTest extends Test:
         assert(result.parts.contains("usr"))
     }
 
-    "tail (0-arg) emits new lines appended after stream opens" in run {
+    "tail (0-arg) emits new lines appended after stream opens" in {
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-path-edge-test")
@@ -1333,15 +1431,15 @@ class PathTest extends Test:
         }
     }
 
-    "tail on non-existent file raises FileReadException" in run {
+    "tail on non-existent file raises FileReadException" in {
         val file = Path / "kyo-nonexistent-dir-xyzzy" / "nonexistent-tail.txt"
         Abort.run[FileReadException](Scope.run(file.tail.run)).map {
-            case Result.Failure(_: FileReadException) => succeed
+            case Result.Failure(_: FileReadException) => succeed("expected exception type")
             case other                                => fail(s"Expected FileReadException, got $other")
         }
     }
 
-    "tail handles multi-byte UTF-8 characters at buffer boundary without corruption" in run {
+    "tail handles multi-byte UTF-8 characters at buffer boundary without corruption" in {
         Clock.withTimeControl { control =>
             // Use a small buffer to force multi-byte chars to split across reads
             val multiByteContent = "café_naïve_über_" * 10 + "\n"
@@ -1365,7 +1463,7 @@ class PathTest extends Test:
         }
     }
 
-    "tail does not emit incomplete lines before newline arrives" in run {
+    "tail does not emit incomplete lines before newline arrives" in {
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-path-edge-test")
@@ -1389,7 +1487,7 @@ class PathTest extends Test:
         }
     }
 
-    "tail assembles lines from multiple partial writes" in run {
+    "tail assembles lines from multiple partial writes" in {
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-path-edge-test")
@@ -1413,7 +1511,7 @@ class PathTest extends Test:
         }
     }
 
-    "tail does not emit empty string after complete line" in run {
+    "tail does not emit empty string after complete line" in {
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-path-edge-test")
@@ -1435,7 +1533,7 @@ class PathTest extends Test:
         }
     }
 
-    "tail on rapidly growing file emits all lines without loss" in run {
+    "tail on rapidly growing file emits all lines without loss" in {
         Clock.withTimeControl { control =>
             val lineCount = 50
             val expected  = (1 to lineCount).map(i => s"line-$i").toList
@@ -1460,7 +1558,7 @@ class PathTest extends Test:
     // Streaming delegation (guards against infinite-recursion in safe API)
     // =========================================================================
 
-    "readStream(charset) delegates to unsafe without infinite loop" in run {
+    "readStream(charset) delegates to unsafe without infinite loop" in {
         for
             dir <- Path.tempDir("kyo-deleg-stream")
             file = dir / "rs-charset.txt"
@@ -1471,7 +1569,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readBytesStream delegates to unsafe without infinite loop" in run {
+    "readBytesStream delegates to unsafe without infinite loop" in {
         val data = Span.from(Array[Byte](1, 2, 3, 4, 5))
         for
             dir <- Path.tempDir("kyo-deleg-stream")
@@ -1483,7 +1581,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLinesStream(charset) delegates to unsafe without infinite loop" in run {
+    "readLinesStream(charset) delegates to unsafe without infinite loop" in {
         for
             dir <- Path.tempDir("kyo-deleg-stream")
             file = dir / "rls-charset.txt"
@@ -1495,7 +1593,7 @@ class PathTest extends Test:
         end for
     }
 
-    "tail(pollDelay) delegates to unsafe without infinite loop" in run {
+    "tail(pollDelay) delegates to unsafe without infinite loop" in {
         Clock.withTimeControl { control =>
             for
                 dir <- Path.tempDir("kyo-deleg-stream")
@@ -1512,7 +1610,7 @@ class PathTest extends Test:
         }
     }
 
-    "walk(maxDepth, followLinks) delegates to unsafe without infinite loop" in run {
+    "walk(maxDepth, followLinks) delegates to unsafe without infinite loop" in {
         for
             dir <- Path.tempDir("kyo-deleg-stream")
             file = dir / "walk-deleg.txt"
@@ -1531,11 +1629,11 @@ class PathTest extends Test:
         assert(Path.basePaths.tmp.parts.nonEmpty)
     }
 
-    "basePaths.tmp directory exists on disk" in run {
+    "basePaths.tmp directory exists on disk" in {
         Path.basePaths.tmp.exists.map(e => assert(e))
     }
 
-    "Path.temp creates a file that exists" in run {
+    "Path.temp creates a file that exists" in {
         for
             p      <- Path.temp()
             exists <- p.exists
@@ -1543,14 +1641,14 @@ class PathTest extends Test:
         yield assert(exists)
     }
 
-    "Path.temp with custom prefix and suffix" in run {
+    "Path.temp with custom prefix and suffix" in {
         for
             p <- Path.temp("myprefix", ".myext")
             _ <- p.remove
         yield assert(p.name.exists(n => n.startsWith("myprefix") && n.endsWith(".myext")))
     }
 
-    "Path.tempDir creates a directory" in run {
+    "Path.tempDir creates a directory" in {
         for
             p           <- Path.tempDir("kyotestdir")
             isDirectory <- p.isDirectory
@@ -1558,7 +1656,7 @@ class PathTest extends Test:
         yield assert(isDirectory)
     }
 
-    "Path.tempScoped auto-deletes on scope close" in run {
+    "Path.tempScoped auto-deletes on scope close" in {
         for
             captured <- AtomicRef.init[Maybe[Path]](Absent)
             _ <- Scope.run {
@@ -1612,7 +1710,7 @@ class PathTest extends Test:
         assert(!p.isAbsolute)
     }
 
-    "parent of absolute single-component path represents root" in run {
+    "parent of absolute single-component path represents root" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
         // Path("", "etc") represents /etc — its parent should be "/"
         val p = Path("", "etc")
@@ -1624,7 +1722,7 @@ class PathTest extends Test:
         end match
     }
 
-    "parent chain from /a/b/c terminates at root then Absent" in run {
+    "parent chain from /a/b/c terminates at root then Absent" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
         import AllowUnsafe.embrace.danger
         val p  = Path("", "a", "b", "c")
@@ -1639,7 +1737,7 @@ class PathTest extends Test:
         assert(aboveRoot.isEmpty, s"Expected Absent above root, got $aboveRoot")
     }
 
-    "parent of /a is root with correct string representation" in run {
+    "parent of /a is root with correct string representation" in {
         assume(!Platform.isWindows, "Unix absolute path syntax")
         import AllowUnsafe.embrace.danger
         val p = Path("", "a")
@@ -1698,7 +1796,7 @@ class PathTest extends Test:
     // Streaming edge cases
     // =========================================================================
 
-    "readBytesStream on empty file yields empty chunk" in run {
+    "readBytesStream on empty file yields empty chunk" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "empty.bin"
@@ -1709,7 +1807,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readBytesStream over multiple buffer boundaries emits all bytes correctly" in run {
+    "readBytesStream over multiple buffer boundaries emits all bytes correctly" in {
         val data = Span.fill(20000)(42.toByte) // > 2 full 8192-byte buffers
         for
             dir <- Path.tempDir("kyo-test")
@@ -1721,7 +1819,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readStream with multi-byte UTF-8 near buffer boundary" in run {
+    "readStream with multi-byte UTF-8 near buffer boundary" in {
         // Write 8190 ASCII chars + a 4-byte emoji (😀, U+1F600)
         // Total: 8194 bytes, which spans two 8192-byte reads.
         // If the implementation splits the UTF-8 sequence across reads and decodes
@@ -1738,7 +1836,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLinesStream on empty file yields empty chunk" in run {
+    "readLinesStream on empty file yields empty chunk" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "empty-lines.txt"
@@ -1749,7 +1847,7 @@ class PathTest extends Test:
         end for
     }
 
-    "readLinesStream on file with trailing newline matches readLines" in run {
+    "readLinesStream on file with trailing newline matches readLines" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "trailing-nl.txt"
@@ -1761,7 +1859,7 @@ class PathTest extends Test:
         end for
     }
 
-    "walk on empty directory emits only the root" in run {
+    "walk on empty directory emits only the root" in {
         for
             dir   <- Path.tempDir("kyo-test")
             paths <- Scope.run(dir.walk.run)
@@ -1772,7 +1870,7 @@ class PathTest extends Test:
         end for
     }
 
-    "tail continues after file truncation" in run {
+    "tail continues after file truncation" in {
         // Start tail, write initial content, truncate the file, then append new data.
         // The question is whether tail picks up the new content or gets confused after
         // truncation (the file position may be beyond EOF).
@@ -1798,7 +1896,7 @@ class PathTest extends Test:
         }
     }
 
-    "writeTo with empty byte stream creates an empty file" in run {
+    "writeTo with empty byte stream creates an empty file" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "empty-byte-stream.bin"
@@ -1810,7 +1908,7 @@ class PathTest extends Test:
         end for
     }
 
-    "writeLinesTo with empty stream creates an empty file" in run {
+    "writeLinesTo with empty stream creates an empty file" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "empty-lines-stream.txt"
@@ -1855,7 +1953,7 @@ class PathTest extends Test:
 
     // Inspired by fs2 #3667: writeTo should not leave a file containing partial data
     // when the input stream fails mid-flight.
-    "writeTo does not leave file with partial data when stream fails mid-flight" in run {
+    "writeTo does not leave file with partial data when stream fails mid-flight" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "should-not-have-partial.txt"
@@ -1880,14 +1978,14 @@ class PathTest extends Test:
             // If this assertion fails it means partial data was written and left behind.
             bytes match
                 case Result.Success(b) => assert(b.isEmpty, s"Partial data left in file: ${b.size} bytes")
-                case Result.Failure(_) => succeed // file doesn't exist — also acceptable
+                case Result.Failure(_) => () // file doesn't exist — also acceptable
         end for
     }
 
     // Inspired by fs2 #1005: buffer reuse corruption after rechunking.
     // Each chunk read from readBytesStream must be an independent copy, not aliased
     // to the same mutable read buffer.
-    "readBytesStream chunks are independent copies — buffer not reused" in run {
+    "readBytesStream chunks are independent copies — buffer not reused" in {
         // Write a pattern where the value at offset i is (i % 256).toByte
         val size = 20000
         val data = Span.from((0 until size).map(i => (i % 256).toByte).toArray)
@@ -1916,7 +2014,7 @@ class PathTest extends Test:
     // Inspired by fs2 #2966: the file handle should be released when a stream is
     // interrupted early (e.g. by take).  On Unix we verify the handle is released
     // by successfully writing to the same file after the interrupted read.
-    "file handle is released when readBytesStream is interrupted by take" in run {
+    "file handle is released when readBytesStream is interrupted by take" in {
         for
             dir <- Path.tempDir("kyo-test")
             file = dir / "interrupt.bin"
@@ -1937,7 +2035,7 @@ class PathTest extends Test:
     // Inspired by fs2 #1005: buffer reuse corruption.
     // Each byte in the read-back must match the pattern used to write the file.
     // A failure here means chunks alias the same mutable read buffer.
-    "readBytesStream chunks are independent copies of the read buffer" in run {
+    "readBytesStream chunks are independent copies of the read buffer" in {
         val size    = 20000
         val pattern = Span.from(Array.tabulate[Byte](size)(i => (i % 251).toByte))
         for
@@ -1957,7 +2055,7 @@ class PathTest extends Test:
 
     // Inspired by fs2 #2966: file handle must be released on early stream termination.
     // After taking only the first chunk, the handle should be freed so further writes succeed.
-    "file handle is released when readBytesStream terminates early" in run {
+    "file handle is released when readBytesStream terminates early" in {
         for
             dir <- Path.tempDir("kyo-handle-release")
             file = dir / "large.bin"
@@ -1973,7 +2071,7 @@ class PathTest extends Test:
     }
 
     // Inspired by fs2 #3667: writeTo with a failing mid-stream should not leave corrupt partial data.
-    "writeTo with failing stream does not leave corrupt partial file" in run {
+    "writeTo with failing stream does not leave corrupt partial file" in {
         for
             dir <- Path.tempDir("kyo-writeto-fail")
             file = dir / "partial.bin"
@@ -1994,13 +2092,13 @@ class PathTest extends Test:
             assert(result.isFailure)
             bytes match
                 case Result.Success(b) => assert(b.isEmpty, s"Partial data found: ${b.size} bytes")
-                case Result.Failure(_) => succeed
+                case Result.Failure(_) => ()
         end for
     }
 
     // Inspired by fs2 #1371: appendLines must append to existing content written by write(),
     // not overwrite from position 0.
-    "appendLines actually appends to existing content" in run {
+    "appendLines actually appends to existing content" in {
         for
             dir <- Path.tempDir("kyo-appendlines")
             file = dir / "appended.txt"
@@ -2045,7 +2143,7 @@ class PathTest extends Test:
                 !config.contains("Preferences"),
                 s"macOS config dir should NOT use 'Preferences', got: $config"
             )
-        else succeed
+        else succeed("non-macOS platform: the Application Support config path is not applicable")
         end if
     }
 
@@ -2060,7 +2158,8 @@ class PathTest extends Test:
                 font.contains("fonts"),
                 s"Font dir should contain 'fonts': $font"
             )
-        else succeed
+        else
+            succeed("non-Linux platform: XDG_DATA_HOME is not applicable")
         end if
     }
 
@@ -2068,7 +2167,7 @@ class PathTest extends Test:
     // Delegation tests (guards against infinite-recursion in safe API)
     // =========================================================================
 
-    "safe exists delegates to unsafe without infinite loop" in run {
+    "safe exists delegates to unsafe without infinite loop" in {
         for
             dir    <- Path.tempDir("kyo-deleg")
             result <- dir.exists
@@ -2077,7 +2176,7 @@ class PathTest extends Test:
         end for
     }
 
-    "safe read delegates to unsafe without infinite loop" in run {
+    "safe read delegates to unsafe without infinite loop" in {
         for
             dir <- Path.tempDir("kyo-deleg")
             file = dir / "deleg-read.txt"
@@ -2088,7 +2187,7 @@ class PathTest extends Test:
         end for
     }
 
-    "safe write delegates to unsafe without infinite loop" in run {
+    "safe write delegates to unsafe without infinite loop" in {
         for
             dir <- Path.tempDir("kyo-deleg")
             file = dir / "deleg-write.txt"
@@ -2111,11 +2210,11 @@ class PathTest extends Test:
         if Platform.isWindows then true
         else Command("id", "-u").text.map(_.trim == "0")
 
-    "removeAll raises error when subdirectory is permission-denied" in run {
+    "removeAll raises error when subdirectory is permission-denied" in {
         for
             root <- isRoot
-            result <-
-                if root then Kyo.lift(succeed)
+            _ <-
+                if root then Kyo.lift(succeed("skipped: running as root, permission checks do not apply"))
                 else
                     for
                         dir <- Path.tempDir("kyo-removeall-test")
@@ -2127,18 +2226,18 @@ class PathTest extends Test:
                         _      <- Command("chmod", "755", sub.toString).waitFor
                         _      <- dir.removeAll
                     yield result match
-                        case Result.Failure(_: FileFsException) => succeed
+                        case Result.Failure(_: FileFsException) => succeed("expected exception type")
                         case Result.Success(_) =>
                             fail("removeAll should fail when subdirectory is inaccessible, but it succeeded silently")
                     end for
-        yield result
+        yield ()
     }
 
-    "removeAll raises error when files cannot be deleted" in run {
+    "removeAll raises error when files cannot be deleted" in {
         for
             root <- isRoot
-            result <-
-                if root then Kyo.lift(succeed)
+            _ <-
+                if root then Kyo.lift(succeed("skipped: running as root, permission checks do not apply"))
                 else
                     for
                         dir <- Path.tempDir("kyo-removeall-test")
@@ -2150,11 +2249,11 @@ class PathTest extends Test:
                         _      <- Command("chmod", "755", sub.toString).waitFor
                         _      <- dir.removeAll
                     yield result match
-                        case Result.Failure(_: FileFsException) => succeed
+                        case Result.Failure(_: FileFsException) => succeed("expected exception type")
                         case Result.Success(_) =>
                             fail("removeAll should fail when files cannot be deleted, but it succeeded silently")
                     end for
-        yield result
+        yield ()
     }
 
 end PathTest

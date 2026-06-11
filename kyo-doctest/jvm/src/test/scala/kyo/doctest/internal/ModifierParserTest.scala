@@ -7,11 +7,11 @@ import kyo.doctest.*
   *
   * These tests use inline strings only (no fixture files).
   */
-class ModifierParserTest extends Test:
+class ModifierParserTest extends kyo.test.Test[Any]:
 
     private val dummyFile: kyo.Path = kyo.Path("test.md")
 
-    "doctest:expect=fails-compile parses to Block.Expectation.FailsCompile" in run {
+    "doctest:expect=fails-compile parses to Block.Expectation.FailsCompile" in {
         Abort.run(ModifierParser.parse("scala doctest:expect=fails-compile", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.expect == Present(Block.Expectation.FailsCompile))
@@ -22,7 +22,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "doctest:expect=runs parses to Block.Expectation.Runs" in run {
+    "doctest:expect=runs parses to Block.Expectation.Runs" in {
         Abort.run(ModifierParser.parse("scala doctest:expect=runs", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.expect == Present(Block.Expectation.Runs))
@@ -33,7 +33,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "doctest:scope=inherited parses to Block.Visibility.Inherited" in run {
+    "doctest:scope=inherited parses to Block.Visibility.Inherited" in {
         Abort.run(ModifierParser.parse("scala doctest:scope=inherited", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.scope == Present(Block.Visibility.Inherited))
@@ -44,7 +44,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "doctest:scope=env:tutorial parses to Block.Visibility.Env(\"tutorial\")" in run {
+    "doctest:scope=env:tutorial parses to Block.Visibility.Env(\"tutorial\")" in {
         Abort.run(ModifierParser.parse("scala doctest:scope=env:tutorial", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.scope == Present(Block.Visibility.Env("tutorial")))
@@ -55,7 +55,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "doctest:platform=jvm,js parses to Set(JVM, JS)" in run {
+    "doctest:platform=jvm,js parses to Set(JVM, JS)" in {
         Abort.run(ModifierParser.parse("scala doctest:platform=jvm,js", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.platform == Present(Set(Block.Target.JVM, Block.Target.JS)))
@@ -66,7 +66,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "doctest:scope=nested expect=warns platform=jvm parses all three" in run {
+    "doctest:scope=nested expect=warns platform=jvm parses all three" in {
         Abort.run(ModifierParser.parse("scala doctest:scope=nested expect=warns platform=jvm", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.scope == Present(Block.Visibility.Nested))
@@ -79,7 +79,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "doctest:setup normalises to Block.Visibility.Env(\"__doc__\")" in run {
+    "doctest:setup normalises to Block.Visibility.Env(\"__doc__\")" in {
         Abort.run(ModifierParser.parse("scala doctest:setup", dummyFile, 1)).map {
             case Result.Success(mods) =>
                 assert(mods.scope == Present(Block.Visibility.Env("__doc__")))
@@ -90,7 +90,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "unknown modifier key returns ParseError with line and key citation" in run {
+    "unknown modifier key returns ParseError with line and key citation" in {
         Abort.run(ModifierParser.parse("scala doctest:boguskey=x", dummyFile, 5)).map {
             case Result.Success(mods) =>
                 fail(s"expected parse error but got: $mods")
@@ -104,7 +104,7 @@ class ModifierParserTest extends Test:
         }
     }
 
-    "malformed expect value returns ParseError with line and value citation" in run {
+    "malformed expect value returns ParseError with line and value citation" in {
         Abort.run(ModifierParser.parse("scala doctest:expect=bogus", dummyFile, 7)).map {
             case Result.Success(mods) =>
                 fail(s"expected parse error but got: $mods")

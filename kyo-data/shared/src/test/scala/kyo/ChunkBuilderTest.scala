@@ -1,6 +1,6 @@
 package kyo
 
-class ChunkBuilderTest extends Test:
+class ChunkBuilderTest extends kyo.test.Test[Any]:
 
     "ChunkBuilder" - {
         "empty" in {

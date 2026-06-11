@@ -2,7 +2,7 @@ package kyo.stats.otlp
 
 import kyo.*
 
-class OTLPExporterFactoryTest extends Test:
+class OTLPExporterFactoryTest extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 

@@ -172,6 +172,12 @@ object Command:
         /** Inherits stdin from the parent process. */
         def inheritStdin: Command = self.unsafe.withStdin(Process.Input.Inherit).safe
 
+        /** Opens an unmanaged pipe on the child's stdin. The caller drives writes directly via
+          * `proc.unsafe.stdinJava` (no auto-pump fiber). Use when wiring the child into a custom
+          * protocol layer that owns when bytes flow in (e.g. JSON-RPC over stdio).
+          */
+        def pipeStdin: Command = self.unsafe.withStdin(Process.Input.Pipe).safe
+
         /** Inherits stdout from the parent process (not captured). */
         def inheritStdout: Command = self.unsafe.withInheritStdout(true).safe
 

@@ -3,7 +3,7 @@ package kyo.kernel
 import kyo.*
 import scala.reflect.ClassTag
 
-class BytecodeTest extends Test:
+class BytecodeTest extends kyo.test.Test[Any]:
 
     object TestEffect extends ArrowEffect[Id, Id]
 

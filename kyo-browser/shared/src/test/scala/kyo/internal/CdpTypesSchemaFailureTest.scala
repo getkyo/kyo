@@ -4,7 +4,7 @@ import kyo.*
 import kyo.internal.CdpTypes.*
 import kyo.internal.cdp.PageDownload
 
-class CdpTypesSchemaFailureTest extends kyo.Test:
+class CdpTypesSchemaFailureTest extends kyo.BaseBrowserTest:
 
     // MouseEventType / KeyEventType / PageDownload.Behavior Schemas used to throw a raw
     // IllegalArgumentException on an unknown wire value inside Schema.stringSchema.transform. That throw
@@ -24,8 +24,9 @@ class CdpTypesSchemaFailureTest extends kyo.Test:
 
     "MouseEventType - known wire values still decode" in {
         Json.decode[MouseEventType]("\"mouseMoved\"") match
-            case Result.Success(MouseEventType.Moved) => succeed
-            case other                                => fail(s"expected Success(Moved), got $other")
+            case Result.Success(v) =>
+                assert(v == MouseEventType.Moved, s"expected Moved but got $v")
+            case other => fail(s"expected Success(Moved), got $other")
     }
 
     "KeyEventType - unknown wire value decodes as Result.Failure[UnknownVariantException]" in {
@@ -40,8 +41,9 @@ class CdpTypesSchemaFailureTest extends kyo.Test:
 
     "KeyEventType - known wire values still decode" in {
         Json.decode[KeyEventType]("\"keyDown\"") match
-            case Result.Success(KeyEventType.Down) => succeed
-            case other                             => fail(s"expected Success(Down), got $other")
+            case Result.Success(v) =>
+                assert(v == KeyEventType.Down, s"expected Down but got $v")
+            case other => fail(s"expected Success(Down), got $other")
     }
 
     "PageDownload.Behavior - unknown wire value decodes as Result.Failure[UnknownVariantException]" in {
@@ -56,8 +58,9 @@ class CdpTypesSchemaFailureTest extends kyo.Test:
 
     "PageDownload.Behavior - known wire values still decode" in {
         Json.decode[PageDownload.Behavior]("\"allow\"") match
-            case Result.Success(PageDownload.Behavior.Allow) => succeed
-            case other                                       => fail(s"expected Success(Allow), got $other")
+            case Result.Success(v) =>
+                assert(v == PageDownload.Behavior.Allow, s"expected Allow but got $v")
+            case other => fail(s"expected Success(Allow), got $other")
     }
 
 end CdpTypesSchemaFailureTest

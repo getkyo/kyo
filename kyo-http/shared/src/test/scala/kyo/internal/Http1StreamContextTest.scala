@@ -7,7 +7,7 @@ import kyo.internal.http1.*
 import kyo.internal.server.*
 import kyo.internal.util.*
 
-class Http1StreamContextTest extends kyo.Test:
+class Http1StreamContextTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -33,7 +33,7 @@ class Http1StreamContextTest extends kyo.Test:
     end makeCtx
 
     /** Helper: read one span from outbound as a String. */
-    private def pollString(outbound: Channel.Unsafe[Span[Byte]]): String =
+    private def pollString(outbound: Channel.Unsafe[Span[Byte]])(using kyo.test.AssertScope): String =
         outbound.poll() match
             case Result.Success(Present(span)) => new String(span.toArray, StandardCharsets.US_ASCII)
             case other                         => fail(s"Expected data in outbound, got: $other")
@@ -49,7 +49,6 @@ class Http1StreamContextTest extends kyo.Test:
             assert(ctx.request == req)
             val span = ctx.takeBodySpan()
             assert(new String(span.toArray, StandardCharsets.US_ASCII) == "hello")
-            succeed
         }
 
         // 2. Take body span consumes bytes
@@ -61,11 +60,10 @@ class Http1StreamContextTest extends kyo.Test:
             val second = ctx.takeBodySpan()
             assert(new String(first.toArray, StandardCharsets.US_ASCII) == "abc")
             assert(second.isEmpty)
-            succeed
         }
 
         // 3. ReadBody fast path — contentLength <= bodySpan.size returns immediately
-        "readBody fast path returns body without touching channel" in run {
+        "readBody fast path returns body without touching channel" in {
             val (ctx, inbound, _) = makeCtx()
             val req               = makeRequest(5)
             val bodyBytes         = "hello".getBytes(StandardCharsets.US_ASCII)
@@ -78,7 +76,7 @@ class Http1StreamContextTest extends kyo.Test:
         }
 
         // 4. ReadBody with leftover bytes — contentLength < bodySpan.size → leftover preserved
-        "readBody preserves leftover bytes when bodySpan exceeds contentLength" in run {
+        "readBody preserves leftover bytes when bodySpan exceeds contentLength" in {
             val (ctx, _, _) = makeCtx()
             // contentLength = 5, but bodySpan has 10 bytes → 5 leftover
             val req       = makeRequest(5)
@@ -92,7 +90,7 @@ class Http1StreamContextTest extends kyo.Test:
         }
 
         // 5. ReadBody slow path — accumulates from inbound channel until contentLength
-        "readBody slow path accumulates bytes from inbound channel" in run {
+        "readBody slow path accumulates bytes from inbound channel" in {
             val (ctx, inbound, _) = makeCtx()
             val req               = makeRequest(10)
             // Seed only 3 bytes as initial bodySpan — not enough
@@ -106,7 +104,7 @@ class Http1StreamContextTest extends kyo.Test:
         }
 
         // 6. Take leftover consumes bytes
-        "takeLeftover consumes — subsequent calls return empty" in run {
+        "takeLeftover consumes — subsequent calls return empty" in {
             val (ctx, _, _) = makeCtx()
             val req         = makeRequest(3)
             ctx.setRequest(req, Span.fromUnsafe("abcXY".getBytes(StandardCharsets.US_ASCII)))
@@ -124,7 +122,6 @@ class Http1StreamContextTest extends kyo.Test:
             discard(ctx.respond(HttpStatus.OK, HttpHeaders.empty))
             val result = pollString(outbound)
             assert(result.startsWith("HTTP/1.1 200 OK\r\n"), s"Got: $result")
-            succeed
         }
 
         // 8. Respond caches common status lines
@@ -138,7 +135,7 @@ class Http1StreamContextTest extends kyo.Test:
                 new String(cached, StandardCharsets.US_ASCII) == expected,
                 s"Cache entry: '${new String(cached, StandardCharsets.US_ASCII)}'"
             )
-            succeed
+            ()
         }
 
         // 9. Respond adds Date header
@@ -147,7 +144,6 @@ class Http1StreamContextTest extends kyo.Test:
             discard(ctx.respond(HttpStatus.OK, HttpHeaders.empty))
             val result = pollString(outbound)
             assert(result.contains("Date: "), s"Expected 'Date: ' in response headers, got: $result")
-            succeed
         }
 
         // 10. Respond applies headers
@@ -158,7 +154,6 @@ class Http1StreamContextTest extends kyo.Test:
             val result = pollString(outbound)
             assert(result.contains("X-Custom: test-value\r\n"), s"Got: $result")
             assert(result.contains("Cache-Control: no-store\r\n"), s"Got: $result")
-            succeed
         }
 
         // 11. WriteBody offers to outbound
@@ -169,7 +164,6 @@ class Http1StreamContextTest extends kyo.Test:
             writer.writeBody(Span.fromUnsafe("world".getBytes(StandardCharsets.US_ASCII)))
             val result = pollString(outbound)
             assert(result == "world", s"Got: $result")
-            succeed
         }
 
         // 12. WriteBody handles full channel — offer returns false → putFiber
@@ -189,7 +183,7 @@ class Http1StreamContextTest extends kyo.Test:
 
             // Drain what we can — at least the headers should be there
             outbound.poll() match
-                case Result.Success(Present(_)) => succeed
+                case Result.Success(Present(_)) => succeed("headers are present in outbound after write")
                 case other                      => fail(s"Expected headers in outbound, got: $other")
             end match
         }
@@ -204,7 +198,6 @@ class Http1StreamContextTest extends kyo.Test:
             val result = pollString(outbound)
             // 13 = 0xd hex
             assert(result == "d\r\nHello, World!\r\n", s"Got: '$result'")
-            succeed
         }
 
         // 14. WriteChunk coalesces data — single offer, not multiple
@@ -221,7 +214,7 @@ class Http1StreamContextTest extends kyo.Test:
                 second.isSuccess && second.getOrThrow.isEmpty,
                 s"Expected no second offer — chunk should be a single coalesced write, but got a second item"
             )
-            succeed
+            ()
         }
 
         // 15. Finish writes terminal chunk
@@ -232,7 +225,6 @@ class Http1StreamContextTest extends kyo.Test:
             writer.finish()
             val result = pollString(outbound)
             assert(result == "0\r\n\r\n", s"Got: '$result'")
-            succeed
         }
 
         // 16. Header buffer reset between responses
@@ -255,7 +247,6 @@ class Http1StreamContextTest extends kyo.Test:
             assert(second.contains("HTTP/1.1 201 Created\r\n"), s"Second response wrong status: $second")
             assert(second.contains("X-Second: second-value\r\n"), s"Second response missing X-Second: $second")
             assert(!second.contains("X-First"), s"Second response must not contain X-First header (stale data): $second")
-            succeed
         }
 
         // 17. Format chunk size for small value
@@ -263,7 +254,6 @@ class Http1StreamContextTest extends kyo.Test:
             val result = Http1StreamContext.formatChunkSize(10)
             val str    = new String(result, StandardCharsets.US_ASCII)
             assert(str == "a\r\n", s"Got: '$str'")
-            succeed
         }
 
         // 18. Format chunk size for large value
@@ -271,7 +261,6 @@ class Http1StreamContextTest extends kyo.Test:
             val result = Http1StreamContext.formatChunkSize(0xabcd)
             val str    = new String(result, StandardCharsets.US_ASCII)
             assert(str == "abcd\r\n", s"Got: '$str'")
-            succeed
         }
 
         // 19. Format chunk size zero
@@ -279,7 +268,6 @@ class Http1StreamContextTest extends kyo.Test:
             val result = Http1StreamContext.formatChunkSize(0)
             val str    = new String(result, StandardCharsets.US_ASCII)
             assert(str == "0\r\n", s"Got: '$str'")
-            succeed
         }
     }
 

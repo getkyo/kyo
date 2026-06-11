@@ -5,19 +5,19 @@ import scala.language.implicitConversions
 
 class HiddenInputTest extends UITest:
 
-    "type hidden" in run {
+    "type hidden" in {
         withUI(UI.div(UI.hiddenInput.id("h"))) {
-            Browser.assertAttribute(Selector.id("h"), "type", "hidden").andThen(succeed)
+            Browser.assertAttribute(Selector.id("h"), "type", "hidden").unit
         }
     }
 
-    "value set" in run {
+    "value set" in {
         withUI(UI.div(UI.hiddenInput.value("secret").id("h"))) {
-            Browser.assertAttribute(Selector.id("h"), "value", "secret").andThen(succeed)
+            Browser.assertAttribute(Selector.id("h"), "value", "secret").unit
         }
     }
 
-    "value signalRef" in run {
+    "value signalRef" in {
         val app: UI < Async =
             for ref <- Signal.initRef("initial")
             yield UI.div(
@@ -29,11 +29,11 @@ class HiddenInputTest extends UITest:
                 _ <- Browser.assertAttribute(Selector.id("h"), "value", "initial")
                 _ <- Browser.click(Selector.id("b"))
                 _ <- Browser.assertAttribute(Selector.id("h"), "value", "updated")
-            yield succeed
+            yield ()
         }
     }
 
-    "hidden input inside form" in run {
+    "hidden input inside form" in {
         val app: UI < Async =
             for
                 ref      <- Signal.initRef("token123")
@@ -49,23 +49,23 @@ class HiddenInputTest extends UITest:
             for
                 _ <- Browser.click(Selector.id("s"))
                 _ <- Browser.assertText(Selector.id("v"), "token123")
-            yield succeed
+            yield ()
         }
     }
 
-    "not visually rendered" in run {
+    "not visually rendered" in {
         withUI(UI.div(UI.hiddenInput.value("secret").id("h"), UI.span("visible").id("s"))) {
             for
                 _ <- Browser.assertExists(Selector.id("h"))
                 _ <- Browser.assertText(Selector.id("s"), "visible")
                 _ <- Browser.assertTextSatisfies(Selector.css("body"), "no 'secret' in body text")(!_.contains("secret"))
-            yield succeed
+            yield ()
         }
     }
 
-    "exists by id" in run {
+    "exists by id" in {
         withUI(UI.div(UI.hiddenInput.id("h"))) {
-            Browser.assertExists(Selector.id("h")).andThen(succeed)
+            Browser.assertExists(Selector.id("h")).unit
         }
     }
 

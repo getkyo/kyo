@@ -1,22 +1,22 @@
 package kyo
 
-class AdderTest extends Test:
+class AdderTest extends kyo.test.Test[Any]:
 
     "long" - {
-        "should initialize to 0" in run {
+        "should initialize to 0" in {
             for
                 ref <- LongAdder.init
                 v   <- ref.get
             yield assert(v == 0)
         }
-        "should add value" in run {
+        "should add value" in {
             for
                 ref <- LongAdder.init
                 _   <- ref.add(5)
                 v   <- ref.get
             yield assert(v == 5)
         }
-        "should increment the value" in run {
+        "should increment the value" in {
             for
                 ref <- LongAdder.init
                 _   <- ref.add(5)
@@ -24,7 +24,7 @@ class AdderTest extends Test:
                 v   <- ref.get
             yield assert(v == 6)
         }
-        "should decrement the value" in run {
+        "should decrement the value" in {
             for
                 ref <- LongAdder.init
                 _   <- ref.add(5)
@@ -32,7 +32,7 @@ class AdderTest extends Test:
                 v   <- ref.get
             yield assert(v == 4)
         }
-        "should reset the value" in run {
+        "should reset the value" in {
             for
                 ref <- LongAdder.init
                 _   <- ref.add(5)
@@ -40,7 +40,7 @@ class AdderTest extends Test:
                 v   <- ref.get
             yield assert(v == 0)
         }
-        "should sum and reset the value" in run {
+        "should sum and reset the value" in {
             for
                 ref <- LongAdder.init
                 _   <- ref.add(5)
@@ -48,26 +48,26 @@ class AdderTest extends Test:
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 0)
         }
-        "LongAdder.initWith" in run {
+        "LongAdder.initWith" in {
             LongAdder.initWith(_.get).map(r => assert(r == 0))
         }
     }
 
     "double" - {
-        "should initialize to 0" in run {
+        "should initialize to 0" in {
             for
                 ref <- DoubleAdder.init
                 v   <- ref.get
             yield assert(v == 0.0)
         }
-        "should add value" in run {
+        "should add value" in {
             for
                 ref <- DoubleAdder.init
                 _   <- ref.add(5.0)
                 v   <- ref.get
             yield assert(v == 5.0)
         }
-        "should reset the value" in run {
+        "should reset the value" in {
             for
                 ref <- DoubleAdder.init
                 _   <- ref.add(5.0)
@@ -75,7 +75,7 @@ class AdderTest extends Test:
                 v   <- ref.get
             yield assert(v == 0.0)
         }
-        "should sum and reset the value" in run {
+        "should sum and reset the value" in {
             for
                 ref <- DoubleAdder.init
                 _   <- ref.add(5)
@@ -83,7 +83,7 @@ class AdderTest extends Test:
                 v2  <- ref.get
             yield assert(v1 == 5 && v2 == 0)
         }
-        "DoubleAdder.initWith" in run {
+        "DoubleAdder.initWith" in {
             DoubleAdder.initWith(_.get).map(r => assert(r == 0))
         }
     }

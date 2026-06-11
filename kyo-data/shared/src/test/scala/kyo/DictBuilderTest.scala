@@ -1,6 +1,6 @@
 package kyo
 
-class DictBuilderTest extends Test:
+class DictBuilderTest extends kyo.test.Test[Any]:
 
     "empty" in {
         val b = DictBuilder.init[String, Int]

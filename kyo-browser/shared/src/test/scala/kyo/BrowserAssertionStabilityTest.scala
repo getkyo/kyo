@@ -6,13 +6,13 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- Default value pin ----
 
-    "SessionConfig.assertionStabilityWindow defaults to 100.millis" in run {
+    "SessionConfig.assertionStabilityWindow defaults to 100.millis" in {
         assert(Browser.SessionConfig.default.assertionStabilityWindow == 100.millis)
     }
 
     // ---- assertCount stability ----
 
-    "assertCount with default stabilityWindow=100ms - Aborts when count flickers within the window" in run {
+    "assertCount with default stabilityWindow=100ms - Aborts when count flickers within the window" in {
         withBrowser {
             onPage(
                 "<ul id='list'><li class='item'>a</li><li class='item'>b</li><li class='item'>c</li></ul>" +
@@ -31,22 +31,26 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertCount(Browser.Selector.css("li.item"), 3)
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
         }
     }
 
-    "assertCount with default stabilityWindow=100ms - succeeds when count holds steady" in run {
+    "assertCount with default stabilityWindow=100ms - succeeds when count holds steady" in {
         withBrowser {
             onPage("<ul><li class='x'>a</li><li class='x'>b</li><li class='x'>c</li></ul>") {
-                Browser.assertCount(Browser.Selector.css("li.x"), 3).map(_ => succeed)
+                Browser.assertCount(Browser.Selector.css("li.x"), 3).andThen {
+                    Browser.count(Browser.Selector.css("li.x")).map { n =>
+                        assert(n == 3, s"Expected 3 li.x elements after assertCount passed but got $n")
+                    }
+                }
             }
         }
     }
 
-    "assertCount with stabilityWindow=0 - explicit opt-out preserves first-match behaviour" in run {
+    "assertCount with stabilityWindow=0 - explicit opt-out preserves first-match behaviour" in {
         withBrowser {
             onPage(
                 "<ul id='list'><li class='item'>a</li><li class='item'>b</li><li class='item'>c</li></ul>" +
@@ -62,14 +66,18 @@ class BrowserAssertionStabilityTest extends BrowserTest:
             ) {
                 Browser.withConfig(_.copy(assertionStabilityWindow = Duration.Zero)) {
                     Browser.assertCount(Browser.Selector.css("li.item"), 3)
-                }.map(_ => succeed)
+                }.andThen {
+                    // The flicker script may have changed the count by now; the structural contract is that
+                    // assertCount with stabilityWindow=0 returned at the first match instead of waiting for the window.
+                    succeed("assertCount with stabilityWindow=0 returns at the first match without waiting for the stability window")
+                }
             }
         }
     }
 
     // ---- waitForText stability ----
 
-    "waitForText with default stabilityWindow=100ms - Aborts when text flickers" in run {
+    "waitForText with default stabilityWindow=100ms - Aborts when text flickers" in {
         withBrowser {
             onPage(
                 "<div id='t'>other</div>" +
@@ -86,14 +94,14 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.waitForText(Browser.Selector.css("#t"), _ == "target")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
         }
     }
 
-    "waitForText with default stabilityWindow=100ms - succeeds when text holds steady" in run {
+    "waitForText with default stabilityWindow=100ms - succeeds when text holds steady" in {
         withBrowser {
             onPage("<div id='t'>target</div>") {
                 Browser.waitForText(Browser.Selector.css("#t"), _ == "target").map { t =>
@@ -105,7 +113,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertExists stability ----
 
-    "assertExists with default stabilityWindow=100ms - Raises BrowserElementNotFoundException when element flickers in and out of DOM" in run {
+    "assertExists with default stabilityWindow=100ms - Raises BrowserElementNotFoundException when element flickers in and out of DOM" in {
         withBrowser {
             onPage(
                 "<div id='container'><span id='flicker-elem'>here</span></div>" +
@@ -124,7 +132,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertExists(Browser.Selector.css("#flicker-elem"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserElementNotFoundException) => succeed
+                    case Result.Failure(ex: BrowserElementNotFoundException) => assert(ex.selector.contains("#flicker-elem"))
                     case other => fail(s"expected BrowserElementNotFoundException but got $other")
                 }
             }
@@ -133,7 +141,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertNotExists stability ----
 
-    "assertNotExists with default stabilityWindow=100ms - Aborts when element flickers in and out of DOM" in run {
+    "assertNotExists with default stabilityWindow=100ms - Aborts when element flickers in and out of DOM" in {
         withBrowser {
             onPage(
                 "<div id='container'></div>" +
@@ -152,7 +160,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertNotExists(Browser.Selector.css("#flicker-elem"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -161,7 +169,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertText stability ----
 
-    "assertText with default stabilityWindow=100ms - Aborts when text flickers" in run {
+    "assertText with default stabilityWindow=100ms - Aborts when text flickers" in {
         withBrowser {
             onPage(
                 "<div id='t'>other</div>" +
@@ -178,7 +186,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertText(Browser.Selector.css("#t"), "target")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -187,7 +195,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertAttribute stability ----
 
-    "assertAttribute with default stabilityWindow=100ms - Aborts when attribute flickers" in run {
+    "assertAttribute with default stabilityWindow=100ms - Aborts when attribute flickers" in {
         withBrowser {
             onPage(
                 "<a id='a' href='/other'>link</a>" +
@@ -204,7 +212,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertAttribute(Browser.Selector.css("#a"), "href", "/target")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -213,7 +221,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertUrl stability ----
 
-    "assertUrl with default stabilityWindow=100ms - Aborts when URL flickers via history.pushState" in run {
+    "assertUrl with default stabilityWindow=100ms - Aborts when URL flickers via history.pushState" in {
         withBrowser {
             onPage(
                 "<div>page</div>" +
@@ -230,7 +238,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertUrl("/kyo-flicker-target")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -239,7 +247,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertTitle stability ----
 
-    "assertTitle with default stabilityWindow=100ms - Aborts when title flickers" in run {
+    "assertTitle with default stabilityWindow=100ms - Aborts when title flickers" in {
         withBrowser {
             onPage(
                 "<html><head><title>Other</title></head><body>" +
@@ -257,7 +265,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertTitle("Target")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -266,7 +274,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertVisible stability ----
 
-    "assertVisible with default stabilityWindow=100ms - Aborts when visibility flickers" in run {
+    "assertVisible with default stabilityWindow=100ms - Aborts when visibility flickers" in {
         withBrowser {
             onPage(
                 "<div id='v' style='display:block'>content</div>" +
@@ -283,7 +291,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertVisible(Browser.Selector.css("#v"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -292,7 +300,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertNotVisible stability ----
 
-    "assertNotVisible with default stabilityWindow=100ms - Aborts when not-visible flickers" in run {
+    "assertNotVisible with default stabilityWindow=100ms - Aborts when not-visible flickers" in {
         withBrowser {
             onPage(
                 "<div id='v' style='display:none'>content</div>" +
@@ -309,7 +317,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertNotVisible(Browser.Selector.css("#v"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -318,7 +326,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertEnabled stability ----
 
-    "assertEnabled with default stabilityWindow=100ms - Aborts when enabled state flickers" in run {
+    "assertEnabled with default stabilityWindow=100ms - Aborts when enabled state flickers" in {
         withBrowser {
             onPage(
                 // Button starts disabled and stays disabled; assertEnabled must exhaust the retry
@@ -334,7 +342,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertEnabled(Browser.Selector.css("#b"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -343,7 +351,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertDisabled stability ----
 
-    "assertDisabled with default stabilityWindow=100ms - Aborts when disabled state flickers" in run {
+    "assertDisabled with default stabilityWindow=100ms - Aborts when disabled state flickers" in {
         withBrowser {
             onPage(
                 "<button id='b' disabled>Click</button>" +
@@ -360,7 +368,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertDisabled(Browser.Selector.css("#b"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -369,7 +377,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertChecked stability ----
 
-    "assertChecked with default stabilityWindow=100ms - Aborts when checked state flickers" in run {
+    "assertChecked with default stabilityWindow=100ms - Aborts when checked state flickers" in {
         withBrowser {
             onPage(
                 "<input id='c' type='checkbox'>" +
@@ -386,7 +394,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertChecked(Browser.Selector.css("#c"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -395,7 +403,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertNotChecked stability ----
 
-    "assertNotChecked with default stabilityWindow=100ms - Aborts when not-checked state flickers" in run {
+    "assertNotChecked with default stabilityWindow=100ms - Aborts when not-checked state flickers" in {
         withBrowser {
             onPage(
                 "<input id='c' type='checkbox' checked>" +
@@ -412,7 +420,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertNotChecked(Browser.Selector.css("#c"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -423,7 +431,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
     // assertValueEmpty reads the input's `value` property (not the HTML attribute), so JS-side `.value = ...`
     // assignments are observable.
 
-    "assertValueEmpty with default stabilityWindow=100ms - Aborts when empty state flickers" in run {
+    "assertValueEmpty with default stabilityWindow=100ms - Aborts when empty state flickers" in {
         withBrowser {
             onPage(
                 "<input id='i' type='text' value=''>" +
@@ -441,7 +449,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertValueEmpty(Browser.Selector.css("#i"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -450,7 +458,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertFocused stability ----
 
-    "assertFocused with default stabilityWindow=100ms - Aborts when focused element flickers" in run {
+    "assertFocused with default stabilityWindow=100ms - Aborts when focused element flickers" in {
         withBrowser {
             onPage(
                 "<input id='a' type='text'><input id='b' type='text'>" +
@@ -468,7 +476,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertFocused(Browser.Selector.id("a"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -477,7 +485,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- assertNotFocused stability ----
 
-    "assertNotFocused with default stabilityWindow=100ms - Aborts when not-focused state flickers" in run {
+    "assertNotFocused with default stabilityWindow=100ms - Aborts when not-focused state flickers" in {
         withBrowser {
             onPage(
                 "<input id='a' type='text'><input id='b' type='text'>" +
@@ -495,7 +503,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.assertNotFocused(Browser.Selector.id("a"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -504,7 +512,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- waitForAttribute stability ----
 
-    "waitForAttribute with default stabilityWindow=100ms - Aborts when attribute predicate flickers" in run {
+    "waitForAttribute with default stabilityWindow=100ms - Aborts when attribute predicate flickers" in {
         withBrowser {
             onPage(
                 "<a id='a' href='/other'>link</a>" +
@@ -521,7 +529,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.waitForAttribute(Browser.Selector.css("#a"), "href", _.startsWith("/t"))
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -535,7 +543,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
     // defeats the probe on a re-check. If clearing is infeasible, consider excluding waitForRequestUrl from the
     // stability window or using a timestamp-based probe instead.
 
-    "waitForRequestUrl with default stabilityWindow=100ms - Aborts when observed URL flickers" in run {
+    "waitForRequestUrl with default stabilityWindow=100ms - Aborts when observed URL flickers" in {
         withBrowser {
             onPage(
                 "<div>page</div>" +
@@ -554,7 +562,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.waitForRequestUrl("kyo-target-request")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }
@@ -563,7 +571,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
 
     // ---- waitFor stability ----
 
-    "waitFor with default stabilityWindow=100ms - Aborts when JS expression flickers between truthy and falsy" in run {
+    "waitFor with default stabilityWindow=100ms - Aborts when JS expression flickers between truthy and falsy" in {
         withBrowser {
             onPage(
                 "<div>page</div>" +
@@ -581,7 +589,7 @@ class BrowserAssertionStabilityTest extends BrowserTest:
                         Browser.waitFor("window.__kyoFlicker")
                     }
                 }.map {
-                    case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                    case Result.Failure(ex: BrowserAssertionTimedOutException) => assert(ex.getMessage.contains("Assertion failed"))
                     case other => fail(s"expected BrowserAssertionTimedOutException but got $other")
                 }
             }

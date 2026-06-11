@@ -5,7 +5,7 @@ import kyo.*
 // RFC 7617: The 'Basic' HTTP Authentication Scheme
 // Tests validate Basic auth behavior per the RFC specification.
 // Failing tests indicate RFC non-compliance — do NOT adjust assertions to match implementation.
-class Rfc7617Test extends Test:
+class Rfc7617Test extends BaseHttpTest:
 
     val rawRoute = HttpRoute.getRaw("raw").response(_.bodyText)
 
@@ -36,7 +36,7 @@ class Rfc7617Test extends Test:
 
     // ==================== Section 2: Base64 Credentials ====================
 
-    "Section 2 - Valid credentials accepted" in runNotNative {
+    "Section 2 - Valid credentials accepted".notNative in {
         // RFC 7617 §2: credentials = "Basic" SP base64(user-id ":" password)
         // "Aladdin:open sesame" → Base64 "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
         withServer(basicEndpoint) { port =>
@@ -48,7 +48,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Password with colon" in runNotNative {
+    "Section 2 - Password with colon".notNative in {
         // RFC 7617 §2: "The user-id and password are separated by a single colon"
         // Only the first colon splits user-id from password
         val ep = basicRoute
@@ -64,7 +64,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Empty password accepted" in runNotNative {
+    "Section 2 - Empty password accepted".notNative in {
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "user" && p == ""))
             .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
@@ -78,7 +78,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Empty username accepted" in runNotNative {
+    "Section 2 - Empty username accepted".notNative in {
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "" && p == "password"))
             .handler(req => HttpResponse.ok(s"hello ${req.fields.user}"))
@@ -92,7 +92,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Malformed Base64 returns 401" in runNotNative {
+    "Section 2 - Malformed Base64 returns 401".notNative in {
         withServer(basicEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", "Basic !!!not-base64!!!")
@@ -102,13 +102,13 @@ class Rfc7617Test extends Test:
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Malformed base64 should return 401, got: ${resp.status}")
                     case Result.Failure(_) =>
-                        succeed // 401 abort is also acceptable
+                        () // 401 abort is also acceptable
                     case _ => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2 - Missing Basic prefix returns 401" in runNotNative {
+    "Section 2 - Missing Basic prefix returns 401".notNative in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -117,26 +117,26 @@ class Rfc7617Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Missing prefix should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => succeed("expected: connection error treated as failure, not assertion")
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2 - No Authorization header returns 401 with WWW-Authenticate" in runNotNative {
+    "Section 2 - No Authorization header returns 401 with WWW-Authenticate".notNative in {
         withServer(basicEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
             Abort.run(send(port, rawRoute, req)).map { result =>
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"No auth should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => succeed("expected: connection error treated as failure, not assertion")
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2 - Case-insensitive scheme" in runNotNative {
+    "Section 2 - Case-insensitive scheme".notNative in {
         // RFC 7235 §2.1: "The scheme name is case-insensitive"
         // RFC 9110 §11.1: Authentication scheme names are case-insensitive
         // "basic" and "BASIC" should both be accepted
@@ -156,22 +156,21 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Extra whitespace after Basic" in runNotNative {
+    "Section 2 - Extra whitespace after Basic".notNative in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
                 .setHeader("Authorization", s"Basic  $encoded") // extra space
             Abort.run(send(port, rawRoute, req)).map { result =>
-                // Extra whitespace handling is implementation-defined
-                // Just verify it doesn't crash
-                succeed
+                // Extra whitespace handling is implementation-defined; either success or 401 is acceptable
+                assert(result.isSuccess || result.isFailure, "request with extra whitespace should not panic")
             }
         }
     }
 
     // ==================== Section 2: Additional credential tests ====================
 
-    "Section 2 - Wrong credentials return 401" in runNotNative {
+    "Section 2 - Wrong credentials return 401".notNative in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("wrong:creds".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -180,13 +179,13 @@ class Rfc7617Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Wrong creds should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => succeed("expected: connection error treated as failure, not assertion")
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2 - UPPER CASE scheme accepted" in runNotNative {
+    "Section 2 - UPPER CASE scheme accepted".notNative in {
         // RFC 9110 §11.1: Authentication scheme names are case-insensitive
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
@@ -198,7 +197,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Mixed case scheme accepted" in runNotNative {
+    "Section 2 - Mixed case scheme accepted".notNative in {
         withServer(basicEndpoint) { port =>
             val encoded = java.util.Base64.getEncoder.encodeToString("Aladdin:open sesame".getBytes("UTF-8"))
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -209,7 +208,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - UTF-8 characters in password" in runNotNative {
+    "Section 2 - UTF-8 characters in password".notNative in {
         // RFC 7617 §2.1: user-id and password are encoded in UTF-8
         val ep = basicRoute
             .filter(HttpFilter.server.basicAuth((u, p) => u == "user" && p == "pässwörd"))
@@ -224,7 +223,7 @@ class Rfc7617Test extends Test:
         }
     }
 
-    "Section 2 - Bearer scheme rejected by basic auth filter" in runNotNative {
+    "Section 2 - Bearer scheme rejected by basic auth filter".notNative in {
         // A Bearer token should not be accepted by a Basic auth filter
         withServer(basicEndpoint) { port =>
             val req = HttpRequest.getRaw(HttpUrl.fromUri("/secure"))
@@ -233,13 +232,13 @@ class Rfc7617Test extends Test:
                 result match
                     case Result.Success(resp) =>
                         assert(resp.status == HttpStatus.Unauthorized, s"Bearer on basic endpoint should return 401, got: ${resp.status}")
-                    case Result.Failure(_) => succeed
+                    case Result.Failure(_) => succeed("expected: connection error treated as failure, not assertion")
                     case _                 => fail("Unexpected result")
             }
         }
     }
 
-    "Section 2 - Long credentials accepted" in runNotNative {
+    "Section 2 - Long credentials accepted".notNative in {
         val longUser = "a" * 200
         val longPass = "b" * 200
         val ep = basicRoute
@@ -257,7 +256,7 @@ class Rfc7617Test extends Test:
 
     // ==================== Client-side Basic auth filter ====================
 
-    "Client-side basic auth filter adds Authorization header" in runNotNative {
+    "Client-side basic auth filter adds Authorization header".notNative in {
         val route = HttpRoute.getRaw("secure")
             .request(_.headerOpt[String]("authorization"))
             .response(_.bodyText)

@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.internal.util.ByteStream
 
-class ByteStreamTest extends kyo.Test:
+class ByteStreamTest extends kyo.BaseHttpTest:
 
     given CanEqual[Any, Any] = CanEqual.derived
 
@@ -48,7 +48,7 @@ class ByteStreamTest extends kyo.Test:
 
     "readUntilWith" - {
 
-        "finds delimiter and returns bytes before" in run {
+        "finds delimiter and returns bytes before" in {
             val stream = streamFromChunks(Seq("hello\r\nworld"))
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
                 (before, _) => str(before)
@@ -58,7 +58,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "consumes delimiter — remaining stream starts after delimiter" in run {
+        "consumes delimiter — remaining stream starts after delimiter" in {
             val stream = streamFromChunks(Seq("hello\r\nworld"))
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
                 (_, rest) =>
@@ -71,7 +71,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "with empty stream returns HttpConnectionClosedException" in run {
+        "with empty stream returns HttpConnectionClosedException" in {
             val stream = Stream.init[Span[Byte], Async](Seq.empty)
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
                 (before, _) => str(before)
@@ -82,7 +82,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "exceeds maxSize raises HttpProtocolException" in run {
+        "exceeds maxSize raises HttpProtocolException" in {
             val stream = streamFromChunks(Seq("hello world"))
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 5) {
                 (before, _) => str(before)
@@ -93,7 +93,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "delimiter split across chunks" in run {
+        "delimiter split across chunks" in {
             val stream = streamFromChunks(Seq("hello\r", "\nworld"))
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
                 (before, _) => str(before)
@@ -103,7 +103,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "maxSize exactly at delimiter — success" in run {
+        "maxSize exactly at delimiter — success" in {
             // "hello" is 5 bytes, delimiter is \r\n — maxSize=5 should succeed
             val stream = streamFromChunks(Seq("hello\r\nworld"))
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 5) {
@@ -117,7 +117,7 @@ class ByteStreamTest extends kyo.Test:
 
     "readExactWith" - {
 
-        "reads n bytes from stream" in run {
+        "reads n bytes from stream" in {
             val stream = streamFromChunks(Seq("hello world"))
             val result = ByteStream.readExactWith(stream, 5) {
                 (bytes, _) => str(bytes)
@@ -127,7 +127,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "reads across multiple chunks" in run {
+        "reads across multiple chunks" in {
             // n=100, chunks of 30, 40, 50 bytes — takes from first two and part of third
             val chunk1 = "A" * 30
             val chunk2 = "B" * 40
@@ -145,7 +145,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "n <= 0 returns empty immediately" in run {
+        "n <= 0 returns empty immediately" in {
             val stream = streamFromChunks(Seq("hello"))
             val result = ByteStream.readExactWith(stream, 0) {
                 (bytes, _) => bytes.size
@@ -155,7 +155,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "insufficient bytes raises HttpConnectionClosedException" in run {
+        "insufficient bytes raises HttpConnectionClosedException" in {
             val stream = streamFromChunks(Seq("hi"))
             val result = ByteStream.readExactWith(stream, 100) {
                 (bytes, _) => str(bytes)
@@ -166,7 +166,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "reads exactly n=1 byte" in run {
+        "reads exactly n=1 byte" in {
             val stream = streamFromChunks(Seq("hello"))
             val result = ByteStream.readExactWith(stream, 1) {
                 (bytes, _) => str(bytes)
@@ -179,7 +179,7 @@ class ByteStreamTest extends kyo.Test:
 
     "readLineWith" - {
 
-        "finds CRLF and returns line without CRLF" in run {
+        "finds CRLF and returns line without CRLF" in {
             val stream = streamFromChunks(Seq("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n"))
             val result = ByteStream.readLineWith(stream) {
                 (line, _) => str(line)
@@ -189,7 +189,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "respects maxSize — raises error if exceeded" in run {
+        "respects maxSize — raises error if exceeded" in {
             val stream = streamFromChunks(Seq("a very long line that exceeds max size\r\n"))
             val result = ByteStream.readLineWith(stream, maxSize = 10) {
                 (line, _) => str(line)
@@ -200,7 +200,7 @@ class ByteStreamTest extends kyo.Test:
             }
         }
 
-        "uses 8192 as default maxSize — accepts line within limit" in run {
+        "uses 8192 as default maxSize — accepts line within limit" in {
             val longLine = "X" * 8192
             // The line itself is exactly 8192 bytes — at the delimiter the combined size
             // includes the delimiter too; test a line just under the default limit
@@ -216,7 +216,7 @@ class ByteStreamTest extends kyo.Test:
 
     "delimiter split across chunks" - {
 
-        "CRLF split: chunk1=hello\\r, chunk2=\\nworld yields hello" in run {
+        "CRLF split: chunk1=hello\\r, chunk2=\\nworld yields hello" in {
             val stream = streamFromChunks(Seq("hello\r", "\nworld"))
             val result = ByteStream.readUntilWith(stream, ByteStream.CRLF, 1024) {
                 (before, rest) =>

@@ -7,7 +7,7 @@ import scala.language.implicitConversions
 // end-to-end via the JVM browser test infrastructure (SSE/event POST cycle).
 class DomBackendTest extends UITest:
 
-    "Replace op updates only the target reactive zone" in run {
+    "Replace op updates only the target reactive zone" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("zone-a")
@@ -25,24 +25,24 @@ class DomBackendTest extends UITest:
                 _ <- Browser.assertText(Selector.id("za"), "zone-a-new")
                 // zone b is untouched
                 _ <- Browser.assertText(Selector.id("zb"), "zone-b")
-            yield succeed
+            yield ()
         }
     }
 
-    "empty reactive renders as placeholder span with data-kyo-path" in run {
+    "empty reactive renders as placeholder span with data-kyo-path" in {
         val app: UI < Async =
             for show <- Signal.initRef(false)
             yield UI.div(
-                show.map(s => if s then UI.span("content").id("content") else UI.empty)
+                UI.when(show)(UI.span("content").id("content"))
             )
         withUI(app) {
             // When signal is false, show is absent; placeholder span should exist in DOM
             // (kyo-ui uses a placeholder span so the path anchor is preserved)
-            Browser.assertNotExists(Selector.id("content")).andThen(succeed)
+            Browser.assertNotExists(Selector.id("content")).unit
         }
     }
 
-    "deep path update applies to nested reactive element only" in run {
+    "deep path update applies to nested reactive element only" in {
         val app: UI < Async =
             for
                 outer <- Signal.initRef("outer-val")
@@ -60,11 +60,11 @@ class DomBackendTest extends UITest:
             for
                 _ <- Browser.assertText(Selector.id("outer-text"), "outer-val")
                 _ <- Browser.assertText(Selector.id("inner-text"), "inner-val")
-            yield succeed
+            yield ()
         }
     }
 
-    "click on nested element fires its handler and bubbles to parent" in run {
+    "click on nested element fires its handler and bubbles to parent" in {
         val app: UI < Async =
             for
                 parentCount <- Signal.initRef(0)
@@ -79,11 +79,11 @@ class DomBackendTest extends UITest:
                 _ <- Browser.click(Selector.id("child"))
                 _ <- Browser.assertText(Selector.id("cc"), "c:1")
                 _ <- Browser.assertText(Selector.id("pc"), "p:1")
-            yield succeed
+            yield ()
         }
     }
 
-    "three independent signals update respective DOM zones" in run {
+    "three independent signals update respective DOM zones" in {
         val app: UI < Async =
             for
                 a <- Signal.initRef("a")
@@ -106,7 +106,32 @@ class DomBackendTest extends UITest:
                 _ <- Browser.click(Selector.id("bc"))
                 _ <- Browser.assertText(Selector.id("za"), "a-new")
                 _ <- Browser.assertText(Selector.id("zc"), "c-new")
-            yield succeed
+            yield ()
+        }
+    }
+
+    // INV-008: the single-consumer drain preserves event ordering; all 5 clicks must be processed in
+    // order by the same drain fiber, so the counter reaches 5 monotonically with no dropped events.
+    "events dispatch in order under the page scope" in {
+        val app: UI < Async =
+            for counterRef <- Signal.initRef(0)
+            yield UI.div(
+                UI.button("inc").id("inc").onClick(counterRef.getAndUpdate(_ + 1).unit),
+                counterRef.map(n => UI.span(n.toString).id("counter"))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "1")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "2")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "3")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "4")
+                _ <- Browser.click(Selector.id("inc"))
+                _ <- Browser.assertText(Selector.id("counter"), "5")
+            yield ()
         }
     }
 
