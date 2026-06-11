@@ -362,12 +362,14 @@ import scala.quoted.*
         }
 
         if cannotSerialize then
+            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields)
             '{
                 kyo.Schema.create[A, F](
                     ${ MacroUtils.identityGetter[A, F] },
                     ${ MacroUtils.identitySetter[A, F] },
                     Seq.empty,
-                    $sourceFieldsExpr
+                    $sourceFieldsExpr,
+                    $structureExpr
                 )
             }
         else
@@ -386,6 +388,8 @@ import scala.quoted.*
             // Primitive / primitive-element container / primitive-arg Result specializations leave slots null.
             val needsSubSchema: List[Boolean] =
                 computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+
+            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields)
 
             if isRecursive then
                 '{
@@ -429,7 +433,8 @@ import scala.quoted.*
                                         '{ _subSchemas },
                                         '{ self }
                                     )
-                                }
+                                },
+                            $structureExpr
                         )
                     end self
                     self
@@ -480,7 +485,8 @@ import scala.quoted.*
                                     fieldSchemaExprs,
                                     '{ _subSchemas }
                                 )
-                            }
+                            },
+                        $structureExpr
                     )
                 }
             end if
@@ -517,12 +523,14 @@ import scala.quoted.*
         }
 
         if cannotSerialize then
+            val structureExpr = buildSealedTraitStructureExpr[A](tpe, sym, typeName, children)
             '{
                 kyo.Schema.create[A, F](
                     ${ MacroUtils.identityGetter[A, F] },
                     ${ MacroUtils.identitySetter[A, F] },
                     Seq.empty,
-                    $sourceFieldsExpr
+                    $sourceFieldsExpr,
+                    $structureExpr
                 )
             }
         else
@@ -597,6 +605,8 @@ import scala.quoted.*
                     end match
                 }
 
+            val structureExpr = buildSealedTraitStructureExpr[A](tpe, sym, typeName, children)
+
             if isRecursive then
                 '{
                     lazy val self: kyo.Schema[A] { type Focused = F } =
@@ -624,7 +634,8 @@ import scala.quoted.*
                                         (info.name, info.schemaResolver('{ self }))
                                     }
                                     SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
-                                }
+                                },
+                            $structureExpr
                         )
                     end self
                     self
@@ -656,7 +667,8 @@ import scala.quoted.*
                                     (info.name, info.schemaResolver('{ null.asInstanceOf[Schema[A]] }))
                                 }
                                 SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
-                            }
+                            },
+                        $structureExpr
                     )
                 }
             end if
@@ -1632,5 +1644,155 @@ import scala.quoted.*
     private def noSchemaMessage(fieldName: String, missingType: String, fieldType: String): String =
         s"No given Schema[${missingType}] for field '$fieldName' (field type: ${fieldType}). " +
             s"Define ${missingType} as a case class or sealed trait, or provide a given Schema[${missingType}]."
+
+    /** Summons `Tag[A].asInstanceOf[Tag[Any]]`, falling back to `Tag[Any]` for abstract or tag-less types.
+      *
+      * Mirrors StructureMacro.summonTag to handle generic type parameters (e.g. `Changeset[A]`) that have a `Schema[A]` constraint but not
+      * necessarily `Tag[A]`.
+      */
+    private def summonStructureTag[A: Type](using Quotes): Expr[Tag[Any]] =
+        import quotes.reflect.*
+        Expr.summon[Tag[A]] match
+            case Some(tagExpr) => '{ $tagExpr.asInstanceOf[Tag[Any]] }
+            case None          => '{ Tag[Any] }
+    end summonStructureTag
+
+    /** Summons `Schema[ft].structure` for a field type.
+      *
+      * When the field type equals the parent type being derived (recursive field), emits `Structure.Type.Open(Tag[ft])` as a placeholder
+      * to avoid infinite recursion. This matches the StructureMacro `seen: Set[String]` cycle-guard pattern.
+      *
+      * When no `given Schema[ft]` is available in scope (e.g. types not yet compiled in the same compilation unit, or types that are only
+      * reachable via `inline given derived` which cannot be expanded inside a macro), emits `Structure.Type.Open(Tag[ft])` as a placeholder.
+      * The codec path enforces missing-Schema errors independently (R-035 is satisfied there).
+      */
+    private def summonFieldStructure[A: Type](using
+        Quotes
+    )(
+        ft: quotes.reflect.TypeRepr,
+        parentType: quotes.reflect.TypeRepr,
+        typeName: String
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+        // Cycle guard: recursive field type gets an Open placeholder.
+        if ft.dealias =:= parentType then
+            ft.dealias.asType match
+                case '[t] =>
+                    val tagExpr = summonStructureTag[t]
+                    '{ Structure.Type.Open($tagExpr) }
+        else
+            ft.asType match
+                case '[t] =>
+                    Expr.summon[Schema[t]] match
+                        case Some(schemaExpr) => '{ ${ schemaExpr }.structure }
+                        case None             =>
+                            // Soft fallback: emit Open when no explicit Schema is in scope.
+                            // This handles types derived via `inline given derived` (same-file circular
+                            // derivation) and types not yet compiled. The codec path independently
+                            // enforces the missing-Schema compile error (R-035).
+                            val tagExpr = summonStructureTag[t]
+                            '{ Structure.Type.Open($tagExpr) }
+        end if
+    end summonFieldStructure
+
+    /** Builds a `Structure.Type.Product` expression for a case class type `A`.
+      *
+      * Each field's `fieldType` is obtained by summoning `Schema[FieldType].structure`. Recursive fields (where the field type equals the
+      * parent type) receive `Structure.Type.Open(Tag[A])` as a cycle-safe placeholder.
+      */
+    private def buildCaseClassStructureExpr[A: Type](using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        typeName: String,
+        maybeFields: Set[Int]
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+        val fields      = sym.caseFields
+        val typeParamsT = tpe.typeArgs
+
+        val fieldExprs: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (field, idx) =>
+            val rawFieldType = tpe.memberType(field)
+            // For Maybe[T] fields: resolve the inner type T for the structure, matching StructureMacro behaviour.
+            val resolvedType =
+                if maybeFields.contains(idx) then
+                    rawFieldType.dealias match
+                        case AppliedType(_, List(inner)) => inner
+                        case _                           => rawFieldType
+                else rawFieldType
+            val fieldStructureExpr = summonFieldStructure[A](resolvedType, tpe, typeName)
+            val isOptional         = maybeFields.contains(idx)
+            '{ Structure.Field(${ Expr(field.name) }, $fieldStructureExpr, kyo.Maybe.empty, kyo.Maybe.empty, ${ Expr(isOptional) }) }
+        }
+
+        val typeParamExprs: List[Expr[Structure.Type]] = typeParamsT.map { tp =>
+            tp.asType match
+                case '[t] =>
+                    Expr.summon[Schema[t]] match
+                        case Some(s) => '{ $s.structure }
+                        case None =>
+                            val tagExpr = summonStructureTag[t]
+                            '{ Structure.Type.Open($tagExpr) }
+        }
+
+        val fieldsChunkExpr     = '{ kyo.Chunk.from(${ Expr.ofList(fieldExprs) }) }
+        val typeParamsChunkExpr = '{ kyo.Chunk.from(${ Expr.ofList(typeParamExprs) }) }
+
+        tpe.asType match
+            case '[a] =>
+                val tagExpr = summonStructureTag[a]
+                '{ Structure.Type.Product(${ Expr(typeName) }, $tagExpr, $typeParamsChunkExpr, $fieldsChunkExpr) }
+        end match
+    end buildCaseClassStructureExpr
+
+    /** Builds a `Structure.Type.Sum` expression for a sealed trait type `A`.
+      *
+      * Each variant's `variantType` is obtained by summoning `Schema[VariantType].structure`. Self-referential variants (where the variant
+      * type equals the parent type) receive `Structure.Type.Open(Tag[A])` as a cycle-safe placeholder.
+      */
+    private def buildSealedTraitStructureExpr[A: Type](using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        typeName: String,
+        children: List[quotes.reflect.Symbol]
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+
+        val variantExprs: List[Expr[Structure.Variant]] = children.map { child =>
+            val childName = child.name.stripSuffix("$")
+            val childType =
+                if child.isType then child.typeRef
+                else if child.flags.is(Flags.Module) then child.termRef.widen
+                else child.typeRef
+            val variantStructureExpr = summonFieldStructure[A](childType, tpe, typeName)
+            '{ Structure.Variant(${ Expr(childName) }, $variantStructureExpr) }
+        }
+
+        // Collect enum singleton names (matches StructureMacro pattern at Structure.scala:78-81)
+        val enumValues: List[String] = children.collect {
+            case child if child.flags.is(Flags.Module) || !child.isClassDef =>
+                child.name.stripSuffix("$")
+        }
+
+        val variantsChunkExpr   = '{ kyo.Chunk.from(${ Expr.ofList(variantExprs) }) }
+        val enumValuesChunkExpr = '{ kyo.Chunk.from(${ Expr.ofList(enumValues.map(Expr(_))) }) }
+
+        tpe.asType match
+            case '[a] =>
+                val tagExpr = summonStructureTag[a]
+                '{
+                    Structure.Type.Sum(
+                        ${ Expr(typeName) },
+                        $tagExpr,
+                        kyo.Chunk.empty,
+                        $variantsChunkExpr,
+                        $enumValuesChunkExpr
+                    )
+                }
+        end match
+    end buildSealedTraitStructureExpr
 
 end FocusMacro

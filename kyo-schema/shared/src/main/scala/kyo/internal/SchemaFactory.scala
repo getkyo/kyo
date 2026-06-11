@@ -59,11 +59,12 @@ private[kyo] object SchemaFactory:
                 renamePathKey(ids, rename._1, rename._2)
             }
         end updatedFieldIds
-        Schema.initFocused[A, F2](
+        Schema.initFocusedWithStructure[A, F2](
             writeFn = (a: A, w: Writer) => source.serializeWrite(a, w),
             readFn = (r: Reader) => source.serializeRead(r),
             getterFn = (a: A) => source.getter(a).asInstanceOf[Maybe[F2]],
             setterFn = (a: A, v: F2) => source.setter(a, v),
+            structure = source.structure,
             segments = source.segments,
             sourceFields = source.sourceFields,
             examples = source.examples,

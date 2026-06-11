@@ -1189,6 +1189,54 @@ object Schema:
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
 
+    /** Internal-only `initFocused` variant supplying `structure: Structure.Type` to the resulting Schema.
+      *
+      * Visibility `private[kyo]` so it does NOT appear on the public surface. Phase 09 folds `structure` into `Schema.initFocused` and
+      * DELETES this helper.
+      */
+    @nowarn("msg=anonymous")
+    private[kyo] inline def initFocusedWithStructure[A, F](
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A,
+        inline getterFn: A => Maybe[F],
+        inline setterFn: (A, F) => A,
+        structure: => Structure.Type,
+        segments: Seq[String] = Seq.empty,
+        sourceFields: Seq[Field[?, ?]] = Seq.empty,
+        examples: Chunk[A] = Chunk.empty,
+        fieldDocs: Map[Seq[String], String] = Map.empty,
+        fieldDeprecated: Map[Seq[String], String] = Map.empty,
+        constraints: Seq[Schema.Constraint] = Seq.empty,
+        droppedFields: Set[String] = Set.empty,
+        renamedFields: Chunk[(String, String)] = Chunk.empty,
+        computedFields: Chunk[(String, A => Any)] = Chunk.empty,
+        checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
+        documentation: Maybe[String] = Maybe.empty,
+        fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
+        discriminatorField: Maybe[String] = Maybe.empty
+    ): Schema[A] { type Focused = F } =
+        Schema.initWithStructure[A](
+            writeFn = writeFn,
+            readFn = readFn,
+            getterFn = getterFn.asInstanceOf[A => Maybe[Any]],
+            setterFn = setterFn.asInstanceOf[(A, Any) => A],
+            segments = segments,
+            examples = examples,
+            fieldDocs = fieldDocs,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            droppedFields = droppedFields,
+            renamedFields = renamedFields,
+            computedFields = computedFields,
+            sourceFields = sourceFields,
+            checks = checks,
+            documentation = documentation,
+            fieldIdOverrides = fieldIdOverrides,
+            discriminatorField = discriminatorField,
+            structure = structure
+        ).asInstanceOf[Schema[A] { type Focused = F }]
+    end initFocusedWithStructure
+
     /** Variant of `Schema.init` that also supplies the resulting Schema's `structure: Structure.Type`.
       *
       * Internal scaffolding used by primitive and container givens to populate `structure` without yet changing the locked `Schema.init`
@@ -2200,15 +2248,17 @@ object Schema:
         inline getterFn: A => Maybe[F],
         inline setterFn: (A, F) => A,
         segments: Seq[String],
-        sourceFields: Seq[Field[?, ?]] = Seq.empty
+        sourceFields: Seq[Field[?, ?]] = Seq.empty,
+        structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     )(using frame: Frame): Schema[A] { type Focused = F } =
-        Schema.initFocused[A, F](
+        Schema.initFocusedWithStructure[A, F](
             writeFn = (_: A, _: Writer) => throw SchemaNotSerializableException(Schema.notSerializableMessage)(using frame),
             readFn = (_: Reader) => throw SchemaNotSerializableException(Schema.notSerializableMessage)(using frame),
             getterFn = getterFn,
             setterFn = setterFn,
             segments = segments,
-            sourceFields = sourceFields
+            sourceFields = sourceFields,
+            structure = structure
         )
 
     /** Internal factory for macro-generated Schema instances with serialization. */
@@ -2219,15 +2269,17 @@ object Schema:
         segments: Seq[String],
         sourceFields: Seq[Field[?, ?]],
         inline writeFn: (A, Writer) => Unit,
-        inline readFn: Reader => A
+        inline readFn: Reader => A,
+        structure: => Structure.Type
     ): Schema[A] { type Focused = F } =
-        Schema.initFocused[A, F](
+        Schema.initFocusedWithStructure[A, F](
             writeFn = writeFn,
             readFn = readFn,
             getterFn = getterFn,
             setterFn = setterFn,
             segments = segments,
-            sourceFields = sourceFields
+            sourceFields = sourceFields,
+            structure = structure
         )
 
     /** Internal factory for transform macros. Copies internal state from a source Schema. Not part of public API.
@@ -2266,9 +2318,10 @@ object Schema:
         fieldDeprecated: Map[Seq[String], String] = Map.empty,
         constraints: Seq[Constraint] = Seq.empty,
         fieldIds: Map[Seq[String], Int] = Map.empty,
-        discriminatorField: Maybe[String] = Maybe.empty
+        discriminatorField: Maybe[String] = Maybe.empty,
+        structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] { type Focused = E } =
-        Schema.init[A](
+        Schema.initWithStructure[A](
             writeFn = writeFn,
             readFn = readFn,
             getterFn = getterFn,
@@ -2285,7 +2338,8 @@ object Schema:
             checks = checks,
             documentation = doc,
             fieldIdOverrides = fieldIds,
-            discriminatorField = discriminatorField
+            discriminatorField = discriminatorField,
+            structure = structure
         ).asInstanceOf[Schema[A] { type Focused = E }]
 
 end Schema

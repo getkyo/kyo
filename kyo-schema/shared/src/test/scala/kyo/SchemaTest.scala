@@ -7009,4 +7009,140 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     }
 
+    // =========================================================================
+    // Phase 08: T1, T2, T3, T4, T6 - derived structure emission
+    // =========================================================================
+
+    // Test data types for Phase 08 structure tests
+    case class P08Person(name: String, age: Int) derives Schema
+    sealed trait P08Shape derives Schema
+    object P08Shape:
+        case class Circle(r: Double) extends P08Shape derives Schema
+        case class Square(s: Double) extends P08Shape derives Schema
+        case object Origin           extends P08Shape
+    end P08Shape
+    case class P08Wrapper(inner: java.io.File)
+
+    "derived case-class structure" - {
+
+        "variant is Product (T1 INV-6)" in {
+            val s = summon[Schema[P08Person]]
+            assert(s.structure.isInstanceOf[Structure.Type.Product])
+        }
+
+        "name is Person (T1 INV-6)" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.name == "P08Person")
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields.size is 2 (T1 INV-6)" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.fields.size == 2)
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields(0).name is name (T1 INV-6)" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.fields(0).name == "name")
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields(0).fieldType eq Schema[String].structure (T1 INV-6)" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product =>
+                    assert(
+                        p.fields(0).fieldType eq summon[Schema[String]].structure,
+                        s"expected reference-eq to Schema[String].structure but got ${p.fields(0).fieldType}"
+                    )
+                case other => fail(s"Expected Product but got $other")
+        }
+
+        "fields(1).name is age (T1 INV-6)" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.fields(1).name == "age")
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields(1).fieldType eq Schema[Int].structure (T1 INV-6)" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product =>
+                    assert(
+                        p.fields(1).fieldType eq summon[Schema[Int]].structure,
+                        s"expected reference-eq to Schema[Int].structure but got ${p.fields(1).fieldType}"
+                    )
+                case other => fail(s"Expected Product but got $other")
+        }
+
+    }
+
+    "derived sealed-trait structure" - {
+
+        "variant is Sum (T2 INV-7)" in {
+            assert(summon[Schema[P08Shape]].structure.isInstanceOf[Structure.Type.Sum])
+        }
+
+        "variants.size is 3 (T2 INV-7)" in {
+            summon[Schema[P08Shape]].structure match
+                case s: Structure.Type.Sum => assert(s.variants.size == 3)
+                case other                 => fail(s"Expected Sum but got $other")
+        }
+
+        "variant Circle.variantType compatible with Schema[Circle].structure (T2 INV-14)" in {
+            summon[Schema[P08Shape]].structure match
+                case s: Structure.Type.Sum =>
+                    val circleVariant = s.variants.find(_.name == "Circle").getOrElse(fail("no Circle variant"))
+                    assert(
+                        Structure.Type.compatible(circleVariant.variantType, summon[Schema[P08Shape.Circle]].structure),
+                        s"Circle variantType=${circleVariant.variantType} incompatible with Schema[Circle].structure"
+                    )
+                case other => fail(s"Expected Sum but got $other")
+        }
+
+        "variant Square.variantType compatible with Schema[Square].structure (T2 INV-14)" in {
+            summon[Schema[P08Shape]].structure match
+                case s: Structure.Type.Sum =>
+                    val sqVariant = s.variants.find(_.name == "Square").getOrElse(fail("no Square variant"))
+                    assert(
+                        Structure.Type.compatible(sqVariant.variantType, summon[Schema[P08Shape.Square]].structure),
+                        s"Square variantType=${sqVariant.variantType} incompatible with Schema[Square].structure"
+                    )
+                case other => fail(s"Expected Sum but got $other")
+        }
+
+    }
+
+    "missing Schema produces precise error" - {
+
+        "derives Schema on case class with java.io.File field fails at compile time (T3 R-035)" in {
+            typeCheckFailure("kyo.Schema.derived[SchemaTest.this.P08Wrapper]")(
+                "No given Schema[java.io.File]"
+            )
+        }
+
+    }
+
+    "internal builder preserves structure" - {
+
+        "check clone does not change structure (T4 INV-11)" in {
+            // MTPerson is a top-level type where Focus navigation works correctly.
+            val base   = Schema[MTPerson]
+            val cloned = base.check(_.name)(_.nonEmpty, "required")
+            assert(
+                cloned.structure eq base.structure,
+                s"check clone changed structure: was ${base.structure}, got ${cloned.structure}"
+            )
+        }
+
+    }
+
+    "structural referential transparency for derived types" - {
+
+        "Schema[P08Person].structure eq Schema[P08Person].structure (T6 INV-1)" in {
+            val s = summon[Schema[P08Person]]
+            assert(s.structure eq s.structure)
+        }
+
+    }
+
 end SchemaTest
