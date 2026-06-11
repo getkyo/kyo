@@ -238,6 +238,7 @@ private[kyo] object HtmlRenderer:
         case _: Header         => "header"
         case _: Footer         => "footer"
         case _: Pre            => "pre"
+        case _: Blockquote     => "blockquote"
         case _: Code           => "code"
         case _: Ul             => "ul"
         case _: Ol             => "ol"

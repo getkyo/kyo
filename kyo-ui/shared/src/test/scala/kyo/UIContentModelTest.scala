@@ -35,6 +35,15 @@ class UIContentModelTest extends kyo.test.Test[Any]:
         }
     }
 
+    "blockquote renders as a <blockquote> element wrapping its children" in {
+        val ui: UI = UI.blockquote.cssClass("pull")(UI.span("quoted"))
+        renderHtml(ui).map { html =>
+            assert(html.contains("<blockquote"), s"must render a blockquote tag: $html")
+            assert(html.contains("</blockquote>"), s"must close the blockquote: $html")
+            assert(html.contains("quoted"), s"must render the children: $html")
+        }
+    }
+
     // Svg.Root IS HtmlContent and compiles inside a div
     "div accepts Svg.svg (Root extends HtmlContent and Inline)" in {
         val root: HtmlContent = Svg.svg

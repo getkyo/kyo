@@ -112,6 +112,7 @@ object UI:
     def main(using Frame): Main                   = Main()
     def label(using Frame): Label                 = Label()
     def pre(using Frame): Pre                     = Pre()
+    def blockquote(using Frame): Blockquote       = Blockquote()
     def code(using Frame): Code                   = Code()
     def table(using Frame): Table                 = Table()
     def tr(using Frame): Tr                       = Tr()
@@ -962,6 +963,13 @@ object UI:
             def withAttrs(a: Attrs): Pre      = copy(attrs = a)
             def apply(cs: HtmlChildVal*): Pre = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Pre
+
+        final case class Blockquote(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
+            with Interactive:
+            type Self = Blockquote
+            def withAttrs(a: Attrs): Blockquote      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Blockquote = copy(children = children ++ Chunk.from(cs.map(_.value)))
+        end Blockquote
 
         final case class Code(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:
