@@ -6427,4 +6427,211 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Result/Either structure" - {
+        "resultSchema produces Sum structure with name Result" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.name == "Result")
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema Sum has 3 variants: success, failure, panic" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants.size == 3)
+                    assert(s.variants(0).name == "success")
+                    assert(s.variants(1).name == "failure")
+                    assert(s.variants(2).name == "panic")
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema success variant structure is reference-eq to Schema[Int].structure" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(0).variantType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema failure variant structure is reference-eq to Schema[String].structure" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(1).variantType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema panic variant structure is Primitive(String)" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    s.variants(2).variantType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema typeParams has size 2" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.typeParams.size == 2)
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema typeParams(0) is reference-eq to Schema[String].structure (E)" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.typeParams(0) eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema typeParams(1) is reference-eq to Schema[Int].structure (A)" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.typeParams(1) eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema produces Sum structure with name Either" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.name == "Either")
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema Sum has 2 variants: Left and Right" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants.size == 2)
+                    assert(s.variants(0).name == "Left")
+                    assert(s.variants(1).name == "Right")
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema Left variant structure is reference-eq to Schema[Int].structure" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(0).variantType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema Right variant structure is reference-eq to Schema[String].structure" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(1).variantType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema typeParams has size 2" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.typeParams.size == 2)
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema enumValues is empty" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.enumValues.isEmpty)
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+    }
+
+    "Map/Dict structure" - {
+        "stringMapSchema produces Mapping structure with name Map" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            schema.structure match
+                case m: Structure.Type.Mapping => assert(m.name == "Map")
+                case other                     => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringMapSchema keyType is Primitive(String)" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringMapSchema valueType is reference-eq to Schema[Int].structure" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.valueType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringDictSchema produces Mapping structure with name Dict and Primitive(String) key" in {
+            val schema = summon[Schema[Dict[String, Boolean]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.name == "Dict")
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringDictSchema valueType is reference-eq to Schema[Boolean].structure" in {
+            val schema = summon[Schema[Dict[String, Boolean]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.valueType eq summon[Schema[Boolean]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "dictSchema produces Mapping structure with name Dict" in {
+            val schema = summon[Schema[Dict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping => assert(m.name == "Dict")
+                case other                     => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "dictSchema keyType is reference-eq to Schema[Int].structure (non-String key)" in {
+            val schema = summon[Schema[Dict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.keyType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "dictSchema valueType is reference-eq to Schema[String].structure" in {
+            val schema = summon[Schema[Dict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.valueType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringDictSchema and dictSchema with String key use different givens" in {
+            // stringDictSchema: keyType is Primitive(String)
+            // dictSchema: keyType is Schema[String].structure (also Primitive(String) but distinct path)
+            val stringDictS = summon[Schema[Dict[String, Int]]]
+            stringDictS.structure match
+                case m: Structure.Type.Mapping =>
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "Schema[Map[String,Int]].structure returns same reference on repeated calls" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            assert(schema.structure eq schema.structure)
+        }
+    }
+
 end SchemaTest

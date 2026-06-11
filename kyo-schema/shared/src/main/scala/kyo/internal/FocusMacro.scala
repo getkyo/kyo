@@ -1011,7 +1011,7 @@ import scala.quoted.*
                         (self: Expr[Schema[A]]) =>
                             val valueSchema = valueResolver(self)
                             '{
-                                kyo.Schema.stringMapSchema[vt](using $valueSchema.asInstanceOf[Schema[vt]]).asInstanceOf[Schema[Any]]
+                                kyo.Schema.stringMapSchemaNoStructure[vt]($valueSchema.asInstanceOf[Schema[vt]]).asInstanceOf[Schema[Any]]
                             }
                 end match
 

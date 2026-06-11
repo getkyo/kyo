@@ -1610,6 +1610,32 @@ object Schema:
                 else Some(inner.serializeRead(reader))
         )
 
+    private[kyo] def stringMapSchemaNoStructure[V](inner: Schema[V]): Schema[Map[String, V]] =
+        Schema.init[Map[String, V]](
+            writeFn = (value, writer) =>
+                writer.mapStart(value.size)
+                value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
+                    writer.field(k, idx)
+                    inner.serializeWrite(v, writer)
+                }
+                writer.mapEnd()
+            ,
+            readFn = reader =>
+                discard(reader.mapStart())
+                val builder = Map.newBuilder[String, V]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextEntry() then
+                        reader.checkCollectionSize(count)
+                        val k = reader.field()
+                        val v = inner.serializeRead(reader)
+                        builder += (k -> v)
+                        loop(count + 1)
+                loop(1)
+                reader.mapEnd()
+                builder.result()
+        )
+
     // --- Collection Schema givens ---
 
     /** Schema for List[A] values. */
@@ -1828,8 +1854,8 @@ object Schema:
         )
 
     /** Schema for Map[String, V] values (object encoding). */
-    given stringMapSchema[V](using valueSchema: Schema[V]): Schema[Map[String, V]] =
-        Schema.init[Map[String, V]](
+    given stringMapSchema[V](using valueSchema: Schema[V], frame: Frame): Schema[Map[String, V]] =
+        Schema.initWithStructure[Map[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
                 value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
@@ -1852,6 +1878,14 @@ object Schema:
                 loop(1)
                 reader.mapEnd()
                 builder.result()
+            ,
+            // Deviation D-1: Tag[Map[String,V]] requires implicit Tag[V]. Fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
+                valueSchema.structure
+            )
         )
 
     // --- Tuple Schemas ---
@@ -1864,8 +1898,8 @@ object Schema:
     // --- Kyo-data type Schemas ---
 
     /** Schema for Result[E, A] values - serialized as discriminated union. */
-    given resultSchema[E, A](using eSchema: Schema[E], aSchema: Schema[A]): Schema[Result[E, A]] =
-        Schema.init[Result[E, A]](
+    given resultSchema[E, A](using eSchema: Schema[E], aSchema: Schema[A], frame: Frame): Schema[Result[E, A]] =
+        Schema.initWithStructure[Result[E, A]](
             writeFn = (value, writer) =>
                 value match
                     case Result.Success(a) =>
@@ -1919,11 +1953,27 @@ object Schema:
                         Result.panic(new RuntimeException(msg.getOrElse(null: String))) // RuntimeException accepts null message
                     case other => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
+            ,
+            // Deviation D-1: Tag[Result[E,A]] requires Tag[E] + Tag[A]. Fall back to Tag[Any].
+            structure = Structure.Type.Sum(
+                "Result",
+                Tag[Any],
+                typeParams = Chunk(eSchema.structure, aSchema.structure),
+                variants = Chunk(
+                    Structure.Variant("success", aSchema.structure),
+                    Structure.Variant("failure", eSchema.structure),
+                    Structure.Variant(
+                        "panic",
+                        Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+                    )
+                ),
+                enumValues = Chunk.empty
+            )
         )
 
     /** Schema for Either[A, B] values - serialized as discriminated union with Left/Right variants. */
-    given eitherSchema[A, B](using aSchema: Schema[A], bSchema: Schema[B]): Schema[Either[A, B]] =
-        Schema.init[Either[A, B]](
+    given eitherSchema[A, B](using aSchema: Schema[A], bSchema: Schema[B], frame: Frame): Schema[Either[A, B]] =
+        Schema.initWithStructure[Either[A, B]](
             writeFn = (value, writer) =>
                 value match
                     case Left(a) =>
@@ -1963,11 +2013,23 @@ object Schema:
                     case "Right" => Right(bSchema.serializeRead(capturedReader))
                     case other   => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
+            ,
+            // Deviation D-1: Tag[Either[A,B]] requires Tag[A] + Tag[B]. Fall back to Tag[Any].
+            structure = Structure.Type.Sum(
+                "Either",
+                Tag[Any],
+                typeParams = Chunk(aSchema.structure, bSchema.structure),
+                variants = Chunk(
+                    Structure.Variant("Left", aSchema.structure),
+                    Structure.Variant("Right", bSchema.structure)
+                ),
+                enumValues = Chunk.empty
+            )
         )
 
     /** Schema for Dict[String, V] - serializes as a JSON object. */
-    given stringDictSchema[V](using vSchema: Schema[V]): Schema[Dict[String, V]] =
-        Schema.init[Dict[String, V]](
+    given stringDictSchema[V](using vSchema: Schema[V], frame: Frame): Schema[Dict[String, V]] =
+        Schema.initWithStructure[Dict[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
                 discard(value.foldLeft(0) { (idx, k, v) =>
@@ -1990,11 +2052,19 @@ object Schema:
                 val dict = loop(Dict.empty[String, V], 1)
                 reader.mapEnd()
                 dict
+            ,
+            // Deviation D-1: Tag[Dict[String,V]] requires Tag[V]. Fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "Dict",
+                Tag[Any],
+                Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]),
+                vSchema.structure
+            )
         )
 
     /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
-    given dictSchema[K, V](using kSchema: Schema[K], vSchema: Schema[V]): Schema[Dict[K, V]] =
-        Schema.init[Dict[K, V]](
+    given dictSchema[K, V](using kSchema: Schema[K], vSchema: Schema[V], frame: Frame): Schema[Dict[K, V]] =
+        Schema.initWithStructure[Dict[K, V]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
                 value.foreach { (k, v) =>
@@ -2020,6 +2090,14 @@ object Schema:
                 val dict = loop(Dict.empty[K, V], 1)
                 reader.arrayEnd()
                 dict
+            ,
+            // Deviation D-1: Tag[Dict[K,V]] requires Tag[K] + Tag[V]. Fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "Dict",
+                Tag[Any],
+                kSchema.structure,
+                vSchema.structure
+            )
         )
 
     // --- Internal helpers ---
