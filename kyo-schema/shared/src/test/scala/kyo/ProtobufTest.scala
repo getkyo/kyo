@@ -648,6 +648,25 @@ class ProtobufTest extends kyo.test.Test[Any]:
         }
     }
 
+    // ===== Protobuf rejects Open =====
+    // Pins INV-25: Open raises SchemaNotSerializableException in Protobuf (NOT IllegalArgumentException).
+
+    "Protobuf rejects Open" - {
+
+        "ProtoSchema.fromStructure on Open throws SchemaNotSerializableException" in {
+            val open = Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
+            val ex   = intercept[SchemaNotSerializableException](Protobuf.ProtoSchema.fromStructure(open))
+            assert(ex.getMessage.contains("open-shape schemas"))
+        }
+
+        "ProtoSchema.fromStructure on Open throws SchemaNotSerializableException not IllegalArgumentException" in {
+            val open = Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
+            val ex   = intercept[SchemaNotSerializableException](Protobuf.ProtoSchema.fromStructure(open))
+            assert(!ex.isInstanceOf[IllegalArgumentException])
+        }
+
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions

@@ -248,18 +248,11 @@ object Structure:
                 }
             case _ => Chunk.empty
 
-        /** Hand-written Schema for Structure.Type that replaces the previously auto-derived
-          * `derives Schema` instance. The replacement is intentionally an ANONYMOUS given (no
-          * name) on the companion: the lock does not list a named `typeSchema` symbol, and
-          * keeping the explicit given on the `Structure.Type` companion preserves grep-ability
-          * (search `given Schema[Structure.Type]` finds the single declaration) without
-          * introducing a new public NAMED member outside the lock.
+        /** Schema instance for `Structure.Type`. Authors update this declaration when a new variant
+          * is added to the sum, ensuring the wire shape changes only with explicit code review.
           *
-          * `Schema.derived` re-emits the sum-Schema for `Structure.Type` via the FocusMacro path
-          * after `derives Schema` is removed at the class level. The behavior is unchanged
-          * (same auto-derived Schema), but the explicit form forces authors to update this
-          * declaration when a new variant is added, instead of silently re-shaping the
-          * auto-derived wire format.
+          * `Schema.derived` emits the sum-Schema for `Structure.Type` via the FocusMacro path. The
+          * explicit declaration ensures the wire shape changes only when authors update this given.
           */
         given Schema[Structure.Type] = Schema.derived
 
