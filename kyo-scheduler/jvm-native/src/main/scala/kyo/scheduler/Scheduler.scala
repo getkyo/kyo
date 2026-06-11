@@ -414,7 +414,8 @@ final class Scheduler(
         for (idx <- allocatedWorkers until currentWorkers) {
             workers(idx) =
                 new Worker(idx, pool, schedule, steal, clock, timeSliceMs) {
-                    def shouldStop(): Boolean = idx >= currentWorkers
+                    def shouldStop(): Boolean         = idx >= currentWorkers
+                    def currentInterruptEpoch(): Long = interruptEpoch.get()
                 }
             allocatedWorkers += 1
         }

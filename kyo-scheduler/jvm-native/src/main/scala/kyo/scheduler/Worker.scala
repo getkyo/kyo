@@ -90,6 +90,8 @@ abstract private class Worker(
 
     protected def shouldStop(): Boolean
 
+    protected def currentInterruptEpoch(): Long
+
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
     private val state = new AtomicReference[State](State.Idle)
@@ -127,6 +129,11 @@ abstract private class Worker(
     private var completions = 0L
     private var mounts      = 0L
     private var stolenTasks = 0L
+
+    // Epoch and timestamp of this worker's last queue rebuild. Single-thread-owned by the
+    // worker's own run loop (read and written only inside rebalance), so plain vars suffice.
+    private var lastRebuiltEpoch = 0L
+    private var lastRebuildMs    = 0L
 
     private val lostTasks = new LongAdder
 
@@ -175,6 +182,25 @@ abstract private class Worker(
     def drain(): Unit =
         queue.drain(schedule)
 
+    /** Re-heapifies this worker's own queue when an interrupt has reset a queued task's runtime in place.
+      *
+      * Gated on two conditions so the common case stays off the hot path: the interrupt epoch must have advanced past the last rebuild, and
+      * at least minInterval milliseconds must have elapsed since the last rebuild. When both hold, queue.rebuild() re-establishes priority
+      * order in O(n), sifting the reset task (now lowest runtime) to the head so the next poll returns it within a bounded, load-independent
+      * delay. Operates only on this worker's own queue.
+      */
+    private def rebalance(): Unit = {
+        val epoch = currentInterruptEpoch()
+        if (epoch != lastRebuiltEpoch) {
+            val now = clock.currentMillis()
+            if (now - lastRebuildMs >= minInterval()) {
+                queue.rebuild()
+                lastRebuiltEpoch = epoch
+                lastRebuildMs = now
+            }
+        }
+    }
+
     /** Checks if this worker can accept new tasks by verifying:
       *   - Not stalled on a long-running task
       *   - Not in Stalled state
@@ -211,6 +237,10 @@ abstract private class Worker(
 
         try
             while (!shouldStop()) {
+                // Re-sift the queue if an interrupt reset a queued task, before polling so the
+                // reset victim reaches the head and the next poll returns it (epoch-and-time-gated).
+                rebalance()
+
                 // Mark worker as actively running
                 state.set(State.Running)
 
