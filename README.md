@@ -7,23 +7,68 @@
 [![Discord](https://img.shields.io/discord/1087005439859904574?logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/KxxkBbW8bq)
 [![License](https://img.shields.io/github/license/getkyo/kyo?color=blue)](LICENSE.txt)
 
-Kyo is a Scala 3 toolkit for building applications. One source tree compiles to JVM, JavaScript, Scala Native, and WebAssembly. The library is built on algebraic effects with modular handlers, exposed through a compact infix type `A < S` ("A pending S"), where `S` is an open, type-level *set* of effects rather than a fixed `R, E, A` triple or a single concrete `IO`. An effect such as `Var[State]`, `Emit[Log]`, or `Abort[NotFound]` becomes another member of the set at the call site. Capabilities are not threaded through an `R` environment, hidden inside a typeclass dictionary, or stacked through monad transformers.
+Kyo is a Scala 3 toolkit for building applications. Its starting point is what it makes impossible: an error path left unhandled does not compile. An effect used without being declared in the signature is rejected at the call site. A resource cannot outlive its scope, even when something fails partway through. Concurrent work started together cannot leak its children. A durable workflow's progress survives a crash and resumes from the last completed step. One source tree compiles to JVM, JavaScript, Scala Native, and WebAssembly.
 
-Kyo is pure monadic computation, programs-as-values. A value of type `A < S` is a pure description of a program (an immutable value that handlers interpret, not a deferred thunk you just run), composed with `map`, `flatMap`, and Scala 3's for-comprehensions the same way you compose `Option`, `Future`, `IO`, or `ZIO`. Algebraic effects do not replace the monadic style; they sit on top of it, letting the *effect row* be open and compositional while every program remains a pure value.
-
-Algebraic effects with handlers separate the *declaration* of an effect from its *interpretation*. The theory traces back to Plotkin and Pretnar and to languages like Koka and Eff. The Kyo encoding represents the effect row as a type-level set rather than a typeclass dictionary or monad-transformer stack, so combining effects does not require stacking transformers or chaining capability traits. The practical difference: where typed-monad systems fix a closed set of channels and rely on transformers or capability stacks to combine them, Kyo lets the effect set be an *open* type-level union you assemble per call. A function returning `A < (Sync & Abort[E] & Env[Config] & Emit[Log])` lists the four capabilities it needs in its return type; the call site supplies handlers in any order.
+The mechanism behind those guarantees is algebraic effects with modular handlers, exposed through a compact infix type `A < S` ("A pending S"): `A` is the value the computation produces, and `S` is the open, type-level *set* of effects it needs. A function returning `A < (Sync & Abort[E] & Env[Config] & Emit[Log])` names its four effects in its return type. Handlers remove effects from the set one at a time, the call site decides where each one runs, and the compiler refuses to execute anything until the set is empty. Composition stays ordinary Scala: `map`, `flatMap`, and for-comprehensions over plain values. The theory traces back to Plotkin and Pretnar and to languages like Koka and Eff.
 
 For a deeper context, see [Suspension: the magic behind composability](https://www.youtube.com/watch?v=y3KiuFczOFE) (Lambda Days 2025), or jump to [Modules](#modules) for the ecosystem map.
 
-> Looking for the published documentation site? See https://getkyo.io.
+> Coming from ZIO or Cats Effect? Jump straight to [the migration table](#coming-from-zio-or-cats-effect).
+
+## Getting Started
+
+Add the modules you want to `build.sbt`. Most application code starts with `kyo-core` (see the [Modules](#modules) tables below for what each module provides). Add more modules as needed.
+
+```sbt doctest:expect=skipped
+libraryDependencies ++= Seq(
+    "io.getkyo" %% "kyo-core" % "<version>",
+    "io.getkyo" %% "kyo-http" % "<version>"    // optional: HTTP client/server
+)
+```
+
+Use `%%` for JVM and Scala Native, `%%%` for the Scala.js and WebAssembly backends. See the [Modules](#modules) tables below for platform support per module. Replace `<version>` with: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
+
+A minimal application extends `KyoApp`, the entrypoint trait that discharges the effect row your `main` body produces:
+
+```scala doctest:expect=skipped
+import kyo.*
+
+object Hello extends KyoApp:
+    run {
+        Sync.defer(println("Hello from Kyo"))
+    }
+end Hello
+```
+
+A first read-through of [`kyo-core/README.md`](kyo-core/README.md) covers `Sync`, `Async`, `Scope`, `Fiber`, `KyoApp`, and the standard concurrent primitives. The natural follow-up for an application developer is [`kyo-http`](kyo-http/README.md). From there, drop into the module map below as your application grows. Worked end-to-end programs live in [`kyo-examples`](kyo-examples).
+
+### Prerequisites
+
+Kyo uses advanced features from the latest Scala 3 versions that [IntelliJ IDEA may not fully support](https://github.com/getkyo/kyo/issues/1249). For a smoother development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server, which offers better stability. Refer to the Metals [guide](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to SBT BSP.
+
+These Scala compiler flags are required when working with Kyo. They catch common mistakes (silently discarded effects, untyped equality) that the API surface relies on you not making:
+
+1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
+2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
+3. `-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
+4. `-language:strictEquality`: Enforces type-safe equality comparisons by requiring explicit evidence that types can be safely compared.
+
+Add these to your `build.sbt`:
+
+```scala doctest:expect=skipped
+scalacOptions ++= Seq(
+    "-Wvalue-discard",
+    "-Wnonunit-statement",
+    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error",
+    "-language:strictEquality"
+)
+```
+
+Each of these warnings usually points at a real bug in a Kyo application: a pure expression in statement position is typically a computation that was built and then discarded, so it will never execute; an unused non-Unit value usually means a computation was passed somewhere that handles only part of its effect set (a `Sync & Abort[Exception]` computation given to a parameter that accepts only `Sync`); and strict equality stops opaque types like `Maybe` from being compared against unrelated types (`Maybe[Int]` vs `Option[Int]` or a raw `Int`). To relax equality in a specific scope, introduce a permissive `CanEqual` given: `given [A, B]: CanEqual[A, B] = CanEqual.derived`. In test code, where asserting side effects without using their returned values is common, you may want to selectively disable the warnings: `Test / scalacOptions --= Seq(options, to, disable)`.
 
 ## Introduction
 
-This section is the working vocabulary needed before opening any module README: how to import Kyo, the pending type, how to compose effects, the shape every effect follows, how handler ordering shows up in the result type, and the recommended writing style. Each subsection links back into the relevant per-module deep dive.
-
-### Imports: one `import kyo.*` covers the user-facing surface
-
-`import kyo.*` brings in the pending type, value types (`Maybe`, `Result`, `Chunk`, `Span`), effects (`Sync`, `Async`, `Abort`, `Env`, `Var`, `Scope`, `Emit`), and runtime primitives (`Fiber`, `Channel`, `Promise`, `AtomicRef`). What's exported depends on which modules are on the classpath: adding a module adds its types, no per-module import to remember. Two subpackages exist for specialized use: `kyo.kernel.*` (defining new effects) and `kyo.compat.*` (the runtime-portable library-author surface, see [`kyo-compat`](kyo-compat/README.md)). Any module asking for an import beyond `kyo.*` says so in its README.
+This section is how the guarantees work: the pending type, how to import Kyo, how to compose effects, the shape every effect follows, how handler ordering shows up in the result type, and the recommended writing style. It is the working vocabulary for every module README, and each subsection links into the relevant per-module deep dive.
 
 ### The pending type
 
@@ -53,21 +98,13 @@ Handlers discharge one effect at a time, returning a value whose row no longer m
 val d: Result[String, Int] < Sync = Abort.run(c)
 ```
 
-`.eval` is the universal "give me the value" call, but the compiler will refuse it until every effect in the row has been handled. A `< (Sync & Abort[E])` value cannot escape into plain Scala without `Sync` and `Abort` being explicitly handled first; the unhandled-effect set is part of the value's type. This is the single property that makes the rest of Kyo work: every signature spells out exactly which capabilities it consumes, and the call site decides where each one gets interpreted.
+`.eval` is the universal "give me the value" call, but the compiler will refuse it until every effect in the row has been handled. A `< (Sync & Abort[E])` value cannot escape into plain Scala without `Sync` and `Abort` being explicitly handled first; the unhandled-effect set is part of the value's type. This is the single property that makes the rest of Kyo work: every signature spells out exactly which effects it consumes, and the call site decides where each one gets interpreted.
 
-The expected way to discharge `Sync` is through an entrypoint that owns the side-effecting boundary: `kyo.KyoApp` for applications (see [`kyo-core`](kyo-core/README.md)), `kyo.test.Test` for tests (the project's own cross-platform test framework, see [`kyo-test`](kyo-test/README.md)). A direct `Sync.Unsafe.evalOrThrow` exists for scripts and REPL exploration but requires an explicit `AllowUnsafe` witness in scope, which is the project-wide convention for "I am opting into an escape hatch that bypasses suspension." Importing `kyo.AllowUnsafe.embrace.danger` provides that witness:
+The expected way to discharge `Sync` is through an entrypoint that owns the side-effecting boundary: `kyo.KyoApp` for applications (see [`kyo-core`](kyo-core/README.md)), `kyo.test.Test` for tests (the project's own cross-platform test framework, see [`kyo-test`](kyo-test/README.md)). An escape hatch for scripts and REPL exploration exists (`Sync.Unsafe.evalOrThrow`, gated by an explicit `AllowUnsafe` witness), but it bypasses the runtime guarantees the effect system provides; see [`kyo-core`](kyo-core/README.md) for when and how to use it.
 
-```scala doctest:scope=inherited
-// Bring an AllowUnsafe witness into scope. Anyone reading the code sees the opt-in,
-// and the compiler refuses any unsafe call unless this import is present.
-import kyo.AllowUnsafe.embrace.danger
+### Imports: all you need is `import kyo.*`
 
-// Sync.Unsafe.evalOrThrow drops the row's last effect and returns the bare value.
-// Side effects fire immediately on the calling thread.
-val e: Result[String, Int] = Sync.Unsafe.evalOrThrow(d)
-```
-
-> **Caution:** `AllowUnsafe.embrace.danger` is, as the name implies, dangerous. It loses the runtime guarantees the effect system provides: the call is no longer fiber-aware (it runs synchronously on the calling thread), cancellation does not propagate into it, and `Sync` is collapsed by running its body rather than by handling it. Reach for it in scripts, demos, test harnesses, and the small set of bridge points where a non-Kyo runtime must drive a Kyo computation. Production code should reach `Sync` through a `KyoApp` entrypoint.
+One import covers everything. `import kyo.*` brings in the pending type, the value types (`Maybe`, `Result`, `Chunk`, `Span`), the effects (`Sync`, `Async`, `Abort`, `Env`, `Var`, `Scope`, `Emit`), and the runtime primitives (`Fiber`, `Channel`, `Promise`, `AtomicRef`). Adding a module to the classpath adds its types to that same import: no per-module import to remember. Two subpackages exist for specialized use, `kyo.kernel.*` (defining new effects) and `kyo.compat.*` (the runtime-portable library-author surface, see [`kyo-compat`](kyo-compat/README.md)), and any module asking for an import beyond `kyo.*` says so in its README.
 
 ### Composing computations: `map`, `flatMap`, and `for`
 
@@ -78,8 +115,9 @@ val parsed: Int < Sync =
     Sync.defer("42").map(_.toInt)
 
 val chained: String < Sync =
-    Sync.defer("42").flatMap: s =>
+    Sync.defer("42").flatMap { s =>
         Sync.defer(s.toInt).map(_ + 1).map(_.toString)
+    }
 ```
 
 In Kyo, `map` and `flatMap` are the same method. Both have this signature:
@@ -90,9 +128,27 @@ extension [A, S](v: A < S)
     def flatMap[B, S2](f: A => B < S2): B < (S & S2)
 ```
 
-The function argument is always `A => B < S2`. A plain function `A => B` passes too because of **automatic lifting**: any value of type `A` lifts to `A < S` through a zero-cost type-level conversion (no runtime wrapping, no allocation), so `A => B` is already a valid `A => B < Any`. The bind never needs to combine a separate `pure` operation with `flatMap` the way classical monad encodings do.
+The function argument is always `A => B < S2`. A plain function `A => B` passes too because of **automatic lifting**: any value of type `A` lifts to `A < S` through a zero-cost type-level conversion (no runtime wrapping, no allocation), so `A => B` is already a valid `A => B < Any`. There is no `pure`, `succeed`, or `point` to call, ever: wherever a computation is expected, a plain value works.
 
-Automatic lifting is the type-level dual of JS-Promise-style flattening, and it is what makes the encoding sound. `Promise.then` accepts either `A => B` or `A => Promise<B>` and at runtime *flattens* a returned `Promise<Promise<A>>` down to `Promise<A>` by running the inner promise dynamically. That flatten loses the ability to represent a real `Promise<Promise<A>>`, breaks the monad laws, and forces every consumer to reason about an implicit runtime collapse. Kyo's automatic lifting does the opposite: there is no runtime collapse, `B < S2 < S3` is a real distinct type. Use `Kyo.lift` when you explicitly want to nest a computation (`Kyo.lift(inner: B < S2): (B < S2) < S3`); use `.flatten` to collapse one. The one bind operator stays both honest and law-abiding.
+```scala
+def describe(n: Int < Sync): String < Sync =
+    n.map(v => if v > 0 then "positive" else "non-positive")
+
+// A plain value lifts on the spot: no wrapping call, no allocation
+val fromValue: String < Sync = describe(42)
+
+// An effectful computation passes unchanged
+val fromEffect: String < Sync = describe(Sync.defer(42))
+
+// map takes pure and effectful functions alike: a pure function's result
+// lifts, an effectful function's row merges into the result type
+val pureStep: Int < Sync      = Sync.defer(20).map(_ + 1)
+val effectfulStep: Int < Sync = pureStep.map(v => Sync.defer(v * 2))
+```
+
+This is what keeps Kyo code free of wrapping ceremony. For-comprehensions mix pure and effectful steps without marking which is which, the bind never needs a separate `pure` operation the way classical monad encodings do, and a function that accepts `A < S` accepts a constant from a test as easily as a database call from production.
+
+> **Note:** Automatic lifting is the type-level dual of JS-Promise-style flattening, and it is what makes the encoding sound. `Promise.then` accepts either `A => B` or `A => Promise<B>` and at runtime *flattens* a returned `Promise<Promise<A>>` down to `Promise<A>` by running the inner promise dynamically. That flatten loses the ability to represent a real `Promise<Promise<A>>`, breaks the monad laws, and forces every consumer to reason about an implicit runtime collapse. Kyo's automatic lifting does the opposite: there is no runtime collapse, `B < S2 < S3` is a real distinct type. Use `Kyo.lift` when you explicitly want to nest a computation (`Kyo.lift(inner: B < S2): (B < S2) < S3`); use `.flatten` to collapse one. The one bind operator stays both honest and law-abiding.
 
 Use whichever of `map` / `flatMap` reads better at the call site, or use a for-comprehension when the chain is long enough to benefit:
 
@@ -123,7 +179,7 @@ Every Kyo effect has the same three-phase shape: it is *introduced* into the row
 - `get*` lifts an existing value into the effect's row (`Abort.get(Right(42))` produces an `Int < Abort[Nothing]`, `Env.get[Config]` reads the environment value, `Var.get[V]` reads the current state).
 - `run*` discharges the effect, returning a computation whose row no longer mentions it (`Abort.run`, `Env.run(config)`, `Var.run(init)`, `Sync.Unsafe.evalOrThrow`).
 
-A common misconception is that Kyo tracks every side effect a computation performs, a separate effect for console access, another for clock reads, and so on. It does the opposite. The pending set is kept deliberately small and canonical: `S` names coarse capabilities (can this suspend, can it fail, does it read configuration), not individual operations. Printing to the console, for instance, is just `Sync`, with no `Console` effect in the row (`Console` is an ordinary API whose methods return `Unit < Sync`). Keeping the set small is what makes rows readable and effects compose, instead of turning every signature into a ledger of operations.
+A common misconception is that Kyo tracks every side effect a computation performs, a separate effect for console access, another for clock reads, and so on. It does the opposite. The pending set is kept deliberately small and canonical: `S` names coarse effects (can this suspend, can it fail, does it read configuration), not individual operations. Printing to the console, for instance, is just `Sync`, with no `Console` effect in the row (`Console` is an ordinary API whose methods return `Unit < Sync`). Keeping the set small is what makes rows readable and effects compose, instead of turning every signature into a ledger of operations.
 
 Defining a brand-new effect is therefore an advanced, rarely-needed step. The three-phase shape applies to your own effects too (`ArrowEffect` / `ContextEffect`, see [`kyo-kernel`](kyo-kernel/README.md)), but most of what looks like it needs a new effect is better served by an opaque type with extension methods layered over the existing effects. Reach for a genuinely new effect only when no existing one captures the control-flow shape you need.
 
@@ -192,9 +248,147 @@ Kyo is programs-as-values: every `A < S` is a pure description that handlers int
 
 If you prefer direct-style code, [kyo-direct](kyo-direct/README.md) ships a `direct { ... }` macro that lets you write `val x = effect1.now; val y = effect2.now; x + y` and compiles it to the same `flatMap` chain. Direct style is an alternative, not the default. Reach for it when a function's suspension graph is dense enough that nested `flatMap` calls or a long for-comprehension would obscure the logic; stay with the monadic style everywhere else. Either way, the underlying values are still pure monadic computation: `direct { ... }` is sugar, not a different runtime.
 
-With this much vocabulary in hand, the table below maps your current ecosystem onto Kyo's effect set.
+## Platforms
 
-## Coming from ZIO, Cats Effect, or plain Future
+One source tree, one Scala 3 LTS compiler, four published targets:
+
+| Platform     | Runtime              | Coordinate |
+| ------------ | -------------------- | ---------- |
+| JVM          | JDK 21+              | `%%`       |
+| Scala.js     | Node.js, browsers    | `%%%`      |
+| Scala Native | Native binary (LLVM) | `%%`       |
+| WebAssembly  | Node.js 24+          | `%%%`      |
+
+Scala.js and the WebAssembly backend share a single-threaded, event-loop concurrency model; on the JVM, Kyo runs its multi-threaded work-stealing scheduler.
+
+WebAssembly uses the experimental Scala.js WebAssembly backend (WasmGC). It runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default; Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js with one exception: the cats-effect bridges `kyo-cats` and `kyo-compat-ce` are not built for WASM, because cats-effect does not yet support the backend ([cats-effect#4608](https://github.com/typelevel/cats-effect/issues/4608)).
+
+The Core, Applications, and most other groups cross-compile to all four. Modules that wrap a JVM-only library are JVM only (`kyo-caliban`, `kyo-aeron`, the logging bridges, the scheduler embeds, `kyo-compat-ox` / `-twitter-future`); `kyo-offheap` and `kyo-scheduler-zio` are JVM and Native. The per-module tables below carry the exact matrix.
+
+## Modules
+
+Every module ships its own README. Open the linked README for the full surface, features, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean published artifacts: ✅ marks the platforms each module is published for.
+
+<!-- TODO (open decision 3): one-line production-users / versioning-policy pointer goes here. -->
+
+### Core
+
+What every Kyo program uses. `kyo-core` and `kyo-prelude` carry the effects you touch most, `kyo-data` the value types they return. `kyo-kernel` defines `A < S` itself and is where effect authors look. `kyo-scheduler` is the engine fibers run on, also usable as a standalone jar (see [the drop-in scheduler](#drop-in-scheduler-for-zio-cats-effect-pekko-finagle)). `kyo-data` also works standalone: `Maybe`, `Result`, and `Chunk` without the effect system.
+
+| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-core](kyo-core/README.md)               | ✅   | ✅   | ✅      | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path` |
+| [kyo-prelude](kyo-prelude/README.md)         | ✅   | ✅   | ✅      | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`    |
+| [kyo-data](kyo-data/README.md)               | ✅   | ✅   | ✅      | ✅   | Low-allocation values: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`  |
+| [kyo-kernel](kyo-kernel/README.md)           | ✅   | ✅   | ✅      | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations    |
+| [kyo-scheduler](kyo-scheduler/README.md)     | ✅   | ✅   | ✅      | ✅   | Adaptive work-stealing pool with automatic blocking detection and admission control                       |
+
+### Applications
+
+The vertical an application developer assembles: HTTP services and clients, derived codecs, runtime config and feature flags, durable workflows, web UIs, and a GraphQL surface.
+
+| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-http](kyo-http/README.md)               | ✅   | ✅   | ✅      | ✅   | HTTP/1.1 client and server (no HTTP/2 or WebSockets) with shared API across JVM/JS/Native/WASM, bidirectional OpenAPI |
+| [kyo-schema](kyo-schema/README.md)           | ✅   | ✅   | ✅      | ✅   | One `derives Schema` powers JSON, Protobuf, validation, lenses, diffs, builders, and structural conversion |
+| [kyo-config](kyo-config/README.md)           | ✅   | ✅   | ✅      | ✅   | Type-safe config + feature flags with a percentage-rollout DSL, optional kyo-http admin and live sync     |
+| [kyo-flow](kyo-flow/README.md)               | ✅   | ✅   | ✅      | ✅   | Durable workflow engine (Temporal/Cadence/ZIO-Flow space); value-replay execution, auto-generated REST     |
+| [kyo-ui](kyo-ui/README.md)                   | ✅   | ✅   | ✅      | ✅   | Web UIs as pure values: one `UI` runs as a Scala.js DOM app (`runMount`), server HTML-over-SSE (`runHandlers`), or SSR stream (`runRender`); first-class `Signal` reactivity, compile-checked HTML |
+| [kyo-caliban](kyo-caliban/README.md)         | ✅   |    |       |    | Caliban GraphQL mounted on kyo-http: typed Kyo effects in resolvers, WebSocket subscriptions              |
+
+### Writing style
+
+Two ways to write Kyo code more fluently. Pick `kyo-direct` for straight-line code with `.now` suspension points; pick `kyo-combinators` for ZIO-style fluent operators and the `forAbort[E1]` failure-narrowing DSL.
+
+| Module                                         | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| ---------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-direct](kyo-direct/README.md)             | ✅   | ✅   | ✅      | ✅   | Direct-style: `direct { val x = effect.now; ... }` desugars to the equivalent `flatMap` chain             |
+| [kyo-combinators](kyo-combinators/README.md)   | ✅   | ✅   | ✅      | ✅   | Sanctioned home for symbolic operators (`*>`, `<*>`, `&>`) and the `forAbort[E1]` narrowing DSL           |
+
+### Testing
+
+The project's own cross-platform test framework, plus a bridge for running `zio-test` suites with Kyo bodies.
+
+| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-test](kyo-test/README.md)               | ✅   | ✅   | ✅      | ✅   | Cross-platform test framework: `Test[S]` suites (`-` groups, `in` leaves), a single power-`assert`, property-based (`PropertyTest`) and snapshot (`SnapshotTest`) testing, run-time no-assertion enforcement, sbt plugin |
+| [kyo-zio-test](kyo-zio-test/README.md)       | ✅   | ✅   | ✅      | ✅   | Write `zio-test` `Spec`s whose bodies are Kyo computations (`KyoSpecDefault`, `KyoSpecAbstract`)          |
+
+### Concurrency
+
+Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-actor` for typed message passing; `kyo-stm` for multi-cell atomicity; `kyo-offheap` for typed arrays outside the JVM heap.
+
+| Module                                         | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| ---------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-actor](kyo-actor/README.md)               | ✅   | ✅   | ✅      | ✅   | Typed actors over `Channel` and `Fiber`: `Subject[A]`, `ask`, supervision by composition                  |
+| [kyo-stm](kyo-stm/README.md)                   | ✅   | ✅   | ✅      | ✅   | STM with `TRef` / `TMap` / `TChunk` / `TTable`, including compile-checked `TTable.Indexed` queries        |
+| [kyo-offheap](kyo-offheap/README.md)           | ✅   |    | ✅      |    | Arena-scoped typed primitive arrays via JEP 442 (JVM 22+) and `calloc`/`free` (Native)                    |
+
+### Specialized tools
+
+Parsing, container management, browser automation, and low-latency messaging.
+
+| Module                                                 | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| ------------------------------------------------------ | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-parse](kyo-parse/README.md)                       | ✅   | ✅   | ✅      | ✅   | Parser combinators in the effect row; supports dual-input-type parsers (e.g. `Parse[Char] & Parse[Int]`)  |
+| [kyo-pod](kyo-pod/README.md)                           | ✅   | ✅   | ✅      | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup     |
+| [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
+| [kyo-aeron](kyo-aeron/README.md)                       | ✅   |    |       |    | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
+
+### Observability
+
+In-process metrics and tracing registry, OTLP exporter that activates from `OTEL_EXPORTER_OTLP_ENDPOINT`, and two bridges from `kyo.Log` to the JDK or SLF4J logging APIs.
+
+| Module                                                   | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-stats-registry](kyo-stats-registry/README.md)       | ✅   | ✅   | ✅      | ✅   | Process-global registry; counters / gauges / counter-gauges / histograms; `TraceExporter` SPI             |
+| [kyo-stats-otlp](kyo-stats-otlp/README.md)               | ✅   | ✅   | ✅      | ✅   | Zero-code OTLP/HTTP+JSON exporter; W3C `traceparent` propagation auto-installed on kyo-http               |
+| [kyo-logging-jpl](kyo-logging-jpl/README.md)             | ✅   |    |       |    | Bridge `kyo.Log` to `java.lang.System.Logger` (JEP 264, JDK 9+); zero third-party deps                    |
+| [kyo-logging-slf4j](kyo-logging-slf4j/README.md)         | ✅   |    |       |    | Bridge `kyo.Log` to any SLF4J binding the host application already configures (Logback, Log4j 2, etc.)    |
+
+### Interop
+
+Whatever you keep from your current stack, there is a bridge. Bidirectional bridges to neighbouring effect systems, plus `kyo-compat` for writing a library once and shipping it to six runtimes.
+
+| Module                                                   | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-cats](kyo-cats/README.md)                           | ✅   | ✅   |       |    | Two-method bridge between Kyo and `cats.effect.IO`, with bidirectional cancellation                       |
+| [kyo-zio](kyo-zio/README.md)                             | ✅   | ✅   | ✅      | ✅   | Three-object bridge: `ZIOs` (effects), `ZStreams` (streams), `ZLayers` (layers)                           |
+| [kyo-reactive-streams](kyo-reactive-streams/README.md)   | ✅   | ✅   | ✅      | ✅   | Bidirectional bridge between Kyo `Stream` and `Publisher`/`Subscriber`; verified against the TCK          |
+| [kyo-compat](kyo-compat/README.md)                       | ✅   | ✅*  | ✅*     | ✅*  | Library-author API: write once against `kyo.compat.*`, ship to ZIO, CE, Kyo, Future, Twitter Future, Ox   |
+
+*kyo-compat platform support depends on the runtime binding (-kyo / -future / -zio: JVM+JS+Native+WASM; -ce: JVM+JS; -ox / -twitter-future: JVM).
+
+### Dev tools
+
+CLI-parser bridge, README example validation, runnable end-to-end programs, and the cross-runtime benchmark suite.
+
+| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-case-app](kyo-case-app/README.md)       | ✅   | ✅   | ✅      | ✅   | Bridge case-app annotation-driven CLI parsing into a Kyo `run { options => ... }` entrypoint              |
+| [kyo-doctest](kyo-doctest/README.md)         | ✅   |    |       |    | Validates Markdown code blocks against the Scala 3 compiler; sbt plugin runs them on `sbt doctest`        |
+| [kyo-examples](kyo-examples)                 | ✅   |    |       |    | Two runnable programs: a ledger HTTP service and an N-queens solver (run with `sbt`)                      |
+| [kyo-bench](kyo-bench)                       | ✅   |    |       |    | JMH suite with side-by-side Kyo / Cats Effect / ZIO implementations for each scenario                     |
+
+<!-- Tree-backed rule: rows for the dev-time AI tooling (coding-agent plugin, LSP and MCP
+     surfaces) are added when those artifacts land. -->
+
+### Scheduler interop
+
+Replace the host runtime's executors with Kyo's adaptive work-stealing scheduler. One pool covers compute and blocking work, with admission control and CPU-based blocking detection; no application code change beyond a one-line swap.
+
+| Module                                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
+| ------------------------------------------------------------ | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
+| [kyo-scheduler-cats](kyo-scheduler-cats/README.md)           | ✅   |    |       |    | Drop-in `IORuntime` replacement: `extends KyoSchedulerIOApp` or `import KyoSchedulerIORuntime.global`     |
+| [kyo-scheduler-zio](kyo-scheduler-zio/README.md)             | ✅   |    | ✅      |    | ZIO: `extends KyoSchedulerZIOAppDefault` or `KyoSchedulerZIORuntime.default` standalone                   |
+| [kyo-scheduler-pekko](kyo-scheduler-pekko/README.md)         | ✅   |    |       |    | Pekko: one HOCON line replaces any dispatcher's executor                                                  |
+| [kyo-scheduler-finagle](kyo-scheduler-finagle/README.md)     | ✅   |    |       |    | Twitter Finagle: activated by `-Dcom.twitter.finagle.exp.scheduler=kyo` (Scala 2.13 only)                 |
+
+## Coming from ZIO or Cats Effect
+
+Two things stay exactly as you know them. First, `A < S` is a monad: the same programs-as-values style you write today, composed with `map`, `flatMap`, and for-comprehensions, referentially transparent, no macros and no capture-based tricks involved. Second, direct-style syntax is not the programming model: it ships as a separate, optional module ([`kyo-direct`](kyo-direct/README.md)), and the core is plain monadic composition.
+
+What changes is the effect channel. Kyo's pending set generalizes what these libraries fix in advance: where `ZIO[R, E, A]` carries two type-level channels and `cats.effect.IO[A]` carries one concrete effect type, `S` is an open set, so each requirement (`Env[R1]`, `Abort[E]`, `Sync`, `Async`) is a separate member assembled per call. Effects are not threaded through an `R` environment, hidden inside a typeclass dictionary, or stacked through monad transformers; handlers are supplied in any order at the call site.
 
 | You currently use                                            | Kyo translation                                                                                                                                                                                |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -214,164 +408,11 @@ With this much vocabulary in hand, the table below maps your current ecosystem o
 
 Three migration paths cover most adopters:
 
-- **Adopt Kyo end-to-end**: start at [Foundation](#foundation) and [Application runtime](#application-runtime), then pick the [HTTP and schema](#http-and-schema) and [Domain modules](#domain-modules) you need.
+- **Adopt Kyo end-to-end**: start at [Core](#core) and [Applications](#applications), then pick the other module groups you need.
 - **Add Kyo inside an existing ZIO or Cats Effect app**: use [`kyo-zio`](kyo-zio/README.md) or [`kyo-cats`](kyo-cats/README.md) for bidirectional effect interop; optionally swap the runtime scheduler with [`kyo-scheduler-zio`](kyo-scheduler-zio/README.md) or [`kyo-scheduler-cats`](kyo-scheduler-cats/README.md).
 - **Write a runtime-portable library**: use [`kyo-compat`](kyo-compat/README.md) to target ZIO, Cats Effect, Kyo, `scala.concurrent.Future`, Twitter Future, and Ox from one source tree.
 
 ZIO migrants looking for fluent extension methods (`.race`, `.timeout`, `.retry`, `.provide`, etc.) over Kyo effects should also see [`kyo-combinators`](kyo-combinators/README.md), which is also where Cats Effect migrants find the cats-syntax-style operators (`*>`, `<*`, `>>`) and the `forAbort[E1]` failure-narrowing DSL. Migrants whose fs2 / ZStream code crosses into Kyo can route through the bidirectional `Stream` bridge in [`kyo-reactive-streams`](kyo-reactive-streams/README.md).
-
-## Platforms
-
-One source tree, one Scala 3 LTS compiler, four published targets:
-
-| Platform     | Runtime              | Coordinate |
-| ------------ | -------------------- | ---------- |
-| JVM          | JDK 21+              | `%%`       |
-| Scala.js     | Node.js, browsers    | `%%%`      |
-| Scala Native | Native binary (LLVM) | `%%`       |
-| WebAssembly  | Node.js 24+          | `%%%`      |
-
-Scala.js and the WebAssembly backend share a single-threaded, event-loop concurrency model; on the JVM, Kyo runs its multi-threaded work-stealing scheduler.
-
-WebAssembly uses the experimental Scala.js WebAssembly backend (WasmGC). It runs on Node.js 24+, where V8's Turboshaft Wasm pipeline is the default; Kyo passes `--experimental-wasm-exnref` for the exception-handling opcodes the backend emits. Because the backend shares Scala.js's source and model, WASM coverage matches Scala.js with one exception: the cats-effect bridges `kyo-cats` and `kyo-compat-ce` are not built for WASM, because cats-effect does not yet support the backend ([cats-effect#4608](https://github.com/typelevel/cats-effect/issues/4608)).
-
-The Foundation, Application runtime, and most domain modules cross-compile to all four. Modules that wrap a JVM-only library are JVM only (`kyo-caliban`, `kyo-aeron`, the logging bridges, the scheduler embeds, `kyo-compat-ox` / `-twitter-future`); `kyo-offheap` and `kyo-scheduler-zio` are JVM and Native. The per-module tables below carry the exact matrix.
-
-## Modules
-
-Every module ships its own README. Open the linked README for the full surface, capabilities, callouts, and worked examples. The tables below name each module's identity in one sentence so you can pick the right one fast. Each identity cell names types and operations defined inside that module; expect unfamiliar names on first scan and treat the linked README as the source for what each one does. Platform columns mean published artifacts: ✅ = supported, ❌ = not built for that platform.
-
-### Foundation
-
-The substrate the rest of the ecosystem builds on. Most application code never depends on these directly; they ride in transitively through `kyo-core`.
-
-| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-data](kyo-data/README.md)               | ✅   | ✅   | ✅      | ✅   | Low-allocation values: `Maybe`, `Result`, `Chunk`, `Span`, `Duration`, `Instant`, `Schedule`, `TypeMap`  |
-| [kyo-kernel](kyo-kernel/README.md)           | ✅   | ✅   | ✅      | ✅   | Algebraic-effects substrate; defines `A < S`, `ArrowEffect`, `ContextEffect`, multi-shot continuations    |
-| [kyo-prelude](kyo-prelude/README.md)         | ✅   | ✅   | ✅      | ✅   | Strictly-pure effect layer: `Abort`, `Env`, `Var`, `Memo`, `Choice`, `Emit`, `Poll`, `Stream`, `Layer`    |
-
-### Application runtime
-
-The runtime layer most apps depend on directly. `kyo-core` is the standard-library equivalent for Kyo applications; `kyo-scheduler` is the work-stealing fiber pool under it.
-
-| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-scheduler](kyo-scheduler/README.md)     | ✅   | ✅   | ✅      | ✅   | Adaptive work-stealing pool with automatic blocking detection and admission control                       |
-| [kyo-core](kyo-core/README.md)               | ✅   | ✅   | ✅      | ✅   | I/O and concurrency: `Sync`, `Async`, `Scope`, `Fiber`, `Channel`, `Hub`, `Queue`, `Clock`, `Log`, `Path` |
-
-### HTTP and schema
-
-Web stack: HTTP client/server, derived JSON/Protobuf codecs, runtime config + feature flags, and a GraphQL surface.
-
-| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-http](kyo-http/README.md)               | ✅   | ✅   | ✅      | ✅   | HTTP/1.1 client and server (no HTTP/2 or WebSockets) with shared API across JVM/JS/Native/WASM, bidirectional OpenAPI |
-| [kyo-schema](kyo-schema/README.md)           | ✅   | ✅   | ✅      | ✅   | One `derives Schema` powers JSON, Protobuf, validation, lenses, diffs, builders, and structural conversion |
-| [kyo-config](kyo-config/README.md)           | ✅   | ✅   | ✅      | ✅   | Type-safe config + feature flags with a percentage-rollout DSL, optional kyo-http admin and live sync     |
-| [kyo-caliban](kyo-caliban/README.md)         | ✅   | ❌   | ❌      | ❌   | Caliban GraphQL mounted on kyo-http: typed Kyo effects in resolvers, WebSocket subscriptions              |
-
-### Direct style and combinators
-
-Two ways to write Kyo code more fluently. Pick `kyo-direct` for straight-line code with `.now` suspension points; pick `kyo-combinators` for ZIO-style fluent operators and the `forAbort[E1]` failure-narrowing DSL.
-
-| Module                                         | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| ---------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-direct](kyo-direct/README.md)             | ✅   | ✅   | ✅      | ✅   | Direct-style: `direct { val x = effect.now; ... }` desugars to the equivalent `flatMap` chain             |
-| [kyo-combinators](kyo-combinators/README.md)   | ✅   | ✅   | ✅      | ✅   | Sanctioned home for symbolic operators (`*>`, `<*>`, `&>`) and the `forAbort[E1]` narrowing DSL           |
-
-### Concurrent primitives
-
-Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-actor` for typed message passing; `kyo-stm` for multi-cell atomicity; `kyo-offheap` for typed arrays outside the JVM heap.
-
-| Module                                         | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| ---------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-actor](kyo-actor/README.md)               | ✅   | ✅   | ✅      | ✅   | Typed actors over `Channel` and `Fiber`: `Subject[A]`, `ask`, supervision by composition                  |
-| [kyo-stm](kyo-stm/README.md)                   | ✅   | ✅   | ✅      | ✅   | STM with `TRef` / `TMap` / `TChunk` / `TTable`, including compile-checked `TTable.Indexed` queries        |
-| [kyo-offheap](kyo-offheap/README.md)           | ✅   | ❌   | ✅      | ❌   | Arena-scoped typed primitive arrays via JEP 442 (JVM 22+) and `calloc`/`free` (Native)                    |
-
-### Domain modules
-
-Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, and web UIs.
-
-| Module                                                 | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| ------------------------------------------------------ | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-parse](kyo-parse/README.md)                       | ✅   | ✅   | ✅      | ✅   | Parser combinators in the effect row; supports dual-input-type parsers (e.g. `Parse[Char] & Parse[Int]`)  |
-| [kyo-flow](kyo-flow/README.md)                         | ✅   | ✅   | ✅      | ✅   | Durable workflow engine (Temporal/Cadence/ZIO-Flow space); value-replay execution, auto-generated REST     |
-| [kyo-pod](kyo-pod/README.md)                           | ✅   | ✅   | ✅      | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup     |
-| [kyo-aeron](kyo-aeron/README.md)                       | ✅   | ❌   | ❌      | ❌   | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
-| [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
-| [kyo-ui](kyo-ui/README.md)                             | ✅   | ✅   | ✅      | ✅   | Web UIs as pure values: one `UI` runs as a Scala.js DOM app (`runMount`), server HTML-over-SSE (`runHandlers`), or SSR stream (`runRender`); first-class `Signal` reactivity, compile-checked HTML |
-
-### Testing
-
-The project's own cross-platform test framework. (To run `zio-test` suites with Kyo bodies, see [`kyo-zio-test`](kyo-zio-test/README.md) under [Interop](#interop-with-other-effect-stacks).)
-
-| Module                                       | JVM | JS  | Native | Identity                                                                                                  |
-| -------------------------------------------- | --- | --- | ------ | --------------------------------------------------------------------------------------------------------- |
-| [kyo-test](kyo-test/README.md)               | ✅   | ✅   | ✅      | Cross-platform test framework: `Test[S]` suites (`-` groups, `in` leaves), a single power-`assert`, property-based (`PropertyTest`) and snapshot (`SnapshotTest`) testing, run-time no-assertion enforcement, sbt plugin |
-
-### Observability
-
-In-process metrics and tracing registry, OTLP exporter that activates from `OTEL_EXPORTER_OTLP_ENDPOINT`, and two bridges from `kyo.Log` to the JDK or SLF4J logging APIs.
-
-| Module                                                   | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-stats-registry](kyo-stats-registry/README.md)       | ✅   | ✅   | ✅      | ✅   | Process-global registry; counters / gauges / counter-gauges / histograms; `TraceExporter` SPI             |
-| [kyo-stats-otlp](kyo-stats-otlp/README.md)               | ✅   | ✅   | ✅      | ✅   | Zero-code OTLP/HTTP+JSON exporter; W3C `traceparent` propagation auto-installed on kyo-http               |
-| [kyo-logging-jpl](kyo-logging-jpl/README.md)             | ✅   | ❌   | ❌      | ❌   | Bridge `kyo.Log` to `java.lang.System.Logger` (JEP 264, JDK 9+); zero third-party deps                    |
-| [kyo-logging-slf4j](kyo-logging-slf4j/README.md)         | ✅   | ❌   | ❌      | ❌   | Bridge `kyo.Log` to any SLF4J binding the host application already configures (Logback, Log4j 2, etc.)    |
-
-### Interop with other effect stacks
-
-Bidirectional bridges to neighbouring effect systems. `kyo-compat` is the special case: write a library once, ship it to six runtimes.
-
-| Module                                                   | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| -------------------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-cats](kyo-cats/README.md)                           | ✅   | ✅   | ❌      | ❌   | Two-method bridge between Kyo and `cats.effect.IO`, with bidirectional cancellation                       |
-| [kyo-zio](kyo-zio/README.md)                             | ✅   | ✅   | ✅      | ✅   | Three-object bridge: `ZIOs` (effects), `ZStreams` (streams), `ZLayers` (layers)                           |
-| [kyo-zio-test](kyo-zio-test/README.md)                   | ✅   | ✅   | ✅      | ✅   | Write `zio-test` `Spec`s whose bodies are Kyo computations (`KyoSpecDefault`, `KyoSpecAbstract`)          |
-| [kyo-reactive-streams](kyo-reactive-streams/README.md)   | ✅   | ✅   | ✅      | ✅   | Bidirectional bridge between Kyo `Stream` and `Publisher`/`Subscriber`; verified against the TCK          |
-| [kyo-compat](kyo-compat/README.md)                       | ✅   | ✅*  | ✅*     | ✅*  | Library-author API: write once against `kyo.compat.*`, ship to ZIO, CE, Kyo, Future, Twitter Future, Ox   |
-
-*kyo-compat platform support depends on the runtime binding (-kyo / -future / -zio: JVM+JS+Native+WASM; -ce: JVM+JS; -ox / -twitter-future: JVM).
-
-### Scheduler embedding for other runtimes
-
-Replace the host runtime's executors with Kyo's adaptive work-stealing scheduler. One pool covers compute and blocking work, with admission control and CPU-based blocking detection; no application code change beyond a one-line swap.
-
-| Module                                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| ------------------------------------------------------------ | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-scheduler-cats](kyo-scheduler-cats/README.md)           | ✅   | ❌   | ❌      | ❌   | Drop-in `IORuntime` replacement: `extends KyoSchedulerIOApp` or `import KyoSchedulerIORuntime.global`     |
-| [kyo-scheduler-finagle](kyo-scheduler-finagle/README.md)     | ✅   | ❌   | ❌      | ❌   | Twitter Finagle: activated by `-Dcom.twitter.finagle.exp.scheduler=kyo` (Scala 2.13 only)                 |
-| [kyo-scheduler-pekko](kyo-scheduler-pekko/README.md)         | ✅   | ❌   | ❌      | ❌   | Pekko: one HOCON line replaces any dispatcher's executor                                                  |
-| [kyo-scheduler-zio](kyo-scheduler-zio/README.md)             | ✅   | ❌   | ✅      | ❌   | ZIO: `extends KyoSchedulerZIOAppDefault` or `KyoSchedulerZIORuntime.default` standalone                   |
-
-### Tooling
-
-CLI-parser bridge, README example validation, runnable end-to-end programs, and the cross-runtime benchmark suite.
-
-| Module                                       | JVM | JS  | Native | WASM | Identity                                                                                                  |
-| -------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
-| [kyo-case-app](kyo-case-app/README.md)       | ✅   | ✅   | ✅      | ✅   | Bridge case-app annotation-driven CLI parsing into a Kyo `run { options => ... }` entrypoint              |
-| [kyo-doctest](kyo-doctest/README.md)         | ✅   | ❌   | ❌      | ❌   | Validates Markdown code blocks against the Scala 3 compiler; sbt plugin runs them on `sbt doctest`        |
-| [kyo-examples](kyo-examples)                 | ✅   | ❌   | ❌      | ❌   | Two runnable programs: a ledger HTTP service and an N-queens solver (run with `sbt`)                      |
-| [kyo-bench](kyo-bench)                       | ✅   | ❌   | ❌      | ❌   | JMH suite with side-by-side Kyo / Cats Effect / ZIO implementations for each scenario                     |
-
-## Getting Started
-
-Add the modules you want to `build.sbt`. Most application code starts with `kyo-core`, which pulls in `kyo-prelude`, `kyo-kernel`, `kyo-data`, and `kyo-scheduler` transitively (see the [Foundation](#foundation) and [Application runtime](#application-runtime) tables above for what each provides). Add integrations and domain modules as needed.
-
-```sbt doctest:expect=skipped
-libraryDependencies ++= Seq(
-    "io.getkyo" %% "kyo-core" % "<version>",
-    "io.getkyo" %% "kyo-http" % "<version>"    // optional: HTTP client/server
-)
-```
-
-Use `%%` for JVM and Scala Native, `%%%` for the Scala.js and WebAssembly backends. See the [Modules](#modules) tables above for platform support per module. Replace `<version>` with: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
-
-A first read-through of [`kyo-core/README.md`](kyo-core/README.md) covers `Sync`, `Async`, `Scope`, `Fiber`, `KyoApp` (the entrypoint trait that discharges the effect row your `main` body produces), and the standard concurrent primitives. The natural follow-up for an application developer is [`kyo-http`](kyo-http/README.md). From there, drop into the rest of the module map above as your application grows. Worked end-to-end programs live in [`kyo-examples`](kyo-examples).
 
 ## Drop-in scheduler for ZIO, Cats Effect, Pekko, Finagle
 
@@ -381,7 +422,7 @@ A first read-through of [`kyo-core/README.md`](kyo-core/README.md) covers `Sync`
 - **Admission control.** The pool measures its own latency under load and rejects new submissions when it cannot meet a target, rather than queuing them indefinitely.
 - **CPU-based blocking detection.** It watches per-worker CPU time and reacts when a task stops making progress on-CPU, so blocking work needs no `blocking { }` annotation at the call site.
 
-It ships as an independent jar that runs on any Scala 2 or Scala 3 codebase, with or without the rest of Kyo. Dropping it into an existing ZIO, Cats Effect, Pekko, or Finagle service is a one-config swap: the host code keeps its native effect APIs, and the scheduler underneath adds the three capabilities above.
+It ships as an independent jar that runs on any Scala 2 or Scala 3 codebase, with or without the rest of Kyo. Dropping it into an existing ZIO, Cats Effect, Pekko, or Finagle service is a one-config swap: the host code keeps its native effect APIs, and the scheduler underneath adds the three additions above.
 
 See [`kyo-scheduler`](kyo-scheduler/README.md) for the standalone API, and one of the adapter READMEs for runtime-specific wiring:
 
@@ -389,40 +430,6 @@ See [`kyo-scheduler`](kyo-scheduler/README.md) for the standalone API, and one o
 - ZIO: [`kyo-scheduler-zio`](kyo-scheduler-zio/README.md)
 - Pekko: [`kyo-scheduler-pekko`](kyo-scheduler-pekko/README.md)
 - Finagle: [`kyo-scheduler-finagle`](kyo-scheduler-finagle/README.md) (Scala 2.13 only)
-
-## IDE Support
-
-Kyo uses advanced features from the latest Scala 3 versions that [IntelliJ IDEA may not fully support](https://github.com/getkyo/kyo/issues/1249). For a smoother development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server, which offers better stability. Refer to the Metals [guide](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to SBT BSP.
-
-## Required Compiler Flags
-
-These Scala compiler flags are required when working with Kyo. They catch common mistakes (silently discarded effects, untyped equality) that the API surface relies on you not making:
-
-1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
-2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
-3. `-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
-4. `-language:strictEquality`: Enforces type-safe equality comparisons by requiring explicit evidence that types can be safely compared.
-
-Add these to your `build.sbt`:
-
-```scala doctest:expect=skipped
-scalacOptions ++= Seq(
-    "-Wvalue-discard",
-    "-Wnonunit-statement",
-    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error",
-    "-language:strictEquality"
-)
-```
-
-These flags help catch three common issues in Kyo applications:
-
-1. **A pure expression does nothing in statement position**: Often suggests that a Kyo computation is being discarded and will never execute, though it can also occur with other pure expressions. Common fixes include using `map` to chain transformations or explicitly handling the result.
-
-2. **Unused/Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that handles only some of the effects your computation requires. For example, passing a computation that needs both `Sync` and `Abort[Exception]` effects as a method parameter that only accepts `Sync` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
-
-3. **Values cannot be compared with == or !=**: The strict equality flag ensures type-safe equality comparisons by requiring that compared types are compatible. This is particularly important for Kyo's opaque types like `Maybe`, where comparing values of different types could lead to inconsistent behavior. The flag helps catch these issues at compile-time, ensuring you only compare values that can be meaningfully compared. For example, you cannot accidentally compare a `Maybe[Int]` with an `Option[Int]` or a raw `Int`, preventing subtle bugs. To disable the check for a specific scope, introduce a permissive `CanEqual` given: `given [A, B]: CanEqual[A, B] = CanEqual.derived`
-
-> Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values: `Test / scalacOptions --= Seq(options, to, disable)`
 
 ## Talks
 
@@ -451,6 +458,8 @@ A podcast interview that doubles as a one-hour live-coded tour:
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) covers community norms.
 - [AGENTS.md](AGENTS.md) is the entry point for agent-driven contributions.
 - [Discord](https://discord.gg/KxxkBbW8bq) is the fastest way to ask a question.
+
+This project exists because of a specific belief about what software is for and who gets to build it. [Read the manifesto](MANIFESTO.md).
 
 ## Acknowledgements
 
