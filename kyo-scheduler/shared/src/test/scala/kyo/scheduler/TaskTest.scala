@@ -55,8 +55,8 @@ class TaskTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "needsInterrupt" - {
-        // Interruption is no longer tracked on Task — IOTask derives it from its
-        // promise. A plain Task is never interrupted, so needsInterrupt stays false.
+        // Interruption is not tracked on Task; IOTask derives it from its promise.
+        // A plain Task is never interrupted, so needsInterrupt stays false.
         "false for a plain task, regardless of preemption or runtime" in {
             val t = new TestTask(5)
             assert(!t.needsInterrupt())

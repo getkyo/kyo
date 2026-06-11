@@ -269,11 +269,13 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             worker.run()
 
             val victimIndex = order.toArray.toList.indexOf("victim")
-            // Boosted to the slice right after the first busy task that triggers the reset, not stranded
-            // at the back behind all the busy work.
+            // b1 triggers the reset (position 0). rebalance fires at the top of the NEXT loop
+            // iteration, but that iteration's task is already b2 (carried from b1's addAndPoll).
+            // b2 runs at position 1; when b2 calls addAndPoll the rebuilt heap returns victim.
+            // So victim is at position 2, not stranded at the back behind all the busy work.
             assert(
-                victimIndex >= 0 && victimIndex < 4,
-                s"victim was not boosted by its own worker's loop: ${order.toArray.toList}"
+                victimIndex == 2,
+                s"victim was not boosted to position 2 by its own worker's loop: ${order.toArray.toList}"
             )
         }
     }
@@ -764,7 +766,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
 
         "cleared blocked flag restores availability" in {
             val worker = createWorker(executor = executor)
-            // No task running — checkStalling won't trigger
+            // No task running, checkStalling won't trigger
             worker.blocked = true
             assert(!worker.checkAvailability(System.currentTimeMillis()))
             worker.blocked = false

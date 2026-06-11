@@ -190,7 +190,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
             queue1.add(t2)
             queue1.add(t3)
             queue1.add(t4)
-            // head t1 returned; s = size()-1 = 3; i = 3 - ceil(1.5) = 1 -> one more (t2) moves to queue2
+            // head t1 returned; s = size() = 3; i = floor(3/2) = 1 -> one more (t2) moves to queue2
             assert((queue1.stealingBy(queue2): Task) eq t1)
             assert((queue1.poll(): Task) eq t3)
             assert((queue1.poll(): Task) eq t4)
@@ -223,7 +223,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
             queue1.add(t3)
             queue1.add(t4)
             queue1.add(t5)
-            // head t1 returned; s = size()-1 = 4; i = 4 - ceil(2) = 2 -> t2,t3 move to queue2
+            // head t1 returned; s = size() = 4; i = floor(4/2) = 2 -> t2,t3 move to queue2
             assert((queue1.stealingBy(queue2): Task) eq t1)
             assert(queue1.size() == 2)
             assert(queue2.size() == 2)
@@ -307,7 +307,7 @@ class WorkerQueueTest extends AnyFreeSpec with NonImplicitAssertions {
             queue1.add(t2)
             queue1.add(t3)
             assert((queue1.poll(): Task) eq t1)
-            // remaining [t2,t3]; head t2 returned; s = size()-1 = 1; i = 1 - ceil(0.5) = 0 -> none move
+            // remaining [t2,t3]; head t2 returned; s = size() = 1; i = floor(1/2) = 0 -> none move
             assert((queue1.stealingBy(queue2): Task) eq t2)
             assert((queue1.poll(): Task) eq t3)
             assert(queue2.poll() == null)

@@ -90,6 +90,9 @@ abstract private class Worker(
 
     protected def shouldStop(): Boolean
 
+    /** Returns the current interrupt epoch from the scheduler. Each call to Scheduler.notifyInterrupt
+      * bumps this value; rebalance compares it against lastRebuiltEpoch to gate queue rebuilds.
+      */
     protected def currentInterruptEpoch(): Long
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
@@ -101,7 +104,7 @@ abstract private class Worker(
     // at the start of run(), reset to -1 on exit. Published by currentTask volatile.
     private[scheduler] var mountId: Long = -1L
     // Not volatile: written by BlockingMonitor timer thread (~2ms), read by cycleWorkers timer
-    // thread (~100μs). Stale reads are acceptable — this is a scheduling heuristic, not a
+    // thread (~100μs). Stale reads are acceptable: this is a scheduling heuristic, not a
     // correctness constraint. Worst case: a blocked worker accepts one extra task before
     // detection, which is then drained on the next cycle.
     private[scheduler] var blocked: Boolean = false
@@ -184,10 +187,12 @@ abstract private class Worker(
 
     /** Re-heapifies this worker's own queue when an interrupt has reset a queued task's runtime in place.
       *
-      * Gated on two conditions so the common case stays off the hot path: the interrupt epoch must have advanced past the last rebuild, and
-      * at least minInterval milliseconds must have elapsed since the last rebuild. When both hold, queue.rebuild() re-establishes priority
-      * order in O(n), sifting the reset task (now lowest runtime) to the head so the next poll returns it within a bounded, load-independent
-      * delay. Operates only on this worker's own queue.
+      * Gated on two conditions so the common case stays off the hot path: the epoch from currentInterruptEpoch
+      * (bumped by Scheduler.notifyInterrupt on every real interrupt) must have advanced past lastRebuiltEpoch,
+      * and at least minInterval milliseconds must have elapsed since the last rebuild. When both hold,
+      * queue.rebuild() re-establishes priority order in O(n), sifting the reset task (now lowest runtime) to
+      * the head so the next poll returns it within a bounded, load-independent delay. Operates only on this
+      * worker's own queue.
       */
     private def rebalance(): Unit = {
         val epoch = currentInterruptEpoch()

@@ -125,7 +125,9 @@ final class Scheduler(
 
     private val interruptEpoch = new AtomicLong(0L)
 
-    /** Notifies the blocking monitor that a fiber was interrupted, triggering an immediate scan. */
+    /** Records a real interrupt: bumps the interrupt epoch (consumed by each worker's rebalance gate
+      * to re-heapify queued tasks) and wakes the blocking monitor for an immediate scan.
+      */
     def notifyInterrupt(): Unit = {
         interruptEpoch.incrementAndGet()
         blockingMonitor.wake()
