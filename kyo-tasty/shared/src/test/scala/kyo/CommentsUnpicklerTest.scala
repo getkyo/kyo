@@ -1,0 +1,221 @@
+package kyo
+
+import java.nio.charset.StandardCharsets
+import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.classfile.ClassfileUnpickler
+import kyo.internal.tasty.reader.CommentsUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
+import kyo.internal.tasty.symbol.SymbolKind
+import kyo.internal.tasty.type_.TypeArena
+import scala.collection.immutable.IntMap
+
+/** Tests for CommentsUnpickler.read and Tasty.Symbol.scaladoc.
+  *
+  * The Comments section format (from dotty CommentUnpickler.scala) {
+  *  }
+  * {{{
+  * Entry = Addr Utf8 LongInt
+  * Addr = Nat -- byte address in AST section
+  * Utf8 = Nat Byte* -- length-prefixed UTF-8 text
+  * LongInt =. -- source span (skipped here)
+  * }}}
+  *
+  * TASTy Nat encoding: small values (0-127) use a single byte with bit 7 SET = (n | 0x80).toByte. TASTy LongInt encoding: for zero span,
+  * use 0x80.toByte (bit 7 SET = stop bit, bit 6 CLEAR = non-negative sign; value decodes to 0).
+  */
+class CommentsUnpicklerTest extends kyo.test.Test[Any]:
+
+    import AllowUnsafe.embrace.danger
+
+    /** Encode a small Nat (0-127) as a single TASTy byte. */
+    private def encNat(n: Int): Array[Byte] =
+        require(n >= 0 && n < 128, s"encNat only handles 0-127, got $n")
+        Array((n | 0x80).toByte)
+
+    /** Encode a UTF-8 string as Nat(length) + bytes. */
+    private def encUtf8(s: String): Array[Byte] =
+        val bytes = s.getBytes(StandardCharsets.UTF_8)
+        require(bytes.length < 128, s"encUtf8 only handles strings < 128 bytes, got ${bytes.length}")
+        encNat(bytes.length) ++ bytes
+    end encUtf8
+
+    /** Encode a single Comments section entry: address + text + span(0). */
+    private def encEntry(address: Int, text: String): Array[Byte] =
+        encNat(address) ++ encUtf8(text) ++ Array(0x80.toByte) // span = 0
+
+    /** Build a Comments section payload from a sequence of (address, text) entries. */
+    private def buildSection(entries: (Int, String)*): Array[Byte] =
+        entries.toArray.flatMap((address, text) => encEntry(address, text))
+
+    private var nextSymId: Int = 0
+
+    /** Create a minimal LoadingSymbol.Materialising for testing with a unique sequential id.
+      *
+      * the LongMap rotation in CommentsUnpickler keys by symbol.id.toLong, so each symbol
+      * must have a unique id to avoid overwriting entries in the result map. Sequential ids
+      * guarantee uniqueness across all test symbols in this test class.
+      */
+    private def makeTestSymbol(nameStr: String): LoadingSymbol.Materialising =
+        val id = nextSymId
+        nextSymId += 1
+        LoadingSymbol.Materialising(
+            id = id,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name(nameStr)
+        )
+    end makeTestSymbol
+
+    "CommentsUnpickler: documented class entry produces result with comment text" in {
+        val symbol  = makeTestSymbol("Foo")
+        val addrMap = IntMap(10 -> symbol) // address 10 -> symbol
+        val payload = buildSection(10 -> "/** My doc */")
+        val view    = ByteView(payload)
+        CommentsUnpickler.read(view, addrMap) match
+            case Result.Success(result) =>
+                assert(result.size == 1, s"Expected 1 entry but got ${result.size}")
+                // LongMap keyed by symbol.id.toLong, not by symbol object.
+                assert(result.contains(symbol.id.toLong), "Expected symbol.id to have a comment entry")
+                val text = result(symbol.id.toLong)
+                assert(text.contains("My doc"), s"Expected text to contain 'My doc' but got: $text")
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        end match
+    }
+
+    "CommentsUnpickler: empty payload returns empty map without error" in {
+        val view = ByteView(Array.empty[Byte])
+        CommentsUnpickler.read(view, IntMap.empty) match
+            case Result.Success(result) =>
+                assert(result.isEmpty, s"Expected empty result but got ${result.size} entries")
+            case Result.Failure(e) =>
+                fail(s"Expected empty map but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        end match
+    }
+
+    "CommentsUnpickler: truncated section produces MalformedSection error" in {
+        // Write address Nat(5) = 0x85, then start a Utf8: Nat(20) = 0x94, then only 3 bytes of a
+        // 20-byte string. ArrayIndexOutOfBoundsException triggers MalformedSection.
+        val payload = Array[Byte](
+            0x85.toByte, // address = 5
+            0x94.toByte, // text length = 20
+            'a'.toByte,  // only 1 of 20 bytes (truncated)
+            'b'.toByte,
+            'c'.toByte
+            // missing 17 more bytes + span
+        )
+        val symbol  = makeTestSymbol("Truncated")
+        val addrMap = IntMap(5 -> symbol)
+        val view    = ByteView(payload)
+        CommentsUnpickler.read(view, addrMap) match
+            case Result.Success(result) =>
+                fail(s"Expected MalformedSection failure but got success with ${result.size} entries")
+            case Result.Failure(TastyError.MalformedSection("Comments", _, _)) =>
+                succeed
+            case Result.Failure(other) =>
+                fail(s"Expected MalformedSection but got: $other")
+            case Result.Panic(t) =>
+                throw t
+        end match
+    }
+
+    // A symbol at an address that has a comment entry appears in the map; one without does not.
+    "CommentsUnpickler: symbol with comment appears in returned map; symbol without does not" in {
+        val symWithDoc    = makeTestSymbol("WithDoc")
+        val symWithoutDoc = makeTestSymbol("WithoutDoc")
+        val addrMap       = IntMap(1 -> symWithDoc, 2 -> symWithoutDoc)
+        // Only address 1 has a comment; address 2 is in addrMap but has no comment entry in the section.
+        val payload = buildSection(1 -> "/** documented */")
+        val view    = ByteView(payload)
+        CommentsUnpickler.read(view, addrMap) match
+            case Result.Success(comments) =>
+                // LongMap keyed by symbol.id.toLong, not by symbol object.
+                assert(
+                    comments.contains(symWithDoc.id.toLong),
+                    s"Expected symWithDoc.id=${symWithDoc.id} to appear in comments map but it was absent"
+                )
+                assert(
+                    comments(symWithDoc.id.toLong).contains("documented"),
+                    s"Expected scaladoc text to contain 'documented' but got ${comments(symWithDoc.id.toLong)}"
+                )
+                assert(
+                    !comments.contains(symWithoutDoc.id.toLong),
+                    s"Expected symWithoutDoc.id=${symWithoutDoc.id} to be absent from comments map but it was present"
+                )
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        end match
+    }
+
+    "CommentsUnpickler: two sibling definitions have independent scaladoc entries" in {
+        val symAlpha = makeTestSymbol("Alpha")
+        val symBeta  = makeTestSymbol("Beta")
+        val addrMap  = IntMap(10 -> symAlpha, 20 -> symBeta)
+        val payload  = buildSection(10 -> "/** Alpha doc */", 20 -> "/** Beta doc */")
+        val view     = ByteView(payload)
+        CommentsUnpickler.read(view, addrMap) match
+            case Result.Success(comments) =>
+                assert(comments.size == 2, s"Expected 2 entries but got ${comments.size}")
+                // LongMap keyed by symbol.id.toLong, not by symbol object.
+                assert(comments.contains(symAlpha.id.toLong), "Expected symAlpha.id to have a comment")
+                assert(comments.contains(symBeta.id.toLong), "Expected symBeta.id to have a comment")
+                assert(
+                    comments(symAlpha.id.toLong).contains("Alpha doc"),
+                    s"symAlpha comment wrong: ${comments(symAlpha.id.toLong)}"
+                )
+                assert(
+                    comments(symBeta.id.toLong).contains("Beta doc"),
+                    s"symBeta comment wrong: ${comments(symBeta.id.toLong)}"
+                )
+                // No cross-contamination: Alpha's doc is not Beta's doc
+                assert(
+                    !comments(symAlpha.id.toLong).contains("Beta"),
+                    s"symAlpha unexpectedly contains 'Beta': ${comments(symAlpha.id.toLong)}"
+                )
+                assert(
+                    !comments(symBeta.id.toLong).contains("Alpha"),
+                    s"symBeta unexpectedly contains 'Alpha': ${comments(symBeta.id.toLong)}"
+                )
+            case Result.Failure(e) =>
+                fail(s"Expected success but got failure: $e")
+            case Result.Panic(t) =>
+                throw t
+        end match
+    }
+
+    // Java classfiles have no Comments section; ClassfileUnpickler sets scaladoc to Absent.
+    "CommentsUnpickler: Java classfile symbol always has scaladoc == Absent" in {
+        val classBytes = kyo.fixtures.Embedded.arrayRecordClass
+        val arena      = new TypeArena
+        Abort.run[TastyError] {
+            Sync.Unsafe.defer {
+                given AllowUnsafe = AllowUnsafe.embrace.danger
+                Abort.get(ClassfileUnpickler.read(classBytes, arena))
+            }
+        }
+            .map {
+                case Result.Success(result) =>
+                    assert(
+                        !result.classSymbol.scaladoc.isDefined,
+                        s"Expected Absent scaladoc for classfile symbol but got ${result.classSymbol.scaladoc}"
+                    )
+                    val memberFailures = result.symbols.filter(_.scaladoc.isDefined)
+                    assert(
+                        memberFailures.isEmpty,
+                        s"Expected all member symbols to have Absent scaladoc but found ${memberFailures.length} with Present: " +
+                            memberFailures.map(s => s"'${s.name.asString}'=${s.scaladoc}").mkString(", ")
+                    )
+                case Result.Failure(e) =>
+                    fail(s"Expected success but got failure: $e")
+                case Result.Panic(t) =>
+                    throw t
+            }
+    }
+
+end CommentsUnpicklerTest
