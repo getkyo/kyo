@@ -77,7 +77,7 @@ object Structure:
       * Each variant captures the shape of one category of Scala type. The tree is produced at compile time by `Structure.of[A]` and can be
       * inspected at runtime to drive generic algorithms.
       */
-    sealed abstract class Type derives Schema:
+    sealed abstract class Type:
         def name: String
 
     /** The specific kind of a primitive (scalar) type.
@@ -194,6 +194,17 @@ object Structure:
             innerType: Structure.Type
         ) extends Type
 
+        /** Identity / open-shape projection: the carrying Schema accepts any wire shape and produces
+          * any wire shape. No fixed structural projection exists at compile time. Used by
+          * Schema[Structure.Value], Schema[Json.JsonSchema], and any future shape-dynamic Schema.
+          *
+          * @param tag
+          *   runtime tag for the open-shape type
+          */
+        case class Open(tag: Tag[Any]) extends Type:
+            def name: String = "Open"
+        end Open
+
         // --- Type structural checks ---
 
         /** Structural compatibility check -- true when both types have the same shape. */
@@ -210,6 +221,7 @@ object Structure:
             case (Collection(_, _, ea), Collection(_, _, eb))   => compatible(ea, eb)
             case (Optional(_, _, ia), Optional(_, _, ib))       => compatible(ia, ib)
             case (Mapping(_, _, ka, va), Mapping(_, _, kb, vb)) => compatible(ka, kb) && compatible(va, vb)
+            case (Open(ta), Open(tb))                           => ta =:= tb
             case _                                              => false
 
         /** Walk all nodes depth-first. */
@@ -222,6 +234,7 @@ object Structure:
                 case Optional(_, _, inner)     => fold(inner)(acc)(f)
                 case Mapping(_, _, k, v)       => fold(v)(fold(k)(acc)(f))(f)
                 case _: Primitive              => acc
+                case _: Open                   => acc
             end match
         end fold
 
@@ -234,6 +247,21 @@ object Structure:
                     else nested.map(f.name +: _)
                 }
             case _ => Chunk.empty
+
+        /** Hand-written Schema for Structure.Type that replaces the previously auto-derived
+          * `derives Schema` instance. The replacement is intentionally an ANONYMOUS given (no
+          * name) on the companion: the lock does not list a named `typeSchema` symbol, and
+          * keeping the explicit given on the `Structure.Type` companion preserves grep-ability
+          * (search `given Schema[Structure.Type]` finds the single declaration) without
+          * introducing a new public NAMED member outside the lock.
+          *
+          * `Schema.derived` re-emits the sum-Schema for `Structure.Type` via the FocusMacro path
+          * after `derives Schema` is removed at the class level. The behavior is unchanged
+          * (same auto-derived Schema), but the explicit form forces authors to update this
+          * declaration when a new variant is added, instead of silently re-shaping the
+          * auto-derived wire format.
+          */
+        given Schema[Structure.Type] = Schema.derived
 
     end Type
 

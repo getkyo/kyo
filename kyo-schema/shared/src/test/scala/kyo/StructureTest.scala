@@ -1420,4 +1420,73 @@ class StructureTest extends kyo.test.Test[Any]:
         }
     }
 
+    // ==================== Structure.Type.Open variant ====================
+
+    "Open variant" - {
+
+        "Open.name returns 'Open'" in {
+            val open = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            assert(open.name == "Open")
+        }
+
+        "compatible returns true for two Open with same tag" in {
+            val a = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val b = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            assert(Structure.Type.compatible(a, b))
+        }
+
+        "compatible returns false for two Open with different tags" in {
+            val a = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val b = Structure.Type.Open(Tag[Int].asInstanceOf[Tag[Any]])
+            assert(!Structure.Type.compatible(a, b))
+        }
+
+        "fold visits Open node once with no children" in {
+            val open  = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val count = Structure.Type.fold(open)(0) { (acc, _) => acc + 1 }
+            assert(count == 1)
+        }
+
+        "JsonSchema.fromStructure on Open renders empty Obj" in {
+            val open   = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val schema = Json.JsonSchema.fromStructure(open)
+            assert(schema == Json.JsonSchema.Obj(List.empty, List.empty))
+        }
+
+    }
+
+    // ==================== Type.Schema round-trip via anonymous given ====================
+
+    "Type.Schema anonymous given" - {
+
+        "derives Schema absent on Type class (anonymous given resolves)" in {
+            val given1 = summon[Schema[Structure.Type]]
+            val given2 = summon[Schema[Structure.Type]]
+            assert(given1 eq given2)
+        }
+
+        "Open round-trips through Schema[Structure.Type] via JSON" in {
+            val open: Structure.Type = Structure.Type.Open(Tag[Int].asInstanceOf[Tag[Any]])
+            val encoded              = Json.encode[Structure.Type](open)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(open, decoded))
+        }
+
+        "Primitive round-trips through Schema[Structure.Type] via JSON" in {
+            val prim: Structure.Type = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val encoded              = Json.encode[Structure.Type](prim)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(prim, decoded))
+        }
+
+        "Collection round-trips through Schema[Structure.Type] via JSON" in {
+            val elem: Structure.Type = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val coll: Structure.Type = Structure.Type.Collection("List", Tag[List[Int]].asInstanceOf[Tag[Any]], elem)
+            val encoded              = Json.encode[Structure.Type](coll)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(coll, decoded))
+        }
+
+    }
+
 end StructureTest

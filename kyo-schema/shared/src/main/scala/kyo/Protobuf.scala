@@ -131,6 +131,10 @@ object Protobuf:
                                 throw new IllegalArgumentException(
                                     s"proto3 does not support nested Optional (Option[Option[_]]) in field '$name'"
                                 )
+                            case _: Structure.Type.Open =>
+                                throw new IllegalArgumentException(
+                                    s"proto3 does not support open-shape field type inside Optional in field '$name'"
+                                )
                             case (_: Structure.Type.Primitive) | (_: Structure.Type.Collection) |
                                 (_: Structure.Type.Mapping) | (_: Structure.Type.Product) | (_: Structure.Type.Sum) =>
                                 val (innerType, nextState) = protoTypeName(inner, state)
@@ -150,6 +154,10 @@ object Protobuf:
                                 throw new IllegalArgumentException(
                                     s"proto3 does not support List[Map[_, _]] (field '$name'): use a wrapper message instead"
                                 )
+                            case _: Structure.Type.Open =>
+                                throw new IllegalArgumentException(
+                                    s"proto3 does not support open-shape field type inside Collection in field '$name'"
+                                )
                             case (_: Structure.Type.Primitive) | (_: Structure.Type.Product) | (_: Structure.Type.Sum) =>
                                 val (innerType, nextState) = protoTypeName(elem, state)
                                 (s"repeated $innerType $name = $fieldNumber;", nextState)
@@ -166,6 +174,11 @@ object Protobuf:
                     case s: Structure.Type.Sum =>
                         val nextState = collect(s, state)
                         (s"${s.name} $name = $fieldNumber;", nextState)
+
+                    case _: Structure.Type.Open =>
+                        throw new IllegalArgumentException(
+                            s"proto3 does not support open-shape field type in field '$name'"
+                        )
                 end match
             end protoFieldDecl
 
@@ -199,6 +212,11 @@ object Protobuf:
                     case s: Structure.Type.Sum =>
                         val nextState = collect(s, state)
                         (s.name, nextState)
+
+                    case _: Structure.Type.Open =>
+                        throw new IllegalArgumentException(
+                            s"proto3 does not support open-shape type in type name position"
+                        )
                 end match
             end protoTypeName
 
@@ -237,6 +255,12 @@ object Protobuf:
                         sb.append('\n')
                     }
                     sb.toString.trim
+                case _: Structure.Type.Open =>
+                    throw SchemaNotSerializableException(
+                        "Protobuf.protoSchema does not support open-shape schemas (Schema[Structure.Value], " +
+                            "Schema[Json.JsonSchema]); these accept arbitrary JSON which proto3 cannot encode " +
+                            "without an escape hatch."
+                    )(using Frame.internal)
                 case (_: Structure.Type.Primitive) | (_: Structure.Type.Collection) |
                     (_: Structure.Type.Optional) | (_: Structure.Type.Mapping) =>
                     throw new IllegalArgumentException(

@@ -597,6 +597,14 @@ object Json:
                             )
                         case _ =>
                             Obj(List.empty, List.empty)
+
+                case _: Structure.Type.Open =>
+                    // The carrying Schema accepts arbitrary JSON; describe it as the JSON Schema
+                    // "any object" shape. This is byte-identical to the Unit arm above by design:
+                    // both empty-properties Obj renderings are the Draft 2020-12 encoding of
+                    // "no constraints". Downstream Scala consumers distinguish via the structure
+                    // tree's variant, not via the wire bytes.
+                    Obj(List.empty, List.empty)
         end fromStructure
     end JsonSchema
 
