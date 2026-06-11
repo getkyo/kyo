@@ -82,6 +82,21 @@ private[kyo] object CssStyleRenderer:
         case Overflow.scroll  => "scroll"
         case Overflow.auto    => "auto"
 
+    private def scrollbarWidth(v: ScrollbarWidth): String = v match
+        case ScrollbarWidth.auto => "auto"
+        case ScrollbarWidth.thin => "thin"
+        case ScrollbarWidth.none => "none"
+
+    private def scrollbarGutter(v: ScrollbarGutter): String = v match
+        case ScrollbarGutter.auto            => "auto"
+        case ScrollbarGutter.stable          => "stable"
+        case ScrollbarGutter.stableBothEdges => "stable both-edges"
+
+    private def backgroundClip(v: BackgroundClip): String = v match
+        case BackgroundClip.borderBox  => "border-box"
+        case BackgroundClip.paddingBox => "padding-box"
+        case BackgroundClip.contentBox => "content-box"
+
     private[kyo] def fontWeightCss(v: FontWeight): String = v match
         case FontWeight.normal => "normal"
         case FontWeight.bold   => "bold"
@@ -163,20 +178,24 @@ private[kyo] object CssStyleRenderer:
         case FlexDirectionProp(d) => d match
                 case FlexDirection.row    => "flex-direction: row;"
                 case FlexDirection.column => "flex-direction: column;"
-        case Align(v)          => s"align-items: ${alignment(v)};"
-        case Justify(v)        => s"justify-content: ${justification(v)};"
-        case OverflowProp(v)   => s"overflow: ${overflow(v)};"
-        case OverflowXProp(v)  => s"overflow-x: ${overflow(v)};"
-        case OverflowYProp(v)  => s"overflow-y: ${overflow(v)};"
-        case Width(v)          => s"width: ${size(v)};"
-        case Height(v)         => s"height: ${size(v)};"
-        case MinWidth(v)       => s"min-width: ${size(v)};"
-        case MaxWidth(v)       => s"max-width: ${size(v)};"
-        case MinHeight(v)      => s"min-height: ${size(v)};"
-        case MaxHeight(v)      => s"max-height: ${size(v)};"
-        case FontSizeProp(v)   => s"font-size: ${size(v)};"
-        case FontWeightProp(v) => s"font-weight: ${fontWeightCss(v)};"
-        case FontStyleProp(v)  => s"font-style: ${fontStyleCss(v)};"
+        case Align(v)                   => s"align-items: ${alignment(v)};"
+        case Justify(v)                 => s"justify-content: ${justification(v)};"
+        case OverflowProp(v)            => s"overflow: ${overflow(v)};"
+        case OverflowXProp(v)           => s"overflow-x: ${overflow(v)};"
+        case OverflowYProp(v)           => s"overflow-y: ${overflow(v)};"
+        case ScrollbarWidthProp(v)      => s"scrollbar-width: ${scrollbarWidth(v)};"
+        case ScrollbarColorProp(th, tr) => s"scrollbar-color: ${color(th)} ${color(tr)};"
+        case ScrollbarGutterProp(v)     => s"scrollbar-gutter: ${scrollbarGutter(v)};"
+        case BackgroundClipProp(v)      => s"background-clip: ${backgroundClip(v)};"
+        case Width(v)                   => s"width: ${size(v)};"
+        case Height(v)                  => s"height: ${size(v)};"
+        case MinWidth(v)                => s"min-width: ${size(v)};"
+        case MaxWidth(v)                => s"max-width: ${size(v)};"
+        case MinHeight(v)               => s"min-height: ${size(v)};"
+        case MaxHeight(v)               => s"max-height: ${size(v)};"
+        case FontSizeProp(v)            => s"font-size: ${size(v)};"
+        case FontWeightProp(v)          => s"font-weight: ${fontWeightCss(v)};"
+        case FontStyleProp(v)           => s"font-style: ${fontStyleCss(v)};"
         case FontFamilyProp(v) =>
             val cssValue = v match
                 case FontFamily.SansSerif    => "sans-serif"
@@ -214,7 +233,11 @@ private[kyo] object CssStyleRenderer:
                 case Position.relative => "position: relative;"
                 case Position.dropdown => "position: absolute; top: 100%; right: 0; z-index: 50;"
                 case Position.sticky   => "position: sticky;"
+                case Position.absolute => "position: absolute;"
         case Top(v)                 => s"top: ${size(v)};"
+        case Right(v)               => s"right: ${size(v)};"
+        case Bottom(v)              => s"bottom: ${size(v)};"
+        case Left(v)                => s"left: ${size(v)};"
         case ZIndexProp(v)          => s"z-index: $v;"
         case AlignSelf(v)           => s"align-self: ${alignment(v)};"
         case ScrollMarginTopProp(v) => s"scroll-margin-top: ${size(v)};"

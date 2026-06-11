@@ -52,6 +52,13 @@ class StylesheetTest extends kyo.test.Test[Any]:
         assert(css.contains("--gap: 16px;"))
     }
 
+    "scopedVars produces selector { --k: v; } block (theme override)" in {
+        val css = Stylesheet.scopedVars(Selector.data("theme", "dark"), "bg" -> "#14130D", "ink" -> "#F4F1EA").render
+        assert(css.contains("[data-theme=\"dark\"] {"))
+        assert(css.contains("--bg: #14130D;"))
+        assert(css.contains("--ink: #F4F1EA;"))
+    }
+
     "Color.variable renders as var(--name) in a rule" in {
         val css = Stylesheet.rule("x", Style.color(Style.Color.variable("accent"))).render
         assert(css.contains("color: var(--accent);"))

@@ -654,6 +654,36 @@ class StyleTest extends kyo.test.Test[Any]:
             val s = Style.overflow(_.hidden).overflowY(_.auto)
             assert(s.toCss == "overflow: hidden; overflow-y: auto;")
         }
+
+        "scrollbarWidth renders the standard scrollbar-width keyword" in {
+            assert(Style.scrollbarWidth(Style.ScrollbarWidth.thin).toCss == "scrollbar-width: thin;")
+            assert(Style.scrollbarWidth(_.none).toCss == "scrollbar-width: none;")
+            assert(Style.scrollbarWidth(_.auto).toCss == "scrollbar-width: auto;")
+        }
+
+        "scrollbarColor renders thumb then track as the two-color scrollbar-color value" in {
+            val css = Style.scrollbarColor(Style.Color.rgba(0, 0, 0, 0.3), Style.Color.transparent).toCss
+            assert(css == "scrollbar-color: rgba(0, 0, 0, 0.3) transparent;")
+        }
+
+        "scrollbarWidth and scrollbarColor coexist with the axis overflow on one rail style" in {
+            val s = Style.overflowY(_.auto).scrollbarWidth(_.thin).scrollbarColor(Style.Color.rgba(0, 0, 0, 0.2), Style.Color.transparent)
+            assert(
+                s.toCss == "overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.2) transparent;"
+            )
+        }
+
+        "scrollbarGutter renders the standard scrollbar-gutter keyword" in {
+            assert(Style.scrollbarGutter(Style.ScrollbarGutter.stable).toCss == "scrollbar-gutter: stable;")
+            assert(Style.scrollbarGutter(_.auto).toCss == "scrollbar-gutter: auto;")
+            assert(Style.scrollbarGutter(_.stableBothEdges).toCss == "scrollbar-gutter: stable both-edges;")
+        }
+
+        "backgroundClip renders the background-clip keyword (padding-box insets a transparent border)" in {
+            assert(Style.backgroundClip(Style.BackgroundClip.paddingBox).toCss == "background-clip: padding-box;")
+            assert(Style.backgroundClip(_.borderBox).toCss == "background-clip: border-box;")
+            assert(Style.backgroundClip(_.contentBox).toCss == "background-clip: content-box;")
+        }
     }
 
     "pseudo-states" - {
@@ -757,6 +787,20 @@ class StyleTest extends kyo.test.Test[Any]:
 
         "companion equals instance" in {
             assert(Style.top(5.px).props(0) == Style.empty.top(5.px).props(0))
+        }
+    }
+
+    "right/bottom/left offsets" - {
+        "each renders its own CSS property" in {
+            assert(Style.right(8.px).toCss == "right: 8px;")
+            assert(Style.bottom(0.px).toCss == "bottom: 0;")
+            assert(Style.left(12.px).toCss == "left: 12px;")
+        }
+
+        "top and right are distinct kinds that coexist for a corner float" in {
+            val s = Style.position(_.absolute).top(8.px).right(8.px)
+            assert(s.toCss.contains("top: 8px;"))
+            assert(s.toCss.contains("right: 8px;"))
         }
     }
 

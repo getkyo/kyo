@@ -135,6 +135,13 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def bg(c: Color): Style               = appendProp(Prop.BgColor(c))
     def bg(f: Color.type => Color): Style = bg(f(Color))
 
+    /** Maps to the CSS `background-clip` property: `paddingBox` clips the background to the padding box so
+      * a transparent border insets the painted fill (the standard way to float a scrollbar thumb inside its
+      * track), `contentBox` clips to the content box, `borderBox` is the default.
+      */
+    def backgroundClip(v: BackgroundClip): Style                        = appendProp(Prop.BackgroundClipProp(v))
+    def backgroundClip(f: BackgroundClip.type => BackgroundClip): Style = backgroundClip(f(BackgroundClip))
+
     // Text color
 
     def color(c: Color): Style               = appendProp(Prop.TextColor(c))
@@ -202,6 +209,28 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
       */
     def overflowY(v: Overflow): Style                  = appendProp(Prop.OverflowYProp(v))
     def overflowY(f: Overflow.type => Overflow): Style = overflowY(f(Overflow))
+
+    /** Maps to the standard CSS `scrollbar-width` property: `thin` renders a slimmer scrollbar than the
+      * platform default, `none` hides it while keeping the element scrollable, `auto` is the default.
+      * Pairs with [[scrollbarColor]] to theme an overflow container's scrollbar (current Chrome, Firefox,
+      * and Safari honor both; other engines fall back to the native scrollbar).
+      */
+    def scrollbarWidth(v: ScrollbarWidth): Style                        = appendProp(Prop.ScrollbarWidthProp(v))
+    def scrollbarWidth(f: ScrollbarWidth.type => ScrollbarWidth): Style = scrollbarWidth(f(ScrollbarWidth))
+
+    /** Maps to the standard CSS `scrollbar-color` property: the first color paints the scrollbar thumb,
+      * the second paints the track. Use a subtle thumb and a transparent or near-page track so the
+      * scrollbar reads as part of the surface rather than an OS chrome slab.
+      */
+    def scrollbarColor(thumb: Color, track: Color): Style = appendProp(Prop.ScrollbarColorProp(thumb, track))
+
+    /** Maps to the standard CSS `scrollbar-gutter` property: `stable` reserves space for the scrollbar
+      * even while the content is short enough not to scroll, so a container whose content grows past the
+      * viewport (or shrinks back) does not shift its layout sideways as the classic scrollbar appears and
+      * disappears. Apply to the page scroll root (`html`) to stop SPA route swaps from nudging the layout.
+      */
+    def scrollbarGutter(v: ScrollbarGutter): Style                         = appendProp(Prop.ScrollbarGutterProp(v))
+    def scrollbarGutter(f: ScrollbarGutter.type => ScrollbarGutter): Style = scrollbarGutter(f(ScrollbarGutter))
 
     // Sizing: any size including auto
 
@@ -384,6 +413,14 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
       */
     def top(v: Length): Style = appendProp(Prop.Top(v))
 
+    /** Sets the CSS `right` / `bottom` / `left` offsets of a positioned element (the counterparts of
+      * [[top]]); e.g. `position(_.absolute).top(8.px).right(8.px)` floats a control in the top-right
+      * corner of a `position(_.relative)` container.
+      */
+    def right(v: Length): Style  = appendProp(Prop.Right(v))
+    def bottom(v: Length): Style = appendProp(Prop.Bottom(v))
+    def left(v: Length): Style   = appendProp(Prop.Left(v))
+
     /** Sets the CSS `z-index` stacking order of a positioned element. Higher values layer above lower
       * ones, e.g. `zIndex(100)` to keep a sticky header above scrolling page content.
       */
@@ -565,11 +602,13 @@ object Style:
     /** The identity `Style` with no properties; the unit for `++`. */
     val empty: Style = Style(Chunk.empty[Prop])
 
-    def bg(c: Color): Style                                     = empty.bg(c)
-    def bg(f: Color.type => Color): Style                       = empty.bg(f)
-    def color(c: Color): Style                                  = empty.color(c)
-    def color(f: Color.type => Color): Style                    = empty.color(f)
-    def padding(all: Length.Px | Length.Pct | Length.Em): Style = empty.padding(all)
+    def bg(c: Color): Style                                             = empty.bg(c)
+    def bg(f: Color.type => Color): Style                               = empty.bg(f)
+    def backgroundClip(v: BackgroundClip): Style                        = empty.backgroundClip(v)
+    def backgroundClip(f: BackgroundClip.type => BackgroundClip): Style = empty.backgroundClip(f)
+    def color(c: Color): Style                                          = empty.color(c)
+    def color(f: Color.type => Color): Style                            = empty.color(f)
+    def padding(all: Length.Px | Length.Pct | Length.Em): Style         = empty.padding(all)
     def padding(vertical: Length.Px | Length.Pct | Length.Em, horizontal: Length.Px | Length.Pct | Length.Em): Style =
         empty.padding(vertical, horizontal)
     def padding(
@@ -596,6 +635,11 @@ object Style:
     def overflowX(f: Overflow.type => Overflow): Style                              = empty.overflowX(f)
     def overflowY(v: Overflow): Style                                               = empty.overflowY(v)
     def overflowY(f: Overflow.type => Overflow): Style                              = empty.overflowY(f)
+    def scrollbarWidth(v: ScrollbarWidth): Style                                    = empty.scrollbarWidth(v)
+    def scrollbarWidth(f: ScrollbarWidth.type => ScrollbarWidth): Style             = empty.scrollbarWidth(f)
+    def scrollbarColor(thumb: Color, track: Color): Style                           = empty.scrollbarColor(thumb, track)
+    def scrollbarGutter(v: ScrollbarGutter): Style                                  = empty.scrollbarGutter(v)
+    def scrollbarGutter(f: ScrollbarGutter.type => ScrollbarGutter): Style          = empty.scrollbarGutter(f)
     def width(v: Length): Style                                                     = empty.width(v)
     def height(v: Length): Style                                                    = empty.height(v)
     def minWidth(v: Length): Style                                                  = empty.minWidth(v)
@@ -668,6 +712,9 @@ object Style:
     def position(v: Position): Style                                           = empty.position(v)
     def position(f: Position.type => Position): Style                          = empty.position(f)
     def top(v: Length): Style                                                  = empty.top(v)
+    def right(v: Length): Style                                                = empty.right(v)
+    def bottom(v: Length): Style                                               = empty.bottom(v)
+    def left(v: Length): Style                                                 = empty.left(v)
     def zIndex(v: Int): Style                                                  = empty.zIndex(v)
     def alignSelf(v: Alignment): Style                                         = empty.alignSelf(v)
     def alignSelf(f: Alignment.type => Alignment): Style                       = empty.alignSelf(f)
@@ -830,6 +877,22 @@ object Style:
     enum Overflow derives CanEqual:
         case visible, hidden, scroll, auto
 
+    /** Maps to the standard CSS `scrollbar-width` property: `auto` is the platform default, `thin`
+      * requests a slimmer scrollbar, `none` hides it while the element stays scrollable.
+      */
+    enum ScrollbarWidth derives CanEqual:
+        case auto, thin, none
+
+    /** Maps to the standard CSS `scrollbar-gutter` property: `auto` is the default (the gutter exists only
+      * while scrolling), `stable` always reserves the gutter, `stableBothEdges` reserves it on both edges.
+      */
+    enum ScrollbarGutter derives CanEqual:
+        case auto, stable, stableBothEdges
+
+    /** Maps to the CSS `background-clip` property. */
+    enum BackgroundClip derives CanEqual:
+        case borderBox, paddingBox, contentBox
+
     /** Maps to the CSS `font-weight` property. */
     enum FontWeight derives CanEqual:
         case normal, bold, w100, w200, w300, w400, w500, w600, w700, w800, w900
@@ -896,7 +959,7 @@ object Style:
       *     (`top(60.px)`, e.g. a rail under a 60px header) without a baked-in offset.
       */
     enum Position derives CanEqual:
-        case flow, overlay, relative, dropdown, sticky
+        case flow, overlay, relative, dropdown, sticky, absolute
 
     /** Maps to the CSS `display` property for opting out of the default flex layout.
       *
@@ -995,6 +1058,10 @@ object Style:
         case OverflowProp(value: Overflow)
         case OverflowXProp(value: Overflow)
         case OverflowYProp(value: Overflow)
+        case ScrollbarWidthProp(value: ScrollbarWidth)
+        case ScrollbarColorProp(thumb: Color, track: Color)
+        case ScrollbarGutterProp(value: ScrollbarGutter)
+        case BackgroundClipProp(value: BackgroundClip)
         // Sizing
         case Width(value: Length)
         case Height(value: Length)
@@ -1029,6 +1096,9 @@ object Style:
         // Position
         case PositionProp(value: Position)
         case Top(value: Length)
+        case Right(value: Length)
+        case Bottom(value: Length)
+        case Left(value: Length)
         case ZIndexProp(value: Int)
         case AlignSelf(value: Alignment)
         case ScrollMarginTopProp(value: Length)

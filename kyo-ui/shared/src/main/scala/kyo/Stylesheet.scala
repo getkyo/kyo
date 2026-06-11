@@ -56,6 +56,16 @@ final case class Stylesheet private[kyo] (entries: Chunk[Stylesheet.Entry]) deri
     def vars(pairs: (String, String)*): Stylesheet =
         Stylesheet(entries :+ Stylesheet.Entry.Vars(pairs.toList))
 
+    /** Appends a block of CSS custom properties (variables) scoped to an arbitrary `selector` rather
+      * than `:root`. Each pair is `(name, value)` emitted as `--name: value;` inside
+      * `selector { ... }`. Used to override the root variables for a theme or state, e.g.
+      * `scopedVars(Selector.data("theme", "dark"), "bg" -> "#14130D", ...)` to re-theme on a
+      * `data-theme="dark"` root. Reference a variable with [[kyo.Style.Color.variable]] or
+      * [[kyo.Length]]'s variable form.
+      */
+    def scopedVars(selector: Selector, pairs: (String, String)*): Stylesheet =
+        Stylesheet(entries :+ Stylesheet.Entry.ScopedVars(selector, pairs.toList))
+
     /** Appends an `@font-face` declaration (a [[kyo.Stylesheet.FontFace]]). */
     def fontFace(face: Stylesheet.FontFace): Stylesheet =
         Stylesheet(entries :+ Stylesheet.Entry.Font(face))
@@ -102,6 +112,9 @@ object Stylesheet:
     /** Starts a stylesheet with a `:root` variables block. */
     def vars(pairs: (String, String)*): Stylesheet = empty.vars(pairs*)
 
+    /** Starts a stylesheet with a selector-scoped variables block. */
+    def scopedVars(selector: Selector, pairs: (String, String)*): Stylesheet = empty.scopedVars(selector, pairs*)
+
     /** Starts a stylesheet with a single `@font-face` declaration. */
     def fontFace(face: FontFace): Stylesheet = empty.fontFace(face)
 
@@ -116,6 +129,7 @@ object Stylesheet:
         case Rule(selector: Selector, style: Style)
         case Media(query: MediaQuery, nested: Stylesheet)
         case Vars(pairs: List[(String, String)])
+        case ScopedVars(selector: Selector, pairs: List[(String, String)])
         case Font(face: FontFace)
         case Keyframes(name: String, frames: List[(Keyframe, Style)])
     end Entry
@@ -215,6 +229,10 @@ object Stylesheet:
                 sb.append("}\n")
             case Entry.Vars(pairs) =>
                 sb.append(":root {")
+                pairs.foreach((k, v) => sb.append(s" --$k: $v;"))
+                sb.append(" }\n")
+            case Entry.ScopedVars(selector, pairs) =>
+                sb.append(s"${selector.css} {")
                 pairs.foreach((k, v) => sb.append(s" --$k: $v;"))
                 sb.append(" }\n")
             case Entry.Font(f) =>

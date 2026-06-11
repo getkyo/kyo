@@ -66,14 +66,15 @@ private[kyo] object DomBackend:
 
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
             HtmlRenderer.render(ui, path).map { html =>
-                // In SVG context an empty reactive zone needs a <g> placeholder (a <span> is invalid
-                // inside <svg>); the non-empty branch already carries the correct tags from HtmlRenderer.
-                val tag = if svgContextAt(path) then "g" else "span"
-                val finalHtml =
-                    if html.isEmpty then
-                        s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive></$tag>"""
-                    else html
-                val pathAttr = path.mkString(".")
+                // Always wrap the rendered html in the reactive boundary element so the node carrying
+                // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value
+                // renders without a path-carrying root, so an unwrapped replace would drop the marker and
+                // the next update could not locate the node. In SVG context the boundary is a <g> (a <span>
+                // is invalid inside <svg>); otherwise a <span> (CSS sets `display: contents` so it is layout-
+                // transparent).
+                val tag       = if svgContextAt(path) then "g" else "span"
+                val pathAttr  = path.mkString(".")
+                val finalHtml = s"""<$tag data-kyo-path="$pathAttr" data-kyo-reactive>$html</$tag>"""
                 Sync.defer {
                     val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                     if el != null && el.outerHTML != finalHtml then
@@ -160,9 +161,12 @@ private[kyo] object DomBackend:
 
     private def applyJsPropsSync(root: dom.Element): Unit =
         val propPrefix = "data-kyo-prop-"
-        val elements   = root.querySelectorAll(s"[$propPrefix*]")
+        // CSS has no attribute-name-prefix selector, so `[data-kyo-prop-*]` is not a valid selector and
+        // throws SyntaxError. Collect the root plus every descendant and keep those carrying any
+        // data-kyo-prop-* attribute; the apply loop reads the prop name off each attribute.
+        val elements = root.querySelectorAll("*")
         val self =
-            if root.hasAttribute(s"${propPrefix}indeterminate") || hasAnyKyoProp(root) then
+            if hasAnyKyoProp(root) then
                 Seq(root)
             else
                 Seq.empty
