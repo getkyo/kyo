@@ -6634,4 +6634,316 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    // =========================================================================
+    // Suite A: valueSchema identity wire shape (INV-15)
+    // =========================================================================
+
+    "valueSchema identity wire shape (top-level)" - {
+
+        "Str encodes as bare JSON string" in {
+            val v    = Structure.Value.Str("hello")
+            val json = Json.encode(v)
+            assert(json == "\"hello\"")
+        }
+
+        "Str round-trips through JSON" in {
+            val v       = Structure.Value.Str("hello")
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Integer encodes as bare JSON number" in {
+            val v    = Structure.Value.Integer(42L)
+            val json = Json.encode(v)
+            assert(json == "42")
+        }
+
+        "Integer round-trips through JSON" in {
+            val v       = Structure.Value.Integer(42L)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Decimal encodes as bare JSON number" in {
+            val v    = Structure.Value.Decimal(3.14)
+            val json = Json.encode(v)
+            assert(json.startsWith("3.14"))
+        }
+
+        "Decimal round-trips through JSON" in {
+            val v       = Structure.Value.Decimal(3.14)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Bool encodes as bare JSON boolean" in {
+            val v    = Structure.Value.Bool(true)
+            val json = Json.encode(v)
+            assert(json == "true")
+        }
+
+        "Bool round-trips through JSON" in {
+            val v       = Structure.Value.Bool(true)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Null encodes as bare JSON null" in {
+            val v    = Structure.Value.Null
+            val json = Json.encode(v)
+            assert(json == "null")
+        }
+
+        "Null round-trips through JSON" in {
+            val v       = Structure.Value.Null
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Record encodes as JSON object (not tagged-union)" in {
+            val v    = Structure.Value.Record(Chunk("path" -> Structure.Value.Str(".")))
+            val json = Json.encode(v)
+            assert(json.contains("\"path\""))
+            assert(json.contains("\".\""))
+            assert(!json.contains("\"Record\""))
+        }
+
+        "Record round-trips through JSON" in {
+            val v       = Structure.Value.Record(Chunk("path" -> Structure.Value.Str(".")))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Sequence encodes as JSON array (not tagged-union)" in {
+            val v = Structure.Value.Sequence(Chunk(Structure.Value.Integer(1L), Structure.Value.Integer(2L), Structure.Value.Integer(3L)))
+            val json = Json.encode(v)
+            assert(json == "[1,2,3]")
+            assert(!json.contains("\"Sequence\""))
+        }
+
+        "Sequence round-trips through JSON" in {
+            val v = Structure.Value.Sequence(Chunk(Structure.Value.Integer(1L), Structure.Value.Integer(2L), Structure.Value.Integer(3L)))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Schema[Structure.Value].structure is Type.Open" in {
+            val schema = summon[Schema[Structure.Value]]
+            schema.structure match
+                case _: Structure.Type.Open => succeed
+                case other                  => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+    }
+
+    // =========================================================================
+    // Suite B: jsonSchemaSchema Draft 2020-12 (INV-17)
+    // =========================================================================
+
+    "jsonSchemaSchema Draft 2020-12 (top-level)" - {
+
+        "Obj(empty) encodes as JSON Schema object type" in {
+            val v    = JsonSchema.Obj(List.empty, List.empty)
+            val json = Json.encode(v)
+            assert(json.contains("\"type\""))
+            assert(json.contains("\"object\""))
+            assert(!json.contains("\"Obj\""))
+        }
+
+        "Obj round-trips through JSON" in {
+            val v       = JsonSchema.Obj(List.empty, List.empty)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Str encodes as JSON Schema string type" in {
+            val v    = JsonSchema.Str()
+            val json = Json.encode(v)
+            assert(json.contains("\"string\""))
+            assert(!json.contains("\"Str\""))
+        }
+
+        "Str round-trips through JSON" in {
+            val v       = JsonSchema.Str()
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Integer encodes as JSON Schema integer type" in {
+            val v    = JsonSchema.Integer()
+            val json = Json.encode(v)
+            assert(json.contains("\"integer\""))
+            assert(!json.contains("\"Integer\""))
+        }
+
+        "Integer round-trips through JSON" in {
+            val v       = JsonSchema.Integer()
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Num encodes as JSON Schema number type" in {
+            val v    = JsonSchema.Num()
+            val json = Json.encode(v)
+            assert(json.contains("\"number\""))
+            assert(!json.contains("\"Num\""))
+        }
+
+        "Num round-trips through JSON" in {
+            val v       = JsonSchema.Num()
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Bool encodes as JSON Schema boolean type" in {
+            val v    = JsonSchema.Bool
+            val json = Json.encode(v)
+            assert(json.contains("\"boolean\""))
+            assert(!json.contains("\"Bool\""))
+        }
+
+        "Bool round-trips through JSON" in {
+            val v       = JsonSchema.Bool
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Null encodes as JSON Schema null type" in {
+            val v    = JsonSchema.Null
+            val json = Json.encode(v)
+            assert(json.contains("\"null\""))
+            assert(!json.contains("\"Null\""))
+        }
+
+        "Null round-trips through JSON" in {
+            val v       = JsonSchema.Null
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Arr encodes as JSON Schema array type" in {
+            val v    = JsonSchema.Arr(JsonSchema.Str())
+            val json = Json.encode(v)
+            assert(json.contains("\"array\""))
+            assert(!json.contains("\"Arr\""))
+        }
+
+        "Arr round-trips through JSON" in {
+            val v       = JsonSchema.Arr(JsonSchema.Str())
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Nullable encodes as oneOf with null (not tagged-union)" in {
+            val v    = JsonSchema.Nullable(JsonSchema.Str())
+            val json = Json.encode(v)
+            assert(json.contains("\"oneOf\""))
+            assert(!json.contains("\"Nullable\""))
+        }
+
+        "Nullable round-trips through JSON" in {
+            val v       = JsonSchema.Nullable(JsonSchema.Str())
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "OneOf encodes as JSON Schema oneOf (not tagged-union)" in {
+            val v    = JsonSchema.OneOf(List("variant" -> JsonSchema.Obj(List.empty, List.empty)))
+            val json = Json.encode(v)
+            assert(json.contains("\"oneOf\""))
+            assert(!json.contains("\"OneOf\""))
+        }
+
+        "OneOf round-trips through JSON" in {
+            val v       = JsonSchema.OneOf(List("variant" -> JsonSchema.Obj(List.empty, List.empty)))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Schema[JsonSchema].structure is Type.Open" in {
+            val schema = summon[Schema[JsonSchema]]
+            schema.structure match
+                case _: Structure.Type.Open => succeed
+                case other                  => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+    }
+
+    // =========================================================================
+    // Suite C: structure variant direct check (INV-8, INV-3)
+    // =========================================================================
+
+    "Schema[Structure.Value] and Schema[JsonSchema] structure variant" - {
+
+        "Schema[Structure.Value].structure is Type.Open (not Primitive, Product, or Sum)" in {
+            val schema = summon[Schema[Structure.Value]]
+            schema.structure match
+                case _: Structure.Type.Open      => succeed
+                case _: Structure.Type.Primitive => fail("Expected Type.Open but got Primitive")
+                case _: Structure.Type.Product   => fail("Expected Type.Open but got Product")
+                case _: Structure.Type.Sum       => fail("Expected Type.Open but got Sum")
+                case other                       => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Schema[Structure.Value].structure tag is compatible with Tag[Structure.Value]" in {
+            val schema = summon[Schema[Structure.Value]]
+            schema.structure match
+                case open: Structure.Type.Open =>
+                    assert(open.tag =:= Tag[Structure.Value].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Schema[JsonSchema].structure is Type.Open (not Primitive, Product, or Sum)" in {
+            val schema = summon[Schema[JsonSchema]]
+            schema.structure match
+                case _: Structure.Type.Open      => succeed
+                case _: Structure.Type.Primitive => fail("Expected Type.Open but got Primitive")
+                case _: Structure.Type.Product   => fail("Expected Type.Open but got Product")
+                case _: Structure.Type.Sum       => fail("Expected Type.Open but got Sum")
+                case other                       => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Schema[JsonSchema].structure tag is compatible with Tag[JsonSchema]" in {
+            val schema = summon[Schema[JsonSchema]]
+            schema.structure match
+                case open: Structure.Type.Open =>
+                    assert(open.tag =:= Tag[JsonSchema].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Structure.Type.compatible returns true for same schema structure" in {
+            val schema = summon[Schema[Structure.Value]]
+            assert(Structure.Type.compatible(schema.structure, schema.structure))
+        }
+
+        "Structure.Type.compatible returns false for Structure.Value vs JsonSchema structures" in {
+            val valueS = summon[Schema[Structure.Value]]
+            val jsonS  = summon[Schema[JsonSchema]]
+            assert(!Structure.Type.compatible(valueS.structure, jsonS.structure))
+        }
+
+    }
+
 end SchemaTest

@@ -350,7 +350,7 @@ object Structure:
           * a zero-cost passthrough; `serializeRead` covers the case where Value is a field of an outer case class being decoded by the
           * macro-generated reader.
           *
-          * Reading requires a [[kyo.Codec.IntrospectingReader]] (JSON, YAML, or Structure source). Binary codecs without per-value type
+          * Reading requires a [[kyo.Codec.IntrospectingReader]] (JSON or Structure source). Binary codecs without per-value type
           * tags cannot decode a `Value` and the type-mismatch is reported with a precise diagnostic instead of bubbling up as an
           * `UnknownVariantException` from the auto-derived shape.
           */
@@ -364,13 +364,15 @@ object Structure:
                         case ir: Codec.IntrospectingReader => ir.readStructure()
                         case other =>
                             throw SchemaNotSerializableException(
-                                s"Schema[Structure.Value] requires a self-describing reader (JSON, YAML, or Structure source); got ${other.getClass.getSimpleName}"
+                                s"Schema[Structure.Value] requires a self-describing reader (JSON or Structure source); got ${other.getClass.getSimpleName}"
                             )(using reader.frame)
                 @publicInBinary private[kyo] def getter(value: Value): Maybe[Any] = Maybe(value)
                 @publicInBinary private[kyo] def setter(value: Value, next: Any): Value =
                     next match
                         case sv: Value => sv
                         case _         => value
+                override def structure: Structure.Type =
+                    Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
                 override private[kyo] def fromStructureValue(sv: Value)(using Frame): Result[DecodeException, Value] =
                     Result.Success(sv)
 

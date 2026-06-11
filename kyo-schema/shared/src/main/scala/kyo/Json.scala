@@ -217,6 +217,8 @@ object Json:
                     next match
                         case sv: JsonSchema => sv
                         case _              => value
+                override def structure: Structure.Type =
+                    Structure.Type.Open(Tag[JsonSchema].asInstanceOf[Tag[Any]])
             end new
         end jsonSchemaSchema
 
@@ -505,24 +507,42 @@ object Json:
         end fromInteger
 
         private def fromOneOf(elems: Chunk[Structure.Value]): JsonSchema =
-            // Reverse of the write path: each element is a single-property object whose key is the variant name.
-            val variants = elems.iterator.flatMap {
+            // Determine whether the elements are named-variant wrappers (MCP discriminated-union style) or direct
+            // sub-schemas (Nullable style: `[{inner}, {"type":"null"}]`).
+            // A named-variant wrapper has exactly one field whose value is itself a Record (another JSON Schema object).
+            // A direct sub-schema is a Record that carries a "type" or "oneOf" key as its own descriptor.
+            val isNamedVariantWrapper: Structure.Value => Boolean = {
                 case Structure.Value.Record(fields) if fields.size == 1 =>
-                    val (name, sub) = fields.head
-                    Some(name -> fromStructureValue(sub))
-                case _ => None
-            }.toList
-            // If the elements weren't named single-property objects (e.g. external producer used unnamed oneOf), fall back
-            // to numbering them so callers still see N variants of the right shape.
-            val nullVariantOnly = variants.lengthCompare(1) == 0 && variants.head._1 == "null"
-            if variants.isEmpty || nullVariantOnly then
-                val inner = elems.iterator.filterNot {
-                    case Structure.Value.Record(fields) if fields.size == 1 && fields.head._1 == "null" => true
-                    case _                                                                              => false
+                    fields.head._2.isInstanceOf[Structure.Value.Record]
+                case _ => false
+            }
+            val allNamedVariants = elems.iterator.forall(isNamedVariantWrapper)
+            if allNamedVariants && elems.nonEmpty then
+                val variants = elems.iterator.map {
+                    case Structure.Value.Record(fields) =>
+                        val (name, sub) = fields.head
+                        name -> fromStructureValue(sub)
+                    case other => throw TypeMismatchException(Seq.empty, "JsonSchema variant wrapper", other.toString)(using Frame.internal)
                 }.toList
-                if inner.lengthCompare(1) == 0 then Nullable(fromStructureValue(inner.head))
-                else OneOf(variants)
-            else OneOf(variants)
+                OneOf(variants)
+            else
+                // Direct sub-schemas: detect the Nullable pattern (exactly 2 elements, one of which is the null type).
+                val isNullSchema: Structure.Value => Boolean = {
+                    case Structure.Value.Record(fields) =>
+                        fields.iterator.exists { case ("type", Structure.Value.Str("null")) => true; case _ => false }
+                    case _ => false
+                }
+                val nonNullElems = elems.iterator.filterNot(isNullSchema).toList
+                val hasNull      = elems.iterator.exists(isNullSchema)
+                if hasNull && nonNullElems.lengthCompare(1) == 0 then
+                    Nullable(fromStructureValue(nonNullElems.head))
+                else
+                    // Fall back to numbering unnamed variants so callers see N variants of the right shape.
+                    val variants = elems.iterator.zipWithIndex.map { (sv, i) =>
+                        s"variant$i" -> fromStructureValue(sv)
+                    }.toList
+                    OneOf(variants)
+                end if
             end if
         end fromOneOf
 
