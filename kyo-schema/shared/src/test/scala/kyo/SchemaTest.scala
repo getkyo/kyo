@@ -6222,4 +6222,23 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     }
 
+    "structure default" - {
+        "Schema[String].structureViaMacro equals Structure.of[String]" in {
+            val s = summon[Schema[String]]
+            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[String]))
+        }
+        "Schema[Int].structureViaMacro equals Structure.of[Int]" in {
+            val s = summon[Schema[Int]]
+            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[Int]))
+        }
+        "Schema[List[String]].structureViaMacro equals Structure.of[List[String]]" in {
+            val s = summon[Schema[List[String]]]
+            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[List[String]]))
+        }
+        "Schema[Map[String, Int]].structureViaMacro equals Structure.of[Map[String, Int]]" in {
+            val s = summon[Schema[Map[String, Int]]]
+            assert(Structure.Type.compatible(s.structureViaMacro, Structure.of[Map[String, Int]]))
+        }
+    }
+
 end SchemaTest

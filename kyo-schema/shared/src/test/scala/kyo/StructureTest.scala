@@ -320,14 +320,12 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(paths == Chunk(Chunk("lead", "name"), Chunk("lead", "age"), Chunk("size")))
         }
 
-        "Structure.of[A] matches Schema[A].structure" in {
+        "Structure.of[A] matches Schema[A].structureViaMacro" in {
             val fromDirect = Structure.of[MTPerson]
-            val fromSchema = Schema[MTPerson].structure
+            val fromSchema = Schema[MTPerson].structureViaMacro
 
-            // Both should produce structurally identical types
             assert(Structure.Type.compatible(fromDirect, fromSchema))
 
-            // Both should be Products with the same field structure
             (fromDirect, fromSchema) match
                 case (Structure.Type.Product(n1, _, _, f1), Structure.Type.Product(n2, _, _, f2)) =>
                     assert(n1 == n2)

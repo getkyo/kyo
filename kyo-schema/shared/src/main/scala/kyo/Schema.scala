@@ -793,12 +793,18 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     // --- Structure integration ---
 
-    /** Returns the runtime type introspection tree for type A.
+    /** Runtime structural projection for A. Sole source of truth for "what shape does this Schema produce
+      * on the wire" -- consumed by Json.JsonSchema.from[A], Protobuf.ProtoSchema.from[A], and the
+      * case-class derivation macro to build product/sum structures.
       *
-      * Derives a Structure.Type at compile time via macro that describes the structure of A: fields for case classes, variants for sealed
-      * traits, element types for collections, etc.
+      * Overridden by each concrete Schema given with the specific structural descriptor for A.
       */
-    inline def structure: Structure.Type = Structure.of[A]
+    def structure: Structure.Type = ???
+
+    /** Macro-derived structural type descriptor. Returns the compile-time structural type for A,
+      * equivalent to Structure.of[A], inlined at each call site where A is statically known.
+      */
+    inline def structureViaMacro: Structure.Type = Structure.of[A]
 
     // --- Structural field operations ---
 
