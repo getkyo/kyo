@@ -328,6 +328,23 @@ object Subtyping:
             case Tasty.Type.Applied(Tasty.Type.Named(parentId), _) =>
                 if parentId == supId then Result.Success(Sub)
                 else checkTransitiveAndTail(parentId, remaining, supId, classpath, budget)
+            case tr: Tasty.Type.TypeRef =>
+                // A transitive parent can surface as a structural TypeRef rather than a resolved Named
+                // (e.g. a parent named through an object prefix). Resolve it to its symbol by the same
+                // fully-qualified-name path the annotation matcher uses, then walk it like a Named parent.
+                classpath.findSymbol(classpath.typeFullNameString(tr)) match
+                    case Maybe.Present(sym) =>
+                        if sym.id == supId then Result.Success(Sub)
+                        else checkTransitiveAndTail(sym.id, remaining, supId, classpath, budget)
+                    case Maybe.Absent =>
+                        // The TypeRef names a symbol outside the loaded closure (or a prefix that does not
+                        // reduce to a dotted name, e.g. a `this`-qualified ref): it cannot be walked, so it
+                        // cannot prove the relation. Continue with the remaining parents; if none establish
+                        // Sub, the unresolved parent leaves the verdict Indeterminate, never a false NotSub.
+                        checkParents(remaining, supId, classpath, budget) match
+                            case f: Result.Failure[TastyError] => f
+                            case Result.Success(Sub)           => Result.Success(Sub)
+                            case Result.Success(_)             => Result.Success(Indeterminate)
             case other =>
                 // Unhandled parent shape: fail on first occurrence with a structured diagnostic.
                 Result.Failure(TastyError.UnhandledSubtypingCase(
