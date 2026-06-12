@@ -424,8 +424,11 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 z = refA.zip(refB)
-                f      <- Fiber.initUnscoped(z.next)
-                _      <- assertEventually(refA.waiters.map(_ == 1))
+                f <- Fiber.initUnscoped(z.next)
+                // z.next races refA.next and refB.next, arming their waiters independently. Wait for both
+                // before firing: this leaf changes refB first, so syncing only on refA can let refB's
+                // subscriber be unregistered when set(1) lands, dropping the change and the zip never emits.
+                _      <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
                 _      <- refB.set(1)
                 _      <- refA.set(1)
                 result <- Abort.run[Timeout](Async.timeout(2.seconds)(f.get))
