@@ -750,6 +750,21 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(!s.toCss.contains("z-index:"))
         }
 
+        "fixed emits only position: fixed (offsets/size set separately, unlike overlay)" in {
+            val s = Style.position(Position.fixed)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.fixed))
+            assert(s.toCss == "position: fixed;")
+            assert(!s.toCss.contains("top:"))
+            assert(!s.toCss.contains("width:"))
+        }
+
+        "fixed composed with corner offsets (a floating button)" in {
+            val s = Style.position(_.fixed).left(16.px).bottom(16.px).zIndex(95)
+            assert(s.toCss.contains("position: fixed;"))
+            assert(s.toCss.contains("left: 16px;"))
+            assert(s.toCss.contains("bottom: 16px;"))
+        }
+
         "sticky composed with explicit top + z-index" in {
             val s = Style.position(_.sticky).top(60.px).zIndex(100)
             assert(s.toCss.contains("position: sticky;"))

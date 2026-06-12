@@ -236,6 +236,7 @@ private[kyo] object CssStyleRenderer:
                 case Position.dropdown => "position: absolute; top: 100%; right: 0; z-index: 50;"
                 case Position.sticky   => "position: sticky;"
                 case Position.absolute => "position: absolute;"
+                case Position.fixed    => "position: fixed;"
         case Top(v)                 => s"top: ${size(v)};"
         case Right(v)               => s"right: ${size(v)};"
         case Bottom(v)              => s"bottom: ${size(v)};"

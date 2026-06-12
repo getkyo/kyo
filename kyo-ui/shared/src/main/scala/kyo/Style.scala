@@ -976,9 +976,15 @@ object Style:
       *     [[kyo.Style.top]] and [[kyo.Style.zIndex]], so a sticky element can pin at the viewport top
       *     (`top(0.px).zIndex(100)`, e.g. a site header) or just below another sticky element
       *     (`top(60.px)`, e.g. a rail under a 60px header) without a baked-in offset.
+      *   - `absolute`: a positioned element (`position: absolute`) taken out of flow and placed against
+      *     its nearest positioned ancestor; the offsets and size are set separately.
+      *   - `fixed`: a viewport-pinned element (`position: fixed`) taken out of flow, with the offsets and
+      *     size set separately (unlike `overlay`, which bakes in all-four-edges full-viewport sizing). For
+      *     a partial pinned element: a corner floating button (`fixed` + `left`/`bottom`) or an edge
+      *     drawer (`fixed` + `top`/`left`/`bottom` + `width`).
       */
     enum Position derives CanEqual:
-        case flow, overlay, relative, dropdown, sticky, absolute
+        case flow, overlay, relative, dropdown, sticky, absolute, fixed
 
     /** Maps to the CSS `display` property for opting out of the default flex layout.
       *
