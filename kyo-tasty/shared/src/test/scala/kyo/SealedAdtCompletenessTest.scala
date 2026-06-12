@@ -86,10 +86,10 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // ── ADT-002: Tasty.Type (enum - 29 variants) ─────────────────────────────
+    // ── ADT-002: Tasty.Type (enum - 30 variants) ─────────────────────────────
 
     // Update EXPECTED_TYPE_COUNT whenever a new Tasty.Type variant is added.
-    private inline val EXPECTED_TYPE_COUNT = 29
+    private inline val EXPECTED_TYPE_COUNT = 30
 
     private inline def checkTypeCount()(using m: Mirror.SumOf[Tasty.Type]): Unit =
         inline val actual = constValue[Tuple.Size[m.MirroredElemTypes]]
@@ -129,14 +129,15 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
         "MatchType"       -> "TypeAdtFidelity2Test",
         "FlexibleType"    -> "TypeAdtFidelity2Test",
         "MatchCase"       -> "TypeAdtFidelity2Test",
+        "Bind"            -> "TypeUnpicklerTest",
         "TypeRef"         -> "TypeAdtFidelity2Test",
         "Bounds"          -> "TypeAdtFidelity2Test",
         "Nothing"         -> "SmallAdtCoexistenceTest",
         "Any"             -> "SmallAdtCoexistenceTest"
     )
 
-    // ADT-002: Tasty.Type - all 29 variants covered by tests.
-    "Tasty.Type - all 29 variants are covered by at least one named test" in {
+    // ADT-002: Tasty.Type - all 30 variants covered by tests.
+    "Tasty.Type - all 30 variants are covered by at least one named test" in {
         val variantNames = enumVariantNames[Tasty.Type]
         assert(
             variantNames.size == EXPECTED_TYPE_COUNT,

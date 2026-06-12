@@ -313,6 +313,8 @@ private[kyo] object BundledSnapshotProbe:
                 Tasty.Type.MatchType(remapType(bound, offset), remapType(scrut, offset), cases.map(remapType(_, offset)))
             case Tasty.Type.MatchCase(pat, rhs) =>
                 Tasty.Type.MatchCase(remapType(pat, offset), remapType(rhs, offset))
+            case Tasty.Type.Bind(name, pattern) =>
+                Tasty.Type.Bind(name, remapType(pattern, offset))
             case Tasty.Type.FlexibleType(underlying) =>
                 Tasty.Type.FlexibleType(remapType(underlying, offset))
             case Tasty.Type.TermRef(prefix, name) =>

@@ -931,6 +931,8 @@ object ClasspathOrchestrator:
                                 Tasty.Type.FlexibleType(remapType(underlying, fr))
                             case Tasty.Type.MatchCase(pat, rhs) =>
                                 Tasty.Type.MatchCase(remapType(pat, fr), remapType(rhs, fr))
+                            case Tasty.Type.Bind(name, pattern) =>
+                                Tasty.Type.Bind(name, remapType(pattern, fr))
                             case Tasty.Type.Rec(parent) =>
                                 Tasty.Type.Rec(remapType(parent, fr))
                             case Tasty.Type.RecThis(rec) =>
@@ -983,7 +985,7 @@ object ClasspathOrchestrator:
                                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                                         true
                                 }
@@ -1044,7 +1046,7 @@ object ClasspathOrchestrator:
                                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                         Tasty.Type.Nothing | Tasty.Type.Any =>
                                         descs(idx).declaredType = Maybe(remapped)
                                 end match
@@ -1172,7 +1174,7 @@ object ClasspathOrchestrator:
                                 _: Tasty.Type.OrType | _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType |
                                 _: Tasty.Type.ThisType | _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef |
                                 _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem | _: Tasty.Type.MatchType |
-                                _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef |
+                                _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef |
                                 _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                                 ""
                         end match
@@ -1196,7 +1198,7 @@ object ClasspathOrchestrator:
                                             _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                             _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                             _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                            _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                            _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                             Tasty.Type.Nothing | Tasty.Type.Any =>
                                             val resolvedFullName = resolveTypeFullNameFromDescs(remappedType)
                                             Some(Tasty.Annotation(remappedType, annotation.arguments, Tasty.Name(resolvedFullName)))
@@ -1418,7 +1420,7 @@ object ClasspathOrchestrator:
                                 _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                 _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                 _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                 Tasty.Type.Nothing | Tasty.Type.Any =>
                                 -1
                     end resolveChildRef
@@ -1455,7 +1457,7 @@ object ClasspathOrchestrator:
                                             _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                             _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                             _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                            _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                            _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                             Tasty.Type.Nothing | Tasty.Type.Any =>
                                             ()
                                     end match
@@ -1535,7 +1537,7 @@ object ClasspathOrchestrator:
                                 _: Tasty.Type.Array | _: Tasty.Type.Refinement | _: Tasty.Type.Rec |
                                 _: Tasty.Type.RecThis | _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType |
                                 _: Tasty.Type.ParamRef | _: Tasty.Type.Skolem | _: Tasty.Type.MatchType |
-                                _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase | Tasty.Type.Nothing |
+                                _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | Tasty.Type.Nothing |
                                 Tasty.Type.Any => t
                     end rewriteCrossFile
 
@@ -1869,7 +1871,7 @@ object ClasspathOrchestrator:
                 _: Tasty.Type.OrType | _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType |
                 _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                 _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                 Tasty.Type.Nothing | Tasty.Type.Any =>
                 Maybe.Absent
 

@@ -478,7 +478,7 @@ def isApplied(t: Tasty.Type): Boolean = t match
     case _                        => false
 ```
 
-Cases group by purpose: nominal references (`Named`, `TermRef`, `TypeRef`), type constructors (`Applied`, `TypeLambda`, `Function`, `ContextFunction`, `Tuple`), composite shapes (`AndType`, `OrType`, `Refinement`, `Annotated`), self / super / this references (`ThisType`, `SuperType`, `ParamRef`), bounds and wildcards (`Bounds`, `Wildcard`), match-type machinery (`MatchType`, `MatchCase`, `Skolem`, `FlexibleType`, `Rec`, `RecThis`), constants (`ConstantType`), and array / by-name / repeated wrappers (`Array`, `ByName`, `Repeated`). Two reserved sentinels, `Type.Nothing` and `Type.Any`, stand in for missing bounds.
+Cases group by purpose: nominal references (`Named`, `TermRef`, `TypeRef`), type constructors (`Applied`, `TypeLambda`, `Function`, `ContextFunction`, `Tuple`), composite shapes (`AndType`, `OrType`, `Refinement`, `Annotated`), self / super / this references (`ThisType`, `SuperType`, `ParamRef`), bounds and wildcards (`Bounds`, `Wildcard`), match-type machinery (`MatchType`, `MatchCase`, `Bind`, `Skolem`, `FlexibleType`, `Rec`, `RecThis`), constants (`ConstantType`), and array / by-name / repeated wrappers (`Array`, `ByName`, `Repeated`). Two reserved sentinels, `Type.Nothing` and `Type.Any`, stand in for missing bounds.
 
 > **Note:** `Type.Nothing` and `Type.Any` are real enum cases, not magic `Named` ids. Match them explicitly, do not look for a sentinel `SymbolId`.
 

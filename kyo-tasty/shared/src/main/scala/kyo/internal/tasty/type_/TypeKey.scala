@@ -320,6 +320,11 @@ object TypeKey:
                 work.append(rhs)
                 work.append(pat)
 
+            case Tasty.Type.Bind(name, pattern) =>
+                // 31 * hash(pattern) + name.hashCode + 20
+                work.append(new Combine1(name.hashCode + 20))
+                work.append(pattern)
+
             case Tasty.Type.TypeRef(qual, name) =>
                 // 31 * hash(qual) + name.hashCode + 15
                 work.append(new Combine1(name.hashCode + 15))
@@ -457,6 +462,9 @@ object TypeKey:
                     case (Tasty.Type.MatchCase(p1, r1), Tasty.Type.MatchCase(p2, r2)) =>
                         work.addOne((p1, p2))
                         work.addOne((r1, r2))
+                    case (Tasty.Type.Bind(n1, p1), Tasty.Type.Bind(n2, p2)) =>
+                        if n1 != n2 then result = false
+                        else work.addOne((p1, p2))
                     case (Tasty.Type.TypeRef(q1, n1), Tasty.Type.TypeRef(q2, n2)) =>
                         if n1 != n2 then result = false
                         else work.addOne((q1, q2))

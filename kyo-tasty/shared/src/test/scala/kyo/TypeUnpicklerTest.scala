@@ -233,6 +233,47 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
         }
     }
 
+    "decoding BIND in type position returns Type.Bind(name, pattern)" in {
+        import Tasty.Name.asString
+        val infoSym  = makeSym("Info")
+        val patSym   = makeSym("Pat")
+        val infoAddr = 5
+        val patAddr  = 7
+        val addrMap  = IntMap(infoAddr -> infoSym, patAddr -> patSym)
+        val names    = Array(Tasty.Name("t"), Tasty.Name("scala"))
+        val qual     = cat2(TastyFormat.TYPEREFpkg, 1) // names(1) = "scala"
+        // BIND (150) = cat5: [boundName_NameRef] [symInfo_Type] [pattern_Type].
+        val info    = cat4(TastyFormat.TYPEREFsymbol, infoAddr, qual)
+        val pattern = cat4(TastyFormat.TYPEREFsymbol, patAddr, qual)
+        val payload = encodeNat(0) ++ info ++ pattern // boundName = names(0) = "t"
+        val bytes   = cat5(TastyFormat.BIND, payload)
+        Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
+            case Result.Success(Tasty.Type.Bind(name, p)) =>
+                assert(name.asString == "t", s"expected bound name 't' but got ${name.asString}")
+                assert(p.isInstanceOf[Tasty.Type.Named], s"expected pattern to be Named but got $p")
+            case Result.Success(other) => fail(s"Expected Type.Bind but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got $e")
+            case Result.Panic(t)       => throw t
+        }
+    }
+
+    "decoding IDENT in type position returns its resolved type" in {
+        val sym     = makeSym("Int")
+        val addr    = 9
+        val addrMap = IntMap(addr -> sym)
+        val names   = Array(Tasty.Name("x"), Tasty.Name("scala"))
+        val qual    = cat2(TastyFormat.TYPEREFpkg, 1)
+        // IDENT (110) = cat4: name-ref + resolved-type AST. Resolved type = TYPEREFsymbol(addr, qual).
+        val resolved = cat4(TastyFormat.TYPEREFsymbol, addr, qual)
+        val bytes    = cat4(TastyFormat.IDENT, 0, resolved) // name-ref 0 = "x"
+        Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
+            case Result.Success(_: Tasty.Type.Named) => succeed
+            case Result.Success(other)               => fail(s"Expected Named (resolved type) but got $other")
+            case Result.Failure(e)                   => fail(s"Expected success but got $e")
+            case Result.Panic(t)                     => throw t
+        }
+    }
+
     // arguments is now a plain Chunk[Tree] field populated eagerly during Pass B.
     // The annotation term TYPEREFpkg(0) decodes to a TermRefPkg tree; arguments holds a single-element Chunk.
     "decoding ANNOTATEDtype eagerly populates Annotation.arguments as Chunk[Tree]" in {

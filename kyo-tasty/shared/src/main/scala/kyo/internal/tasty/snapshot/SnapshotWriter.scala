@@ -180,7 +180,7 @@ object SnapshotWriter:
                                 _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                 _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                 _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                 _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                                 true
                         }
@@ -198,7 +198,7 @@ object SnapshotWriter:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         -1
                 }
@@ -1029,7 +1029,7 @@ object SnapshotWriter:
                 _: Tasty.Type.OrType | _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType |
                 _: Tasty.Type.ThisType | _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef |
                 _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem | _: Tasty.Type.MatchType |
-                _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase | _: Tasty.Type.Bounds |
+                _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.Bounds |
                 Tasty.Type.Nothing | Tasty.Type.Any =>
                 ""
         end match

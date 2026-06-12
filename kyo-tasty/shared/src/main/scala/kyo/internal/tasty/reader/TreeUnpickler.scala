@@ -311,7 +311,7 @@ object TreeUnpickler:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef |
                         _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem | _: Tasty.Type.MatchType |
-                        _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef |
+                        _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef |
                         _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         makeUnresolvedSym("this-class")
                 Tasty.Tree.This(symbol)
@@ -327,7 +327,7 @@ object TreeUnpickler:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         makeUnresolvedSym("qualthis")
                 Tasty.Tree.This(symbol)
@@ -1497,7 +1497,7 @@ object TreeUnpickler:
                                 _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                 _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                 _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                 _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                                 ""
                         import Tasty.Name.asString as nameAsString
@@ -1510,7 +1510,7 @@ object TreeUnpickler:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         ""
                 val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
@@ -1540,7 +1540,7 @@ object TreeUnpickler:
                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                         Tasty.Type.Nothing | Tasty.Type.Any =>
                         kyo.Maybe.Absent
                 kyo.internal.tasty.type_.TypeOps.applied(tycon, Chunk.from(args.toSeq), fullNameHint)
@@ -1584,7 +1584,7 @@ object TreeUnpickler:
                                     _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                     _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                     _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                    _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                    _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                     Tasty.Type.Nothing | Tasty.Type.Any =>
                                     false
                             end match
@@ -1617,7 +1617,7 @@ object TreeUnpickler:
                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                         Tasty.Type.Nothing | Tasty.Type.Any =>
                         ""
                 val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
@@ -1759,7 +1759,7 @@ object TreeUnpickler:
                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                         Tasty.Type.Nothing | Tasty.Type.Any =>
                         ""
                 val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm

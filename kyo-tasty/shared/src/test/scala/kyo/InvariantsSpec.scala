@@ -708,6 +708,7 @@ class InvariantsSpec extends kyo.test.Test[Any]:
             case _: Tasty.Type.MatchType       => "matchType"
             case _: Tasty.Type.FlexibleType    => "flexibleType"
             case _: Tasty.Type.MatchCase       => "matchCase"
+            case _: Tasty.Type.Bind            => "bind"
             case _: Tasty.Type.Bounds          => "bounds"
         end label
         assert(label(named) == "named")

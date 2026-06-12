@@ -87,6 +87,8 @@ final class TypeArena:
                     Tasty.Type.TypeLambda(paramIds, f(body))
                 case Tasty.Type.MatchCase(pat, rhs) =>
                     Tasty.Type.MatchCase(f(pat), f(rhs))
+                case Tasty.Type.Bind(name, pattern) =>
+                    Tasty.Type.Bind(name, f(pattern))
                 case Tasty.Type.TypeRef(qual, name) =>
                     Tasty.Type.TypeRef(f(qual), name)
                 case Tasty.Type.Bounds(lo, hi) =>

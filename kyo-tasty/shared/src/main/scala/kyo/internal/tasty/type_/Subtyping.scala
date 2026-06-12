@@ -103,7 +103,7 @@ object Subtyping:
                     _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.Annotated |
                     _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                     _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                     _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing =>
                     sub match
                         // ADT sentinel: Type.Nothing short-circuits before any classpath lookup
@@ -128,7 +128,7 @@ object Subtyping:
                                     _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                     _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                     _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                     _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing |
                                     Tasty.Type.Any =>
                                     Result.Success(NotSub)
@@ -158,7 +158,7 @@ object Subtyping:
                                                         _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType |
-                                                        _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                                        _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                                         Tasty.Type.Nothing | Tasty.Type.Any =>
                                                         Maybe.Absent
@@ -171,7 +171,7 @@ object Subtyping:
                                     _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                     _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                     _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                     _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing |
                                     Tasty.Type.Any =>
                                     Result.Success(NotSub)
@@ -210,7 +210,7 @@ object Subtyping:
                                     _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                     _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                     _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                     _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing |
                                     Tasty.Type.Any =>
                                     Result.Success(NotSub)
@@ -234,7 +234,7 @@ object Subtyping:
                                     _: Tasty.Type.RecThis | _: Tasty.Type.AndType | _: Tasty.Type.OrType |
                                     _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                     _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Skolem |
-                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                     _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing |
                                     Tasty.Type.Any =>
                                     Result.Success(NotSub)
@@ -253,7 +253,7 @@ object Subtyping:
                                     _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                                     _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                                     _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                                    _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                                     _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing |
                                     Tasty.Type.Any =>
                                     val subUnfolded = substituteRecThis(subParent, sub)
@@ -265,7 +265,7 @@ object Subtyping:
                             _: Tasty.Type.OrType | _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType |
                             _: Tasty.Type.ThisType | _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef |
                             _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                            _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                            _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                             Tasty.Type.Any =>
                             Result.Success(NotSub)
         end if
@@ -484,7 +484,7 @@ object Subtyping:
             _: Tasty.Type.RecThis | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
             _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
             _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-            _: Tasty.Type.MatchCase | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
+            _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
             t.getClass.getSimpleName
 
     /** Structural alpha-equivalence for TypeLambda: rename params to positional de Bruijn-like indices.

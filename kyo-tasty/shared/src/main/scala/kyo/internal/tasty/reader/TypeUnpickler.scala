@@ -501,7 +501,7 @@ object TypeUnpickler:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         // Resolve THIS through the active scope's enclosing class.
                         // The owner stack is maintained by AstUnpickler around every CLASSDEF / DEFDEF;
@@ -612,7 +612,7 @@ object TypeUnpickler:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         Maybe.Absent
                 TypeOps.applied(tycon, Chunk.from(args), fullNameHint)
@@ -695,7 +695,7 @@ object TypeUnpickler:
                         _: Tasty.Type.AndType | _: Tasty.Type.OrType | _: Tasty.Type.Annotated |
                         _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType | _: Tasty.Type.SuperType |
                         _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard | _: Tasty.Type.Skolem |
-                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.MatchCase |
+                        _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType | _: Tasty.Type.Bind | _: Tasty.Type.MatchCase |
                         _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds | Tasty.Type.Nothing | Tasty.Type.Any =>
                         Maybe.Absent
                 TypeOps.andType(left, right, namedFullName(left), namedFullName(right))
@@ -805,7 +805,7 @@ object TypeUnpickler:
                                 _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                                 _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                                 _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                                _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                                _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                                 Tasty.Type.Nothing | Tasty.Type.Any =>
                                 simpleName
                         val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + simpleName else simpleName
@@ -863,8 +863,10 @@ object TypeUnpickler:
             // this second set of handlers handles nested TPT tags reached via readTypeNode.
             // Nested TPT tags are handled directly here; top-level dispatch in AstUnpickler routes to TreeUnpickler.decodeTptAsType.
 
-            case TastyFormat.IDENTtpt =>
-                // IDENTtpt (111): cat-4 (tag + Nat + AST). Nat is a name-ref; AST is the resolved Type.
+            case TastyFormat.IDENTtpt | TastyFormat.IDENT =>
+                // IDENTtpt (111) and its term-identifier form IDENT (110): cat-4 (tag + name-ref + AST).
+                // The name-ref is the identifier name; the AST is its resolved Type. Discard the name and
+                // return the resolved type. IDENT reaches type position via singleton/macro-generated types.
                 discard(view.readNat())
                 readTypeNode(view, ctx)
 
@@ -888,7 +890,7 @@ object TypeUnpickler:
                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                         Tasty.Type.Nothing | Tasty.Type.Any =>
                         ""
                 val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
@@ -946,7 +948,7 @@ object TypeUnpickler:
                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                         Tasty.Type.Nothing | Tasty.Type.Any =>
                         ""
                 val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
@@ -1055,7 +1057,7 @@ object TypeUnpickler:
                         _: Tasty.Type.Annotated | _: Tasty.Type.ConstantType | _: Tasty.Type.ThisType |
                         _: Tasty.Type.SuperType | _: Tasty.Type.ParamRef | _: Tasty.Type.Wildcard |
                         _: Tasty.Type.Skolem | _: Tasty.Type.MatchType | _: Tasty.Type.FlexibleType |
-                        _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
+                        _: Tasty.Type.Bind | _: Tasty.Type.MatchCase | _: Tasty.Type.TypeRef | _: Tasty.Type.Bounds |
                         Tasty.Type.Nothing | Tasty.Type.Any =>
                         ""
                 val qualifiedFullName = if qualFullName.nonEmpty then qualFullName + "." + nm else nm
@@ -1111,6 +1113,20 @@ object TypeUnpickler:
                     case Maybe.Absent     => Tasty.Type.Named(sentinelId)
 
             // ── Unknown tag: fail loudly ──────────────────────────────────────────
+
+            case TastyFormat.BIND =>
+                // BIND (150) in type position binds a match-type pattern variable: the `t` in a
+                // `case List[t] => ...` case, pickled inside the case's APPLIEDtpt pattern. dotty
+                // pickles BIND as `name, symInfo_Type, body`; the term decoder reads it the same way
+                // (the bound variable's info is not retained, matching Tree.Bind). goto(end) guards the
+                // cursor against trailing modifiers.
+                val end     = view.readEnd()
+                val nameRef = view.readNat()
+                val name    = nameAt(ctx.names, nameRef)
+                discard(readTypeNode(view, ctx)) // bound variable's info type
+                val pattern = readTypeNode(view, ctx)
+                view.goto(end)
+                Tasty.Type.Bind(name, pattern)
 
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 // Any cat-5 tag not handled above is a genuinely unrecognised TASTy format extension.

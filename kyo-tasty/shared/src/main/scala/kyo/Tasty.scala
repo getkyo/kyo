@@ -1512,6 +1512,14 @@ object Tasty:
           */
         case MatchCase(pat: Type, rhs: Type)
 
+        /** Match-type pattern binder: the `t` in a `case List[t] => ...` match-type case. Wire tag BIND (150).
+          *
+          * Symmetric to `Tree.Bind` in term position: `name` is the bound type variable and `pattern` is the
+          * bound pattern type. The bound variable's info bounds are not retained, matching `Tree.Bind`.
+          * Exhaustive matches over `Type` must handle this case.
+          */
+        case Bind(name: Name, pattern: Type)
+
         /** Type-position reference. Wire tag TYPEREF (117).
           *
           * Semantically distinct from `TermRef` (term-position reference). Callers that need to distinguish
@@ -1570,6 +1578,7 @@ object Tasty:
             case FlexibleType(u) => f(u)
             case MatchCase(p, r) =>
                 f(p); f(r)
+            case Bind(_, p)       => f(p)
             case TypeRef(qual, _) => f(qual)
             case Bounds(lo, hi) =>
                 f(lo); f(hi)
@@ -3164,6 +3173,7 @@ object Tasty:
                             case _: Type.MatchType       => false
                             case _: Type.FlexibleType    => false
                             case _: Type.MatchCase       => false
+                            case _: Type.Bind            => false
                             case _: Type.TypeRef         => false
                             case _: Type.Bounds          => false
                             case Type.Nothing            => false
@@ -3520,6 +3530,7 @@ object Tasty:
             case Type.MatchType(_, _, _)    => Maybe.Absent
             case Type.FlexibleType(_)       => Maybe.Absent
             case Type.MatchCase(_, _)       => Maybe.Absent
+            case Type.Bind(_, _)            => Maybe.Absent
             case Type.TypeRef(_, _)         => Maybe.Absent
             case Type.Bounds(_, _)          => Maybe.Absent
             case Type.Nothing               => Maybe.Absent
@@ -3591,6 +3602,8 @@ object Tasty:
                     s"${typeShow(underlying)}?"
                 case Type.MatchCase(pat, rhs) =>
                     s"case ${typeShow(pat)} => ${typeShow(rhs)}"
+                case Type.Bind(name, pattern) =>
+                    s"${name.asString} @ ${typeShow(pattern)}"
                 case Type.TypeRef(qual, name) =>
                     s"${typeShow(qual)}.${name.asString}"
                 case Type.Bounds(lo, hi) =>
@@ -3794,6 +3807,7 @@ object Tasty:
                 case _: Type.MatchType       => ""
                 case _: Type.FlexibleType    => ""
                 case _: Type.MatchCase       => ""
+                case _: Type.Bind            => ""
                 case _: Type.Bounds          => ""
                 case Type.Nothing            => ""
                 case Type.Any                => ""
@@ -4006,6 +4020,7 @@ object Tasty:
                 case _: Type.MatchType       => Chunk.empty
                 case _: Type.FlexibleType    => Chunk.empty
                 case _: Type.MatchCase       => Chunk.empty
+                case _: Type.Bind            => Chunk.empty
                 case _: Type.TypeRef         => Chunk.empty
                 case _: Type.Bounds          => Chunk.empty
                 case Type.Nothing            => Chunk.empty
@@ -4316,6 +4331,7 @@ object Tasty:
                             case _: Type.MatchType       => ()
                             case _: Type.FlexibleType    => ()
                             case _: Type.MatchCase       => ()
+                            case _: Type.Bind            => ()
                             case _: Type.TypeRef         => ()
                             case _: Type.Bounds          => ()
                             case Type.Nothing            => ()
