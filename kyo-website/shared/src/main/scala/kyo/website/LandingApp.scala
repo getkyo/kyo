@@ -221,10 +221,13 @@ object LandingApp:
 
         val baseline = Svg.line.x1(left).y1(baseY).x2(w - right).y2(baseY).stroke(lineC).strokeWidth(1.0)
         val area     = Svg.path.d(areaPath).fill(red).fillOpacity(0.12).stroke(Svg.Paint.None)
+        // fill=freeze holds the fully-drawn state when the tween ends; without it the SMIL default
+        // (fill=remove) reverts stroke-dashoffset to its base (= total), erasing the line.
         val line = Svg.path.d(linePath).fill(Svg.Paint.None).stroke(red).strokeWidth(2.5)
             .strokeLinecap(Svg.StrokeLinecap.Round)
             .strokeDasharray(Seq(total, total)).strokeDashoffset(Svg.SvgLength.px(total))(
-                Svg.animate.attributeName("stroke-dashoffset").from(total).to(0.0).dur("1.1s").begin("0s").repeatCount("1")
+                Svg.animate.attributeName("stroke-dashoffset").from(total).to(0.0).dur("1.1s").begin("0s")
+                    .repeatCount("1").fill(Svg.AnimFill.Freeze)
             )
         // The start is the brand accent (a single step still mostly works); the line climbs into red.
         val startDot = Svg.circle.cx(pts.head._1).cy(pts.head._2).r(4.0).fill(accent)
