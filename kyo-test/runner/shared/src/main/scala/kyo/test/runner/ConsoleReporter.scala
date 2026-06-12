@@ -118,8 +118,10 @@ final class ConsoleReporter(
                 end if
 
             case TestResult.Cancelled(reason, d) =>
+                // A cancelled leaf is a deliberate skip (a failed `assume`/`cancel` precondition), not a failure:
+                // coloured yellow (neutral), not red.
                 out.println(
-                    s"$ind${color("[CANCELLED]", _.red)} $path  ${durationSuffix(d)}  $reason"
+                    s"$ind${color("[CANCELLED]", _.yellow)} $path  ${durationSuffix(d)}  $reason"
                 )
 
             case TestResult.Pending(reason) =>
@@ -154,11 +156,16 @@ final class ConsoleReporter(
         val timedOutCount = report.leafResults.count(_._2.isInstanceOf[TestResult.TimedOut])
         val skippedCount  = report.leafResults.count(_._2.isInstanceOf[TestResult.Skipped])
 
+        // A timeout is a failure: fold it into the failed total so this line agrees with the FAILURES block.
+        val redCount = failedCount + timedOutCount
+        val failedSegment =
+            if timedOutCount > 0 then color(s"$redCount failed ($timedOutCount timed out)", _.red)
+            else color(s"$redCount failed", _.red)
+
         val extraCounts = List(
             if cancelCount > 0 then Maybe(color(s"$cancelCount cancelled", _.yellow)) else Maybe.empty,
             if pendingCount > 0 then Maybe(color(s"$pendingCount pending", _.yellow)) else Maybe.empty,
             if ignoredCount > 0 then Maybe(color(s"$ignoredCount ignored", _.grey)) else Maybe.empty,
-            if timedOutCount > 0 then Maybe(color(s"$timedOutCount timed out", _.yellow)) else Maybe.empty,
             if skippedCount > 0 then Maybe(color(s"$skippedCount skipped", _.grey)) else Maybe.empty
         ).flatMap(_.toChunk)
 
@@ -167,7 +174,7 @@ final class ConsoleReporter(
         val line =
             s"${color("---", _.dim)} ${info.name}: " +
                 s"${color(s"$passedCount passed", _.green)}, " +
-                s"${color(s"$failedCount failed", _.red)}$extraStr" +
+                s"$failedSegment$extraStr" +
                 s"  ${durationSuffix(report.duration)}"
 
         out.println(line)
@@ -182,19 +189,19 @@ final class ConsoleReporter(
         end if
     end onSuiteComplete
 
+    // A failure is a real red only: a failed assertion or a timeout; Cancelled/Skipped/Pending/Ignored
+    // are non-failures reported as separate counts, never in FAILURES.
     private def isSuiteFailure(r: TestResult): Boolean =
         r match
-            case _: TestResult.Failed    => true
-            case _: TestResult.TimedOut  => true
-            case _: TestResult.Cancelled => true
-            case _                       => false
+            case _: TestResult.Failed   => true
+            case _: TestResult.TimedOut => true
+            case _                      => false
 
     private def suiteStatusTag(r: TestResult): String =
         r match
-            case _: TestResult.Failed    => "[FAIL]"
-            case _: TestResult.TimedOut  => "[TIMEOUT]"
-            case _: TestResult.Cancelled => "[CANCELLED]"
-            case _                       => ""
+            case _: TestResult.Failed   => "[FAIL]"
+            case _: TestResult.TimedOut => "[TIMEOUT]"
+            case _                      => ""
 
     private def printCompactDetail(result: TestResult): Unit =
         result match
@@ -226,11 +233,16 @@ final class ConsoleReporter(
         val timedOutCount = report.timedOut
         val skippedCount  = report.skipped
 
+        // A timeout is a failure: fold it into the failed total so this line agrees with the FAILURES block.
+        val redCount = failedCount + timedOutCount
+        val failedSegment =
+            if timedOutCount > 0 then color(s"$redCount failed ($timedOutCount timed out)", _.red)
+            else color(s"$redCount failed", _.red)
+
         val extraCounts = List(
             if cancelCount > 0 then Maybe(color(s"$cancelCount cancelled", _.yellow)) else Maybe.empty,
             if pendingCount > 0 then Maybe(color(s"$pendingCount pending", _.yellow)) else Maybe.empty,
             if ignoredCount > 0 then Maybe(color(s"$ignoredCount ignored", _.grey)) else Maybe.empty,
-            if timedOutCount > 0 then Maybe(color(s"$timedOutCount timed out", _.yellow)) else Maybe.empty,
             if skippedCount > 0 then Maybe(color(s"$skippedCount skipped", _.grey)) else Maybe.empty
         ).flatMap(_.toChunk)
 
@@ -239,7 +251,7 @@ final class ConsoleReporter(
         val line =
             s"Results: " +
                 s"${color(s"$passedCount passed", _.green)}, " +
-                s"${color(s"$failedCount failed", _.red)}$extraStr" +
+                s"$failedSegment$extraStr" +
                 s"  (total: ${formatDuration(report.totalDuration)})"
 
         out.println()
