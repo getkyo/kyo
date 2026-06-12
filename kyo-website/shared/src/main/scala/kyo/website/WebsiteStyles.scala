@@ -943,6 +943,26 @@ object WebsiteStyles:
                 Selector.cls("hero-code").descendant(Selector.tag("pre")),
                 Style.fontSize(12.5.px).lineHeight(1.6)
             )
+            // Hero code reveal: each source line is a `.hl` block (the hero `<code>` goes block too, so the
+            // block lines sit in a block context, overriding the `.code` inline reset), letting the lines
+            // stagger in on load. The base state is the full code, still and visible; the entrance animation
+            // is gated behind `prefers-reduced-motion: no-preference`, so a reduced-motion (or no-CSS-anim)
+            // reader gets the complete code at once. The animation prop's `both` fill holds each line at the
+            // `from` frame until its per-line `animation-delay` (set inline in LandingApp), then freezes it
+            // at the `to` frame, the CSS analog of the gap chart's SMIL freeze.
+            .rule(Selector.cls("hero-code").descendant(Selector.tag("code")), Style.block)
+            .rule(Selector.cls("hero-code").descendant(Selector.cls("hl")), Style.block)
+            .keyframes(
+                "heroline",
+                Stylesheet.Keyframe.from -> Style.opacity(0.0).translate(0.px, 6.px),
+                Stylesheet.Keyframe.to   -> Style.opacity(1.0).translate(0.px, 0.px)
+            )
+            .media(Stylesheet.MediaQuery.prefersReducedMotionNoPreference)(
+                Stylesheet.empty.rule(
+                    Selector.cls("hero-code").descendant(Selector.cls("hl")),
+                    Style.animation("heroline", 300, _.easeOut)
+                )
+            )
             // ---- hero + gap as two-column compositions that use the full content width (the page used
             // to be a thin centered ribbon). The hero pairs left-aligned text with a real code sample;
             // the gap pairs the argument with the stat. Both stack to one column on narrow viewports. ----

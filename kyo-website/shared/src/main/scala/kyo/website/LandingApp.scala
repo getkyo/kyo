@@ -94,62 +94,69 @@ object LandingApp:
 
     // A real, type-checked Kyo program in the hero: the pending type lists every effect, handlers
     // discharge them in any order, and `.eval` yields a Result. Same `tok-*` palette as the docs.
+    //
+    // Each line is its own `.hl` block so the lines can stagger in on load (WebsiteStyles `.hero-code .hl`
+    // + the `heroline` keyframes), the final result-type comment arriving on a beat as the punchline. The
+    // stagger delay is set per line; the animation itself is gated behind `prefers-reduced-motion:
+    // no-preference`, so a reduced-motion (or no-CSS-animation) reader gets the full code, still, at once.
+    private def heroLine(delayMs: Int)(content: UI.Ast.HtmlChildVal*)(using Frame): UI =
+        UI.span.cssClass("hl").style(Style.animationDelay(delayMs))(content*)
+
     private def heroCode(using Frame): UI =
+        val step = 34
         UI.div.cssClass("code").cssClass("hero-code")(
             UI.pre(
                 UI.code(
-                    tCom("// effects and failures are part of the type"),
-                    UI.br,
-                    tKey("val"),
-                    " program: ",
-                    tType("Int"),
-                    " ",
-                    tOp("<"),
-                    " (",
-                    tType("Abort"),
-                    "[",
-                    tType("String"),
-                    "] ",
-                    tOp("&"),
-                    " ",
-                    tType("Env"),
-                    "[",
-                    tType("Int"),
-                    "]) =",
-                    UI.br,
-                    "  ",
-                    tType("Env"),
-                    ".get[",
-                    tType("Int"),
-                    "].map(n =>",
-                    UI.br,
-                    "    ",
-                    tKey("if"),
-                    " n > 0 ",
-                    tKey("then"),
-                    " n ",
-                    tKey("else"),
-                    " ",
-                    tType("Abort"),
-                    ".fail(",
-                    tStr("\"oops\""),
-                    "))",
-                    UI.br,
-                    UI.br,
-                    tCom("// handlers discharge them, in any order"),
-                    UI.br,
-                    "program.handle(",
-                    tType("Abort"),
-                    ".run, ",
-                    tType("Env"),
-                    ".run(",
-                    tNum("10"),
-                    ")).eval",
-                    UI.br,
-                    tCom("// Result[String, Int]")
+                    heroLine(step * 0)(tCom("// effects and failures are part of the type")),
+                    heroLine(step * 1)(
+                        tKey("val"),
+                        " program: ",
+                        tType("Int"),
+                        " ",
+                        tOp("<"),
+                        " (",
+                        tType("Abort"),
+                        "[",
+                        tType("String"),
+                        "] ",
+                        tOp("&"),
+                        " ",
+                        tType("Env"),
+                        "[",
+                        tType("Int"),
+                        "]) ="
+                    ),
+                    heroLine(step * 2)("  ", tType("Env"), ".get[", tType("Int"), "].map(n =>"),
+                    heroLine(step * 3)(
+                        "    ",
+                        tKey("if"),
+                        " n > 0 ",
+                        tKey("then"),
+                        " n ",
+                        tKey("else"),
+                        " ",
+                        tType("Abort"),
+                        ".fail(",
+                        tStr("\"oops\""),
+                        "))"
+                    ),
+                    heroLine(step * 4)(" "),
+                    heroLine(step * 5)(tCom("// handlers discharge them, in any order")),
+                    heroLine(step * 6)(
+                        "program.handle(",
+                        tType("Abort"),
+                        ".run, ",
+                        tType("Env"),
+                        ".run(",
+                        tNum("10"),
+                        ")).eval"
+                    ),
+                    // The result-type line lands on a longer beat, the payoff of the whole snippet.
+                    heroLine(step * 6 + 120)(tCom("// Result[String, Int]"))
                 )
             )
         )
+    end heroCode
 
     // ---- 2. The gap ----
 
