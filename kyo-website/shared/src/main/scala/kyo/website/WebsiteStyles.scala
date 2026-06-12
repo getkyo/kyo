@@ -791,7 +791,15 @@ object WebsiteStyles:
                         (inkSection, Length.Pct(72))
                     )
             )
-            .rule("rungs", Style.column.maxWidth(900.px).margin(40.px, Length.Auto, 0.px, Length.Auto))
+            // width 100% + min-width 0: as a flex item the `margin: auto` horizontal centering would
+            // otherwise let `.rungs` size to its max-content (the non-wrapping code <pre>, ~580px) and
+            // overflow a phone, clipped by the band's overflow:hidden. width 100% pins it to the column
+            // (capped by max-width on wide screens); min-width 0 lets the inner `.code` scroll instead of
+            // forcing the rung wide.
+            .rule(
+                "rungs",
+                Style.column.width(Length.Pct(100)).minWidth(0.px).maxWidth(900.px).margin(40.px, Length.Auto, 0.px, Length.Auto)
+            )
             .rule("rung", Style.row.flexWrap(_.wrap).gap(26.px).padding(30.px, 4.px).borderTop(1.px, whiteBorder12))
             .rule(
                 "beat",
@@ -1570,9 +1578,12 @@ object WebsiteStyles:
             // reset both to auto here to size by content.
             .media(Stylesheet.MediaQuery.maxWidth(640.px))(
                 Stylesheet.empty
-                    .rule("rung", Style.column.gap(10.px).padding(26.px, 0.px))
+                    .rule("rung", Style.column.gap(10.px).padding(26.px, 0.px).minWidth(0.px))
                     .rule("beat", Style.flexBasis(Length.Auto).margin(0.px, 0.px, 2.px, 0.px))
-                    .rule("rung-body", Style.flexBasis(Length.Auto))
+                    // width 100% + min-width 0 pins the body to the (now column-width) rung instead of
+                    // letting it expand to the non-wrapping code's min-content and overflow the viewport
+                    // (which the band's overflow:hidden then clips). The code panel scrolls inside it.
+                    .rule("rung-body", Style.flexBasis(Length.Auto).width(Length.Pct(100)).minWidth(0.px))
             )
             // docs 2-pane is side-by-side on wide viewports (rail + content); below 860px the rail
             // collapses into a toggle-revealed drawer (handled by the <860px block further down).
