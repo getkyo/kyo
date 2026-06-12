@@ -1326,7 +1326,8 @@ private[kyo] object HtmlRenderer:
             val la = if largeArc then 1 else 0
             val sw = if sweep then 1 else 0
             s"a${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(dx)} ${fmtD(dy)}"
-        case Svg.PathCommand.Close => "Z"
+        case Svg.PathCommand.Close  => "Z"
+        case Svg.PathCommand.Raw(d) => d
 
     private def fillRule(r: Svg.FillRule): String = r match
         case Svg.FillRule.NonZero => "nonzero"

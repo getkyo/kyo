@@ -147,13 +147,26 @@ object Svg:
         case ArcTo(rx: Double, ry: Double, xRot: Double, largeArc: Boolean, sweep: Boolean, x: Double, y: Double)
         case ArcBy(rx: Double, ry: Double, xRot: Double, largeArc: Boolean, sweep: Boolean, dx: Double, dy: Double)
         case Close
+
+        /** A pre-formatted `d` fragment emitted verbatim, the escape for embedding an external path (a
+          * brand mark, an icon-set glyph) whose command list would be impractical to transcribe. The
+          * counterpart to [[kyo.Selector.raw]] / [[kyo.Stylesheet.MediaQuery.raw]].
+          */
+        case Raw(d: String)
     end PathCommand
 
-    /** A typed path-command list backing the `d` attribute; no raw `d` string. */
+    /** A typed path-command list backing the `d` attribute. Prefer the typed builders; [[kyo.Svg.PathData.raw]]
+      * is the escape for embedding an external path string verbatim.
+      */
     opaque type PathData = Chunk[PathCommand]
     object PathData:
-        def from(x: Double, y: Double): PathData                   = Chunk(PathCommand.MoveTo(x, y))
-        def from(x: Int, y: Int): PathData                         = from(x.toDouble, y.toDouble)
+        def from(x: Double, y: Double): PathData = Chunk(PathCommand.MoveTo(x, y))
+        def from(x: Int, y: Int): PathData       = from(x.toDouble, y.toDouble)
+
+        /** A path whose `d` attribute is the given string verbatim, for embedding an external/standard path
+          * (a brand mark, an icon-set glyph) that the typed builders would be impractical to express.
+          */
+        def raw(d: String): PathData                               = Chunk(PathCommand.Raw(d))
         val empty: PathData                                        = Chunk.empty
         private[kyo] def commands(p: PathData): Chunk[PathCommand] = p
         given CanEqual[PathData, PathData]                         = CanEqual.derived

@@ -44,6 +44,12 @@ class SvgRendererTest extends kyo.test.Test[Any]:
         yield assert(html.contains("""d="M50 50 L90 50 A40 40 0 0 1 50 90 Z""""))
     }
 
+    "PathData.raw emits the d string verbatim (for external/brand paths)" in {
+        val p = Svg.path.d(Svg.PathData.raw("M12 0a12 12 0 100 24z"))
+        for html <- HtmlRenderer.render(p, Seq.empty)
+        yield assert(html.contains("""d="M12 0a12 12 0 100 24z""""), s"raw d must pass through: $html")
+    }
+
     // transform list joins
     "transform list renders as space-separated functions" in {
         val g = Svg.g.transform(Svg.Transform.Translate(10, 20), Svg.Transform.Scale(2))
