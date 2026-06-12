@@ -123,7 +123,7 @@ class LandingAppTest extends WebsiteTest:
             // The stat callout is a chart card: the SVG line chart (the chance the run has failed, climbing
             // as steps chain) stacked on top of the "compounds" caption and explanatory copy. The chart is
             // server-rendered (present without JS); the line climbs from the accent start dot up into the red
-            // "4 in 5" peak and draws itself in via a SMIL stroke-dashoffset tween.
+            // "4 in 5" peak and draws itself in (a CSS stroke-dashoffset keyframe) when scrolled into view.
             assert(html.contains("class=\"stat-chart\""), s"stat-chart wrapper must render: $html")
             assert(html.contains("<svg"), s"the chart must render as inline SVG: $html")
             assert(html.contains("Small errors compound."), "the stat caption must state that errors compound")
@@ -131,7 +131,21 @@ class LandingAppTest extends WebsiteTest:
             assert(html.contains("chance of failure"), "the chart must caption the failure dimension")
             assert(html.contains("85%"), "the copy must give the 85% per-step reliability")
             assert(html.contains("var(--red)"), "the climbing line and its peak render in red")
-            assert(html.contains("attributeName=\"stroke-dashoffset\""), "the line draws in via a SMIL stroke-dashoffset tween")
+        }
+    }
+
+    "the gap chart's line carries the scroll-reveal hooks: a #gap-chart wrapper and a #gap-line path with pathLength=1" in {
+        renderLanding.map { html =>
+            // The bundle observes `#gap-chart` and adds `.chart-drawn` when it scrolls into view; the CSS
+            // keyframe then tweens `#gap-line`'s stroke-dashoffset. `pathLength="1"` normalizes the geometry
+            // so the keyframe (1 -> 0) is length-independent. The inline dash base (stroke-dasharray="1",
+            // stroke-dashoffset="0") renders the line fully drawn without JS or with reduced motion.
+            assert(html.contains("id=\"gap-chart\""), s"the chart wrapper must carry id=gap-chart for the observer: $html")
+            assert(html.contains("id=\"gap-line\""), s"the climbing line must carry id=gap-line for the draw keyframe: $html")
+            assert(html.contains("pathLength=\"1\""), s"the line must normalize its length via pathLength=1: $html")
+            assert(html.contains("stroke-dashoffset=\"0\""), s"the line's inline base must render it fully drawn: $html")
+            // The draw is CSS-driven now, not SMIL: there is no <animate> tween in the chart.
+            assert(!html.contains("attributeName=\"stroke-dashoffset\""), s"the chart must not use a SMIL animate: $html")
         }
     }
 

@@ -194,8 +194,10 @@ object LandingApp:
       * work 85% of the time (`1 - 0.85^n`): about one in seven at a single step, climbing to four in five
       * by ten. The line climbs up and to the right into red, the visual argument the section makes, that
       * small per-step errors compound fast. Colors are CSS-variable paints, so the chart follows the light
-      * and dark themes; the line draws in with a SMIL `stroke-dashoffset` tween (browser-driven, no
-      * JavaScript).
+      * and dark themes. The line draws itself in (a `stroke-dashoffset` CSS keyframe) the moment the chart
+      * scrolls into view rather than on load, where the motion would play below the fold and be missed: the
+      * bundle adds `.chart-drawn` to the `#gap-chart` wrapper via an IntersectionObserver. With scripting or
+      * reduced-motion the line renders fully drawn (its inline dash base), so the chart is always complete.
       */
     private def failureChart(using Frame): UI =
         val n       = 10
@@ -218,10 +220,6 @@ object LandingApp:
         val linePath =
             pts.drop(1).foldLeft(Svg.PathData.from(pts.head._1, pts.head._2))((acc, p) => acc.lineTo(p._1, p._2))
         val areaPath = linePath.lineTo(pts.last._1, baseY).lineTo(pts.head._1, baseY).close
-        val total =
-            (1 until pts.length).foldLeft(0.0) { (acc, i) =>
-                acc + math.hypot(pts(i)._1 - pts(i - 1)._1, pts(i)._2 - pts(i - 1)._2)
-            }
 
         val accent = Svg.Paint.Color(Style.Color.variable("accent"))
         val red    = Svg.Paint.Color(Style.Color.variable("red"))
@@ -230,14 +228,15 @@ object LandingApp:
 
         val baseline = Svg.line.x1(left).y1(baseY).x2(w - right).y2(baseY).stroke(lineC).strokeWidth(1.0)
         val area     = Svg.path.d(areaPath).fill(red).fillOpacity(0.12).stroke(Svg.Paint.None)
-        // fill=freeze holds the fully-drawn state when the tween ends; without it the SMIL default
-        // (fill=remove) reverts stroke-dashoffset to its base (= total), erasing the line.
-        val line = Svg.path.d(linePath).fill(Svg.Paint.None).stroke(red).strokeWidth(2.5)
+        // The line draws in when the chart scrolls into view, not on load: `pathLength=1` normalizes the
+        // geometry so the CSS keyframe (`#gap-line` under the wrapper's `.chart-drawn`) tweens
+        // stroke-dashoffset 1 (the dash shifted off, hidden) -> 0 (drawn) without knowing the real length.
+        // The inline dasharray/offset render the line fully drawn by default, so it is present with the
+        // scripting OR motion disabled; the bundle adds `.chart-drawn` via an IntersectionObserver.
+        val line = Svg.path.d(linePath).id("gap-line").pathLength(1.0)
+            .fill(Svg.Paint.None).stroke(red).strokeWidth(2.5)
             .strokeLinecap(Svg.StrokeLinecap.Round)
-            .strokeDasharray(Seq(total, total)).strokeDashoffset(Svg.SvgLength.px(total))(
-                Svg.animate.attributeName("stroke-dashoffset").from(total).to(0.0).dur("0.7s").begin("0s")
-                    .repeatCount("1").fill(Svg.AnimFill.Freeze)
-            )
+            .strokeDasharray(Seq(1.0)).strokeDashoffset(Svg.SvgLength.user(0.0))
         // The start is the brand accent (a single step still mostly works); the line climbs into red.
         val startDot = Svg.circle.cx(pts.head._1).cy(pts.head._2).r(4.0).fill(accent)
         val endDot   = Svg.circle.cx(pts.last._1).cy(pts.last._2).r(5.0).fill(red)
@@ -246,7 +245,7 @@ object LandingApp:
         val caption = Svg.text.x(w / 2).y(h - 8).textAnchor(Svg.TextAnchor.Middle)
             .fill(dim).fontSize(Svg.SvgLength.px(11.0))("chance of failure, 1 to 10 chained steps")
 
-        UI.div.cssClass("stat-chart")(
+        UI.div.cssClass("stat-chart").id("gap-chart")(
             Svg.svg.viewBox(Svg.ViewBox(0, 0, w, h)).width(w.toInt).height(h.toInt)(
                 baseline,
                 area,

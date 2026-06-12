@@ -999,12 +999,28 @@ object WebsiteStyles:
                 Stylesheet.Keyframe.from -> Style.opacity(0.0).translate(0.px, 6.px),
                 Stylesheet.Keyframe.to   -> Style.opacity(1.0).translate(0.px, 0.px)
             )
-            // 340ms duration: with the per-line delays (LandingApp), the last line ends at ~700ms, matched
-            // to the gap chart's 0.7s line draw so the two on-load animations finish together.
+            // 340ms duration: with the per-line delays (LandingApp), the last line ends at ~700ms, the
+            // hero's on-load entrance.
             .media(Stylesheet.MediaQuery.prefersReducedMotionNoPreference)(
                 Stylesheet.empty.rule(
                     Selector.cls("hero-code").descendant(Selector.cls("hl")),
                     Style.animation("heroline", 340, _.easeOut)
+                )
+            )
+            // Gap chart line draw: the `#gap-line` path renders fully drawn by default (its inline dash
+            // base), so the chart is complete with scripting or reduced-motion off. When the chart scrolls
+            // into view the bundle adds `.chart-drawn` to `#gap-chart`, and (motion allowed) the keyframe
+            // tweens stroke-dashoffset 1 -> 0, drawing the line in over 700ms. Gating on the chart entering
+            // the viewport, not on load, is the fix for the draw playing unseen below the fold.
+            .keyframes(
+                "gapdraw",
+                Stylesheet.Keyframe.from -> Style.strokeDashoffset(1.0),
+                Stylesheet.Keyframe.to   -> Style.strokeDashoffset(0.0)
+            )
+            .media(Stylesheet.MediaQuery.prefersReducedMotionNoPreference)(
+                Stylesheet.empty.rule(
+                    Selector.cls("chart-drawn").descendant(Selector.id("gap-line")),
+                    Style.animation("gapdraw", 700, _.easeOut)
                 )
             )
             // ---- hero + gap as two-column compositions that use the full content width (the page used

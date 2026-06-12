@@ -126,6 +126,11 @@ object WebsiteBundleMain:
         // a module page, and "" on `/` and `/<prefix>/` (the SSG seeds an empty island there). Seed
         // the cache so the module branch reuses the first-paint content instead of re-fetching it.
         seedArticleCache(initialRoute, DocsClient.Article(island.articleHtml, island.headings))
+        // The landing gap chart's draw is gated on it scrolling into view. The mount replaces
+        // document.body's HTML, so the SSR chart node is swapped for a freshly-rendered one; capture the
+        // SSR node here (before mount) so the reveal fiber can wait for the swap and observe the LIVE node,
+        // not the about-to-be-detached SSR one. `null` off the landing route (no chart present).
+        val ssrGapChart = dom.document.getElementById("gap-chart")
         for
             // Re-apply an explicit theme choice (set by the nav toggle on a prior visit) before the body
             // mounts, so it overrides the OS `prefers-color-scheme` default. No stored choice leaves the
@@ -133,7 +138,11 @@ object WebsiteBundleMain:
             _ <- applyStoredTheme
             // One delegated document click listener wires every code-block Copy button (SSR + SPA-injected
             // alike), removed when the app scope closes.
-            _          <- wireCodeCopy
+            _ <- wireCodeCopy
+            // Arm the gap chart's scroll-revealed line draw. Forked because the poll must observe the
+            // post-mount node and so cannot complete until after this build returns the view to mount.
+            _          <- Fiber.init(wireGapChartReveal(ssrGapChart))
+            articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
             articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
             tocRef     <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
             // Content-loading flag, false at first paint (the boot island is already injected into
@@ -261,6 +270,45 @@ object WebsiteBundleMain:
                         case Absent => Kyo.unit
                     end match
                 case Absent => Kyo.unit
+        }
+
+    /** The bounded poll budget for arming the gap chart reveal: up to [[GapMaxAttempts]] lookups
+      * [[GapPollInterval]] apart. The mount swaps `document.body`'s HTML once at boot; the poll yields the
+      * event loop between attempts so it observes the freshly-mounted chart node rather than the SSR node
+      * it replaces. Exhausting the budget is a clean no-op (the chart simply stays fully drawn).
+      */
+    private val GapMaxAttempts: Int       = 25
+    private val GapPollInterval: Duration = 20.millis
+
+    /** Arm the gap chart's scroll-revealed line draw. The chart sits below the fold, so animating its
+      * `stroke-dashoffset` on load would play the draw unseen. Instead `#gap-line` renders fully drawn by
+      * default and the keyframe is gated behind a `.chart-drawn` class on `#gap-chart`; this observes the
+      * chart and adds that class the first time it scrolls into view.
+      *
+      * `ssrGapChart` is the server-rendered chart node captured BEFORE mount. The mount replaces
+      * `document.body`'s HTML, so the live chart is a different node; this polls (bounded, yielding the
+      * event loop) until a `#gap-chart` distinct from the SSR node is present, then observes that mounted
+      * node. Off the landing route there is no chart, so the poll cleanly exhausts to a no-op. Reduced
+      * motion needs no branch here: the `.chart-drawn` rule is itself gated behind
+      * `prefers-reduced-motion: no-preference`, so adding the class is inert when motion is not wanted.
+      */
+    private def wireGapChartReveal(ssrGapChart: dom.Element)(using Frame): Unit < (Async & Scope) =
+        Loop[Int, Unit, Async & Scope](0) { attempt =>
+            Sync.defer(dom.document.getElementById("gap-chart")).map { live =>
+                if live != null && !live.eq(ssrGapChart) then
+                    UIWindow.onIntersectById("gap-chart")(addChartDrawn).andThen(Loop.done)
+                else if attempt >= GapMaxAttempts - 1 then Loop.done
+                else Async.sleep(GapPollInterval).andThen(Loop.continue(attempt + 1))
+            }
+        }
+
+    /** Add the `.chart-drawn` class to the live `#gap-chart`, which (motion allowed) runs the line-draw
+      * keyframe. A no-op if the node has since gone.
+      */
+    private def addChartDrawn(using Frame): Unit < Sync =
+        Sync.defer {
+            val el = dom.document.getElementById("gap-chart")
+            if el != null then el.classList.add("chart-drawn")
         }
 
     /** One delegated document click listener that closes the header search dropdown. It closes on a
