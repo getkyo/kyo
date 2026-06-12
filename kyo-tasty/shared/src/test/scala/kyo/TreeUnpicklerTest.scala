@@ -392,6 +392,72 @@ class TreeUnpicklerTest extends kyo.test.Test[Any]:
         end match
     }
 
+    // INLINED is pickled `expansion_Term call_Term? binding_Stat*`. A bare-expansion INLINED (no call,
+    // no bindings) must decode to Tree.Inlined whose body IS the expansion, not Tree.Unknown(INLINED).
+    "bare-expansion INLINED decodes to Tree.Inlined with the expansion as body" in {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val names     = Array(Tasty.Name("scala"))
+        val addrMap   = IntMap.empty[LoadingSymbol.Materialising]
+        val expansion = Array(TastyFormat.UNITconst.toByte)
+        val pickle    = Array(TastyFormat.INLINED.toByte, (expansion.length | 0x80).toByte) ++ expansion
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.Inlined(Maybe.Absent, bindings, Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type))) =>
+                assert(bindings.isEmpty, s"Expected no bindings but got $bindings")
+            case Result.Success(other) => fail(s"Expected Inlined(Absent, [], Literal(Unit)) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
+    }
+
+    // APPLYsigpoly is pickled `fn_Term meth_Type arg_Term*`; the erased meth_Type has no Tree form and
+    // is dropped. The node must decode to the underlying Tree.Apply(fn, args), not Tree.Unknown.
+    "APPLYsigpoly decodes to Tree.Apply of its function and args" in {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val names   = Array(Tasty.Name("scala"))
+        val sym     = LoadingSymbol.Materialising(id = 5, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("Int"))
+        val addrMap = IntMap(5 -> sym)
+        val fn      = Array(TastyFormat.UNITconst.toByte)
+        // meth_Type = TYPEREFsymbol(addr=5, qual=TYPEREFpkg(nameRef=0)); read and discarded.
+        val qual     = Array(TastyFormat.TYPEREFpkg.toByte, (0 | 0x80).toByte)
+        val methType = Array(TastyFormat.TYPEREFsymbol.toByte, (5 | 0x80).toByte) ++ qual
+        val payload  = fn ++ methType
+        val pickle   = Array(TastyFormat.APPLYsigpoly.toByte, (payload.length | 0x80).toByte) ++ payload
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(Tasty.Tree.Apply(Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type), args)) =>
+                assert(args.isEmpty, s"Expected no args but got $args")
+            case Result.Success(other) => fail(s"Expected Apply(Literal(Unit), []) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
+    }
+
+    // A qualified access modifier (private[X]) between statements is a modifier carrying a qualifier
+    // sub-AST, not a body tree. The stat reader must skip it, never surface it as a Tree.Unknown leaf.
+    "qualified PRIVATEqualified between BLOCK statements is skipped, not an Unknown leaf" in {
+        import kyo.internal.tasty.reader.TastyFormat
+        import scala.collection.immutable.IntMap
+        val names   = Array(Tasty.Name("scala"))
+        val addrMap = IntMap.empty[LoadingSymbol.Materialising]
+        val expr    = Array(TastyFormat.UNITconst.toByte)
+        // PRIVATEqualified (cat-3): tag + qualifier sub-AST (TYPEREFpkg(nameRef=0)).
+        val privQual = Array(TastyFormat.PRIVATEqualified.toByte, TastyFormat.TYPEREFpkg.toByte, (0 | 0x80).toByte)
+        val payload  = expr ++ privQual
+        val pickle   = Array(TastyFormat.BLOCK.toByte, (payload.length | 0x80).toByte) ++ payload
+        decodeAnnPickle(pickle, names, addrMap) match
+            case Result.Success(block @ Tasty.Tree.Block(stats, Tasty.Tree.Literal(_: Tasty.Constant.UnitConst.type))) =>
+                assert(stats.isEmpty, s"Expected the qualified modifier to be skipped (no stats) but got $stats")
+                assert(
+                    block.collect { case u: Tasty.Tree.Unknown => u }.isEmpty,
+                    s"Expected no Unknown leaves but got ${block.collect { case u: Tasty.Tree.Unknown => u }}"
+                )
+            case Result.Success(other) => fail(s"Expected Block([], Literal(Unit)) but got $other")
+            case Result.Failure(e)     => fail(s"Expected success but got failure $e")
+            case Result.Panic(t)       => throw t
+        end match
+    }
+
     "OBJECT byte decodes to Tree.Modifier(Flag.Module)" in {
         import kyo.internal.tasty.reader.TastyFormat
         import scala.collection.immutable.IntMap

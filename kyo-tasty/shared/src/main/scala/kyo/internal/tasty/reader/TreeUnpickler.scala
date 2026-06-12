@@ -215,11 +215,9 @@ object TreeUnpickler:
         while view.position < end do
             // Skip standalone modifier tags that can appear between tree nodes.
             val peek = view.peekByte(view.position) & 0xff
-            if isModifierTag(peek) then
-                discard(view.readByte())
-                if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
-                    skipOneTree(view)
-            else
+            // Modifier tags (including qualified private[X]/protected[X]) can sit between tree nodes;
+            // skip them so they do not leak into readTree as Unknown leaves.
+            if !skipModifierAt(peek, view) then
                 accumulator += readTree(view, ctx)
             end if
         end while
@@ -659,20 +657,18 @@ object TreeUnpickler:
 
             case TastyFormat.INLINED =>
                 val end = view.readEnd()
-                // call may be EMPTYTREE (a zero-byte marker) or a real tree.
+                // dotty pickles INLINED as `expansion_Term call_Term? binding_Stat*`: the expansion
+                // (the inlined body) comes first, then an optional original-call term, then binding
+                // ValDefs/DefDefs. The call is absent when the next tree is a binding definition.
+                val body = readTree(view, ctx)
                 val call =
                     if view.position < end then
                         val peek = view.peekByte(view.position) & 0xff
-                        // EMPTYTREE is not a formal tag in TastyFormat; dotty uses a very short payload.
-                        // In practice the call is present as a full tree or absent.
-                        Maybe(readTree(view, ctx))
+                        if peek == TastyFormat.VALDEF || peek == TastyFormat.DEFDEF then Maybe.Absent
+                        else Maybe(readTree(view, ctx))
                     else Maybe.Absent
-                // Bindings are VALDEFs / DEFDEFs before the body (last tree).
-                val remaining = readTreesUntil(view, end, ctx)
+                val bindings = readTreesUntil(view, end, ctx)
                 view.goto(end)
-                val (bindings, body) =
-                    if remaining.isEmpty then (Chunk.empty[Tasty.Tree], Tasty.Tree.Unknown(TastyFormat.INLINED, 0))
-                    else (remaining.dropRight(1), remaining.last)
                 Tasty.Tree.Inlined(call, bindings, body)
 
             case TastyFormat.SELECTouter =>
@@ -906,9 +902,16 @@ object TreeUnpickler:
                 Tasty.Tree.Unknown(TastyFormat.SPLICE, Math.toIntExact(end - startAddr))
 
             case TastyFormat.APPLYsigpoly =>
+                // APPLYsigpoly (181): `fn_Term meth_Type arg_Term*`, a signature-polymorphic
+                // invocation (e.g. MethodHandle.invoke). The erased call-site signature meth_Type has
+                // no Tree form; read it to advance the cursor and model the node as the underlying
+                // application of fn to its args.
                 val end = view.readEnd()
+                val fn  = readTree(view, ctx)
+                discard(readType(view, ctx))
+                val args = readTreesUntil(view, end, ctx)
                 view.goto(end)
-                Tasty.Tree.Unknown(TastyFormat.APPLYsigpoly, Math.toIntExact(end - startAddr))
+                Tasty.Tree.Apply(fn, args)
 
             case TastyFormat.QUOTEPATTERN =>
                 val end = view.readEnd()
@@ -1029,11 +1032,8 @@ object TreeUnpickler:
                 selfSym = ctx.addrMap.values.find(_.name == name) match
                     case Some(s) => Maybe(s)
                     case None    => Maybe.Absent
-            else if isModifierTag(peek) then
+            else if skipModifierAt(peek, view) then
                 inParents = false
-                discard(view.readByte())
-                if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
-                    skipOneTree(view)
             else
                 inParents = false
                 bodyBuf += readTree(view, ctx)
@@ -1066,11 +1066,8 @@ object TreeUnpickler:
                 selfSym = ctx.addrMap.values.find(_.name == name) match
                     case Some(s) => Maybe(s)
                     case None    => Maybe.Absent
-            else if isModifierTag(peek) then
+            else if skipModifierAt(peek, view) then
                 inParents = false
-                discard(view.readByte())
-                if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
-                    skipOneTree(view)
             else
                 inParents = false
                 bodyBuf += readTree(view, ctx)
@@ -1174,10 +1171,7 @@ object TreeUnpickler:
                 if view.position < end && (view.peekByte(view.position) & 0xff) == TastyFormat.RENAMED then
                     discard(view.readByte())
                     discard(view.readNat()) // skip renamed-to name
-            else if isModifierTag(peek) then
-                discard(view.readByte())
-                if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
-                    skipOneTree(view)
+            else if skipModifierAt(peek, view) then ()
             else
                 // Unexpected content; skip by reading a full tree to maintain cursor integrity.
                 discard(readTree(view, ctx))
@@ -1213,10 +1207,11 @@ object TreeUnpickler:
                     tpt = readType(view, ctx)
                     // After result type, only rhs remains; stop.
                     return (Chunk.from(paramss.toSeq), tpt)
+                case TastyFormat.PRIVATEqualified | TastyFormat.PROTECTEDqualified =>
+                    discard(view.readByte())
+                    skipOneTree(view)
                 case _ if isModifierTag(peek) =>
                     discard(view.readByte())
-                    if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
-                        skipOneTree(view)
                 // Carve-out: TASTy tag-byte dispatch; non-param non-modifier tags terminate the param scan
                 case _ =>
                     // Could be rhs or something else; stop reading params.
@@ -1324,18 +1319,26 @@ object TreeUnpickler:
             discard(view.readNat())
         // else category 1: nothing to skip
 
-    /** Skip any modifier tags (category 1, 1-59) and qualified-modifier sub-trees at current position. */
+    /** If `peek` is a modifier tag at the current position, consume it from `view` and return true;
+      * otherwise leave the cursor unmoved and return false. Cat-1 flag modifiers (PRIVATE..INTO) are a
+      * lone tag byte; PRIVATEqualified/PROTECTEDqualified additionally carry a qualifier sub-AST that must
+      * be skipped. isModifierTag covers only the cat-1 range, so the qualified tags are matched here
+      * explicitly; otherwise they leak into readTree and surface as Unknown(98)/Unknown(99) leaves.
+      */
+    private def skipModifierAt(peek: Int, view: ByteView)(using AllowUnsafe): Boolean =
+        if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
+            discard(view.readByte())
+            skipOneTree(view)
+            true
+        else if isModifierTag(peek) then
+            discard(view.readByte())
+            true
+        else false
+    end skipModifierAt
+
+    /** Skip any leading modifier tags (and qualified-modifier sub-trees) up to `end`. */
     private def skipModifierTags(view: ByteView, end: Long)(using AllowUnsafe): Unit =
-        while view.position < end do
-            val peek = view.peekByte(view.position) & 0xff
-            if isModifierTag(peek) then
-                discard(view.readByte())
-                if peek == TastyFormat.PRIVATEqualified || peek == TastyFormat.PROTECTEDqualified then
-                    skipOneTree(view)
-            else
-                return
-            end if
-        end while
+        while view.position < end && skipModifierAt(view.peekByte(view.position) & 0xff, view) do ()
     end skipModifierTags
 
     // ── Tag classification helpers ────────────────────────────────────────────
