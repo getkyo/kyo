@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 /** Keyboard modifier and focus/key-event tests. */
 class KeyboardTest extends UITest:

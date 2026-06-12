@@ -4,7 +4,6 @@ import kyo.Browser.*
 import kyo.UI.foreach
 import kyo.UI.foreachIndexed
 import kyo.UI.foreachKeyed
-import scala.language.implicitConversions
 
 class ForeachTest extends UITest:
 

@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Browser.*
 import kyo.internal.NumberFormat
-import scala.language.implicitConversions
 
 class NumberInputConstraintItTest extends UITest:
 

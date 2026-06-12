@@ -472,6 +472,10 @@ object UI:
             def aria(pairs: (String, String)*): Self =
                 withAttrs(attrs.copy(ariaAttrs = attrs.ariaAttrs ++ pairs))
 
+            /** Sets the WAI-ARIA `role` attribute (emitted as the bare `role="..."` HTML attribute). */
+            def role(v: String): Self =
+                withAttrs(attrs.copy(role = Present(v)))
+
             // Data attributes (kyo- prefix is reserved)
             /** Sets a single `data-*` attribute (the `name` is the suffix after `data-`).
               *
@@ -760,7 +764,8 @@ object UI:
             onScrollEvt: Maybe[WheelEvent => Any < Async] = Absent,
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
-            jsProps: Map[String, String] = Map.empty
+            jsProps: Map[String, String] = Map.empty,
+            role: Maybe[String] = Absent
         )
 
         // ---- Non-element AST cases ----
@@ -1458,6 +1463,7 @@ object UI:
             def disabled(v: Boolean): Dropdown               = copy(disabled = Present(v))
             def onChange(f: String => Any < Async): Dropdown = copy(onChange = Present(f))
         end Dropdown
+
     end Ast
 
 end UI
