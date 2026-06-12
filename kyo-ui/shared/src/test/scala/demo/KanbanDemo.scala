@@ -18,7 +18,7 @@ import kyo.UI.Ast.HtmlContent
   * `Signal[Chunk[Card]]`s via `.map`, keyed list rendering with `foreachKeyed` (so moving one card never disturbs the others), a reactive
   * per-column count, `when` empty-state placeholders, two-way `value` binding on the new-card input, and flex-row/column layout via `Style`.
   */
-object Kanban extends KyoApp:
+object KanbanDemo extends KyoApp:
 
     case class Card(id: String, title: String) derives CanEqual
     case class Board(todo: Chunk[Card], doing: Chunk[Card], done: Chunk[Card]) derives CanEqual
@@ -140,4 +140,4 @@ object Kanban extends KyoApp:
         yield ()
         end for
     }
-end Kanban
+end KanbanDemo

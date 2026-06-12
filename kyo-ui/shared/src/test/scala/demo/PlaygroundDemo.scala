@@ -14,7 +14,7 @@ import kyo.UI.*
   * Demonstrates: the `iframe` element with a reactive `src`, two-way `textarea` binding, derived signals via `.map`, and equal-column
   * layout via `flexGrow(1).flexBasis(0.px)`.
   */
-object Playground extends KyoApp:
+object PlaygroundDemo extends KyoApp:
 
     private val sampleHtml =
         """<!doctype html>
@@ -64,4 +64,4 @@ object Playground extends KyoApp:
         yield ()
         end for
     }
-end Playground
+end PlaygroundDemo

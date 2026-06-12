@@ -3,7 +3,6 @@ package demo
 import kyo.*
 import kyo.Style.*
 import kyo.UI.*
-import scala.language.implicitConversions
 
 /** Interactive flamegraph built entirely on the kyo-ui SVG layer and served as a server-push app via `UI.runHandlers`.
   *
@@ -20,7 +19,7 @@ import scala.language.implicitConversions
   *
   * Run via `sbt 'kyo-ui/Test/runMain demo.Flamegraph'` (optional port as the first argument).
   */
-object Flamegraph extends KyoApp:
+object FlamegraphDemo extends KyoApp:
 
     // ---- data ----
 
@@ -363,4 +362,4 @@ object Flamegraph extends KyoApp:
         yield ()
         end for
     }
-end Flamegraph
+end FlamegraphDemo

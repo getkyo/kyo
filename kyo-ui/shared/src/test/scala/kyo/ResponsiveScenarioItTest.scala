@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 /** Responsive workflows tested in the browser. The original TUI tests measured ScreenBuffer dimensions directly; in browser we just verify
   * the elements render and remain interactive across realistic viewport widths.
