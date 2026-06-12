@@ -30,7 +30,7 @@ object WebsiteBundleMain:
 
     // Unsafe: Frame.internal is the boundary value here. `def main(args: Array[String])` is the
     // JS entry point imposed by Scala.js and there is no user code above it to thread a Frame
-    // from. Same justification as SpaHarnessMain (SpaHarnessMain.scala:22).
+    // from.
     private given bundleFrame: Frame = Frame.internal
 
     // The physical tree the landing route `/` resolves into. The SSG emits the landing header's
@@ -621,13 +621,13 @@ object WebsiteBundleMain:
     end readVersions
 
     // Unsafe: app-entry boundary bridge; injects stylesheet before first render from JS main.
-    // This is the sanctioned unsafe tier crossing (matches SpaHarnessMain pattern).
+    // This is the sanctioned unsafe tier crossing.
     private def runStylesheetUnsafe(): Unit =
         import AllowUnsafe.embrace.danger
         discard(Sync.Unsafe.evalOrThrow(UI.runStylesheet(WebsiteStyles.sheet)))
 
     // Unsafe: app-entry boundary bridge; mounts the SPA fiber from JS main into the Kyo
-    // scheduler. This is the sanctioned unsafe tier crossing (matches SpaHarnessMain pattern).
+    // scheduler. This is the sanctioned unsafe tier crossing.
     private def runMountUnsafe(view: UI < (Sync & Async & Scope)): Unit =
         import AllowUnsafe.embrace.danger
         discard(Sync.Unsafe.evalOrThrow(

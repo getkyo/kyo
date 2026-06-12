@@ -506,7 +506,7 @@ object WebsiteGenerator:
         )
 
     // Serialize a heading outline to a JSON array of `{"level": N, "text": "...", "slug": "..."}`
-    // objects. Mirrors the `tocJson` pattern in `manifestEntry` verbatim (prep doc lines 122-127).
+    // objects. Mirrors the `tocJson` pattern in `manifestEntry` verbatim.
     private def headingsJson(headings: Chunk[DocsMarkdown.Heading]): String =
         headings.toSeq.map { h =>
             s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}"}"""
