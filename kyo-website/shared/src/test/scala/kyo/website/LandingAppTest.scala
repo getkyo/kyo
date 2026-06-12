@@ -104,20 +104,20 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
-    "the gap stat renders the compounding-failure bar chart as inline SVG (no raw markup)" in {
+    "the gap stat renders the compounding-failure line chart as inline SVG (no raw markup)" in {
         renderLanding.map { html =>
-            // The stat callout is a chart card: the SVG bar chart (the chance the run has failed, climbing
-            // as steps chain) on one side, and the "compounds" caption plus explanatory copy on the other.
-            // The chart is server-rendered (present without JS); the bars redden via an accent-to-amber
-            // gradient and grow up via a SMIL tween.
+            // The stat callout is a chart card: the SVG line chart (the chance the run has failed, climbing
+            // as steps chain) stacked on top of the "compounds" caption and explanatory copy. The chart is
+            // server-rendered (present without JS); the line climbs from the accent start dot up into the red
+            // "4 in 5" peak and draws itself in via a SMIL stroke-dashoffset tween.
             assert(html.contains("class=\"stat-chart\""), s"stat-chart wrapper must render: $html")
             assert(html.contains("<svg"), s"the chart must render as inline SVG: $html")
             assert(html.contains("Small errors compound."), "the stat caption must state that errors compound")
-            assert(html.contains(">4 in 5<"), "the chart must label the four-in-five failure endpoint")
+            assert(html.contains(">4 in 5<"), "the chart must label the four-in-five failure peak")
             assert(html.contains("chance of failure"), "the chart must caption the failure dimension")
             assert(html.contains("85%"), "the copy must give the 85% per-step reliability")
-            assert(html.contains("var(--amber)"), "the tall (past-halfway) bars shift to amber")
-            assert(html.contains("attributeName=\"height\""), "the bars grow in via a SMIL height tween")
+            assert(html.contains("var(--red)"), "the climbing line and its peak render in red")
+            assert(html.contains("attributeName=\"stroke-dashoffset\""), "the line draws in via a SMIL stroke-dashoffset tween")
         }
     }
 

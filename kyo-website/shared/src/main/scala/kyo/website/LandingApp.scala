@@ -167,7 +167,7 @@ object LandingApp:
                         )
                     ),
                     UI.div.cssClass("stat")(
-                        failureBarChart,
+                        failureChart,
                         UI.div.cssClass("stat-body")(
                             UI.div.cssClass("stat-cap")("Small errors compound."),
                             UI.div.cssClass("stat-txt")(
@@ -181,62 +181,71 @@ object LandingApp:
     end gap
 
     /** The compounding-failure chart for the gap stat, drawn entirely on the kyo-ui `Svg` DSL (no raw
-      * markup). Each bar is the chance the whole run has failed somewhere after chaining n steps that each
-      * work 85% of the time (`1 - 0.85^n`): the bars CLIMB from about one in seven at a single step to four
-      * in five by ten, growing into the danger as they go. Once the run is more likely than not to fail (past
-      * the halfway mark), the bars shift from the brand accent to amber, so the growth itself reads as the
-      * problem. Colors are CSS-variable paints, so the chart follows the light and dark themes, and the bars
-      * grow up on load via a SMIL `height`/`y` tween (browser-driven, no JavaScript).
+      * markup). It plots the chance the whole run has failed somewhere after chaining n steps that each
+      * work 85% of the time (`1 - 0.85^n`): about one in seven at a single step, climbing to four in five
+      * by ten. The line climbs up and to the right into red, the visual argument the section makes, that
+      * small per-step errors compound fast. Colors are CSS-variable paints, so the chart follows the light
+      * and dark themes; the line draws in with a SMIL `stroke-dashoffset` tween (browser-driven, no
+      * JavaScript).
       */
-    private def failureBarChart(using Frame): UI =
+    private def failureChart(using Frame): UI =
         val n       = 10
         val failure = Chunk.from(1 to n).map(s => 1.0 - math.pow(0.85, s.toDouble))
 
-        val w      = 250.0
-        val h      = 178.0
-        val left   = 8.0
-        val right  = 8.0
-        val top    = 28.0
-        val bottom = 24.0
+        val w      = 340.0
+        val h      = 152.0
+        val left   = 16.0
+        val right  = 16.0
+        val top    = 26.0
+        val bottom = 30.0
         val plotW  = w - left - right
         val plotH  = h - top - bottom
         val baseY  = top + plotH
-        val slot   = plotW / n.toDouble
-        val barW   = slot * 0.6
 
-        def barX(i: Int): Double     = left + i.toDouble * slot + (slot - barW) / 2.0
-        def topOf(f: Double): Double = top + (1.0 - f) * plotH
+        def xOf(i: Int): Double    = left + (i.toDouble / (n - 1).toDouble) * plotW
+        def yOf(f: Double): Double = top + (1.0 - f) * plotH
+
+        val pts = failure.zipWithIndex.map((f, i) => (xOf(i), yOf(f)))
+        val linePath =
+            pts.drop(1).foldLeft(Svg.PathData.from(pts.head._1, pts.head._2))((acc, p) => acc.lineTo(p._1, p._2))
+        val areaPath = linePath.lineTo(pts.last._1, baseY).lineTo(pts.head._1, baseY).close
+        val total =
+            (1 until pts.length).foldLeft(0.0) { (acc, i) =>
+                acc + math.hypot(pts(i)._1 - pts(i - 1)._1, pts(i)._2 - pts(i - 1)._2)
+            }
 
         val accent = Svg.Paint.Color(Style.Color.variable("accent"))
-        val amber  = Svg.Paint.Color(Style.Color.variable("amber"))
+        val red    = Svg.Paint.Color(Style.Color.variable("red"))
+        val dim    = Svg.Paint.Color(Style.Color.variable("dim"))
+        val lineC  = Svg.Paint.Color(Style.Color.variable("line"))
 
-        // Once the run is more likely than not to fail (past the halfway mark), the bars shift from the
-        // brand color to amber, so the climb visibly tips into the danger zone.
-        val bars = failure.zipWithIndex.map { (f, i) =>
-            val bx = barX(i)
-            val bt = topOf(f)
-            val bh = baseY - bt
-            Svg.rect.x(bx).y(bt).width(barW).height(bh).rx(2.0).fill(if f >= 0.5 then amber else accent)(
-                Svg.animate.attributeName("height").from(0.0).to(bh).dur("0.7s").begin("0s").repeatCount("1"),
-                Svg.animate.attributeName("y").from(baseY).to(bt).dur("0.7s").begin("0s").repeatCount("1")
+        val baseline = Svg.line.x1(left).y1(baseY).x2(w - right).y2(baseY).stroke(lineC).strokeWidth(1.0)
+        val area     = Svg.path.d(areaPath).fill(red).fillOpacity(0.12).stroke(Svg.Paint.None)
+        val line = Svg.path.d(linePath).fill(Svg.Paint.None).stroke(red).strokeWidth(2.5)
+            .strokeLinecap(Svg.StrokeLinecap.Round)
+            .strokeDasharray(Seq(total, total)).strokeDashoffset(Svg.SvgLength.px(total))(
+                Svg.animate.attributeName("stroke-dashoffset").from(total).to(0.0).dur("1.1s").begin("0s").repeatCount("1")
             )
-        }
-
-        val baseline = Svg.line.x1(left).y1(baseY).x2(w - right).y2(baseY)
-            .stroke(Svg.Paint.Color(Style.Color.variable("line"))).strokeWidth(1.0)
-        val endLabel = Svg.text.x(barX(n - 1) + barW / 2.0).y(topOf(failure.last) - 7.0)
-            .textAnchor(Svg.TextAnchor.Middle).fill(amber).fontSize(Svg.SvgLength.px(15.0))("4 in 5")
-        val caption = Svg.text.x(w / 2.0).y(h - 7.0).textAnchor(Svg.TextAnchor.Middle)
-            .fill(Svg.Paint.Color(Style.Color.variable("dim"))).fontSize(Svg.SvgLength.px(11.0))(
-                "chance of failure, 1 to 10 chained steps"
-            )
+        // The start is the brand accent (a single step still mostly works); the line climbs into red.
+        val startDot = Svg.circle.cx(pts.head._1).cy(pts.head._2).r(4.0).fill(accent)
+        val endDot   = Svg.circle.cx(pts.last._1).cy(pts.last._2).r(5.0).fill(red)
+        val endLabel = Svg.text.x(pts.last._1).y(pts.last._2 - 10.0).textAnchor(Svg.TextAnchor.End)
+            .fill(red).fontSize(Svg.SvgLength.px(15.0))("4 in 5")
+        val caption = Svg.text.x(w / 2).y(h - 8).textAnchor(Svg.TextAnchor.Middle)
+            .fill(dim).fontSize(Svg.SvgLength.px(11.0))("chance of failure, 1 to 10 chained steps")
 
         UI.div.cssClass("stat-chart")(
             Svg.svg.viewBox(Svg.ViewBox(0, 0, w, h)).width(w.toInt).height(h.toInt)(
-                (baseline +: bars :+ endLabel :+ caption)*
+                baseline,
+                area,
+                line,
+                startDot,
+                endDot,
+                endLabel,
+                caption
             )
         )
-    end failureBarChart
+    end failureChart
 
     // ---- 3. The ladder ----
 
