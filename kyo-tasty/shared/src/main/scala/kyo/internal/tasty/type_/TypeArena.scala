@@ -32,8 +32,15 @@ final class TypeArena:
       */
     def merge(canonical: TypeArena): Unit =
         val inProgress = new mutable.HashMap[TypeKey, Tasty.Type]()
+        // Identity memo (original node object -> its interned canonical). Keyed by reference, not by
+        // structural TypeKey, so a rebuild reads each child in O(1) without re-deriving the key of a
+        // deep subtree (the same reason IdentitySet avoids structural hashCode on nested types).
+        val internedByObj = new java.util.IdentityHashMap[Tasty.Type, Tasty.Type]()
 
-        def recurse(t: Tasty.Type, depth: Int): Tasty.Type =
+        // Reconstruct `t` from its children, applying `f` to each child type. This is the single
+        // structural enumeration of Tasty.Type, used both to enumerate children (with a collecting
+        // `f`) and to rebuild a node from its interned children (with `f = internOf`).
+        def rebuild(t: Tasty.Type, f: Tasty.Type => Tasty.Type): Tasty.Type =
             t match
                 case Tasty.Type.Named(_)        => t
                 case Tasty.Type.RecThis(_)      => t
@@ -41,77 +48,109 @@ final class TypeArena:
                 case Tasty.Type.ConstantType(_) => t
                 case Tasty.Type.ThisType(_)     => t
                 case Tasty.Type.Applied(base, args) =>
-                    Tasty.Type.Applied(internRec(base, depth), args.map(internRec(_, depth)))
+                    Tasty.Type.Applied(f(base), args.map(f))
                 case Tasty.Type.Function(ps, r) =>
-                    Tasty.Type.Function(ps.map(internRec(_, depth)), internRec(r, depth))
+                    Tasty.Type.Function(ps.map(f), f(r))
                 case Tasty.Type.ContextFunction(ps, r) =>
-                    Tasty.Type.ContextFunction(ps.map(internRec(_, depth)), internRec(r, depth))
+                    Tasty.Type.ContextFunction(ps.map(f), f(r))
                 case Tasty.Type.Tuple(elems) =>
-                    Tasty.Type.Tuple(elems.map(internRec(_, depth)))
+                    Tasty.Type.Tuple(elems.map(f))
                 case Tasty.Type.ByName(u) =>
-                    Tasty.Type.ByName(internRec(u, depth))
+                    Tasty.Type.ByName(f(u))
                 case Tasty.Type.Repeated(e) =>
-                    Tasty.Type.Repeated(internRec(e, depth))
+                    Tasty.Type.Repeated(f(e))
                 case Tasty.Type.Array(e) =>
-                    Tasty.Type.Array(internRec(e, depth))
+                    Tasty.Type.Array(f(e))
                 case Tasty.Type.AndType(l, r) =>
-                    Tasty.Type.AndType(internRec(l, depth), internRec(r, depth))
+                    Tasty.Type.AndType(f(l), f(r))
                 case Tasty.Type.OrType(l, r) =>
-                    Tasty.Type.OrType(internRec(l, depth), internRec(r, depth))
+                    Tasty.Type.OrType(f(l), f(r))
                 case Tasty.Type.Refinement(p, n, i) =>
-                    Tasty.Type.Refinement(internRec(p, depth), n, internRec(i, depth))
+                    Tasty.Type.Refinement(f(p), n, f(i))
                 case Tasty.Type.Rec(p) =>
-                    Tasty.Type.Rec(internRec(p, depth))
+                    Tasty.Type.Rec(f(p))
                 case Tasty.Type.Annotated(u, annotation) =>
-                    Tasty.Type.Annotated(internRec(u, depth), annotation)
+                    Tasty.Type.Annotated(f(u), annotation)
                 case Tasty.Type.SuperType(s, m) =>
-                    Tasty.Type.SuperType(internRec(s, depth), internRec(m, depth))
+                    Tasty.Type.SuperType(f(s), f(m))
                 case Tasty.Type.Wildcard(lo, hi) =>
-                    Tasty.Type.Wildcard(internRec(lo, depth), internRec(hi, depth))
+                    Tasty.Type.Wildcard(f(lo), f(hi))
                 case Tasty.Type.Skolem(u) =>
-                    Tasty.Type.Skolem(internRec(u, depth))
+                    Tasty.Type.Skolem(f(u))
                 case Tasty.Type.MatchType(b, sc, cs) =>
-                    Tasty.Type.MatchType(internRec(b, depth), internRec(sc, depth), cs.map(internRec(_, depth)))
+                    Tasty.Type.MatchType(f(b), f(sc), cs.map(f))
                 case Tasty.Type.FlexibleType(u) =>
-                    Tasty.Type.FlexibleType(internRec(u, depth))
+                    Tasty.Type.FlexibleType(f(u))
                 case Tasty.Type.TermRef(p, n) =>
-                    Tasty.Type.TermRef(internRec(p, depth), n)
+                    Tasty.Type.TermRef(f(p), n)
                 case Tasty.Type.TypeLambda(paramIds, body) =>
-                    Tasty.Type.TypeLambda(paramIds, internRec(body, depth))
+                    Tasty.Type.TypeLambda(paramIds, f(body))
                 case Tasty.Type.MatchCase(pat, rhs) =>
-                    Tasty.Type.MatchCase(internRec(pat, depth), internRec(rhs, depth))
+                    Tasty.Type.MatchCase(f(pat), f(rhs))
                 case Tasty.Type.TypeRef(qual, name) =>
-                    Tasty.Type.TypeRef(internRec(qual, depth), name)
+                    Tasty.Type.TypeRef(f(qual), name)
                 case Tasty.Type.Bounds(lo, hi) =>
-                    Tasty.Type.Bounds(internRec(lo, depth), internRec(hi, depth))
+                    Tasty.Type.Bounds(f(lo), f(hi))
                 case Tasty.Type.Nothing => t
                 case Tasty.Type.Any     => t
             end match
-        end recurse
+        end rebuild
 
-        def internRec(t: Tasty.Type, depth: Int): Tasty.Type =
-            if depth >= TypeArena.MaxDepth then
-                throw new TypeArena.DepthExceededException(
-                    s"TypeArena.internRec depth ${TypeArena.MaxDepth} exceeded; pathological nesting"
-                )
+        // The interned canonical for an already-visited child. Every node is recorded in
+        // `internedByObj` at its enter (the dedup-skip paths) or its exit (the processed path), and a
+        // node's children are all visited before its exit rebuild, so this is an O(1) identity lookup
+        // in the common case. The structural fallback runs only for the rare back-reference that closes
+        // a Rec/RecThis cycle.
+        def internOf(child: Tasty.Type): Tasty.Type =
+            val memo = internedByObj.get(child)
+            if memo != null then memo
+            else
+                val k = TypeKey.of(child)
+                canonical.map.get(k).orElse(inProgress.get(k)).getOrElse(child)
             end if
-            val key = TypeKey.of(t)
-            canonical.map.get(key) match
-                case Some(canon) => canon
-                case None =>
-                    inProgress.get(key) match
-                        case Some(placeholder) => placeholder
-                        case None =>
-                            inProgress(key) = t
-                            val recurInterned = recurse(t, depth + 1)
-                            discard(inProgress.remove(key))
-                            canonical.map(key) = recurInterned
-                            recurInterned
-                    end match
-            end match
-        end internRec
+        end internOf
 
-        for (_, t) <- map do internRec(t, 0)
+        // Iterative post-order interning. An explicit work-list replaces the former call recursion so
+        // that types nested up to MaxDepth do not consume O(depth) JVM call stack and can never
+        // overflow it, matching TypeKey.of and IdentitySet which are stack-safe for the same reason.
+        // Each node is visited twice: an enter frame applies the depth guard, dedups against
+        // `canonical`/`inProgress`, and schedules its children; the following exit frame rebuilds it
+        // from their now-interned results. `inProgress` carries the Rec/RecThis cycle-break placeholder
+        // exactly as the recursive form did; `internedByObj` memoises every visited object so the
+        // rebuild reads its children in O(1).
+        def process(root: Tasty.Type): Unit =
+            val work = new mutable.ArrayDeque[(Tasty.Type, Int, Boolean)]()
+            work.append((root, 0, false))
+            while work.nonEmpty do
+                val (t, depth, isExit) = work.removeLast()
+                if isExit then
+                    val key     = TypeKey.of(t)
+                    val rebuilt = rebuild(t, internOf)
+                    canonical.map(key) = rebuilt
+                    discard(inProgress.remove(key))
+                    discard(internedByObj.put(t, rebuilt))
+                else if depth >= TypeArena.MaxDepth then
+                    throw new TypeArena.DepthExceededException(
+                        s"TypeArena.internRec depth ${TypeArena.MaxDepth} exceeded; pathological nesting"
+                    )
+                else if internedByObj.get(t) == null then
+                    val key = TypeKey.of(t)
+                    canonical.map.get(key) match
+                        case Some(canon) => discard(internedByObj.put(t, canon))
+                        case None =>
+                            inProgress.get(key) match
+                                case Some(placeholder) => discard(internedByObj.put(t, placeholder))
+                                case None =>
+                                    inProgress(key) = t
+                                    work.append((t, depth, true))
+                                    discard(rebuild(t, child => { work.append((child, depth + 1, false)); child }))
+                            end match
+                    end match
+                end if
+            end while
+        end process
+
+        for (_, t) <- map do process(t)
     end merge
 
     /** All type values currently in this arena. */
