@@ -682,8 +682,21 @@ import scala.quoted.*
 
     /** Derives Schema[A] with serialization for case classes and sealed traits.
       *
-      * This is called by `inline given derived[A]: Schema[A]` to enable auto-derivation during implicit search. Delegates to the shared
-      * generateCaseClassSchema/generateSealedTraitSchema with Focused = A, empty fields, and no serializability check.
+      * Case classes: fields are walked via `sym.caseFields` and each field's Schema is
+      * resolved by `scala.compiletime.summonInline[Schema[t]]` at the inline-expansion
+      * phase (see `derivedEmitProduct`). Private case-fields are rejected at derivation
+      * time via `derivedRejectPrivateCaseFields` to prevent silent wire-name corruption.
+      *
+      * Sealed traits: delegated to `generateSealedTraitSchema`, which handles variants
+      * without explicit Schema instances (via `buildVariantSchemaResolver`), recursive
+      * parent-type references, case objects, and Scala 3 enum values.
+      *
+      * This method lives in FocusMacro (rather than SchemaDerivedMacro) because FocusMacro
+      * is already a compile-time dependency of Schema.scala (for other macro calls such as
+      * defaultsImpl and metaApplyImpl). Moving the implementation here avoids the cyclic
+      * macro dependency that would arise if SchemaDerivedMacro.scala referenced Schema
+      * types directly in its quoted output while Schema.scala held a macro call into
+      * SchemaDerivedMacro.
       */
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         import quotes.reflect.*
@@ -691,21 +704,373 @@ import scala.quoted.*
         val tpe = TypeRepr.of[A].dealias
         val sym = tpe.typeSymbol
 
-        val nilExpr = '{ Nil: List[Field[?, ?]] }
-
-        val result =
-            if sym.isClassDef && sym.flags.is(Flags.Sealed) then
-                generateSealedTraitSchema[A, A](nilExpr, checkSerializability = false)
-            else if sym.isClassDef && sym.flags.is(Flags.Case) then
-                generateCaseClassSchema[A, A](nilExpr, checkSerializability = false)
-            else
-                report.errorAndAbort(
-                    s"Schema.derived requires a case class or sealed trait, got: ${tpe.show}. " +
-                        "Provide a given Schema instance for this type if derivation is not possible."
-                )
-
-        '{ ${ result }.asInstanceOf[kyo.Schema[A]] }
+        if sym.isClassDef && sym.flags.is(Flags.Sealed) then
+            // Sealed traits use the existing generateSealedTraitSchema path, which correctly handles
+            // variants without explicit Schema instances (via buildVariantSchemaResolver), recursive
+            // parent-type references, case objects, and Scala 3 enum values.
+            val nilExpr = '{ Nil: List[Field[?, ?]] }
+            '{ ${ generateSealedTraitSchema[A, A](nilExpr, checkSerializability = false) }.asInstanceOf[kyo.Schema[A]] }
+        else if sym.isClassDef && sym.flags.is(Flags.Case) then
+            // Case classes use the new summonInline-per-field path, which emits generic derivation
+            // without specialization to specific types.
+            derivedRejectPrivateCaseFields(tpe, sym)
+            derivedEmitProduct[A](tpe, sym)
+        else
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: not a case class or sealed trait. " +
+                    "Provide a given Schema instance for this type if derivation is not possible."
+            )
+        end if
     end derivedImpl
+
+    /** Guard: a case class with a private case-field is rejected at derivation time. The
+      * macro's caseFields walk would otherwise emit the storage member as a wire field,
+      * corrupting the on-wire shape silently. The `Structure.Field` case class itself has a
+      * private case-field (`_fieldType`) and is the structural failure mode this guard
+      * prevents from recurring; its Schema is hand-rolled in `Structure.scala` (see
+      * `structureFieldSchema`) so it never reaches this guard.
+      */
+    private def derivedRejectPrivateCaseFields(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Unit =
+        import quotes.reflect.*
+        val privateFields = sym.caseFields.filter(f => f.flags.is(Flags.Private))
+        if privateFields.nonEmpty then
+            val names = privateFields.map(_.name).mkString(", ")
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: case-class field(s) $names are private. " +
+                    "Private case-fields are not supported by the derivation macro because the macro " +
+                    "would emit the private storage name on the wire. Provide a hand-rolled given " +
+                    "Schema for this type (see Structure.Field's structureFieldSchema for the pattern)."
+            )
+        end if
+    end derivedRejectPrivateCaseFields
+
+    /** Emits the Schema for a case class.
+      *
+      * Uses the existing `buildCaseClassStructureExpr` for the `structure` lazy val so that
+      * container fields (Chunk, List, Maybe, Option, etc.) are handled correctly without
+      * requiring a `Frame` at the `derives Schema` call site. Uses `summonFieldSchemaResolvers`
+      * for the serialization resolver list; that method handles recursive fields, container
+      * fields (via `buildContainerSchemaOpt`), and non-recursive fields uniformly. Private
+      * case-fields are rejected before this method is called via `derivedRejectPrivateCaseFields`.
+      *
+      * Note: `summonInline[Schema[t]]` cannot be used for container field types (Chunk, List,
+      * Maybe, Option, etc.) because those schema givens carry `using Frame` constraints that
+      * are not satisfied at the `derives Schema` call site in user code. The existing
+      * `summonFieldSchemaResolvers` and `buildCaseClassStructureExpr` helpers handle containers
+      * correctly via `buildContainerSchemaOpt`.
+      */
+    private def derivedEmitProduct[A: Type](using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Expr[Schema[A]] =
+        import quotes.reflect.*
+
+        val nameStr  = sym.name
+        val typeName = nameStr
+        val fields   = sym.caseFields
+        val n        = fields.length
+
+        val (maybeFields, optionFields) = MacroUtils.detectMaybeOptionFields(tpe, fields)
+
+        val isRecursive: Boolean = fields.exists { f =>
+            SerializationMacro.containsType(tpe.memberType(f), tpe)
+        }
+
+        val fieldSchemaBuilders = summonFieldSchemaResolvers[A](fields, tpe, maybeFields, optionFields, isRecursive)
+        val fieldResolvers: List[SerializationMacro.SchemaResolver[A]] = fieldSchemaBuilders.map(_._3)
+        val namedResolvers: List[(String, SerializationMacro.SchemaResolver[A])] =
+            fieldSchemaBuilders.map { (name, _, resolver) => (name, resolver) }
+        // Compute stable hash-based field IDs (same as generateCaseClassSchema uses).
+        // summonFieldSchemaResolvers returns (name, index, resolver); the second element
+        // is the field index, NOT the hash ID. Use CodecMacro.fieldId for the correct hash.
+        val derivedFieldIds: List[(String, Int)] = fields.map(f => f.name -> CodecMacro.fieldId(f.name))
+
+        val needsSubSchema: List[Boolean] = computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+
+        val preEncodedExprs: List[Expr[Array[Byte]]] = fields.map { f =>
+            Expr(f.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        }
+        val fieldNamesArr: Array[String] = fields.map(_.name).toArray
+
+        val structureExpr: Expr[Structure.Type] =
+            buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields, optionFields)
+
+        if isRecursive then
+            '{
+                lazy val self: kyo.Schema[A] =
+                    val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
+                    val _fieldNames: Array[String]      = ${ Expr(fieldNamesArr) }
+                    lazy val _subSchemas: Array[kyo.Schema[Any]] =
+                        ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ self }) }
+                    new Schema[A](Seq.empty):
+                        import scala.annotation.publicInBinary
+                        private lazy val _structure: Structure.Type = $structureExpr
+                        override def structure: Structure.Type      = _structure
+
+                        @publicInBinary private[kyo] def serializeWrite(value: A, writer: Writer): Unit =
+                            ${
+                                SerializationMacro.caseClassWriteBody[A](
+                                    typeName,
+                                    n,
+                                    fields.map(_.name),
+                                    derivedFieldIds,
+                                    maybeFields,
+                                    optionFields,
+                                    fieldResolvers,
+                                    '{ _fieldBytes },
+                                    '{ _subSchemas },
+                                    '{ self },
+                                    '{ value },
+                                    '{ writer }
+                                )
+                            }
+
+                        @publicInBinary private[kyo] def serializeRead(reader: Reader): A =
+                            ${
+                                SerializationMacro.caseClassReadBodyResolved[A](
+                                    '{ reader },
+                                    '{ _fieldBytes },
+                                    '{ _fieldNames },
+                                    namedResolvers,
+                                    '{ _subSchemas },
+                                    '{ self }
+                                )
+                            }
+
+                        @publicInBinary private[kyo] def getter(value: A): Maybe[Any] = Maybe(value)
+                        @publicInBinary private[kyo] def setter(value: A, next: Any): A =
+                            next.asInstanceOf[A]
+                    end new
+                end self
+                self
+            }
+        else
+            val dummySelf        = '{ null.asInstanceOf[Schema[A]] }
+            val subSchemasE      = buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, dummySelf)
+            val fieldBytesOuterE = CodecMacro.mkFieldBytesPublic(preEncodedExprs)
+            val fieldNamesOuterE = Expr(fieldNamesArr)
+            '{
+                val _fieldBytes: Array[Array[Byte]]     = ${ fieldBytesOuterE }
+                val _fieldNames: Array[String]          = ${ fieldNamesOuterE }
+                val _subSchemas: Array[kyo.Schema[Any]] = ${ subSchemasE }
+                new Schema[A](Seq.empty):
+                    import scala.annotation.publicInBinary
+                    private lazy val _structure: Structure.Type = $structureExpr
+                    override def structure: Structure.Type      = _structure
+
+                    @publicInBinary private[kyo] def serializeWrite(value: A, writer: Writer): Unit =
+                        ${
+                            SerializationMacro.caseClassWriteBody[A](
+                                typeName,
+                                n,
+                                fields.map(_.name),
+                                derivedFieldIds,
+                                maybeFields,
+                                optionFields,
+                                fieldResolvers,
+                                '{ _fieldBytes },
+                                '{ _subSchemas },
+                                dummySelf,
+                                '{ value },
+                                '{ writer }
+                            )
+                        }
+
+                    @publicInBinary private[kyo] def serializeRead(reader: Reader): A =
+                        ${
+                            SerializationMacro.caseClassReadBodyResolved[A](
+                                '{ reader },
+                                '{ _fieldBytes },
+                                '{ _fieldNames },
+                                namedResolvers,
+                                '{ _subSchemas },
+                                dummySelf
+                            )
+                        }
+
+                    @publicInBinary private[kyo] def getter(value: A): Maybe[Any] = Maybe(value)
+                    @publicInBinary private[kyo] def setter(value: A, next: Any): A =
+                        next.asInstanceOf[A]
+                end new
+            }
+        end if
+    end derivedEmitProduct
+
+    /** Emits the Schema for a sealed trait / enum via summonInline per variant.
+      *
+      * Walks the sealed children and emits one variant Schema per child via
+      * `summonInline[Schema[child]]` at the variant dispatch site. The
+      * `Structure.Type.Sum` literal carries one `Structure.Variant` per child whose
+      * `variantType` is the child's structure read through
+      * `summonInline[Schema[child]].structure`. Recursion across the sealed parent
+      * (e.g. a variant whose field is `Parent`) is broken at runtime by the outer
+      * parent Schema's own `lazy val structure`.
+      *
+      * The write and read bodies are pre-built as function-expression closures before
+      * the main `new Schema[A]` quote so that the children list (which carries
+      * path-dependent `Quotes#Reflect#Symbol` elements) stays in a single Quotes
+      * context and never crosses into a nested staging level. This avoids the
+      * "Cyclic macro dependencies" compile error that would arise if the children list
+      * were passed as an argument into a nested splice inside the anonymous class body.
+      */
+    private def derivedEmitSum[A: Type](using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Expr[Schema[A]] =
+        import quotes.reflect.*
+
+        val nameE                = Expr(sym.name)
+        val anyT: Expr[Tag[Any]] = summonStructureTag[A]
+
+        val children: List[Symbol] = sym.children
+        if children.isEmpty then
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: sealed trait has no known children."
+            )
+        end if
+
+        val variantExprs: List[Expr[Structure.Variant]] = children.map { child =>
+            val childTpe   = child.typeRef.asInstanceOf[TypeRepr]
+            val childNameE = Expr(child.name)
+            childTpe.asType match
+                case '[c] =>
+                    '{
+                        Structure.Variant(
+                            $childNameE,
+                            scala.compiletime.summonInline[Schema[c]].structure
+                        )
+                    }
+            end match
+        }
+        val variantsChunkE: Expr[Chunk[Structure.Variant]] = '{
+            Chunk.from[Structure.Variant](${ Expr.ofList(variantExprs) })
+        }
+
+        val enumValueNames: List[String] = children
+            .filter(c => c.flags.is(Flags.Enum) && !c.flags.is(Flags.Case))
+            .map(_.name)
+        val enumValuesE: Expr[Chunk[String]] = '{
+            Chunk.from[String](${ Expr(enumValueNames) })
+        }
+
+        // Build the write-dispatch body as a quoted function value so that the children
+        // list (which carries Quotes-path-dependent Symbol elements) stays in the outer
+        // Quotes context throughout construction. The '{ value } and '{ writer } quotes
+        // lift the lambda parameters (level 1) to Expr references (level 0) so they can
+        // be threaded into the Match's CaseDef bodies.
+        val writeBodyFn: Expr[(A, Writer) => Unit] =
+            '{
+                (value: A, writer: Writer) =>
+                    ${
+                        val writerE = '{ writer }
+                        val valueE  = '{ value }
+                        val cases: List[CaseDef] = children.map { child =>
+                            val childTpe   = child.typeRef.asInstanceOf[TypeRepr]
+                            val childNameE = Expr(child.name)
+                            childTpe.asType match
+                                case '[c] =>
+                                    val bind = Symbol.newBind(
+                                        Symbol.spliceOwner,
+                                        "v",
+                                        Flags.EmptyFlags,
+                                        childTpe
+                                    )
+                                    val body: Expr[Unit] = '{
+                                        $writerE.objectStart($childNameE, 1)
+                                        $writerE.field($childNameE, 0)
+                                        scala.compiletime.summonInline[Schema[c]].serializeWrite(
+                                            ${ Ref(bind).asExprOf[c] },
+                                            $writerE
+                                        )
+                                        $writerE.objectEnd()
+                                    }
+                                    CaseDef(
+                                        Bind(bind, Typed(Wildcard(), TypeTree.of[c])),
+                                        None,
+                                        body.asTerm
+                                    )
+                            end match
+                        }
+                        Match(valueE.asTerm, cases).asExprOf[Unit]
+                    }
+            }
+
+        // Build the read-dispatch body as a quoted function value for the same reason.
+        // The if-chain dispatch is constructed entirely within the outer Quotes context.
+        val readBodyFn: Expr[Reader => A] =
+            '{
+                (reader: Reader) =>
+                    ${
+                        val readerE = '{ reader }
+                        val variantArms: List[(String, Expr[A])] = children.map { child =>
+                            val childTpe = child.typeRef.asInstanceOf[TypeRepr]
+                            childTpe.asType match
+                                case '[c] =>
+                                    val arm: Expr[A] = '{
+                                        scala.compiletime.summonInline[Schema[c]].serializeRead(
+                                            $readerE
+                                        ).asInstanceOf[A]
+                                    }
+                                    (child.name, arm)
+                            end match
+                        }
+                        val firstArm = variantArms.head
+                        val dispatch: Expr[A] = variantArms.foldRight(firstArm._2: Expr[A]) {
+                            case ((tag, body), acc) =>
+                                val tagE = Expr(tag)
+                                '{ if $readerE.lastFieldName() == $tagE then $body else $acc }
+                        }
+                        '{
+                            kyo.discard($readerE.objectStart())
+                            if ! $readerE.hasNextField() then
+                                throw new IllegalStateException(
+                                    "Sealed-trait reader: expected discriminator field, got end of object"
+                                )
+                            end if
+                            $readerE.fieldParse()
+                            val result: A = $dispatch
+                            $readerE.objectEnd()
+                            result
+                        }
+                    }
+            }
+
+        '{
+            new Schema[A](Seq.empty):
+                import scala.annotation.publicInBinary
+                private val _writeFn: (A, Writer) => Unit = $writeBodyFn
+                private val _readFn: Reader => A          = $readBodyFn
+                private lazy val _structure: Structure.Type =
+                    Structure.Type.Sum(
+                        $nameE,
+                        $anyT,
+                        Chunk.empty,
+                        $variantsChunkE,
+                        $enumValuesE
+                    )
+                override def structure: Structure.Type = _structure
+
+                @publicInBinary private[kyo] def serializeWrite(value: A, writer: Writer): Unit =
+                    _writeFn(value, writer)
+
+                @publicInBinary private[kyo] def serializeRead(reader: Reader): A =
+                    _readFn(reader)
+
+                @publicInBinary private[kyo] def getter(value: A): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def setter(value: A, next: Any): A =
+                    next.asInstanceOf[A]
+            end new
+        }
+    end derivedEmitSum
 
     /** Builds a schema resolver for a sealed trait variant that contains the recursive parent type.
       *

@@ -5288,19 +5288,19 @@ class SchemaTest extends kyo.test.Test[Any]:
 
         "plain class" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpaque]")(
-                "requires a case class or sealed trait"
+                "not a case class or sealed trait"
             )
         }
 
         "open trait" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpenTrait]")(
-                "requires a case class or sealed trait"
+                "not a case class or sealed trait"
             )
         }
 
         "primitive" in {
             typeCheckFailure("kyo.Schema.derived[Int]")(
-                "requires a case class or sealed trait"
+                "not a case class or sealed trait"
             )
         }
 
@@ -7188,6 +7188,53 @@ class SchemaTest extends kyo.test.Test[Any]:
             val reader = JsonReader(w.resultString)
             val result = schema.readFrom(reader)
             assert(result == value)
+        }
+
+    }
+
+    "Schema derivation (SchemaDerivedMacro)" - {
+
+        "Self-recursive case class derives Schema without StackOverflow" in {
+            case class Tree(children: List[Tree]) derives Schema
+            val s  = summon[Schema[Tree]]
+            val st = s.structure
+            assert(st.isInstanceOf[Structure.Type.Product])
+            val prod = st.asInstanceOf[Structure.Type.Product]
+            assert(prod.name == "Tree")
+            val fieldType = prod.fields(0).fieldType
+            assert(fieldType.isInstanceOf[Structure.Type.Collection])
+            val coll = fieldType.asInstanceOf[Structure.Type.Collection]
+            // The element type is a Product(Tree,...) with the correct name.
+            // derives Schema uses a cycle-safe stub for the recursive element type
+            // (buildCaseClassStructureExpr uses deriveTypeFallback for recursive fields).
+            assert(coll.elementType.isInstanceOf[Structure.Type.Product])
+            assert(coll.elementType.asInstanceOf[Structure.Type.Product].name == "Tree")
+        }
+
+        "Maybe and Option fields are optional and primitive defaults use their Value variant" in {
+            case class Q(
+                a: Int = 42,
+                b: Maybe[String] = Maybe.empty,
+                c: Option[Boolean] = None,
+                d: BigDecimal = BigDecimal(1)
+            ) derives Schema
+            val s      = summon[Schema[Q]]
+            val fields = s.structure.asInstanceOf[Structure.Type.Product].fields
+            assert(fields(0).optional == false)
+            assert(fields(0).default == Maybe(Structure.Value.Integer(42L)))
+            assert(fields(1).optional == true)
+            assert(fields(2).optional == true)
+            assert(fields(3).optional == false)
+            assert(fields(3).default == Maybe(Structure.Value.BigNum(BigDecimal(1))))
+        }
+
+        "Derivation rejects case class with a private case-field" in {
+            val src      = "case class Bad(private val x: Int) derives kyo.Schema"
+            val compiles = scala.compiletime.testing.typeChecks(src)
+            assert(!compiles)
+            val errs = scala.compiletime.testing.typeCheckErrors(src)
+            assert(errs.nonEmpty)
+            assert(errs.head.message.contains("private") && errs.head.message.contains("x"))
         }
 
     }
