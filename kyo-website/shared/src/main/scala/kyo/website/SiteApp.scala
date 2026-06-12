@@ -200,10 +200,12 @@ object SiteApp:
                         UI.span.cssClass("sun")(sunIcon),
                         UI.span.cssClass("moon")(moonIcon)
                     ),
+                    // Get started lands on the overview (the root-README intro), the same target as the
+                    // Docs link, rather than dropping the reader straight into the first module's page.
                     UI.a
                         .cssClass("btn")
                         .cssClass("btn-primary")
-                        .href(Href.Path(docsHome))("Get started")
+                        .href(Href.Path(overviewHome))("Get started")
                 )
             )
         )

@@ -30,24 +30,26 @@ object LandingApp:
     /** The landing content body (header excluded, owned by `SiteApp`).
       *
       * @param docsHome
-      *   The local docs home (`/<prefix>/<firstSlug>/`) that every in-body "Start building" call to
-      *   action targets. Its first path segment is the active prefix (`latest` or a version tag), used
-      *   to build the module and manifesto links.
+      *   The local docs home (`/<prefix>/<firstSlug>/`). Its first path segment is the active prefix
+      *   (`latest` or a version tag), used to build the overview, module, and manifesto links. The
+      *   in-body call-to-action buttons ("Start building", "Get started", "Documentation") target the
+      *   overview (`/<prefix>/`, the root-README intro), not a specific module.
       */
     def body(docsHome: String)(using Frame): UI < Sync =
         Sync.defer {
-            val prefix = docsHome.split('/').iterator.filter(_.nonEmpty).nextOption().getOrElse("latest")
-            val mod    = (slug: String) => s"/$prefix/$slug/"
+            val prefix       = docsHome.split('/').iterator.filter(_.nonEmpty).nextOption().getOrElse("latest")
+            val mod          = (slug: String) => s"/$prefix/$slug/"
+            val overviewHome = s"/$prefix/"
             UI.div.cssClass("wrap").data("section", "page")(
-                hero(docsHome),
+                hero(overviewHome),
                 gap,
                 ladder(mod),
                 oneFoundation(mod),
                 platforms,
                 socialProof,
                 whyExists(mod("manifesto")),
-                finalCta(docsHome),
-                pageFooter(docsHome, mod("manifesto"))
+                finalCta(overviewHome),
+                pageFooter(overviewHome, mod("manifesto"))
             )
         }
 
@@ -57,7 +59,7 @@ object LandingApp:
 
     // ---- 1. Hero ----
 
-    private def hero(docsHome: String)(using Frame): UI =
+    private def hero(home: String)(using Frame): UI =
         UI.section.cssClass("hero").id("top").data("section", "hero")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("hero-grid")(
@@ -71,7 +73,7 @@ object LandingApp:
                             "AI can write the code. Making it hold up under real use is the part that has not changed. Kyo is the foundation that takes that on, with layered safety from the first line of code to crash recovery, so what you build survives errors, restarts, and real traffic."
                         ),
                         UI.div.cssClass("hero-cta")(
-                            UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(docsHome))("Start building"),
+                            UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(home))("Start building"),
                             UI.a.cssClass("btn").href(Href.Fragment("ladder"))("How it works")
                         ),
                         UI.div.cssClass("trust")(
@@ -429,13 +431,13 @@ object LandingApp:
 
     // ---- 8. Call to action + footer ----
 
-    private def finalCta(docsHome: String)(using Frame): UI =
+    private def finalCta(home: String)(using Frame): UI =
         UI.section.cssClass("band").cssClass("dark").cssClass("cta-band").data("section", "final-cta")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("cta-final").cssClass("on-dark")(
                     UI.h2("Build something that holds."),
                     UI.div.cssClass("hero-cta")(
-                        UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(docsHome))("Start building"),
+                        UI.a.cssClass("btn").cssClass("btn-primary").href(Href.Path(home))("Start building"),
                         UI.a
                             .cssClass("btn")
                             .href(Href.External("https", "//discord.gg/KxxkBbW8bq"))
@@ -446,7 +448,7 @@ object LandingApp:
         )
     end finalCta
 
-    private def pageFooter(docsHome: String, manifestoHref: String)(using Frame): UI =
+    private def pageFooter(home: String, manifestoHref: String)(using Frame): UI =
         UI.footer.data("section", "footer")(
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("foot")(
@@ -461,9 +463,9 @@ object LandingApp:
                     ),
                     UI.div(
                         UI.h5("Docs"),
-                        UI.a("Get started").href(Href.Path(docsHome)),
-                        UI.a("Documentation").href(Href.Path(docsHome)),
-                        UI.a("Modules").href(Href.Path(docsHome)),
+                        UI.a("Get started").href(Href.Path(home)),
+                        UI.a("Documentation").href(Href.Path(home)),
+                        UI.a("Modules").href(Href.Path(home)),
                         UI.a("API reference")
                             .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
                             .target(Target.Blank)

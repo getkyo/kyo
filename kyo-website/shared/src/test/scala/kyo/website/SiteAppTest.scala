@@ -85,17 +85,16 @@ class SiteAppTest extends WebsiteTest:
         }
     }
 
-    "Docs targets the overview intro route, with no separate Modules link; Get started targets the first module" in {
+    "Docs and Get started both target the overview intro route (the main README), not a module page" in {
         render(versions2, home).map { html =>
-            // Get started targets docsHome (the first module).
-            val homeRefCount = countOccurrences(html, s"""href="$home"""")
-            assert(homeRefCount >= 1, s"expected Get started to target $home, found $homeRefCount: $html")
-            // Docs targets the overview/intro route /latest/ (the overview auto-opens, its sidebar IS the
-            // module list, so a separate Modules link is redundant and was removed).
+            // Both the Docs link and the Get started button land on the overview /latest/ (the root-README
+            // intro): the reader starts at the main README rather than being dropped into the first
+            // module's page. The overview auto-opens and its sidebar IS the module list, so a separate
+            // Modules link is redundant and was removed.
             val overviewHome     = "/latest/"
             val overviewRefCount = countOccurrences(html, s"""href="$overviewHome"""")
-            assert(overviewRefCount >= 1, s"expected Docs to target $overviewHome, found $overviewRefCount: $html")
-            // Get started (docsHome) and the overview route must differ for the test to be meaningful.
+            assert(overviewRefCount >= 2, s"expected Docs + Get started to both target $overviewHome, found $overviewRefCount: $html")
+            // docsHome (the first module) and the overview must differ for the check to be meaningful.
             assert(home != overviewHome, "docsHome and the overview route must differ for the test to be meaningful")
             assert(html.contains("Docs"), s"Docs link text missing: $html")
             assert(!html.contains("Modules"), s"Modules link should be removed from the header: $html")

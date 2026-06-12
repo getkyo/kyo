@@ -77,10 +77,14 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
-    "in-body CTAs and footer doc links target the local docs home (Href.Path), not getkyo.io anchors (D2)" in {
+    "in-body CTAs and footer doc links target the overview (the main README), not getkyo.io anchors (D2)" in {
         renderLanding.map { html =>
-            // The hero/final-CTA/footer internal links route locally to docsHome.
-            assert(html.contains(s"""href="$home""""), s"in-body CTAs must target $home: $html")
+            // The hero/final-CTA/footer CTAs ("Start building", "Get started", "Documentation") route to
+            // the overview /<prefix>/ (the root-README intro), derived from the docs home's prefix, not to
+            // the first module page. `href="/latest/"` (exact, with the trailing quote) matches only the
+            // overview CTA, not the `/latest/kyo-http/` module links the feature cards carry.
+            val overview = "/latest/"
+            assert(html.contains(s"""href="$overview""""), s"in-body CTAs must target the overview $overview: $html")
             // No internal getkyo.io anchor links remain in the body.
             assert(!html.contains("getkyo.io#getting-started"), "Get started must be local, not a getkyo.io anchor")
             assert(!html.contains("getkyo.io#modules"), "Modules must be local, not a getkyo.io anchor")
