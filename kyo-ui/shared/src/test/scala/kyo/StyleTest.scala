@@ -1067,6 +1067,31 @@ class StyleTest extends kyo.test.Test[Any]:
         }
     }
 
+    "flex direction" - {
+        "row sets FlexDirectionProp(row)" in {
+            assert(Style.row.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.row))
+        }
+
+        "column sets FlexDirectionProp(column)" in {
+            assert(Style.column.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.column))
+        }
+
+        "rowReverse sets FlexDirectionProp(rowReverse)" in {
+            assert(Style.rowReverse.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.rowReverse))
+        }
+
+        "columnReverse sets FlexDirectionProp(columnReverse)" in {
+            assert(Style.columnReverse.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.columnReverse))
+        }
+
+        "renders flex-direction css for every direction" in {
+            assert(Style.row.toCss == "flex-direction: row;")
+            assert(Style.column.toCss == "flex-direction: column;")
+            assert(Style.rowReverse.toCss == "flex-direction: row-reverse;")
+            assert(Style.columnReverse.toCss == "flex-direction: column-reverse;")
+        }
+    }
+
     "displayNone" - {
         "displayNone sets HiddenProp" in {
             val s = Style.displayNone

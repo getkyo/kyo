@@ -176,8 +176,10 @@ private[kyo] object CssStyleRenderer:
         case Margin(t, r, b, l)  => s"margin: ${size(t)} ${size(r)} ${size(b)} ${size(l)};"
         case Gap(v)              => s"gap: ${size(v)};"
         case FlexDirectionProp(d) => d match
-                case FlexDirection.row    => "flex-direction: row;"
-                case FlexDirection.column => "flex-direction: column;"
+                case FlexDirection.row           => "flex-direction: row;"
+                case FlexDirection.column        => "flex-direction: column;"
+                case FlexDirection.rowReverse    => "flex-direction: row-reverse;"
+                case FlexDirection.columnReverse => "flex-direction: column-reverse;"
         case Align(v)                   => s"align-items: ${alignment(v)};"
         case Justify(v)                 => s"justify-content: ${justification(v)};"
         case OverflowProp(v)            => s"overflow: ${overflow(v)};"

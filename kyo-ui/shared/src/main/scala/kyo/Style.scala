@@ -178,8 +178,10 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
 
     // Layout direction
 
-    def row: Style    = appendProp(Prop.FlexDirectionProp(FlexDirection.row))
-    def column: Style = appendProp(Prop.FlexDirectionProp(FlexDirection.column))
+    def row: Style           = appendProp(Prop.FlexDirectionProp(FlexDirection.row))
+    def column: Style        = appendProp(Prop.FlexDirectionProp(FlexDirection.column))
+    def rowReverse: Style    = appendProp(Prop.FlexDirectionProp(FlexDirection.rowReverse))
+    def columnReverse: Style = appendProp(Prop.FlexDirectionProp(FlexDirection.columnReverse))
 
     def flexWrap(v: FlexWrap): Style                  = appendProp(Prop.FlexWrapProp(v))
     def flexWrap(f: FlexWrap.type => FlexWrap): Style = flexWrap(f(FlexWrap))
@@ -623,6 +625,8 @@ object Style:
     def gap(v: Length.Px | Length.Em): Style                                        = empty.gap(v)
     def row: Style                                                                  = empty.row
     def column: Style                                                               = empty.column
+    def rowReverse: Style                                                           = empty.rowReverse
+    def columnReverse: Style                                                        = empty.columnReverse
     def flexWrap(v: FlexWrap): Style                                                = empty.flexWrap(v)
     def flexWrap(f: FlexWrap.type => FlexWrap): Style                               = empty.flexWrap(f)
     def align(v: Alignment): Style                                                  = empty.align(v)
@@ -859,7 +863,7 @@ object Style:
     // ---- Enums ----
 
     enum FlexDirection derives CanEqual:
-        case row, column
+        case row, column, rowReverse, columnReverse
 
     /** Maps to the CSS `flex-wrap` property. */
     enum FlexWrap derives CanEqual:
