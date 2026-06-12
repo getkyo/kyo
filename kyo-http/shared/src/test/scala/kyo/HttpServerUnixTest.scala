@@ -73,12 +73,12 @@ class HttpServerUnixTest extends BaseHttpTest with internal.UnixSocketTestHelper
             }
         }
 
-        "non-existent socket path fails with HttpConnectException".notNative in {
+        "non-existent socket path fails with HttpUnixConnectException".notNative in {
             Abort.run[HttpException] {
                 HttpClient.getText("http+unix://%2Ftmp%2Fnonexistent_kyo_unix_test.sock/test")
             }.map { result =>
                 assert(result.isFailure)
-                assert(result.failure.exists(_.isInstanceOf[HttpConnectException]))
+                assert(result.failure.exists(_.isInstanceOf[HttpUnixConnectException]))
             }
         }
 

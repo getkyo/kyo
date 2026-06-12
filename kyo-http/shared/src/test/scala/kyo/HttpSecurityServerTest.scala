@@ -118,4 +118,63 @@ class HttpSecurityServerTest extends BaseHttpTest:
         }
     }
 
+    "handshake-stall DoS defenses" - {
+
+        // TLS server tests skip on Native: OpenSSL's recursive ASN.1 parser overflows Scala Native thread stacks during
+        // certificate parsing (the same documented limitation HttpServerTest's "tls" leg carries). The cross-backend reap
+        // mechanism itself (including Native) is covered by kyo-net's TransportHandshakeTimeoutTest via the public
+        // NetPlatform.transport(config) factory; this test covers the kyo-http wiring: HttpServerConfig.transportConfig
+        // .handshakeTimeout reaching an owned per-config transport whose finite deadline reaps a stalled accept handshake.
+
+        val serverTls = internal.HttpTestPlatformBackend.serverTlsConfig
+
+        "a finite handshakeTimeout reaps a stalled TLS accept handshake (CWE-400, slowloris)".notNative in {
+            val tc = HttpTransportConfig.default.handshakeTimeout(150.millis)
+            val serverConfig = HttpServerConfig.default.port(0).host("localhost")
+                .tls(serverTls)
+                .transportConfig(tc)
+            HttpServer.init(serverConfig)(echoHandler).map { server =>
+                // Raw plaintext client: completes the TCP accept but never sends a ClientHello, so the server-side TLS
+                // handshake parks. The bug this guards (handshakeTimeout silently ignored under the shared default transport)
+                // would leave the connection pinned and the bounded await below would expire (Timeout, the regression
+                // symptom); the fix reaps the accepted fd at the deadline, which the client observes as its inbound
+                // terminating (Closed, or an empty EOF span).
+                Sync.Unsafe.defer {
+                    val transport = kyo.net.NetPlatform.transport
+                    transport.connect("localhost", server.port).safe.get.map { conn =>
+                        Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](conn.inbound.safe.take))).map { outcome =>
+                            conn.close()
+                            val reaped = outcome match
+                                case Result.Success(Result.Success(span)) => span.isEmpty
+                                case Result.Success(Result.Failure(_))    => true
+                                case _                                    => false
+                            assert(reaped, s"expected the finite handshakeTimeout to reap the stalled server handshake, got $outcome")
+                        }
+                    }
+                }
+            }
+        }
+
+        "a TLS handshake completing within the deadline is served, not reaped".notNative in {
+            val okRoute   = HttpRoute.getText("ok").response(_.bodyText)
+            val okHandler = okRoute.handler(_ => HttpResponse.ok("served"))
+            // A generous finite deadline: the loopback handshake completes well under it, so the timer disarms and the
+            // request round-trips. This proves the finite deadline does not reap completed handshakes and that the owned
+            // per-config transport serves real TLS traffic.
+            val tc = HttpTransportConfig.default.handshakeTimeout(30.seconds)
+            val serverConfig = HttpServerConfig.default.port(0).host("localhost")
+                .tls(serverTls)
+                .transportConfig(tc)
+            initTrustAllClient().map { httpClient =>
+                HttpServer.init(serverConfig)(okHandler).map { server =>
+                    HttpClient.let(httpClient) {
+                        HttpClient.getText(s"https://localhost:${server.port}/ok").map { body =>
+                            assert(body == "served")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 end HttpSecurityServerTest

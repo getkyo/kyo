@@ -1391,6 +1391,7 @@ lazy val `kyo-http` =
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
+        .dependsOn(`kyo-net`)
         .withKyoTest
         .settings(
             `kyo-settings`

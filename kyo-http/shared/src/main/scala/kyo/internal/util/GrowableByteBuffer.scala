@@ -17,12 +17,28 @@ final private[kyo] class GrowableByteBuffer:
     /** Current number of bytes written. */
     def size: Int = pos
 
-    /** Ensures the internal array can hold at least `needed` additional bytes. */
+    /** Ensures the internal array can hold at least `needed` additional bytes.
+      *
+      * The required capacity and the doubling-growth target are computed in `Long` arithmetic and capped at [[GrowableByteBuffer.MaxArrayLength]].
+      * The naive `Int` doubling `newLen * 2` overflows for a large array: once `newLen` reaches `2^30` the next double is `2^31`, which wraps to a
+      * negative `Int` (a `NegativeArraySizeException` from `new Array[Byte]`) and, doubling again, to `0` (an unterminating growth loop). Computing
+      * in `Long` and capping keeps the target representable, and a request beyond the largest allocatable array fails fast with a clear, bounded
+      * error rather than wrapping. `pos` is incremented by callers only after this returns, so a failed growth leaves the position unchanged.
+      */
     private def ensureCapacity(needed: Int): Unit =
-        val required = pos + needed
+        val required = pos.toLong + needed.toLong
         if required > arr.length then
-            @tailrec def grow(newLen: Int): Int = if newLen < required then grow(newLen * 2) else newLen
-            val newArr                          = new Array[Byte](grow(arr.length))
+            if required > GrowableByteBuffer.MaxArrayLength then
+                throw new IllegalArgumentException(
+                    s"GrowableByteBuffer capacity request ($required bytes) exceeds the maximum array length ${GrowableByteBuffer.MaxArrayLength}"
+                )
+            end if
+            @tailrec def grow(newLen: Long): Int =
+                if newLen >= required then newLen.toInt
+                else
+                    val doubled = newLen * 2
+                    grow(if doubled > GrowableByteBuffer.MaxArrayLength then GrowableByteBuffer.MaxArrayLength.toLong else doubled)
+            val newArr = new Array[Byte](grow(arr.length.toLong))
             java.lang.System.arraycopy(arr, 0, newArr, 0, pos)
             arr = newArr
         end if
@@ -93,4 +109,18 @@ final private[kyo] class GrowableByteBuffer:
 
     /** Raw access to the internal array for zero-copy reads. */
     def array: Array[Byte] = arr
+
+    /** Ensures the internal array can hold at least `additional` bytes beyond the current position.
+      * Must be called before reading `array` if growth may occur, so callers always get the current reference.
+      */
+    private[kyo] def ensureCapacityFor(additional: Int): Unit = ensureCapacity(additional)
+end GrowableByteBuffer
+
+private[kyo] object GrowableByteBuffer:
+    /** Largest length the internal array may grow to. Matches the JDK's effective array-size ceiling (`Int.MaxValue` minus a small header
+      * allowance): some VMs reserve a few header words, so requesting exactly `Int.MaxValue` can fail with an `OutOfMemoryError` on the
+      * allocation. Growth is capped here, and a capacity request above this fails fast with a clear, bounded error rather than overflowing the
+      * doubling target to a negative or zero length.
+      */
+    final val MaxArrayLength = Int.MaxValue - 8
 end GrowableByteBuffer

@@ -4,7 +4,7 @@ import kyo.*
 
 // RFC 3986: Uniform Resource Identifier (URI): Generic Syntax
 // Tests validate URI parsing behavior per the RFC specification.
-// Failing tests indicate RFC non-compliance — do NOT adjust assertions to match implementation.
+// Failing tests indicate RFC non-compliance, do NOT adjust assertions to match implementation.
 class Rfc3986Test extends BaseHttpTest:
     import HttpPath.*
 
@@ -18,6 +18,27 @@ class Rfc3986Test extends BaseHttpTest:
             url.scheme.contains("http") || url.scheme.contains("HTTP"),
             s"Scheme should be recognized regardless of case, got: ${url.scheme}"
         )
+    }
+
+    "Section 3.1 - non-HTTP scheme is rejected, not dispatched as HTTP (SSRF guard)" in {
+        // A non-HTTP `scheme://` from untrusted input must not silently downgrade to HTTP and reach the authority.
+        // Only http, https, and the urllib3 Unix-socket variants are accepted; everything else fails to parse.
+        def rejects(u: String): Boolean =
+            HttpUrl.parse(u) match
+                case Result.Failure(e: HttpUrlParseException) =>
+                    e.getMessage.contains("unsupported URL scheme") && e.getMessage.contains("allowed:")
+                case _ => false
+        assert(rejects("ftp://internal-service/x"), "ftp:// must be rejected")
+        assert(rejects("gopher://host/"), "gopher:// must be rejected")
+        assert(rejects("file:///etc/passwd"), "file:// must be rejected")
+    }
+
+    "Section 3.1 - supported schemes still parse (allowlist regression)" in {
+        assert(HttpUrl.parse("http://host/p").getOrThrow.scheme.contains("http"))
+        assert(HttpUrl.parse("https://host/p").getOrThrow.scheme.contains("https"))
+        // Unix-socket variants normalize the scheme to http/https and decode the socket path.
+        assert(HttpUrl.parse("http+unix://%2Ftmp%2Fs.sock/p").getOrThrow.unixSocket.nonEmpty)
+        assert(HttpUrl.parse("https+unix://%2Ftmp%2Fs.sock/p").getOrThrow.unixSocket.nonEmpty)
     }
 
     // ==================== Section 3.2: Authority ====================
@@ -87,9 +108,9 @@ class Rfc3986Test extends BaseHttpTest:
     // ==================== Section 3.4: Query ====================
 
     "Section 3.4 - URL with empty query string" in {
-        // "http://host/path?" — query component present but empty
+        // "http://host/path?", query component present but empty
         val url = HttpUrl.parse("http://host/path?").getOrThrow
-        // Empty query after ? — implementation may set rawQuery to Absent or Present("")
+        // Empty query after ?, implementation may set rawQuery to Absent or Present("")
         assert(url.path == "/path", s"Path should be '/path', got: '${url.path}'")
     }
 
@@ -171,13 +192,13 @@ class Rfc3986Test extends BaseHttpTest:
     }
 
     "Section 3.4 - Query param with = in value" in {
-        // "?key=a=b" — only first = splits key/value
+        // "?key=a=b", only first = splits key/value
         val url = HttpUrl.fromUri("/path?key=a=b")
         assert(url.query("key") == Present("a=b"), s"Value should be 'a=b', got: ${url.query("key")}")
     }
 
     "Section 3.4 - Query param with encoded ampersand" in {
-        // "?key=a%26b" — %26 is encoded &, should decode to "a&b"
+        // "?key=a%26b", %26 is encoded &, should decode to "a&b"
         val url = HttpUrl.fromUri("/path?key=a%26b")
         assert(url.query("key") == Present("a&b"), s"Encoded & should decode, got: ${url.query("key")}")
     }
@@ -212,7 +233,7 @@ class Rfc3986Test extends BaseHttpTest:
     }
 
     "Section 3.4 - Malformed percent-encoding falls back to raw" in {
-        // %GG is not valid hex — should fall back to raw value
+        // %GG is not valid hex, should fall back to raw value
         val url = HttpUrl.fromUri("/path?q=%GG")
         val v   = url.query("q")
         // Should either fail gracefully or return raw value
@@ -220,20 +241,20 @@ class Rfc3986Test extends BaseHttpTest:
     }
 
     "Section 3.4 - Incomplete percent-encoding" in {
-        // %A is incomplete — should fall back to raw value
+        // %A is incomplete, should fall back to raw value
         val url = HttpUrl.fromUri("/path?q=%A")
         val v   = url.query("q")
         assert(v.nonEmpty, s"Incomplete encoding should not crash, got: $v")
     }
 
     "Section 3.4 - Empty query string produces no params" in {
-        // "?" with nothing after — rawQuery may be Absent
+        // "?" with nothing after, rawQuery may be Absent
         val url = HttpUrl.fromUri("/path?")
         assert(url.query("anything") == Absent, s"Empty query should have no params")
     }
 
     "Section 3.4 - Multiple ? in URL" in {
-        // "?a=1?b=2" — second ? is part of the query value
+        // "?a=1?b=2", second ? is part of the query value
         val url = HttpUrl.fromUri("/path?a=1?b=2")
         // The entire query string is "a=1?b=2", so param "a" has value "1?b=2"
         // unless impl splits on second ? differently

@@ -1,6 +1,5 @@
 package kyo.internal.client
 
-import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.internal.codec.*
@@ -25,13 +24,14 @@ import kyo.scheduler.IOPromise
   * sendWithConfig is the main entry point from HttpClient. It applies base URL resolution, then delegates to retryWith -> timeoutWith ->
   * poolWith.
   */
-final private[kyo] class HttpClientBackend[Handle] private (
-    transport: Transport[Handle],
+final private[kyo] class HttpClientBackend private (
+    transport: kyo.net.Transport,
     transportConfig: HttpTransportConfig,
     defaultTlsConfig: HttpTlsConfig,
-    private val pool: ConnectionPool[HttpConnection[Handle]],
-    private val allConnections: ConcurrentHashMap[HttpConnection[Handle], Unit],
+    private val pool: ConnectionPool[HttpConnection],
+    private val allConnections: ConcurrentHashMap[HttpConnection, Unit],
     val maxConnectionsPerHost: Int,
+    ownsTransport: Boolean,
     val clientFrame: Frame
 ):
     private val CrLf          = Span.fromUnsafe(Http1StreamContext.CRLF)
@@ -42,22 +42,36 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case Present(path) => (s"unix:$path", 0)
             case Absent        => (url.host, url.port)
 
+    /** Map a transport connect failure to the matching [[HttpException]]. The transport produces a typed [[kyo.net.NetException]] leaf (a DNS
+      * failure, a connection refusal, a Unix-socket error), which is translated to the matching HTTP connection exception and kept as the cause
+      * so a caller can still recover the specific transport reason. `eh`/`ep` are the display host/port used for a failure with no structured
+      * host of its own.
+      */
+    private def transportConnectFailure(failure: Closed, eh: String, ep: Int)(using Frame): HttpException =
+        failure match
+            case e: kyo.net.NetDnsResolutionException  => HttpDnsResolutionException(e.host, e)
+            case e: kyo.net.NetUnixConnectException    => HttpUnixConnectException(e.path, e)
+            case e: kyo.net.NetConnectTimeoutException => HttpConnectTimeoutException(e.host, e.port, e.timeout)
+            case e: kyo.net.NetConnectException        => HttpConnectException(e.host, e.port, e)
+            case other                                 => HttpConnectException(eh, ep, other)
+    end transportConnectFailure
+
     def connect(url: HttpUrl, connectTimeout: Duration, tlsConfig: HttpTlsConfig)(using
         AllowUnsafe,
         Frame
-    ): Fiber.Unsafe[HttpConnection[Handle], Abort[HttpException]] =
+    ): Fiber.Unsafe[HttpConnection, Abort[HttpException]] =
         // Merge TLS configs: use defaultTlsConfig as base, override with explicitly set fields
         val effectiveTls =
             if tlsConfig == HttpTlsConfig.default then defaultTlsConfig
             else tlsConfig
         val connectFiber = (url.unixSocket, url.ssl) match
             case (Present(path), _) => transport.connectUnix(path)
-            case (_, true)          => transport.connect(url.host, url.port, effectiveTls)
+            case (_, true)          => NetConfigTranslation.connectTls(transport, url.host, url.port, effectiveTls)
             case _                  => transport.connect(url.host, url.port)
-        val resultPromise = Promise.Unsafe.init[HttpConnection[Handle], Abort[HttpException]]()
+        val resultPromise = Promise.Unsafe.init[HttpConnection, Abort[HttpException]]()
         // Cast to IOPromise to get Result[Closed, transport.Connection] directly (no `< S` wrapper).
         // Fiber.Unsafe is an opaque wrapper over IOPromise - at runtime they are the same object.
-        connectFiber.asInstanceOf[IOPromise[Closed, kyo.internal.transport.Connection[Handle]]].onComplete { result =>
+        connectFiber.asInstanceOf[IOPromise[Closed, kyo.net.Connection]].onComplete { result =>
             result match
                 case Result.Success(transportConn) =>
                     try
@@ -78,9 +92,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                     end try
                 case Result.Failure(closed) =>
                     val (h, p) = hostPort(url)
-                    resultPromise.completeDiscard(
-                        Result.fail(HttpConnectException(h, p, new IOException(closed.getMessage)))
-                    )
+                    resultPromise.completeDiscard(Result.fail(transportConnectFailure(closed, h, p)))
                 case Result.Panic(t) =>
                     resultPromise.completeDiscard(Result.panic(t))
         }
@@ -88,9 +100,10 @@ final private[kyo] class HttpClientBackend[Handle] private (
     end connect
 
     def sendBuffered[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        maxResponseLength: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
@@ -99,7 +112,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                 responsePromise.onComplete { parseResult =>
                     parseResult match
                         case Result.Success(parsed) =>
-                            readBufferedBody(conn, parsed, request.method, resultPromise, route, request)
+                            readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
                         case Result.Failure(e) =>
                             resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
                         case Result.Panic(t) =>
@@ -115,9 +128,10 @@ final private[kyo] class HttpClientBackend[Handle] private (
     end sendBuffered
 
     def sendStreaming[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        maxResponseLength: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         val resultPromise = Promise.Unsafe.init[HttpResponse[Out], Abort[HttpException]]()
         try
@@ -135,7 +149,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                                 // away the only diagnostic. Going through the buffered path lets
                                 // RouteUtil.decodeBufferedResponse populate HttpStatusException.body.
                                 if parsed.statusCode >= 400 then
-                                    readBufferedBody(conn, parsed, request.method, resultPromise, route, request)
+                                    readBufferedBody(conn, parsed, request.method, resultPromise, route, request, maxResponseLength)
                                 else
                                     val lastBodySpan = conn.http1.lastBodySpan
                                     val bodyStream   = buildBodyStream(conn, parsed, lastBodySpan)
@@ -172,32 +186,35 @@ final private[kyo] class HttpClientBackend[Handle] private (
         resultPromise
     end sendStreaming
 
-    /** Safe wrapper for connect — bridges the unsafe fiber with `f`. Used by tests. */
+    /** Safe wrapper for connect, bridges the unsafe fiber with `f`. Used by tests. */
     def connectWith[A](url: HttpUrl, connectTimeout: Duration, tlsConfig: HttpTlsConfig)(
-        f: HttpConnection[Handle] => A < (Async & Abort[HttpException])
+        f: HttpConnection => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         Sync.Unsafe.defer {
             val fiber = connect(url, connectTimeout, tlsConfig)
             fiber.safe.use(f)
         }
 
-    /** Safe wrapper for send — bridges the unsafe fiber with `f`. Used by tests. */
+    /** Safe wrapper for send, bridges the unsafe fiber with `f`. Used by tests. `maxResponseLength` defaults to the same buffered-response
+      * cap as [[HttpClientConfig.maxResponseLength]].
+      */
     def sendWith[In, Out, A](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In],
-        onRelease: Maybe[Result.Error[Any]] => Unit < Sync = _ => Kyo.unit
+        onRelease: Maybe[Result.Error[Any]] => Unit < Sync = _ => Kyo.unit,
+        maxResponseLength: Int = 100 * 1024 * 1024
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
         Sync.Unsafe.defer {
             val fiber =
                 if request.method == HttpMethod.HEAD then
-                    sendBuffered(conn, route, request)
+                    sendBuffered(conn, route, request, maxResponseLength)
                 else if RouteUtil.isStreamingResponse(route) then
-                    sendStreaming(conn, route, request)
+                    sendStreaming(conn, route, request, maxResponseLength)
                 else
-                    sendBuffered(conn, route, request)
+                    sendBuffered(conn, route, request, maxResponseLength)
             Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                 onRelease(error)
             } {
@@ -205,30 +222,30 @@ final private[kyo] class HttpClientBackend[Handle] private (
             }
         }
 
-    def isAliveUnsafe(conn: HttpConnection[Handle])(using AllowUnsafe): Boolean =
+    def isAliveUnsafe(conn: HttpConnection)(using AllowUnsafe): Boolean =
         conn.transport.isOpen
 
     /** Safe wrapper for isAlive - used by tests and connection pool. */
-    def isAlive(conn: HttpConnection[Handle])(using Frame): Boolean < Sync =
+    def isAlive(conn: HttpConnection)(using Frame): Boolean < Sync =
         Sync.Unsafe.defer(conn.transport.isOpen)
 
-    def closeNowUnsafe(conn: HttpConnection[Handle])(using AllowUnsafe, Frame): Unit =
+    def closeNowUnsafe(conn: HttpConnection)(using AllowUnsafe, Frame): Unit =
         conn.http1.close()
         conn.transport.close()
 
     /** Safe wrapper for closeNow - used by tests and Scope.ensure. */
-    def closeNow(conn: HttpConnection[Handle])(using Frame): Unit < Async =
+    def closeNow(conn: HttpConnection)(using Frame): Unit < Async =
         Sync.Unsafe.defer {
             conn.http1.close()
             conn.transport.close()
         }
 
-    def closeUnsafe(conn: HttpConnection[Handle], gracePeriod: Duration)(using AllowUnsafe, Frame): Unit =
+    def closeUnsafe(conn: HttpConnection, gracePeriod: Duration)(using AllowUnsafe, Frame): Unit =
         conn.http1.close()
         conn.transport.close()
 
     /** Safe wrapper for close - used by tests. */
-    def close(conn: HttpConnection[Handle], gracePeriod: Duration)(using Frame): Unit < Async =
+    def close(conn: HttpConnection, gracePeriod: Duration)(using Frame): Unit < Async =
         Sync.Unsafe.defer {
             conn.http1.close()
             conn.transport.close()
@@ -240,7 +257,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * onComplete without `< S` wrapper, plus the path.
       */
     private def encodeAndSendDirectWith[In, Out, A](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
         request: HttpRequest[In]
     )(
@@ -281,7 +298,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
     end encodeAndSendDirectWith
 
     /** Stream request body in chunked transfer encoding format. Launched as a background IOTask. */
-    private def streamRequestBody(conn: HttpConnection[Handle], bodyStream: Stream[Span[Byte], Async])(using AllowUnsafe, Frame): Unit =
+    private def streamRequestBody(conn: HttpConnection, bodyStream: Stream[Span[Byte], Async])(using AllowUnsafe, Frame): Unit =
         import kyo.kernel.internal.Context
         import kyo.kernel.internal.Trace
         import kyo.scheduler.IOTask
@@ -310,12 +327,13 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * Per RFC 9110 Section 6.4.1, responses to HEAD requests, 1xx informational, 204, and 304 responses must not include a message body.
       */
     private def readBufferedBody[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         parsed: ParsedResponse,
         method: HttpMethod,
         resultPromise: Promise.Unsafe[HttpResponse[Out], Abort[HttpException]],
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        maxResponseLength: Int
     )(using AllowUnsafe, Frame): Unit =
         val noBody = method == HttpMethod.HEAD ||
             parsed.statusCode < 200 ||
@@ -326,27 +344,40 @@ final private[kyo] class HttpClientBackend[Handle] private (
         else
             val lastBodySpan = conn.http1.lastBodySpan
             if parsed.isChunked then
-                // Chunked: decode all chunks via callback-based reader
-                ChunkedBodyDecoder.readBufferedUnsafe(conn.http1.bodyChannel, lastBodySpan, conn.http1.chunkedDecoderState) { result =>
-                    result match
+                // Chunked: decode all chunks via callback-based reader, bounding the accumulated body at maxResponseLength
+                // (a server streaming an unbounded chunked body would otherwise OOM the client, CWE-400).
+                ChunkedBodyDecoder.readBufferedUnsafe(
+                    conn.http1.bodyChannel,
+                    lastBodySpan,
+                    maxResponseLength,
+                    conn.http1.chunkedDecoderState
+                )(
+                    {
                         case Result.Success(bodyBytes) =>
                             decodeAndComplete(conn, bodyBytes, parsed, resultPromise, route, request)
                         case Result.Failure(_) =>
                             resultPromise.completeDiscard(Result.fail(HttpConnectionClosedException()))
                         case Result.Panic(t) =>
                             resultPromise.completeDiscard(Result.panic(t))
-                }
+                    },
+                    size => resultPromise.completeDiscard(Result.fail(HttpPayloadTooLargeException(size, maxResponseLength)))
+                )
             else if parsed.contentLength > 0 then
-                val remaining = parsed.contentLength - lastBodySpan.size
-                if remaining <= 0 then
-                    // All body bytes were in the header chunk
-                    decodeAndComplete(conn, lastBodySpan, parsed, resultPromise, route, request)
+                if parsed.contentLength > maxResponseLength then
+                    // Reject before allocating: an enormous declared Content-Length must not size the read buffer (CWE-400).
+                    resultPromise.completeDiscard(Result.fail(HttpPayloadTooLargeException(parsed.contentLength, maxResponseLength)))
                 else
-                    // Read remaining bytes from the inbound channel
-                    val buf = new GrowableByteBuffer
-                    if lastBodySpan.nonEmpty then
-                        buf.writeBytes(lastBodySpan.toArrayUnsafe, 0, lastBodySpan.size)
-                    readLoopUnsafe(conn, buf, remaining, parsed, resultPromise, route, request)
+                    val remaining = parsed.contentLength - lastBodySpan.size
+                    if remaining <= 0 then
+                        // All body bytes were in the header chunk
+                        decodeAndComplete(conn, lastBodySpan, parsed, resultPromise, route, request)
+                    else
+                        // Read remaining bytes from the inbound channel
+                        val buf = new GrowableByteBuffer
+                        if lastBodySpan.nonEmpty then
+                            buf.writeBytes(lastBodySpan.toArrayUnsafe, 0, lastBodySpan.size)
+                        readLoopUnsafe(conn, buf, remaining, parsed, resultPromise, route, request)
+                    end if
                 end if
             else if parsed.contentLength == 0 then
                 decodeAndComplete(conn, Span.empty[Byte], parsed, resultPromise, route, request)
@@ -359,7 +390,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                 val buf = new GrowableByteBuffer
                 if lastBodySpan.nonEmpty then
                     buf.writeBytes(lastBodySpan.toArrayUnsafe, 0, lastBodySpan.size)
-                readUntilCloseUnsafe(conn, buf, parsed, resultPromise, route, request)
+                readUntilCloseUnsafe(conn, buf, parsed, resultPromise, route, request, maxResponseLength)
             end if
         end if
     end readBufferedBody
@@ -368,7 +399,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * Span[Byte]] directly.
       */
     private def readLoopUnsafe[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         buf: GrowableByteBuffer,
         remaining: Int,
         parsed: ParsedResponse,
@@ -399,21 +430,27 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * the EOF is the legitimate end-of-body signal, not an error. Used e.g. for Podman's `/exec/{id}/start` multiplexed-stream response.
       */
     private def readUntilCloseUnsafe[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         buf: GrowableByteBuffer,
         parsed: ParsedResponse,
         resultPromise: Promise.Unsafe[HttpResponse[Out], Abort[HttpException]],
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        maxResponseLength: Int
     )(using AllowUnsafe, Frame): Unit =
         conn.http1.bodyChannel.takeFiber()
             .asInstanceOf[IOPromise[Closed, Span[Byte]]].onComplete { result =>
                 result match
                     case Result.Success(span) =>
                         buf.writeBytes(span.toArrayUnsafe, 0, span.size)
-                        readUntilCloseUnsafe(conn, buf, parsed, resultPromise, route, request)
+                        if buf.size > maxResponseLength then
+                            // A close-framed body that keeps growing past the cap would OOM the client (CWE-400).
+                            resultPromise.completeDiscard(Result.fail(HttpPayloadTooLargeException(buf.size, maxResponseLength)))
+                        else
+                            readUntilCloseUnsafe(conn, buf, parsed, resultPromise, route, request, maxResponseLength)
+                        end if
                     case Result.Failure(_) =>
-                        // EOF is expected for close-framed bodies — deliver what we have.
+                        // EOF is expected for close-framed bodies, deliver what we have.
                         decodeAndComplete(conn, Span.fromUnsafe(buf.toByteArray), parsed, resultPromise, route, request)
                     case Result.Panic(t) =>
                         resultPromise.completeDiscard(Result.panic(t))
@@ -424,7 +461,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * (isKeepAlive=false) so it won't be reused from the pool.
       */
     private def decodeAndComplete[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         bodyBytes: Span[Byte],
         parsed: ParsedResponse,
         resultPromise: Promise.Unsafe[HttpResponse[Out], Abort[HttpException]],
@@ -455,7 +492,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
     // -- Streaming response path --
 
     /** Build a raw body stream from the parsed response metadata. */
-    private def buildBodyStream(conn: HttpConnection[Handle], parsed: ParsedResponse, lastBodySpan: Span[Byte])(using
+    private def buildBodyStream(conn: HttpConnection, parsed: ParsedResponse, lastBodySpan: Span[Byte])(using
         AllowUnsafe,
         Frame
     ): Stream[Span[Byte], Async] =
@@ -503,7 +540,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
     end buildBodyStream
 
     /** Emit exactly `remaining` bytes from the inbound channel. */
-    private def readContentLengthStream(conn: HttpConnection[Handle], remaining: Int)(using
+    private def readContentLengthStream(conn: HttpConnection, remaining: Int)(using
         Frame
     ): Unit < (Emit[Chunk[Span[Byte]]] & Async) =
         if remaining <= 0 then Kyo.unit
@@ -519,7 +556,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
 
     // -- WebSocket support --
 
-    /** Connect to a WebSocket endpoint. Bypasses the HTTP connection pool — WS connections aren't poolable.
+    /** Connect to a WebSocket endpoint. Bypasses the HTTP connection pool, WS connections aren't poolable.
       *
       * Uses transport.connect directly with defaultTlsConfig when TLS is needed. Performs the HTTP/1.1 upgrade handshake via
       * WebSocketCodec.requestUpgrade, then runs the three-fiber session loop (read / write / user handler).
@@ -542,7 +579,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
         val connectFiber = Sync.Unsafe.defer {
             (url.unixSocket, ssl) match
                 case (Present(path), _) => transport.connectUnix(path)
-                case (_, true)          => transport.connect(host, port, defaultTlsConfig)
+                case (_, true)          => NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig)
                 case _                  => transport.connect(host, port)
         }
         val connect = connectFiber.map(_.safe.get)
@@ -555,11 +592,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case Result.Failure(_: Timeout) =>
                 Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
             case Result.Failure(closed: Closed) =>
-                Abort.fail(HttpConnectException(
-                    eh,
-                    ep,
-                    new IOException(Option(closed.getMessage).getOrElse("Connection closed"))
-                ))
+                Abort.fail(transportConnectFailure(closed, eh, ep))
             case Result.Panic(t) => throw t
         }
     end connectWebSocket
@@ -568,7 +601,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
 
     /** Connect to a server and upgrade the connection to raw bidirectional byte streaming.
       *
-      * Bypasses the HTTP connection pool — raw connections aren't poolable. Sends the HTTP request, validates the response status (101 or
+      * Bypasses the HTTP connection pool, raw connections aren't poolable. Sends the HTTP request, validates the response status (101 or
       * 2xx), then exposes the transport channels as a raw byte stream. The connection is closed when the enclosing Scope exits.
       */
     def connectRaw(
@@ -586,7 +619,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
         val connectFiber = Sync.Unsafe.defer {
             (url.unixSocket, ssl) match
                 case (Present(path), _) => transport.connectUnix(path)
-                case (_, true)          => transport.connect(host, port, defaultTlsConfig)
+                case (_, true)          => NetConfigTranslation.connectTls(transport, host, port, defaultTlsConfig)
                 case _                  => transport.connect(host, port)
         }
         val connect = connectFiber.map(_.safe.get)
@@ -599,11 +632,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
             case Result.Failure(_: Timeout) =>
                 Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
             case Result.Failure(closed: Closed) =>
-                Abort.fail(HttpConnectException(
-                    eh,
-                    ep,
-                    new IOException(Option(closed.getMessage).getOrElse("Connection closed"))
-                ))
+                Abort.fail(transportConnectFailure(closed, eh, ep))
             case Result.Panic(t) => throw t
         }
     end connectRaw
@@ -614,7 +643,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * stream.
       */
     private def setupRawConnection(
-        connection: Connection[Handle],
+        connection: kyo.net.Connection,
         url: HttpUrl,
         method: HttpMethod,
         body: Span[Byte],
@@ -697,7 +726,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
       * + WebSocketCodec.
       */
     private def runWsSessionWith[A, S](
-        connection: Connection[Handle],
+        connection: kyo.net.Connection,
         url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config
@@ -810,16 +839,16 @@ final private[kyo] class HttpClientBackend[Handle] private (
     @volatile private var closingGracePeriod: Duration = Duration.Zero
 
     /** Track a newly created connection. If the client has already been closed, close it immediately. */
-    private def trackConn(conn: HttpConnection[Handle])(using AllowUnsafe, Frame): Unit =
+    private def trackConn(conn: HttpConnection)(using AllowUnsafe, Frame): Unit =
         discard(allConnections.put(conn, ()))
         if clientClosed then
             closeUnsafe(conn, closingGracePeriod)
     end trackConn
 
-    /** Release a connection back to the pool or discard it on error. Does NOT touch allConnections — removal happens only in discardConn
+    /** Release a connection back to the pool or discard it on error. Does NOT touch allConnections, removal happens only in discardConn
       * (actual close).
       */
-    private def releaseConn(key: HttpAddress, conn: HttpConnection[Handle], error: Maybe[Result.Error[Any]])(using AllowUnsafe): Unit =
+    private def releaseConn(key: HttpAddress, conn: HttpConnection, error: Maybe[Result.Error[Any]])(using AllowUnsafe): Unit =
         error match
             case Absent => pool.release(key, conn)
             case _      => pool.discard(conn)
@@ -928,7 +957,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
         Sync.Unsafe.defer {
             pool.poll(key) match
                 case Present(conn) =>
-                    val responseFiber = sendViaBackend(conn, route, request)
+                    val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
                     Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                         Sync.Unsafe.defer(releaseConn(key, conn, error))
                     } {
@@ -941,7 +970,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
                             val connectFiber = connect(url, config.connectTimeout, config.tls)
                             connectFiber.safe.use { conn =>
                                 trackConn(conn)
-                                val responseFiber = sendViaBackend(conn, route, request)
+                                val responseFiber = sendViaBackend(conn, route, request, config.maxResponseLength)
                                 Sync.ensure { (error: Maybe[Result.Error[Any]]) =>
                                     Sync.Unsafe.defer(releaseConn(key, conn, error))
                                 } {
@@ -973,13 +1002,13 @@ final private[kyo] class HttpClientBackend[Handle] private (
     )(
         f: HttpResponse[Out] => A < (Async & Abort[HttpException])
     )(using Frame): A < (Async & Abort[HttpException]) =
-        // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough — they transform the request
+        // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough, they transform the request
         // and forward next's result unchanged.
         // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
         val clientFilter = HttpFilter.Factory.composedClient
         val routeFilter  = route.filter
         if (clientFilter eq HttpFilter.noop) && (routeFilter eq HttpFilter.noop) then
-            // Fast path: no filters configured — call impl directly without filter closure
+            // Fast path: no filters configured, call impl directly without filter closure
             poolWithImpl(route, request, config)(f)
         else
             val filter = clientFilter.andThen(routeFilter)
@@ -995,18 +1024,19 @@ final private[kyo] class HttpClientBackend[Handle] private (
 
     /** Dispatch to the appropriate unsafe backend method based on route type. */
     private def sendViaBackend[In, Out](
-        conn: HttpConnection[Handle],
+        conn: HttpConnection,
         route: HttpRoute[In, Out, ?],
-        request: HttpRequest[In]
+        request: HttpRequest[In],
+        maxResponseLength: Int
     )(using AllowUnsafe, Frame): Fiber.Unsafe[HttpResponse[Out], Abort[HttpException]] =
         // HEAD responses never have a body (RFC 9110 Section 9.3.2),
         // so always use the buffered path which skips body reading for HEAD.
         if request.method == HttpMethod.HEAD then
-            sendBuffered(conn, route, request)
+            sendBuffered(conn, route, request, maxResponseLength)
         else if RouteUtil.isStreamingResponse(route) then
-            sendStreaming(conn, route, request)
+            sendStreaming(conn, route, request, maxResponseLength)
         else
-            sendBuffered(conn, route, request)
+            sendBuffered(conn, route, request, maxResponseLength)
 
     def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
         // Mark closed FIRST so any new connection gets closed immediately by trackConn.
@@ -1014,13 +1044,15 @@ final private[kyo] class HttpClientBackend[Handle] private (
         clientClosed = true
         // Close pool to stop reuse, then close all tracked connections.
         // allConnections has every connection from creation to close (discardConn removes them).
-        // Pool idle connections are a subset — closing from allConnections covers everything.
+        // Pool idle connections are a subset, closing from allConnections covers everything.
         discard(pool.close())
         val closePromise = Promise.Unsafe.init[Unit, Any]()
         allConnections.forEach { (conn, _) =>
             closeUnsafe(conn, gracePeriod)
         }
         allConnections.clear()
+        // Release a per-config transport this client owns (the shared global transport is never closed here).
+        if ownsTransport then transport.close()
         closePromise.completeDiscard(Result.succeed(()))
         closePromise
     end closeFiber
@@ -1029,15 +1061,22 @@ end HttpClientBackend
 
 private[kyo] object HttpClientBackend:
 
-    /** Create a fully pooled backend for production use. */
-    def init[H](
-        transport: Transport[H],
+    /** Create a fully pooled backend for production use.
+      *
+      * `transportConfig` carries this client's byte-transport and HTTP-parser tuning (notably `maxHeaderSize`, the HTTP header limit the
+      * client parser enforces). `ownsTransport` is true when the caller built a per-config transport for this client (rather than reusing the
+      * shared global one); when true, closing the client also closes that transport so its driver and pool are released.
+      */
+    def init(
+        transport: kyo.net.Transport,
         maxConnsPerHost: Int,
         idleConnectionTimeout: Duration,
-        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default
-    )(using AllowUnsafe, Frame): HttpClientBackend[H] =
-        val conns = new ConcurrentHashMap[HttpConnection[H], Unit]()
-        val pool = ConnectionPool.init[HttpConnection[H]](
+        defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default,
+        transportConfig: HttpTransportConfig = HttpTransportConfig.default,
+        ownsTransport: Boolean = false
+    )(using AllowUnsafe, Frame): HttpClientBackend =
+        val conns = new ConcurrentHashMap[HttpConnection, Unit]()
+        val pool = ConnectionPool.init[HttpConnection](
             maxConnsPerHost,
             idleConnectionTimeout,
             conn => conn.transport.isOpen,
@@ -1046,13 +1085,14 @@ private[kyo] object HttpClientBackend:
                 conn.http1.close()
                 conn.transport.close()
         )
-        new HttpClientBackend[H](
+        new HttpClientBackend(
             transport,
-            HttpTransportConfig.default,
+            transportConfig,
             defaultTlsConfig,
             pool,
             conns,
             maxConnsPerHost,
+            ownsTransport,
             summon[Frame]
         )
     end init

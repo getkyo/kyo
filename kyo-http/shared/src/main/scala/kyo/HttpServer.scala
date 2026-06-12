@@ -5,18 +5,18 @@ import kyo.internal.HttpPlatformTransport
 import kyo.internal.codec.OpenApiGenerator
 import kyo.internal.server.HttpRouter
 import kyo.internal.server.UnsafeServerDispatch
-import kyo.internal.transport.Transport
+import kyo.internal.transport.NetConfigTranslation
 
 /** HTTP server that binds one or more handlers to a port and manages the server lifecycle.
   *
-  * `HttpServer.init` returns a server managed by `Scope` — it shuts down automatically when the enclosing scope exits. Use
+  * `HttpServer.init` returns a server managed by `Scope`, it shuts down automatically when the enclosing scope exits. Use
   * `HttpServer.initUnscoped` when you need manual lifecycle control and must close the server explicitly via `close()`. Both forms accept
   * one or more `HttpHandler` instances as varargs and an optional `HttpServerConfig`.
   *
   * When `HttpServerConfig.openApi` is configured, the server automatically generates an OpenAPI 3.x spec from all registered handlers and
   * serves it at the configured path (default: `/openapi.json`).
   *
-  * The `initWith` variants combine `init` and a continuation — they bind the server and pass it to a function, which is useful for keeping
+  * The `initWith` variants combine `init` and a continuation, they bind the server and pass it to a function, which is useful for keeping
   * the server reference local to the block that uses it.
   *
   * Note: Port 0 tells the OS to assign any available port. After binding, the actual port is available via `server.port`. This is the
@@ -113,15 +113,26 @@ object HttpServer:
             case Absent =>
                 handlers
         Sync.Unsafe.defer {
-            val listenFiber = Unsafe.init(HttpPlatformTransport.transport, config, allHandlers)
+            // Reuse the process-global shared transport for the default config (no per-server resources). When the config customizes
+            // transport tuning, build and OWN a per-config transport so handshakeTimeout (the slowloris-handshake DoS guard) and the
+            // other HttpTransportConfig fields actually take effect rather than being ignored under the shared default transport. An
+            // owned transport is closed when the server closes (and on a bind failure here, so it never leaks).
+            val ownsTransport = config.transportConfig != HttpTransportConfig.default
+            val transport =
+                if ownsTransport then kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
+                else HttpPlatformTransport.transport
+            val listenFiber = Unsafe.init(transport, config, allHandlers, ownsTransport)
             Abort.run[Closed](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(closed) =>
+                    if ownsTransport then transport.close()
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
                     throw HttpBindException(bindTarget, config.port, new java.io.IOException(closed.getMessage))
-                case Result.Panic(t) => throw t
+                case Result.Panic(t) =>
+                    if ownsTransport then transport.close()
+                    throw t
             }
         }
     end initUnscoped
@@ -175,10 +186,11 @@ object HttpServer:
           * @return
           *   A fiber that completes with the unsafe server once bound
           */
-        def init[H](
-            transport: Transport[H],
+        def init(
+            transport: kyo.net.Transport,
             config: HttpServerConfig,
-            handlers: Seq[HttpHandler[?, ?, ?]]
+            handlers: Seq[HttpHandler[?, ?, ?]],
+            ownsTransport: Boolean = false
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
             val router = HttpRouter(handlers, config.cors)
             val listenFiber = (config.unixSocket, config.tls) match
@@ -187,7 +199,7 @@ object HttpServer:
                         UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
                     }
                 case (Absent, Present(tls)) =>
-                    transport.listen(config.host, config.port, config.backlog, tls) { conn =>
+                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls) { conn =>
                         UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
                     }
                 case _ =>
@@ -195,31 +207,37 @@ object HttpServer:
                         UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
                     }
             listenFiber.map { listener =>
-                new ListenerUnsafe(listener)
+                new ListenerUnsafe(listener, transport, ownsTransport)
             }
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport. */
+    /** Unsafe implementation wrapping a Listener from Transport. When `ownsTransport` is true (the server built a per-config transport
+      * rather than reusing the shared global one), closing the server also closes that transport so its driver/pool is released.
+      */
     final private class ListenerUnsafe(
-        listener: kyo.internal.transport.Listener
+        listener: kyo.net.Listener,
+        transport: kyo.net.Transport,
+        ownsTransport: Boolean
     )(using allow: AllowUnsafe) extends Unsafe:
-        private val closedPromise = Promise.Unsafe.init[Unit, Any]()
+        private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
+        private val httpAddress: HttpAddress = NetConfigTranslation.toHttpAddress(listener.address)
 
-        def port: Int = listener.address match
+        def port: Int = httpAddress match
             case HttpAddress.Tcp(_, p) => p
             case HttpAddress.Unix(_)   => -1
 
-        def host: String = listener.address match
+        def host: String = httpAddress match
             case HttpAddress.Tcp(h, _) => h
             case HttpAddress.Unix(_)   => "localhost"
 
-        def address: HttpAddress = listener.address
+        def address: HttpAddress = httpAddress
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             listener.close()
+            if ownsTransport then transport.close()
             discard(closedPromise.completeDiscard(Result.succeed(())))
             closedPromise
         end closeFiber
