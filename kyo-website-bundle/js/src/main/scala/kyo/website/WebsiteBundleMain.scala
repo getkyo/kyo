@@ -498,18 +498,18 @@ object WebsiteBundleMain:
         docsBody: UI
     )(using Frame): Unit < Async =
         for
-            // Keep the PREVIOUS module's article on screen through the (async) content.html fetch and swap
-            // it atomically when the new HTML arrives, rather than blanking the column first. Blanking first
-            // collapsed the article to empty for the whole fetch window (~tens of ms on a cold module): a
-            // white flash in the content column, and because an empty page is short, the page scrollbar
-            // dropped then re-appeared and shifted the whole layout sideways (the left rail visibly jumped).
-            // The `route` signal flips synchronously on click, so the rail already keys the NEW module as
-            // active and the click reads as registered; letting the old prose linger for one fetch is a
-            // smooth lag, not a "did my click do anything" stall. tocRef IS still reset to empty up front so
-            // the newly-active rail module expands with NO sections (a clean empty) instead of the previous
-            // module's `## ` list, until the real headings arrive with the article. For an already-cached
-            // route the fetch resolves in-fiber, so the article set runs back-to-back and the swap is one
-            // paint with nothing stale on screen.
+            // Keep the PREVIOUS module's article AND its `## ` section list on screen through the (async)
+            // content.html fetch, and swap both atomically when the new HTML arrives, rather than blanking
+            // them first. Blanking the article collapsed the column to empty for the whole fetch window
+            // (~tens of ms on a cold module): a white flash, and the short empty page dropped the scrollbar
+            // and shifted the layout sideways (the rail visibly jumped). Clearing the TOC had the same shape
+            // in the rail: the newly-active module's section box collapsed to empty and then re-expanded
+            // when the headings arrived (the "box expands, then the text loads" flicker). So neither is
+            // cleared up front; the previous list lingers, coherent with the lingering article (the whole
+            // page reads as "loading the new module, still showing the old content" with the new module
+            // highlighted), and both swap to the new content in one paint when the fetch resolves. For an
+            // already-cached route the fetch resolves in-fiber, so the swap is a single paint with nothing
+            // stale on screen.
             //
             // `loadingRef` gates the prev/next pager hidden for the same window: it is keyed on the `route`
             // signal (which flipped synchronously), so without the gate it would paint the NEW module's
@@ -518,7 +518,6 @@ object WebsiteBundleMain:
             _ <- loadingRef.set(true)
             _ <- Sync.ensure(loadingRef.set(false)) {
                 for
-                    _ <- tocRef.set(Chunk.empty)
                     article <- Sync.defer(Maybe.fromOption(articleCache.get(nextRoute))).flatMap {
                         case Present(a) => Sync.defer(a)
                         case Absent =>

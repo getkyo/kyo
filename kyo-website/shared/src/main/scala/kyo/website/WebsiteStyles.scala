@@ -1186,15 +1186,14 @@ object WebsiteStyles:
             )
             .rule(
                 "nav-item",
-                // Hover brightens the label to full-strength `ink` only: NO background shade and no
-                // transition. The rail re-renders on every navigation (the active flag and the page
-                // outline both tick), so a hover background that faded in and out across those re-renders
-                // read as a flicker; the active module is still clearly marked by its accent color, bold
-                // label, and left bar below.
+                // Hover brightens the label to full-strength `ink` (a colour change only, no background
+                // shade). The transition is scoped to `color` so only the label colour eases; the
+                // background and left bar never transition.
                 Style.row.align(_.center).gap(8.px)
                     .fontSize(13.5.px).lineHeight(1.3).color(_.variable("text-dim"))
                     .padding(7.px, 10.px).rounded(8.px).cursor(_.pointer)
                     .borderLeft(2.px, Color.transparent)
+                    .transition(_.color, 150, _.ease)
                     .hover(_.color(_.variable("ink")))
             )
             // The active module is a COLUMN (not the base row): it stacks the module link above its
@@ -1203,12 +1202,11 @@ object WebsiteStyles:
             // the outline both pinned to the left edge.
             .rule(
                 "nav-item-active",
-                // The current module: an accent label, a semibold weight, and a 3px accent left bar. No
-                // background fill and no transition, so the rail's re-renders on navigation never fade a
-                // shade in or out (the source of the flicker); the left bar + color + weight mark the
-                // active module clearly without one.
+                // The current module: an accent label, a semibold weight, a .14 accent fill box, and a 3px
+                // accent left bar. No transition (the box appears with the freshly-rendered active node,
+                // never fading), so it does not animate across the rail's re-renders.
                 Style.column.align(_.start)
-                    .color(_.variable("accent")).fontWeight(_.w600)
+                    .color(_.variable("accent")).bg(Color.rgba(78, 70, 224, 0.14)).fontWeight(_.w600)
                     .borderLeft(3.px, _.variable("accent"))
             )
             // the inner anchor fills the row so the whole item is the link target. Scope to the DIRECT
