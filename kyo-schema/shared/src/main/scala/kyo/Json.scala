@@ -228,8 +228,9 @@ object Json:
                     next match
                         case sv: JsonSchema => sv
                         case _              => value
-                override def structure: Structure.Type =
+                private lazy val _structure: Structure.Type =
                     Structure.Type.Open(Tag[JsonSchema].asInstanceOf[Tag[Any]])
+                override def structure: Structure.Type = _structure
             end new
         end jsonSchemaSchema
 

@@ -371,8 +371,9 @@ object Structure:
                     next match
                         case sv: Value => sv
                         case _         => value
-                override def structure: Structure.Type =
+                private lazy val _structure: Structure.Type =
                     Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
+                override def structure: Structure.Type = _structure
                 override private[kyo] def fromStructureValue(sv: Value)(using Frame): Result[DecodeException, Value] =
                     Result.Success(sv)
 
