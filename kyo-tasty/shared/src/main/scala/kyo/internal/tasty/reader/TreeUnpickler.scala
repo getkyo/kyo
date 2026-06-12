@@ -348,11 +348,6 @@ object TreeUnpickler:
                 // Implicit argument: transparent wrapper; return inner tree.
                 readTree(view, ctx)
 
-            // Modifier-with-sub-AST: not a term tree; skip the sub-tree.
-            case TastyFormat.PRIVATEqualified | TastyFormat.PROTECTEDqualified =>
-                skipOneTree(view)
-                Tasty.Tree.Unknown(tag, 0)
-
             // RECtype and BYNAMEtype: category-3 (tag+AST); decode into typed Tree cases.
             case TastyFormat.RECtype =>
                 val parent = readTree(view, ctx)
