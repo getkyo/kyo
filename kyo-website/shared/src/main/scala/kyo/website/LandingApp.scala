@@ -103,7 +103,9 @@ object LandingApp:
         UI.span.cssClass("hl").style(Style.animationDelay(delayMs))(content*)
 
     private def heroCode(using Frame): UI =
-        val step = 34
+        // step 40ms + the result line's +120ms beat puts the last delay at 360ms; with the .hl animation's
+        // 340ms duration the reveal ends at ~700ms, matched to the gap chart's 0.7s draw (they finish together).
+        val step = 40
         UI.div.cssClass("code").cssClass("hero-code")(
             UI.pre(
                 UI.code(
@@ -233,7 +235,7 @@ object LandingApp:
         val line = Svg.path.d(linePath).fill(Svg.Paint.None).stroke(red).strokeWidth(2.5)
             .strokeLinecap(Svg.StrokeLinecap.Round)
             .strokeDasharray(Seq(total, total)).strokeDashoffset(Svg.SvgLength.px(total))(
-                Svg.animate.attributeName("stroke-dashoffset").from(total).to(0.0).dur("1.1s").begin("0s")
+                Svg.animate.attributeName("stroke-dashoffset").from(total).to(0.0).dur("0.7s").begin("0s")
                     .repeatCount("1").fill(Svg.AnimFill.Freeze)
             )
         // The start is the brand accent (a single step still mostly works); the line climbs into red.
@@ -425,25 +427,96 @@ object LandingApp:
                     )
                 ),
                 UI.div.cssClass("feat-grid")(
-                    fcat("Web", mod("kyo-http"), Seq("HTTP services and clients", "Real-time and streaming", "Web frontends")),
+                    fcat(webIcon, "Web", mod("kyo-http"), Seq("HTTP services and clients", "Real-time and streaming", "Web frontends")),
                     fcat(
+                        concurrencyIcon,
                         "Concurrency",
                         mod("kyo-actor"),
                         Seq("Thousands of tasks at once", "Channels and queues", "Parallel work, kept orderly")
                     ),
-                    fcat("Reliability", mod("kyo-flow"), Seq("Typed errors and retries", "Durable workflows", "A self-tuning scheduler")),
-                    fcat("Data", mod("kyo-schema"), Seq("Typed data and schemas", "JSON, Protobuf, validation", "Transactional state")),
-                    fcat("Operations", mod("kyo-config"), Seq("Config and feature flags", "Metrics and tracing", "Structured logging"))
+                    fcat(
+                        reliabilityIcon,
+                        "Reliability",
+                        mod("kyo-flow"),
+                        Seq("Typed errors and retries", "Durable workflows", "A self-tuning scheduler")
+                    ),
+                    fcat(
+                        dataIcon,
+                        "Data",
+                        mod("kyo-schema"),
+                        Seq("Typed data and schemas", "JSON, Protobuf, validation", "Transactional state")
+                    ),
+                    fcat(
+                        operationsIcon,
+                        "Operations",
+                        mod("kyo-config"),
+                        Seq("Config and feature flags", "Metrics and tracing", "Structured logging")
+                    )
                 )
             )
         )
     end oneFoundation
 
-    private def fcat(title: String, href: String, items: Seq[String])(using Frame): UI =
+    private def fcat(icon: UI, title: String, href: String, items: Seq[String])(using Frame): UI =
         UI.a.cssClass("fcat").href(Href.Path(href))(
+            icon,
             UI.h4(title),
             UI.ul(html(items.map(s => UI.li(s)))*)
         )
+
+    // Category glyphs for the feature cards, drawn on the kyo-ui `Svg` DSL as a single-weight line set
+    // (24x24, `currentColor` so the `.fcat-ic` rule themes them). No fills except the slider knobs.
+    private def catIcon(parts: Svg.SvgChild*)(using Frame): UI =
+        UI.span.cssClass("fcat-ic")(
+            Svg.svg.viewBox(Svg.ViewBox(0, 0, 24, 24)).width(24).height(24)(
+                Svg.g.fill(Svg.Paint.None).stroke(Svg.Paint.CurrentColor).strokeWidth(1.7)
+                    .strokeLinecap(Svg.StrokeLinecap.Round).strokeLinejoin(Svg.StrokeLinejoin.Round)(parts*)
+            )
+        )
+
+    // Web: a globe (outline + equator + meridian).
+    private def webIcon(using Frame): UI = catIcon(
+        Svg.circle.cx(12).cy(12).r(8.5),
+        Svg.line.x1(3.5).y1(12).x2(20.5).y2(12),
+        Svg.ellipse.cx(12).cy(12).rx(4.0).ry(8.5)
+    )
+
+    // Concurrency: two rightward arrows running in parallel.
+    private def concurrencyIcon(using Frame): UI = catIcon(
+        Svg.line.x1(4).y1(8.5).x2(16).y2(8.5),
+        Svg.polyline.points(Svg.Points((13.0, 5.5), (16.5, 8.5), (13.0, 11.5))),
+        Svg.line.x1(8).y1(15.5).x2(20).y2(15.5),
+        Svg.polyline.points(Svg.Points((16.5, 12.5), (20.0, 15.5), (16.5, 18.5)))
+    )
+
+    // Reliability: a shield with a check.
+    private def reliabilityIcon(using Frame): UI = catIcon(
+        Svg.path.d(
+            Svg.PathData.from(12.0, 2.8).lineTo(19.0, 5.8).lineTo(19.0, 11.2)
+                .quadTo(19.0, 17.0, 12.0, 20.6).quadTo(5.0, 17.0, 5.0, 11.2).lineTo(5.0, 5.8).close
+        ),
+        Svg.polyline.points(Svg.Points((8.8, 11.6), (11.0, 13.8), (15.0, 9.4)))
+    )
+
+    // Data: a database cylinder.
+    private def dataIcon(using Frame): UI = catIcon(
+        Svg.ellipse.cx(12).cy(6).rx(7.0).ry(2.8),
+        Svg.path.d(Svg.PathData.from(5.0, 6.0).lineTo(5.0, 18.0).arcTo(7.0, 2.8, 0.0, false, false, 19.0, 18.0).lineTo(19.0, 6.0)),
+        Svg.path.d(Svg.PathData.from(5.0, 12.0).arcTo(7.0, 2.8, 0.0, false, false, 19.0, 12.0))
+    )
+
+    // Operations: three sliders with knobs.
+    private def operationsIcon(using Frame): UI =
+        val knob = Svg.Paint.CurrentColor
+        catIcon(
+            Svg.line.x1(4).y1(6).x2(20).y2(6),
+            Svg.circle.cx(15).cy(6).r(2.3).fill(knob),
+            Svg.line.x1(4).y1(12).x2(20).y2(12),
+            Svg.circle.cx(9).cy(12).r(2.3).fill(knob),
+            Svg.line.x1(4).y1(18).x2(20).y2(18),
+            Svg.circle.cx(15).cy(18).r(2.3).fill(knob)
+        )
+    end operationsIcon
 
     // ---- 5. Platforms and the floor ----
 

@@ -701,6 +701,12 @@ object WebsiteStyles:
                 Style.fontSize(14.5.px).color(_.variable("dim")).lineHeight(1.4)
                     .padding(0.px, 0.px, 0.px, 17.px).position(_.flow)
             )
+            // The category glyph sits above the title in the brand accent (the SVG draws in currentColor).
+            .rule("fcat-ic", Style.block.color(_.variable("accent")).margin(0.px, 0.px, 14.px, 0.px))
+            .rule(
+                Selector.cls("fcat-ic").descendant(Selector.tag("svg")),
+                Style.display(_.block).width(26.px).height(26.px)
+            )
     end landingGrids
 
     // ---- Landing: platforms band (dark inset card) ----
@@ -957,10 +963,12 @@ object WebsiteStyles:
                 Stylesheet.Keyframe.from -> Style.opacity(0.0).translate(0.px, 6.px),
                 Stylesheet.Keyframe.to   -> Style.opacity(1.0).translate(0.px, 0.px)
             )
+            // 340ms duration: with the per-line delays (LandingApp), the last line ends at ~700ms, matched
+            // to the gap chart's 0.7s line draw so the two on-load animations finish together.
             .media(Stylesheet.MediaQuery.prefersReducedMotionNoPreference)(
                 Stylesheet.empty.rule(
                     Selector.cls("hero-code").descendant(Selector.cls("hl")),
-                    Style.animation("heroline", 300, _.easeOut)
+                    Style.animation("heroline", 340, _.easeOut)
                 )
             )
             // ---- hero + gap as two-column compositions that use the full content width (the page used
