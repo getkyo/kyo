@@ -620,7 +620,6 @@ lazy val `kyo-offheap` =
 
 lazy val `kyo-ffi` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
@@ -649,7 +648,6 @@ lazy val buildKyoItBundled =
 
 lazy val `kyo-ffi-it` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ffi/it"))
         .enablePlugins(KyoFfiPlugin)
@@ -778,7 +776,7 @@ lazy val `kyo-ffi-codegen` =
             libraryDependencies += "org.scala-lang" %% "scala3-compiler"        % scalaVersion.value % Test,
             // kyo-test framework wiring (the JVM-only equivalent of .withKyoTest, which only applies to crossProjects).
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-test-runner") / Test / fullClasspath).value,
+                (LocalProject("kyo-test-runnerJVM") / Test / fullClasspath).value,
             Test / testFrameworks +=
                 new TestFramework("kyo.test.runner.SbtFramework"),
             Test / javaOptions += s"-Dkyo.ffi.codegen.test.classes=${(Test / classDirectory).value.getAbsolutePath}",
