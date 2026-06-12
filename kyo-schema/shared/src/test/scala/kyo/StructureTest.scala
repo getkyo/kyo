@@ -349,6 +349,47 @@ class StructureTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "Structure.Field by-name construction does not force the structure thunk" in {
+            val sentinel = new java.util.concurrent.atomic.AtomicInteger(0)
+            // The by-name expression must appear directly at the call site (not through
+            // a pre-assigned val) so the thunk captures the unevaluated block.
+            val f = Structure.Field(
+                "x",
+                { sentinel.incrementAndGet(); Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]]) },
+                Maybe.empty,
+                Maybe.empty,
+                false
+            )
+            assert(sentinel.get() == 0, s"thunk was forced at construction time; sentinel=${sentinel.get()}")
+            val ft = f.fieldType
+            assert(sentinel.get() == 1, s"expected sentinel==1 after one fieldType read; got ${sentinel.get()}")
+            ft match
+                case Structure.Type.Primitive(kind, _) => assert(kind == Structure.PrimitiveKind.Int)
+                case other                             => fail(s"Expected Primitive(Int), got $other")
+            end match
+        }
+
+        "Structure.Field roundtrips via Json with public field names" in {
+            val ft      = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val f       = Structure.Field("x", ft, Maybe("hi"), Maybe.empty, optional = true)
+            val encoded = Json.encode(f)
+            assert(encoded.contains("\"name\":\"x\""), s"encoded did not contain name:x; got $encoded")
+            assert(encoded.contains("\"fieldType\":"), s"encoded did not contain fieldType; got $encoded")
+            assert(encoded.contains("\"doc\":\"hi\""), s"encoded did not contain doc:hi; got $encoded")
+            assert(encoded.contains("\"optional\":true"), s"encoded did not contain optional:true; got $encoded")
+            assert(!encoded.contains("\"_fieldType\""), s"encoded contained private _fieldType; got $encoded")
+            val decoded = Json.decode[Structure.Field](encoded)
+            decoded match
+                case Result.Success(f2) =>
+                    assert(f2.name == "x")
+                    assert(Structure.Type.compatible(f2.fieldType, ft))
+                    assert(f2.doc == Maybe("hi"))
+                    assert(f2.default == Maybe.empty)
+                    assert(f2.optional == true)
+                case other => fail(s"Expected Success, got $other")
+            end match
+        }
+
         "List[Int] produces Collection" in {
             val tpe = Structure.of[List[Int]]
             tpe match

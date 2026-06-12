@@ -2,6 +2,7 @@ package kyo
 
 import kyo.*
 import scala.annotation.tailrec
+import scala.annotation.targetName
 
 /** Runtime structural description of Scala types, used for introspection, generic programming, and bridging to dynamic formats.
   *
@@ -265,10 +266,11 @@ object Structure:
 
     /** Descriptor for a single field in a product type.
       *
+      * The structural type of the field is held by-name so a recursive or indirectly-recursive
+      * type graph constructs without forcing the inner Schema's lazy structure mid-init.
+      *
       * @param name
       *   the field name as declared in the case class
-      * @param fieldType
-      *   the structural type of the field value
       * @param doc
       *   optional human-readable description
       * @param default
@@ -278,13 +280,128 @@ object Structure:
       */
     case class Field(
         name: String,
-        fieldType: Structure.Type,
+        private val _fieldType: () => Structure.Type,
         doc: Maybe[String],
         default: Maybe[Structure.Value],
         optional: Boolean
-    ) derives Schema
+    ):
+        def fieldType: Structure.Type = _fieldType()
+    end Field
 
-    object Field
+    object Field:
+
+        /** Constructs a Structure.Field with the structural type captured by-name.
+          *
+          * The `fieldType` parameter is by-name so a strict caller writes
+          * `Structure.Field("x", someStructure, ...)` and the macro emission writes
+          * `Structure.Field("x", summonInline[Schema[t]].structure, ...)`; both defer
+          * the structure's evaluation until the first `field.fieldType` read. The
+          * thunk is required for self-referential and indirectly-recursive
+          * `Structure.Type.Product` graphs to construct without forcing the inner
+          * Schema's `structure` lazy val mid-init.
+          */
+        @targetName("applyByName")
+        def apply(
+            name: String,
+            fieldType: => Structure.Type,
+            doc: Maybe[String] = Maybe.empty,
+            default: Maybe[Structure.Value] = Maybe.empty,
+            optional: Boolean = false
+        ): Field =
+            new Field(name, () => fieldType, doc, default, optional)
+
+        /** Hand-rolled Schema for Structure.Field.
+          *
+          * The 5 wire keys are `name, fieldType, doc, default, optional`. The hand-roll is a
+          * chosen byte-for-byte match of those 5 keys against what the pre-campaign
+          * `derives Schema` emitted for the pre-campaign 5-positional case class; the
+          * roundtrip leaf 2 of StructureTest below verifies it. This is not a mechanical
+          * consequence of any compiler property; it is a chosen invariant the hand-roll
+          * preserves.
+          *
+          * The auto-derived Schema would walk the case-class fields and emit the storage
+          * member `_fieldType: Function0[Structure.Type]` as a wire field, which is wrong on
+          * two counts: the wire field name would be the storage name (not the public
+          * `fieldType`), and the wire field type would be `Function0[Structure.Type]` for
+          * which no Schema can be summoned. The hand-roll mirrors the public 5-key face and
+          * reads via the public `def fieldType` accessor; constructs via the by-name
+          * companion `apply`.
+          *
+          * The Reader loop uses the canonical Codec.Reader contract at `Codec.scala:63-130`:
+          * `hasNextField()` is the loop predicate (returns Boolean), `fieldParse()` advances
+          * the cursor past the field name (returns Unit), and `lastFieldName()` returns the
+          * just-parsed field name.
+          */
+        given structureFieldSchema: Schema[Field] =
+            new Schema[Field](Seq.empty):
+                import scala.annotation.publicInBinary
+                // Unsafe: Frame.internal is required here because maybeSchema carries `using Frame`
+                // but this given is a kyo-internal implementation with no user callsite frame.
+                private given frame: Frame = Frame.internal
+                @publicInBinary private[kyo] def serializeWrite(value: Field, writer: Codec.Writer): Unit =
+                    writer.objectStart("Field", 5)
+                    writer.field("name", 0); summon[Schema[String]].serializeWrite(value.name, writer)
+                    writer.field("fieldType", 1); summon[Schema[Structure.Type]].serializeWrite(value.fieldType, writer)
+                    writer.field("doc", 2); summon[Schema[Maybe[String]]].serializeWrite(value.doc, writer)
+                    writer.field("default", 3); summon[Schema[Maybe[Structure.Value]]].serializeWrite(value.default, writer)
+                    writer.field("optional", 4); summon[Schema[Boolean]].serializeWrite(value.optional, writer)
+                    writer.objectEnd()
+                end serializeWrite
+                @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Field =
+                    discard(reader.objectStart())
+                    var name: String                    = ""
+                    var fieldType: Structure.Type       = Structure.Type.Open(Tag[Any])
+                    var doc: Maybe[String]              = Maybe.empty
+                    var default: Maybe[Structure.Value] = Maybe.empty
+                    var optional: Boolean               = false
+                    while reader.hasNextField() do
+                        reader.fieldParse()
+                        reader.lastFieldName() match
+                            case "name"      => name = summon[Schema[String]].serializeRead(reader)
+                            case "fieldType" => fieldType = summon[Schema[Structure.Type]].serializeRead(reader)
+                            case "doc"       => doc = summon[Schema[Maybe[String]]].serializeRead(reader)
+                            case "default"   => default = summon[Schema[Maybe[Structure.Value]]].serializeRead(reader)
+                            case "optional"  => optional = summon[Schema[Boolean]].serializeRead(reader)
+                            case _           => reader.skip()
+                        end match
+                    end while
+                    reader.objectEnd()
+                    Field(name, fieldType, doc, default, optional)
+                end serializeRead
+                @publicInBinary private[kyo] def getter(value: Field): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def setter(value: Field, next: Any): Field =
+                    next match
+                        case f: Field => f
+                        case _        => value
+                private lazy val _structure: Structure.Type =
+                    Structure.Type.Product(
+                        "Field",
+                        Tag[Field].asInstanceOf[Tag[Any]],
+                        Chunk.empty,
+                        Chunk(
+                            Structure.Field("name", summon[Schema[String]].structure, Maybe.empty, Maybe.empty, optional = false),
+                            Structure.Field(
+                                "fieldType",
+                                summon[Schema[Structure.Type]].structure,
+                                Maybe.empty,
+                                Maybe.empty,
+                                optional = false
+                            ),
+                            Structure.Field("doc", summon[Schema[Maybe[String]]].structure, Maybe.empty, Maybe.empty, optional = true),
+                            Structure.Field(
+                                "default",
+                                summon[Schema[Maybe[Structure.Value]]].structure,
+                                Maybe.empty,
+                                Maybe.empty,
+                                optional = true
+                            ),
+                            Structure.Field("optional", summon[Schema[Boolean]].structure, Maybe.empty, Maybe.empty, optional = false)
+                        )
+                    )
+                override def structure: Structure.Type = _structure
+            end new
+        end structureFieldSchema
+    end Field
 
     /** Descriptor for a single variant (case) in a sum type.
       *
