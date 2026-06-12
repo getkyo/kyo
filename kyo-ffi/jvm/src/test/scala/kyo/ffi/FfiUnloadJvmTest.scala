@@ -11,6 +11,12 @@ package kyo.ffi
   */
 class FfiUnloadJvmTest extends Test:
 
+    // The leaves share one process-global state set: the `Ffi` load cache keyed by the binding trait.
+    // Each leaf loads, unloads, and reloads the same binding, so under the default parallel leaf
+    // execution a sibling leaf's unload evicts the entry between another leaf's two loads. Run the
+    // leaves sequentially.
+    override def config = super.config.sequential
+
     "Ffi.unload" - {
         "evicts cached impl so the next load produces a new instance" in {
             val first = Ffi.load[FfiUnloadJvmTest.TestBinding]
