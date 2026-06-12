@@ -925,6 +925,12 @@ object TreeUnpickler:
                 view.goto(end)
                 Tasty.Tree.Unknown(TastyFormat.HOLE, Math.toIntExact(end - startAddr))
 
+            // Type-tree (tpt) tags in tree position whose shape is fully carried by the decoded Type.
+            // The type decoder already handles each; re-read from the tag and wrap the resulting Type.
+            case TastyFormat.LAMBDAtpt | TastyFormat.REFINEDtpt | TastyFormat.TYPEBOUNDStpt | TastyFormat.MATCHtpt =>
+                view.goto(startAddr)
+                Tasty.Tree.TypeTree(readType(view, ctx))
+
             // No silent fallback for remaining cat-5 tags.
             case other if other >= TastyFormat.firstLengthTreeTag =>
                 val end = view.readEnd()

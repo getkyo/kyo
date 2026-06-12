@@ -1160,24 +1160,21 @@ object TypeUnpickler:
         val resultStart = view.position
         // Skip result type to find TypesNames start.
         skipOneType(view)
-        // Collect TypesNames = (typeOrBounds_ASTRef paramName_NameRef)*
-        // typeRef from TypesNames is section-relative; addrMap keys are absolute.
-        // Add ctx.sectionOffset to convert before lookup.
+        // Collect TypesNames = (typeOrBounds_Type paramName_NameRef)*. The leading entry is a FULL
+        // inline type (e.g. a TYPEBOUNDS carrying lo/hi), not a single address nat, so it must be
+        // consumed with skipOneType; reading it as one nat consumed the type's tag and payload as a
+        // bogus name ref and ran off the end of the section.
         val paramSyms = new mutable.ArrayBuffer[LoadingSymbol.Materialising]()
         while view.position < end do
-            val typeRef = view.readNat()
+            skipOneType(view)
             val nameRef = view.readNat()
             val symName = nameAt(ctx.names, nameRef)
-            val symbol = ctx.addrMap.get(ctx.sectionOffset + typeRef) match
-                case Some(existingSym) => existingSym
-                case None =>
-                    LoadingSymbol.Materialising(
-                        id = ctx.nextLocalId(),
-                        kind = SymbolKind.TypeParam,
-                        flags = Tasty.Flags.empty,
-                        name = symName
-                    )
-            paramSyms += symbol
+            paramSyms += LoadingSymbol.Materialising(
+                id = ctx.nextLocalId(),
+                kind = SymbolKind.TypeParam,
+                flags = Tasty.Flags.empty,
+                name = symName
+            )
         end while
         // Rewind to result type start so caller can decode result.
         view.goto(resultStart)
@@ -1207,19 +1204,17 @@ object TypeUnpickler:
             if isModifierOrVarianceTag(tag) then
                 view.goto(end)
             else
-                val typeRef = view.readNat()
+                // Each entry is `paramType_Type paramName_NameRef`: the type is a full inline type, not a
+                // single address nat, so consume it with skipOneType before reading the name.
+                skipOneType(view)
                 val nameRef = view.readNat()
                 val symName = nameAt(ctx.names, nameRef)
-                val symbol = ctx.addrMap.get(ctx.sectionOffset + typeRef) match
-                    case Some(existingSym) => existingSym
-                    case None =>
-                        LoadingSymbol.Materialising(
-                            id = ctx.nextLocalId(),
-                            kind = SymbolKind.Parameter,
-                            flags = Tasty.Flags.empty,
-                            name = symName
-                        )
-                paramSyms += symbol
+                paramSyms += LoadingSymbol.Materialising(
+                    id = ctx.nextLocalId(),
+                    kind = SymbolKind.Parameter,
+                    flags = Tasty.Flags.empty,
+                    name = symName
+                )
             end if
         end while
         view.goto(resultStart)

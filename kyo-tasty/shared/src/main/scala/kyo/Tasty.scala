@@ -1864,6 +1864,12 @@ object Tasty:
         /** By-name type annotation in type position (BYNAMEtpt tag). */
         case ByNameTpt(inner: Type)
 
+        /** A type written in tree position whose shape is carried by the decoded `Type` rather than a
+          * dedicated tree node (LAMBDAtpt, REFINEDtpt, TYPEBOUNDStpt, MATCHtpt). The tree decoder routes
+          * these through the type decoder and wraps the result here.
+          */
+        case TypeTree(tpe: Type)
+
         /** Bounded wildcard type (BOUNDED tag): the bound tree. */
         case Bounded(bound: Tree)
 
@@ -2027,6 +2033,7 @@ object Tasty:
             case Tree.AnnotationNode(annotType, arg) =>
                 f(annotType); f(arg)
             case Tree.RecThisAddr(_) => ()
+            case Tree.TypeTree(_)    => ()
             case Tree.Imported(qual) =>
                 f(qual)
             case Tree.Renamed(_)   => ()

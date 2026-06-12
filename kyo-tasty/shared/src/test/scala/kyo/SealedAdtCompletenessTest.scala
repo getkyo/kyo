@@ -154,7 +154,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     // ── ADT-003: Tasty.Tree (enum - 70 cases) ─────────────────────────────────
 
     // Update EXPECTED_TREE_COUNT and the coverage map whenever a new Tree case is added.
-    private inline val EXPECTED_TREE_COUNT = 70
+    private inline val EXPECTED_TREE_COUNT = 71
 
     private inline def checkTreeCount()(using m: Mirror.SumOf[Tasty.Tree]): Unit =
         inline val actual = constValue[Tuple.Size[m.MirroredElemTypes]]
@@ -167,7 +167,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
     end checkTreeCount
     checkTreeCount()(using summonInline[Mirror.SumOf[Tasty.Tree]])
 
-    // Tree variants that appear in at least one test file (all 70 covered).
+    // Tree variants that appear in at least one test file (all 71 covered).
     private val treeCoveredVariants: Set[String] = Set(
         "Alternative",
         "AndType",
@@ -234,6 +234,7 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
         "TypeRefPkg",
         "TypeRefSymbol",
         "TypeRefTree",
+        "TypeTree",
         "Typed",
         "Unapply",
         "Unknown",
@@ -241,11 +242,11 @@ class SealedAdtCompletenessTest extends kyo.test.Test[Any]:
         "While"
     )
 
-    // Tree variants with no test coverage (0 of 70).
+    // Tree variants with no test coverage (0 of 71).
     private val treeUncoveredVariants: List[String] = List.empty
 
-    // ADT-003: Tasty.Tree - variant count pinned via Mirror; all 70 variants have test coverage.
-    "Tasty.Tree - 70 variant count is pinned and 70 variants have test coverage" in {
+    // ADT-003: Tasty.Tree - variant count pinned via Mirror; all 71 variants have test coverage.
+    "Tasty.Tree - 71 variant count is pinned and 71 variants have test coverage" in {
         val variantNames = enumVariantNames[Tasty.Tree]
         assert(
             variantNames.size == EXPECTED_TREE_COUNT,

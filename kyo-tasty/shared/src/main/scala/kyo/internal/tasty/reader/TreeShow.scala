@@ -98,6 +98,7 @@ private[kyo] object TreeShow:
             case Tasty.Tree.Imported(qual)                => show(qual, classpath)
             case Tasty.Tree.Renamed(name)                 => name.asString
             case Tasty.Tree.ByNameTpt(inner)              => s"=> ${showType(inner, classpath)}"
+            case Tasty.Tree.TypeTree(tpe)                 => showType(tpe, classpath)
             case Tasty.Tree.Bounded(bound)                => show(bound, classpath)
             case Tasty.Tree.ExplicitTpt(inner)            => showType(inner, classpath)
             case Tasty.Tree.Elided(inner)                 => showType(inner, classpath)

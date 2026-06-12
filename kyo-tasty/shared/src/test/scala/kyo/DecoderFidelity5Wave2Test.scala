@@ -810,4 +810,17 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
         }
     }
 
+    "Tree.TypeTree wraps a decoded type, renders via treeShow, and exposes no tree children" in {
+        // LAMBDAtpt/REFINEDtpt/TYPEBOUNDStpt/MATCHtpt in tree position decode through the type decoder
+        // and wrap the resulting Type in Tree.TypeTree. The wrapped value is a Type, so the node has no
+        // Tree children; treeShow renders it by delegating to the type renderer.
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val tt: Tasty.Tree = Tasty.Tree.TypeTree(Tasty.Type.Any)
+            assert(tt.children.isEmpty, "TypeTree wraps a Type, so it has no Tree children")
+            assert(classpath.treeShow(tt).nonEmpty, "treeShow must render a TypeTree")
+            assert(tt.collect { case t: Tasty.Tree.TypeTree => t }.length == 1, "collect must find the TypeTree node")
+            succeed
+        }
+    }
+
 end DecoderFidelity5Wave2Test

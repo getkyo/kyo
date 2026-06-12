@@ -206,20 +206,21 @@ class TypeUnpicklerTest extends kyo.test.Test[Any]:
     }
 
     "decoding TYPELAMBDAtype with one param returns TypeLambda with params.size == 1" in {
-        val paramSym   = makeSym("A", SymbolKind.TypeParam)
         val resultSym  = makeSym("Int")
-        val paramAddr  = 5
         val resultAddr = 10
-        val addrMap    = IntMap(paramAddr -> paramSym, resultAddr -> resultSym)
+        val addrMap    = IntMap(resultAddr -> resultSym)
         val names      = Array(Tasty.Name("scala"), Tasty.Name("A"))
         val qual       = cat2(TastyFormat.TYPEREFpkg, 0)
-        // TYPELAMBDAtype (170) = cat5: [result_Type] [typeRef0 paramNameRef0]
+        // TYPELAMBDAtype (170) = cat5: [result_Type] [paramInfo_Type paramName_NameRef]*
         // result = TYPEREFsymbol(resultAddr, qual)
         val result = cat4(TastyFormat.TYPEREFsymbol, resultAddr, qual)
-        // TypesNames: typeRef0=paramAddr, paramNameRef0=1 (index into names, "A")
-        val typeRef0Name0 = encodeNat(paramAddr) ++ encodeNat(1)
-        val payload       = result ++ typeRef0Name0
-        val bytes         = cat5(TastyFormat.TYPELAMBDAtype, payload)
+        // A type-lambda param is `paramInfo_Type paramName_NameRef`: paramInfo is a full inline type
+        // (a TYPEBOUNDS for type params), not a bare address Nat. Bounds lo=hi=Int keep it minimal;
+        // the decoder materializes the param symbol from paramName_NameRef (names(1) = "A").
+        val paramInfo = cat5(TastyFormat.TYPEBOUNDS, result ++ result)
+        val typeName0 = paramInfo ++ encodeNat(1)
+        val payload   = result ++ typeName0
+        val bytes     = cat5(TastyFormat.TYPELAMBDAtype, payload)
         Abort.run[TastyError](decodeType(bytes, addrMap, names)).map {
             case Result.Success(t) =>
                 t match
