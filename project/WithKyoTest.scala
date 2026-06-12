@@ -27,7 +27,6 @@ import scalanativecrossproject.ScalaNativeCrossPlugin.autoImport.*
   * Example:
   *   lazy val `kyo-kernel` =
   *     crossProject(JSPlatform, JVMPlatform, NativePlatform)
-  *       .withoutSuffixFor(JVMPlatform)
   *       ...
   *       .withKyoTest
   */
@@ -39,7 +38,7 @@ object WithKyoTest {
             val base =
                 cp.jvmSettings(
                     Test / unmanagedClasspath ++=
-                        (LocalProject("kyo-test-runner") / Test / fullClasspath).value,
+                        (LocalProject("kyo-test-runnerJVM") / Test / fullClasspath).value,
                     Test / testFrameworks +=
                         new TestFramework("kyo.test.runner.SbtFramework")
                 )

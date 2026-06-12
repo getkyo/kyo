@@ -14,7 +14,7 @@ import kyo.UI.Ast.HtmlContent
   * `Signal[String]` of the path, with `push`/`replace`/`back`); plain anchor clicks are intercepted into history navigation. That path is
   * JS-only, so this server-push demo uses a route signal to show the same view-switching pattern in a form you can run with `runMain`.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Router'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Router'` (optional port as the first argument).
   *
   * Demonstrates: `route.render` view switching, a parameterized route, nav driven by writing a `SignalRef`, and active-link styling derived
   * from the route signal.

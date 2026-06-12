@@ -22,7 +22,7 @@ Run:
 sbt '<module-sbt-name>/doctest' 2>&1 | tee /tmp/doctest-verify.log
 ```
 
-For kyo-jsonrpc that is `sbt 'kyo-jsonrpc/doctest'`. For kyo-http that is `sbt 'kyo-http/doctest'`. Use the project name `git grep -nE "^lazy val ..kyo-<name>." build.sbt` resolves to ; do not invent the sbt module name.
+For kyo-data that is `sbt 'kyo-dataJVM/doctest'`. For kyo-http that is `sbt 'kyo-httpJVM/doctest'`. Use the project name `git grep -nE "^lazy val ..kyo-<name>." build.sbt` resolves to ; do not invent the sbt module name.
 
 Parse the log's last summary line:
 

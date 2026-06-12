@@ -71,7 +71,7 @@ import scala.util.control.NonFatal
   *   Maximum time slice for task execution before preemption
   *
   * @see
-  *   Queue for details on the underlying task queue implementation
+  *   WorkerQueue for details on the underlying task queue implementation
   * @see
   *   Task for the task execution model
   * @see
@@ -90,6 +90,11 @@ abstract private class Worker(
 
     protected def shouldStop(): Boolean
 
+    /** Returns the current interrupt epoch from the scheduler. Each call to Scheduler.notifyInterrupt
+      * bumps this value; rebalance compares it against lastRebuiltEpoch to gate queue rebuilds.
+      */
+    protected def currentInterruptEpoch(): Long
+
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
     private val state = new AtomicReference[State](State.Idle)
@@ -99,7 +104,7 @@ abstract private class Worker(
     // at the start of run(), reset to -1 on exit. Published by currentTask volatile.
     private[scheduler] var mountId: Long = -1L
     // Not volatile: written by BlockingMonitor timer thread (~2ms), read by cycleWorkers timer
-    // thread (~100μs). Stale reads are acceptable — this is a scheduling heuristic, not a
+    // thread (~100μs). Stale reads are acceptable: this is a scheduling heuristic, not a
     // correctness constraint. Worst case: a blocked worker accepts one extra task before
     // detection, which is then drained on the next cycle.
     private[scheduler] var blocked: Boolean = false
@@ -128,9 +133,14 @@ abstract private class Worker(
     private var mounts      = 0L
     private var stolenTasks = 0L
 
+    // Epoch and timestamp of this worker's last queue rebuild. Single-thread-owned by the
+    // worker's own run loop (read and written only inside rebalance), so plain vars suffice.
+    private var lastRebuiltEpoch = 0L
+    private var lastRebuildMs    = 0L
+
     private val lostTasks = new LongAdder
 
-    private val queue = new Queue[Task]()
+    private val queue = new WorkerQueue()
 
     private val schedule = scheduleTask(_, this)
 
@@ -175,6 +185,27 @@ abstract private class Worker(
     def drain(): Unit =
         queue.drain(schedule)
 
+    /** Re-heapifies this worker's own queue when an interrupt has reset a queued task's runtime in place.
+      *
+      * Gated on two conditions so the common case stays off the hot path: the epoch from currentInterruptEpoch
+      * (bumped by Scheduler.notifyInterrupt on every real interrupt) must have advanced past lastRebuiltEpoch,
+      * and at least minInterval milliseconds must have elapsed since the last rebuild. When both hold,
+      * queue.rebuild() re-establishes priority order in O(n), sifting the reset task (now lowest runtime) to
+      * the head so the next poll returns it within a bounded, load-independent delay. Operates only on this
+      * worker's own queue.
+      */
+    private def rebalance(): Unit = {
+        val epoch = currentInterruptEpoch()
+        if (epoch != lastRebuiltEpoch) {
+            val now = clock.currentMillis()
+            if (now - lastRebuildMs >= minInterval()) {
+                queue.rebuild()
+                lastRebuiltEpoch = epoch
+                lastRebuildMs = now
+            }
+        }
+    }
+
     /** Checks if this worker can accept new tasks by verifying:
       *   - Not stalled on a long-running task
       *   - Not in Stalled state
@@ -183,8 +214,16 @@ abstract private class Worker(
       * If checks fail while Running, transitions to Stalled and drains queue. Used by scheduler to skip workers that can't make progress.
       */
     def checkAvailability(nowMs: Long): Boolean = {
-        val st        = this.state.get()
-        val available = (st ne State.Stalled) && !blocked && !checkStalling(nowMs)
+        val st = this.state.get()
+        // Evaluate checkStalling for any non-blocked worker, not just a Running one: a worker already in Stalled
+        // state but pinned on a long-running, preemptible CPU-bound task must still receive doPreempt once work
+        // queues up behind it. Otherwise a worker that stalled while its queue was momentarily empty (no doPreempt
+        // issued) stays Stalled forever, never re-checked, spinning the task while its queue grows unbounded, which
+        // deadlocks the scheduler under CPU-bound load. Blocked workers are excluded: their task is parked on I/O,
+        // not burning a time slice, so it is the BlockingMonitor's Thread.interrupt (not a time-slice doPreempt)
+        // that frees them. Issuing doPreempt against a blocked task is pointless and, on Native, unsafe.
+        val stalling  = !blocked && checkStalling(nowMs)
+        val available = (st ne State.Stalled) && !blocked && !stalling
         if (!available && (st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
             drain()
         available
@@ -211,6 +250,10 @@ abstract private class Worker(
 
         try
             while (!shouldStop()) {
+                // Re-sift the queue if an interrupt reset a queued task, before polling so the
+                // reset victim reaches the head and the next poll returns it (epoch-and-time-gated).
+                rebalance()
+
                 // Mark worker as actively running
                 state.set(State.Running)
 

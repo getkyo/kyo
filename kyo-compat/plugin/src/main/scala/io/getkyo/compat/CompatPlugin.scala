@@ -88,8 +88,8 @@ object CompatPlugin extends AutoPlugin {
                 )
                 CompatLibrary.register(m.id, meta)
                 // Pin defaultAxes only for single-scala matrices so the canonical
-                // row drops the JVM + Scala suffixes (matching sbt-crossproject's
-                // `.withoutSuffixFor(JVMPlatform)` convention). Multi-scala
+                // row drops the JVM + Scala suffixes (the plugin's own choice;
+                // the root build's cross-projects carry explicit JVM suffixes). Multi-scala
                 // matrices intentionally keep the version suffix on every cell
                 // so rows like 3.3.4 and 3.4.0 stay distinguishable.
                 // We use the full-version `scalaVersionAxis(sv, sv)` (not

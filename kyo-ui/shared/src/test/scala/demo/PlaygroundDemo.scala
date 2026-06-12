@@ -9,7 +9,7 @@ import kyo.UI.*
   * Type HTML in the textarea on the left; a derived `data:` URL feeds an `iframe` on the right that renders it live. The textarea is
   * two-way bound to a `SignalRef[String]`; the iframe's `src` is that signal mapped to a `data:` URL, so each edit re-points the frame.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Playground'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Playground'` (optional port as the first argument).
   *
   * Demonstrates: the `iframe` element with a reactive `src`, two-way `textarea` binding, derived signals via `.map`, and equal-column
   * layout via `flexGrow(1).flexBasis(0.px)`.

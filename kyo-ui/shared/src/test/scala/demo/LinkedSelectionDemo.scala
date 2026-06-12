@@ -12,7 +12,7 @@ import kyo.UI.*
   * the clicked datum into it, and the detail title and line read it back. There is no event bus and no
   * callback plumbing; "interaction" is just another app signal.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.LinkedSelection'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.LinkedSelection'` (optional port as the first argument).
   */
 object LinkedSelectionDemo extends KyoApp:
 

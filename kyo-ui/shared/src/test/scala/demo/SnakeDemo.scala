@@ -17,7 +17,7 @@ import scala.annotation.tailrec
   *   - The board and the status line `render` off the ref, so each tick redraws the grid reactively.
   *
   * Click the board once to focus it, then steer with the arrow keys (the snake waits for the first key before it
-  * starts moving). Run via `sbt 'kyo-ui/Test/runMain demo.Snake'` (optional port as the first argument).
+  * starts moving). Run via `sbt 'kyo-uiJVM/Test/runMain demo.Snake'` (optional port as the first argument).
   */
 object SnakeDemo extends KyoApp:
 
