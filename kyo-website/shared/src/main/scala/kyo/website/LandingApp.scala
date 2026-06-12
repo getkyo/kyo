@@ -183,8 +183,8 @@ object LandingApp:
     /** The compounding-failure chart for the gap stat, drawn entirely on the kyo-ui `Svg` DSL (no raw
       * markup). Each bar is the chance the whole run has failed somewhere after chaining n steps that each
       * work 85% of the time (`1 - 0.85^n`): the bars CLIMB from about one in seven at a single step to four
-      * in five by ten, growing into the danger as they go. A single vertical gradient (the brand accent at
-      * the baseline shading to amber at the top) reddens the taller bars, so the growth itself reads as the
+      * in five by ten, growing into the danger as they go. Once the run is more likely than not to fail (past
+      * the halfway mark), the bars shift from the brand accent to amber, so the growth itself reads as the
       * problem. Colors are CSS-variable paints, so the chart follows the light and dark themes, and the bars
       * grow up on load via a SMIL `height`/`y` tween (browser-driven, no JavaScript).
       */

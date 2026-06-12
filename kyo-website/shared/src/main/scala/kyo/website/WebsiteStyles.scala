@@ -420,22 +420,22 @@ object WebsiteStyles:
                 Selector.cls("trust").descendant(Selector.tag("span")),
                 Style.row.align(_.center).gap(8.px)
             )
-            // stat callout: a chart card with the compounding-failure chart on the left and the
-            // caption plus explanatory text on the right (it stacks on narrow viewports).
+            // stat callout: a chart card that stacks the compounding-failure chart on top of the
+            // caption plus explanatory text.
             .rule(
                 "stat",
-                Style.row.align(_.center).gap(22.px).textAlign(_.left)
+                Style.column.gap(18.px).textAlign(_.left)
                     .maxWidth(680.px).margin(42.px, Length.Auto, 0.px, Length.Auto)
                     .bg(_.variable("surface")).border(1.px, _.variable("line")).rounded(16.px)
                     .padding(24.px, 26.px)
                     .shadow(0.px, 6.px, 24.px, 0.px, shadowSoft)
             )
-            .rule("stat-chart", Style.flexBasis(196.px).flexShrink(0.0).minWidth(0.px))
+            .rule("stat-chart", Style.width(Length.Pct(100)).minWidth(0.px))
             .rule(
                 Selector.cls("stat-chart").descendant(Selector.tag("svg")),
                 Style.display(_.block).width(Length.Pct(100)).height(Length.Auto)
             )
-            .rule("stat-body", Style.column.gap(11.px).flexGrow(1.0).flexBasis(210.px).minWidth(0.px))
+            .rule("stat-body", Style.column.gap(11.px))
             .rule(
                 "stat-cap",
                 Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
@@ -471,7 +471,9 @@ object WebsiteStyles:
                 Selector.cls("sec-head").descendant(Selector.tag("p")),
                 Style.color(_.variable("dim")).fontSize(18.px).margin(18.px, 0.px, 0.px, 0.px).lineHeight(1.6).textWrap(_.pretty)
             )
-            // problem section: centered head + centered body + stat
+            // problem (gap) section: a centered column band that holds the two-column gap-grid (chart card
+            // + left-aligned heading/text). The `.gap-text p` rule re-lefts the paragraph that the centered
+            // `.problem p` base below would otherwise center.
             .rule(
                 "problem",
                 Style.column.align(_.center)
@@ -960,12 +962,19 @@ object WebsiteStyles:
                 "hero-code",
                 Style.flexGrow(1.0).flexBasis(420.px).minWidth(0.px).margin(0.px).textAlign(_.left)
             )
-            .rule("gap-grid", Style.row.flexWrap(_.wrap).gap(44.px).align(_.center))
+            // row-reverse: the heading/text comes first in the DOM (reading order, and it stacks on top
+            // when the grid wraps on narrow viewports), but on a wide row it renders second, so the chart
+            // card sits to the LEFT of the "From it works..." heading.
+            .rule("gap-grid", Style.rowReverse.flexWrap(_.wrap).gap(44.px).align(_.center))
             .rule("gap-text", Style.column.flexGrow(1.0).flexBasis(440.px).minWidth(0.px))
             .rule(Selector.cls("gap-text").descendant(Selector.cls("sec-head")), Style.maxWidth(Length.Pct(100)))
             .rule(
+                // textAlign left: the gap-text column is left-aligned (eyebrow + heading + this paragraph),
+                // so override the centered `.problem p` base (a leftover from the old centered single-column
+                // band) that would otherwise center this paragraph under its left-aligned heading.
                 Selector.cls("gap-text").descendant(Selector.tag("p")),
-                Style.margin(20.px, 0.px, 0.px, 0.px).color(_.variable("dim")).fontSize(17.px).lineHeight(1.65).textWrap(_.pretty)
+                Style.margin(20.px, 0.px, 0.px, 0.px).color(_.variable("dim")).fontSize(17.px).lineHeight(1.65)
+                    .textAlign(_.left).textWrap(_.pretty)
             )
             .rule(
                 Selector.cls("gap-grid").descendant(Selector.cls("stat")),
