@@ -785,6 +785,21 @@ object WebsiteStyles:
                 Style.color(_.variable("dim")).fontSize(14.5.px).padding(5.px, 0.px)
                     .hover(_.color(_.variable("accent")))
             )
+            // A link carrying a brand glyph (GitHub, Discord) becomes a tight inline-flex row so the
+            // filled mark sits on the text baseline; the glyph inherits the link color (currentColor)
+            // and follows the hover state with it. Used in the footer and the nav chrome.
+            .rule(
+                "soc",
+                Style.display(_.inlineFlex).align(_.center).gap(7.px)
+            )
+            .rule(
+                "brand-ic",
+                Style.display(_.inlineFlex).align(_.center).flexShrink(0.0)
+            )
+            .rule(
+                Selector.cls("brand-ic").descendant(Selector.tag("svg")),
+                Style.display(_.block).width(16.px).height(16.px)
+            )
             .rule(
                 "note",
                 Style.color(_.variable("dim")).fontSize(14.px).maxWidth(320.px)

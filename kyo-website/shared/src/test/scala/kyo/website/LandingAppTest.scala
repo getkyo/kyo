@@ -104,6 +104,20 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
+    "the GitHub and Discord links carry inline brand glyphs filled with currentColor" in {
+        renderLanding.map { html =>
+            // Each identity link is a `.soc` row wrapping a `.brand-ic` glyph span + the text label. The
+            // glyph is the canonical filled brand mark, embedded as an inline <svg> via the Svg DSL raw-path
+            // escape and painted with `currentColor` so it follows the link color across themes.
+            assert(html.contains("class=\"soc\""), "identity links must use the .soc glyph-row layout")
+            assert(html.contains("class=\"brand-ic\""), "identity links must carry a .brand-ic glyph span")
+            assert(html.contains("fill=\"currentColor\""), "brand glyphs must paint with currentColor")
+            // The first 8 chars of each canonical path pin the GitHub octocat and Discord marks.
+            assert(html.contains("M12 .297"), "the GitHub octocat path must render")
+            assert(html.contains("M20.317 4.3698"), "the Discord mark path must render")
+        }
+    }
+
     "the gap stat renders the compounding-failure line chart as inline SVG (no raw markup)" in {
         renderLanding.map { html =>
             // The stat callout is a chart card: the SVG line chart (the chance the run has failed, climbing

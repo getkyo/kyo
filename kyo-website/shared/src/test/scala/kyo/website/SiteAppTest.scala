@@ -111,6 +111,16 @@ class SiteAppTest extends WebsiteTest:
         }
     }
 
+    "the nav GitHub link carries the inline octocat brand glyph (currentColor)" in {
+        render(versions2, home).map { html =>
+            // The nav GitHub link reuses the landing brand-glyph helper: a `.soc` row with a `.brand-ic`
+            // span wrapping the filled octocat path, painted with currentColor so it tracks the nav color.
+            assert(html.contains("class=\"soc\""), s"nav GitHub link must use the .soc glyph row: $html")
+            assert(html.contains("class=\"brand-ic\""), s"nav GitHub link must carry a .brand-ic glyph: $html")
+            assert(html.contains("M12 .297"), s"the GitHub octocat path must render in the nav: $html")
+        }
+    }
+
     "header carries a theme toggle with both sun and moon icons" in {
         render(versions2, home).map { html =>
             assert(html.contains("class=\"theme-toggle\""), s"theme-toggle button missing: $html")

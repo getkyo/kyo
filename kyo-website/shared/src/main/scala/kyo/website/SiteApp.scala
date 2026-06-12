@@ -174,7 +174,7 @@ object SiteApp:
                     UI.a("API")
                         .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
                         .target(Target.Blank),
-                    UI.a("GitHub")
+                    UI.a.cssClass("soc")(LandingApp.brandGlyph(LandingApp.githubMark), "GitHub")
                         .href(Href.External("https", "//github.com/getkyo/kyo"))
                         .target(Target.Blank)
                 ),
