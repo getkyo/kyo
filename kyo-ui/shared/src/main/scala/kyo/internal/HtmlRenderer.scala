@@ -1173,6 +1173,7 @@ private[kyo] object HtmlRenderer:
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
             case _: Svg.AnimateTransform =>
                 s.animAttributeName.foreach(v => svgAttr(sb, "attributeName", v))
                 s.animType.foreach(v => svgAttr(sb, "type", transformType(v)))
@@ -1181,14 +1182,17 @@ private[kyo] object HtmlRenderer:
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
             case _: Svg.AnimateMotion =>
                 s.d.foreach(d => svgAttr(sb, "path", pathData(d)))
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
             case _: Svg.SetAnim =>
                 s.animAttributeName.foreach(v => svgAttr(sb, "attributeName", v))
                 s.animTo.foreach(v => svgAttr(sb, "to", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
         end match
     end renderSvgAttrs
 
@@ -1415,5 +1419,9 @@ private[kyo] object HtmlRenderer:
         case Svg.TransformType.Rotate    => "rotate"
         case Svg.TransformType.SkewX     => "skewX"
         case Svg.TransformType.SkewY     => "skewY"
+
+    private def animFill(f: Svg.AnimFill): String = f match
+        case Svg.AnimFill.Freeze => "freeze"
+        case Svg.AnimFill.Remove => "remove"
 
 end HtmlRenderer

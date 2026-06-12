@@ -319,6 +319,14 @@ object Svg:
         case Translate, Scale, Rotate, SkewX, SkewY
     end TransformType
 
+    /** SMIL animation `fill`: what the animated attribute does once the animation ends. `Freeze`
+      * holds the final value (`fill="freeze"`); `Remove` reverts to the base value (`fill="remove"`,
+      * the SMIL default). Use `Freeze` for a draw-on-load effect that must stay drawn.
+      */
+    enum AnimFill derives CanEqual:
+        case Freeze, Remove
+    end AnimFill
+
     // ---- SVG attribute bag ----
 
     /** Typed presentation/geometry attributes for an SVG element. Separate from CSS
@@ -422,7 +430,8 @@ object Svg:
         animDur: Maybe[String] = Absent,
         animRepeatCount: Maybe[String] = Absent,
         animBegin: Maybe[String] = Absent,
-        animType: Maybe[TransformType] = Absent
+        animType: Maybe[TransformType] = Absent,
+        animFill: Maybe[AnimFill] = Absent
     )
 
     /** A geometry value that is either a plain user-space `Double` or an `SvgLength`. */
@@ -1084,6 +1093,7 @@ object Svg:
         def dur(v: String): Animate           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): Animate   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): Animate         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def fill(v: AnimFill): Animate        = withSvg(svgAttrs.copy(animFill = Present(v)))
     end Animate
 
     final case class AnimateTransform(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
@@ -1099,6 +1109,7 @@ object Svg:
         def dur(v: String): AnimateTransform           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): AnimateTransform   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): AnimateTransform         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def fill(v: AnimFill): AnimateTransform        = withSvg(svgAttrs.copy(animFill = Present(v)))
     end AnimateTransform
 
     final case class AnimateMotion(svgAttrs: SvgAttrs = SvgAttrs(), attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using
@@ -1110,6 +1121,7 @@ object Svg:
         def path(v: PathData): AnimateMotion      = withSvg(svgAttrs.copy(d = Present(v)))
         def dur(v: String): AnimateMotion         = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): AnimateMotion = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
+        def fill(v: AnimFill): AnimateMotion      = withSvg(svgAttrs.copy(animFill = Present(v)))
     end AnimateMotion
 
     /** `<set>`: sets an attribute to a value at a time. Named `SetAnim` to avoid clashing
@@ -1124,6 +1136,7 @@ object Svg:
         def attributeName(v: String): SetAnim = withSvg(svgAttrs.copy(animAttributeName = Present(v)))
         def to(v: String): SetAnim            = withSvg(svgAttrs.copy(animTo = Present(v)))
         def begin(v: String): SetAnim         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def fill(v: AnimFill): SetAnim        = withSvg(svgAttrs.copy(animFill = Present(v)))
     end SetAnim
 
     // ---- metadata ----

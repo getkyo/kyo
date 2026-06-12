@@ -362,6 +362,24 @@ class SvgRendererTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // animate fill freeze/remove: a draw-on-load tween must freeze its final value or it reverts to the
+    // base on end (the SMIL default), so the drawn line would vanish without fill="freeze".
+    "animate renders fill=freeze and fill=remove" in {
+        for
+            freeze <- HtmlRenderer.render(
+                Svg.circle.cx(50).cy(50).r(20)(Svg.animate.attributeName("r").to(30.0).dur("1s").fill(Svg.AnimFill.Freeze)),
+                Seq.empty
+            )
+            remove <- HtmlRenderer.render(
+                Svg.circle.cx(50).cy(50).r(20)(Svg.animate.attributeName("r").to(30.0).dur("1s").fill(Svg.AnimFill.Remove)),
+                Seq.empty
+            )
+        yield
+            assert(freeze.contains("""fill="freeze""""), s"freeze: $freeze")
+            assert(remove.contains("""fill="remove""""), s"remove: $remove")
+        end for
+    }
+
     // FeFlood is sealed under FilterPrimitive; the production dispatches are exhaustive. Because the
     // kyo-ui build escalates the non-exhaustive-match warning to an error for HtmlRenderer/ReactiveUI,
     // removing the FeFlood arm from svgTagName or rebuildSvgElement fails to compile. This test asserts
