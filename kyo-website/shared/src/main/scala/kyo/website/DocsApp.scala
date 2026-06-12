@@ -84,32 +84,38 @@ object DocsApp:
         route: Signal[String],
         tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
         article: UI,
+        contentLoading: Signal[Boolean],
+        navOpenRef: SignalRef[Boolean]
+    )(using Frame): UI < Sync =
+        val allModules = content.groups.flatMap(_.modules)
+        // The `docs-shell` is the 2-pane row: the persistent header is owned by SiteApp and sits above
+        // this body, so the header-out-of-shell layout invariant holds automatically (docs-shell is
+        // flex-direction:row; a header sibling here would steal a column and squish the content). On a
+        // narrow viewport the rail becomes a slide-in drawer that `navOpenRef` opens (via the floating
+        // menu button) and a section-link tap closes; on wide viewports the two panes lay out side by
+        // side and `navOpenRef` is inert. The owner of `navOpenRef` (the bundle) wires the section-link
+        // close, so a module tap can load + expand its sections while leaving the drawer open.
+        UI.div.cssClass("docs-shell")(
+            drawerBackdrop(navOpenRef),
+            sidebar(content, route, prefix, navOpenRef, tocSignal),
+            contentArea(article, allModules, route, prefix, contentLoading),
+            mobileMenuFab(navOpenRef)
+        )
+    end body
+
+    /** Convenience overload that creates a fresh, internally-owned `navOpenRef` (the mobile drawer's open
+      * state). Used by the SSG and tests, which render statically and never open the drawer. The bundle
+      * calls the canonical 7-arg [[body]] so it can own `navOpenRef` and wire the section-link close.
+      */
+    def body(
+        content: WebsiteContent,
+        prefix: String,
+        route: Signal[String],
+        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
+        article: UI,
         contentLoading: Signal[Boolean]
     )(using Frame): UI < Sync =
-        for
-            // Mobile sidebar disclosure (B6). Below 860px the sidebar is hidden by default; this ref
-            // drives a reactive open/closed class so the docs-nav-toggle button (mobile-only) can reveal
-            // the module list. On wide viewports the sidebar is always shown and the toggle is hidden, so
-            // the ref is inert there. Closing the disclosure on each navigation keeps the drawer from
-            // covering the freshly-loaded article.
-            navOpenRef <- Signal.initRef(false)
-        yield
-            val allModules = content.groups.flatMap(_.modules)
-            // The `docs-shell` is the 2-pane row: the persistent header is owned by SiteApp and sits
-            // above this body, so the header-out-of-shell layout invariant holds automatically
-            // (docs-shell is flex-direction:row; a header sibling here would steal a column and squish
-            // the content). The mobile nav toggle is the first child so, when the drawer opens on a
-            // narrow viewport, the revealed sidebar list sits directly below the button; on wide
-            // viewports the toggle is hidden and the two panes lay out side by side (B6). The former
-            // right TOC pane is removed: the page's section outline now nests inside the rail under
-            // the active module (the rail is the single source of in-page navigation).
-            UI.div.cssClass("docs-shell")(
-                drawerBackdrop(navOpenRef),
-                sidebar(content, route, prefix, navOpenRef, tocSignal),
-                contentArea(article, allModules, route, prefix, contentLoading),
-                mobileMenuFab(navOpenRef)
-            )
-    end body
+        Signal.initRef(false).map(body(content, prefix, route, tocSignal, article, contentLoading, _))
 
     // ---- Private helpers ----
 
@@ -129,16 +135,13 @@ object DocsApp:
         navOpenRef: SignalRef[Boolean],
         tocSignal: Signal[Chunk[DocsMarkdown.Heading]]
     )(using Frame): UI =
-        // Tapping a module (or the Overview) in the mobile drawer navigates cross-document and must also
-        // close the drawer, which would otherwise stay open over the freshly-loaded article. The handler
-        // is placed on each cross-document <a>: UILocation drives the navigation in the capture phase
-        // (before this bubble-phase handler), so the kyo-ui anchor preventDefault is harmless. On wide
-        // viewports navOpenRef is inert, so closing is a no-op there. (Same-document `#section` links keep
-        // their native scroll and are intentionally NOT wired here.)
-        val closeDrawer = navOpenRef.updateAndGet(_ => false).unit
+        // The drawer is a two-level menu: tapping a module navigates AND expands its sections in place,
+        // keeping the drawer open so the reader can then drill into a section; tapping a section closes
+        // the drawer. So module/overview links carry no close handler here (the bundle closes the drawer
+        // on a section-link tap, where the same-document `#section` scroll must stay native).
         val nav =
             UI.nav.cssClass("sidebar-nav")(
-                html(overviewItem(route, prefix, tocSignal, closeDrawer) +: content.groups.toSeq.map { group =>
+                html(overviewItem(route, prefix, tocSignal) +: content.groups.toSeq.map { group =>
                     UI.div.cssClass("sidebar-group")(
                         UI.div.cssClass("sidebar-group-name")(UI.span(groupLabel(group.name))),
                         UI.ul(
@@ -155,12 +158,12 @@ object DocsApp:
                                 UI.Ast.Reactive(activeSignal.combineLatest(tocSignal).map { case (isActive, toc) =>
                                     if isActive then
                                         UI.li.cssClass("nav-item").cssClass("nav-item-active")(
-                                            UI.a(mod.displayName).href(Href.Path(href)).onClick(closeDrawer),
+                                            UI.a(mod.displayName).href(Href.Path(href)),
                                             sidebarSections(toc)
                                         )
                                     else
                                         UI.li.cssClass("nav-item")(
-                                            UI.a(mod.displayName).href(Href.Path(href)).onClick(closeDrawer)
+                                            UI.a(mod.displayName).href(Href.Path(href))
                                         )
                                 })
                             })*
@@ -210,12 +213,7 @@ object DocsApp:
     // route is the single-segment `/<prefix>/`, so active is an exact-match on that path (a module route
     // has a trailing slug segment and never matches). The item sits in its own `<ul>` so the
     // `.nav-item` / `.nav-item .a` rules apply identically to the module items below.
-    private def overviewItem(
-        route: Signal[String],
-        prefix: String,
-        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
-        closeDrawer: => Any < Async
-    )(using
+    private def overviewItem(route: Signal[String], prefix: String, tocSignal: Signal[Chunk[DocsMarkdown.Heading]])(using
         Frame
     ): UI =
         val href         = s"/$prefix/"
@@ -225,12 +223,12 @@ object DocsApp:
             UI.Ast.Reactive(activeSignal.combineLatest(tocSignal).map { case (isActive, toc) =>
                 if isActive then
                     UI.li.cssClass("nav-item").cssClass("nav-item-active")(
-                        UI.a("Overview").href(Href.Path(href)).onClick(closeDrawer),
+                        UI.a("Overview").href(Href.Path(href)),
                         sidebarSections(toc)
                     )
                 else
                     UI.li.cssClass("nav-item")(
-                        UI.a("Overview").href(Href.Path(href)).onClick(closeDrawer)
+                        UI.a("Overview").href(Href.Path(href))
                     )
             })
         )

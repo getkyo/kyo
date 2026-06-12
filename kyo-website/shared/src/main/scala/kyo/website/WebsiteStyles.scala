@@ -1229,14 +1229,11 @@ object WebsiteStyles:
             // secondary navigation. Full width so the indented links share one left edge.
             .rule(
                 "sidebar-sections",
-                // When a module becomes active this outline appears; it ENTERS with a subtle slide-down
-                // + fade (the `sidebar-sections-in` keyframes registered below): from opacity 0 +
-                // translateY(-6px) to opacity 1 + translateY(0) over 200ms ease-out, `both` fill so it
-                // never flashes the un-animated state. Tasteful and fast, no janky long sweep.
+                // When a module becomes active this outline appears directly (no entrance animation): the
+                // sections expand in place the instant the module is the active item.
                 Style.column.align(_.start).width(Length.Pct(100))
                     .gap(1.px).margin(6.px, 0.px, 2.px, 8.px)
                     .borderLeft(1.px, _.variable("accent-line"))
-                    .animation("sidebar-sections-in", 200, Style.Easing.easeOut)
             )
             // A section link: clearly subordinate (smaller, dim, indented under the guide line), left-
             // aligned, no underline. Same ~150ms ease transition and the SAME subtle accent-ghost tint
@@ -1300,16 +1297,6 @@ object WebsiteStyles:
                 Stylesheet.empty
                     .rule("docs-sidebar-open", Style.animation("drawer-in", 260, _.easeOut))
                     .rule("docs-drawer-backdrop-open", Style.animation("backdrop-in", 220, _.easeOut))
-            )
-            // Entrance keyframes for the active module's .sidebar-sections outline: a subtle slide-down
-            // + fade. Referenced by name from the .sidebar-sections rule's `animation` prop. Defined
-            // once on the sheet; both the SSG (sheet.render in the page <head>) and the bundle
-            // (UI.runStylesheet) emit the identical @keyframes block, so SSG/hydration CSS stays in
-            // parity.
-            .keyframes(
-                "sidebar-sections-in",
-                Stylesheet.Keyframe.from -> Style.opacity(0.0).translate(0.px, (-6).px),
-                Stylesheet.Keyframe.to   -> Style.opacity(1.0).translate(0.px, 0.px)
             )
     end docsSidebar
 

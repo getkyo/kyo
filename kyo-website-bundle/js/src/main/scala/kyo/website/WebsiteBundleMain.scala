@@ -143,8 +143,18 @@ object WebsiteBundleMain:
             // post-mount node and so cannot complete until after this build returns the view to mount.
             _          <- Fiber.init(wireGapChartReveal(ssrGapChart))
             articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
-            articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
             tocRef     <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
+            // The mobile docs drawer's open state. The bundle owns it so it can close the drawer on a
+            // section-link tap (a same-document `#section` scroll that must stay native, so a per-link
+            // handler would suppress it): a delegated document click listener closes the drawer when the
+            // click lands on a `.sidebar-section` link, while a module tap leaves the drawer open so its
+            // sections expand in place.
+            navOpenRef <- Signal.initRef(false)
+            _ <- UIWindow.onClick { e =>
+                e.targetClosest(".sidebar-section") match
+                    case Present(_) => navOpenRef.updateAndGet(_ => false).unit
+                    case Absent     => Kyo.unit
+            }
             // Content-loading flag, false at first paint (the boot island is already injected into
             // articleRef/tocRef above). `showContentRoute` sets it true the instant a navigation clears
             // those refs for an async content.html fetch, and false once the fetched article/TOC are set
@@ -161,7 +171,8 @@ object WebsiteBundleMain:
                 tocRef,
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(articleRef.map(a => a)),
-                loadingRef
+                loadingRef,
+                navOpenRef
             )
             landingBody <- LandingApp.body(home)
             content     <- Signal.initRef[UI](if isRootRoute(initialRoute) then landingBody else docsBody)
