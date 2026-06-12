@@ -2145,11 +2145,11 @@ import scala.quoted.*
     /** Walks the type tree at compile time to produce a `Structure.Type` literal.
       *
       * This is the inlined fallback used for cyclic fields: it carries the compile-time
-      * type-tree-walk logic formerly in StructureMacro (deleted in Phase 11).
+      * type-tree-walk logic inline because StructureMacro no longer exists as a separate object.
       *
       * The four symbol sets (extendedPrimitiveSymbols, optionalSymbols,
-      * collectionSymbols, mapSymbols) are inlined as local vals because the
-      * MacroUtils-level defs were deleted in Phase 11.
+      * collectionSymbols, mapSymbols) are inlined as local vals because there are no
+      * shared MacroUtils-level defs for them.
       */
     private def deriveTypeFallback(using
         Quotes

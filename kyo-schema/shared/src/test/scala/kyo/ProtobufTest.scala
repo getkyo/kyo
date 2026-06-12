@@ -712,7 +712,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
-    "Protobuf.protoSchema requires Schema in scope (T4 R-028)" - {
+    "Protobuf.protoSchema requires Schema in scope" - {
 
         "fails to compile for a type with no Schema" in {
             typeCheckFailure("""

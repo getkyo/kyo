@@ -1,6 +1,6 @@
 package kyo
 
-// --- Suite C: transform sub-schema at nested position (INV-13, R-006) ---
+// --- Suite C: transform sub-schema at nested position (INV-13) ---
 sealed trait NTSealedT derives CanEqual
 object NTSealedT:
     final case class A(x: Int)    extends NTSealedT derives CanEqual, Schema
@@ -102,7 +102,7 @@ class NestedTransformTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite C: transform sub-schema at nested position (INV-13, R-006)
+    // Suite C: transform sub-schema at nested position (INV-13)
     // =========================================================================
 
     "transform sub-schema at nested position" - {
@@ -130,8 +130,7 @@ class NestedTransformTest extends kyo.test.Test[Any]:
 
         "encoding via ntSealedTSchema round-trips correctly via Json.decode[NTSealedT] (INV-13)" in {
             // Round-trip check: the discriminated schema encodes and decodes both variants at the
-            // top level and as a nested field inside NTWrapper. This anchors INV-13 for Phase 07;
-            // Phase 08 will extend structural compatibility to the nested field's fieldType.
+            // top level and as a nested field inside NTWrapper (INV-13).
             val a       = NTSealedT.A(42)
             val topJson = Json.encode[NTSealedT](a)
             val decoded = Json.decode[NTSealedT](topJson)
@@ -139,13 +138,12 @@ class NestedTransformTest extends kyo.test.Test[Any]:
         }
 
         "NTWrapper.structure.fields(0).fieldType eq summon[Schema[NTSealedT]].structure (INV-13 structural)" in {
-            // Phase 08 assertion: the wrapper's field's fieldType is structurally compatible with
-            // the in-scope discriminated Schema[NTSealedT]'s structure (ntSealedTSchema is the given).
-            // Note: ntSealedTSchema is defined as Schema.derived[NTSealedT].discriminator("type"),
-            // which creates a clone via createWithFocused. Phase 08 threads structure through
-            // createWithFocused so the discriminated schema carries the Sum structure.
+            // The wrapper's field's fieldType must be structurally compatible with the in-scope
+            // discriminated Schema[NTSealedT]'s structure (ntSealedTSchema is the given).
+            // ntSealedTSchema is defined as Schema.derived[NTSealedT].discriminator("type"),
+            // which creates a clone via createWithFocused that carries the Sum structure.
             // We use Structure.Type.compatible as the fallback if reference identity is not achievable
-            // through the discriminator-clone path (see decisions.md for justification).
+            // through the discriminator-clone path.
             val wrapperStructure = summon[Schema[NTWrapper]].structure
             val sealedTStructure = summon[Schema[NTSealedT]].structure
             wrapperStructure match

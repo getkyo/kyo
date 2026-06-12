@@ -6,13 +6,13 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
 
     "discriminator + Protobuf round-trip" - {
 
-        // Regression guard for SchemaSerializer.DiscriminatorReader.matchField numeric-tag fallback (kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:469-485). Pins INV-35 (revised: existing fallback fixes Bug E at the wrapper layer; macro-level withFieldNames wiring is unnecessary).
+        // Regression guard for SchemaSerializer.DiscriminatorReader.matchField numeric-tag fallback (kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:469-485). Pins INV-35.
         "sealed-trait variant with .discriminator round-trips correctly" in {
-            val schema              = Schema[BugEWithDisc].discriminator("type")
-            val value: BugEWithDisc = BugEA(42)
-            val bytes: Span[Byte]   = Protobuf.encode(value)(using schema)
-            val result: Result[DecodeException, BugEWithDisc] =
-                Protobuf.decode[BugEWithDisc](bytes)(using summon[Protobuf], schema)
+            val schema                    = Schema[DiscriminatedShape].discriminator("type")
+            val value: DiscriminatedShape = ShapeA(42)
+            val bytes: Span[Byte]         = Protobuf.encode(value)(using schema)
+            val result: Result[DecodeException, DiscriminatedShape] =
+                Protobuf.decode[DiscriminatedShape](bytes)(using summon[Protobuf], schema)
             assert(result == Result.succeed(value))
         }
 
@@ -97,11 +97,11 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
             assert(Json.decode[Unit](enc) == Result.succeed(v))
         }
 
-        "sealed-trait-with-discriminator (BugEWithDisc) round-trips via Json" in {
-            val schema          = Schema[BugEWithDisc].discriminator("type")
-            val v: BugEWithDisc = BugEA(7)
-            val enc             = Json.encode(v)(using schema)
-            val dec             = Json.decode[BugEWithDisc](enc)(using summon[Json], schema)
+        "sealed-trait-with-discriminator (DiscriminatedShape) round-trips via Json" in {
+            val schema                = Schema[DiscriminatedShape].discriminator("type")
+            val v: DiscriminatedShape = ShapeA(7)
+            val enc                   = Json.encode(v)(using schema)
+            val dec                   = Json.decode[DiscriminatedShape](enc)(using summon[Json], schema)
             assert(dec == Result.succeed(v))
         }
 
@@ -196,12 +196,12 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
         }
 
         "sealed-trait-with-discriminator: nested field equals top-level encoding (base schema)" in {
-            // Uses the base (non-discriminated) Schema[BugEWithDisc] for both top-level and wrapped,
+            // Uses the base (non-discriminated) Schema[DiscriminatedShape] for both top-level and wrapped,
             // verifying that the nested field encoding is consistent with the top-level encoding.
             // Discriminated-schema at nested position is tested separately in the transform matrix suite.
-            val v: BugEWithDisc = BugEA(3)
-            val topLevel        = Json.encode[BugEWithDisc](v)
-            val wrapped         = Json.encode(WrapperBugEWithDisc(v))(using summon[Schema[WrapperBugEWithDisc]])
+            val v: DiscriminatedShape = ShapeA(3)
+            val topLevel              = Json.encode[DiscriminatedShape](v)
+            val wrapped               = Json.encode(WrapperDiscriminatedShape(v))(using summon[Schema[WrapperDiscriminatedShape]])
             assertFieldEqualsTopLevel(wrapped, topLevel, "field")
         }
 
@@ -239,24 +239,24 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
             assert(topJson.contains("\"senior\":true"), s"computed field should appear: $topJson")
         }
 
-        "discriminator on BugEWithDisc: discriminator field emitted at top level" in {
-            val schema          = Schema[BugEWithDisc].discriminator("type")
-            val v: BugEWithDisc = BugEA(1)
-            val topJson         = Json.encode(v)(using schema)
-            assert(topJson.contains("\"type\":\"BugEA\""), s"discriminator field should appear: $topJson")
+        "discriminator on DiscriminatedShape: discriminator field emitted at top level" in {
+            val schema                = Schema[DiscriminatedShape].discriminator("type")
+            val v: DiscriminatedShape = ShapeA(1)
+            val topJson               = Json.encode(v)(using schema)
+            assert(topJson.contains("\"type\":\"ShapeA\""), s"discriminator field should appear: $topJson")
         }
 
-        "discriminator on BugEWithDisc: distinct encoding between discriminated and base schema" in {
+        "discriminator on DiscriminatedShape: distinct encoding between discriminated and base schema" in {
             // The discriminated schema uses a flat 'type' field; the auto-derived base schema uses
             // the tagged-union form. This verifies the two encoding contracts are distinct, which
             // is the meaningful property to pin at the transform-matrix level.
-            val discSchema      = Schema[BugEWithDisc].discriminator("type")
-            val baseSchema      = summon[Schema[BugEWithDisc]]
-            val v: BugEWithDisc = BugEA(5)
-            val discJson        = Json.encode(v)(using discSchema)
-            val baseJson        = Json.encode(v)(using baseSchema)
-            assert(discJson.contains("\"type\":\"BugEA\""), s"discriminated form should use type field: $discJson")
-            assert(baseJson.contains("BugEA"), s"base form should contain variant name: $baseJson")
+            val discSchema            = Schema[DiscriminatedShape].discriminator("type")
+            val baseSchema            = summon[Schema[DiscriminatedShape]]
+            val v: DiscriminatedShape = ShapeA(5)
+            val discJson              = Json.encode(v)(using discSchema)
+            val baseJson              = Json.encode(v)(using baseSchema)
+            assert(discJson.contains("\"type\":\"ShapeA\""), s"discriminated form should use type field: $discJson")
+            assert(baseJson.contains("ShapeA"), s"base form should contain variant name: $baseJson")
             assert(!baseJson.contains("\"type\""), s"base form should not use type field: $baseJson")
         }
 
@@ -370,8 +370,8 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
             assert(s.structure eq s.structure)
         }
 
-        "Schema[BugEWithDisc].structure is stable (eq)" in {
-            val s = summon[Schema[BugEWithDisc]]
+        "Schema[DiscriminatedShape].structure is stable (eq)" in {
+            val s = summon[Schema[DiscriminatedShape]]
             assert(s.structure eq s.structure)
         }
 
@@ -440,9 +440,9 @@ end SchemaCompositionTest
 // Top-level to avoid macro issues with derives Schema inside nested definitions.
 // Minimal fixture: one sealed trait with one case-class variant containing a single
 // required Int field "x".
-sealed trait BugEWithDisc derives Schema, CanEqual
-case class BugEA(x: Int)    extends BugEWithDisc derives CanEqual
-case class BugEB(y: String) extends BugEWithDisc derives CanEqual
+sealed trait DiscriminatedShape derives Schema, CanEqual
+case class ShapeA(x: Int)    extends DiscriminatedShape derives CanEqual
+case class ShapeB(y: String) extends DiscriminatedShape derives CanEqual
 
 // Representative case class for the "case-class-with-transform" representative type.
 // The Schema is a .rename transform applied to the derived Schema.
@@ -462,5 +462,5 @@ case class WrapperDictStringInt(field: Dict[String, Int]) derives CanEqual, Sche
 case class WrapperStructureValue(field: Structure.Value) derives CanEqual, Schema
 case class WrapperJsonSchema(field: Json.JsonSchema) derives CanEqual, Schema
 case class WrapperUnit(field: Unit) derives CanEqual, Schema
-case class WrapperBugEWithDisc(field: BugEWithDisc) derives CanEqual, Schema
+case class WrapperDiscriminatedShape(field: DiscriminatedShape) derives CanEqual, Schema
 case class WrapperCompoPersonTransform(field: CompoPersonTransform) derives CanEqual, Schema

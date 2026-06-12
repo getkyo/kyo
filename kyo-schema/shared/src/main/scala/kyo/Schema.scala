@@ -1152,8 +1152,9 @@ object Schema:
     end init
 
     /** Typed-focus variant of `Schema.init`. Produces `Schema[A] { type Focused = F }`. Internally, the user's `getterFn` and `setterFn`
-      * are stored as `A => Maybe[Any]` / `(A, Any) => A` via erased Function-type casts, matching the pre-phase-4 runtime contract that
-      * avoided JVM type-casts on `F` (F is commonly a structural `Record.~` type with no runtime class).
+      * are stored as `A => Maybe[Any]` / `(A, Any) => A` via erased Function-type casts. The cast has no runtime effect and keeps JVM
+      * bytecode parameter types erased to `Object`, avoiding a `checkcast` on F (F is commonly a structural `Record.~` type with no runtime
+      * class).
       */
     @nowarn("msg=anonymous")
     inline def initFocused[A, F](
@@ -1177,10 +1178,9 @@ object Schema:
         structure: => Structure.Type
     ): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
-        // value itself (no runtime effect -- purely a Function-type cast). This mirrors the
-        // pre-phase-4 `identityGetter` / `identitySetter` macro shape (`((_: Any, v: Any) => v).asInstanceOf[(A, F) => A]`)
-        // which keeps the JVM bytecode parameter types erased to `Object` and avoids a
-        // `checkcast` on F (F is often a structural `Record.~` with no runtime class).
+        // value itself (no runtime effect, purely a Function-type cast). This keeps the JVM
+        // bytecode parameter types erased to `Object` and avoids a `checkcast` on F
+        // (F is often a structural `Record.~` with no runtime class).
         Schema.init[A](
             writeFn = writeFn,
             readFn = readFn,
@@ -1400,9 +1400,10 @@ object Schema:
       * Attempting Tag[java.time.LocalDateTime].asInstanceOf[Tag[Any]] triggers a Scala 3 TagMacro internal-assertion
       * bug (AssertionError: TypeBounds(TypeRef(...Nothing),...FromJavaObject>)) during compilation. This is a
       * pre-existing Scala 3 compiler limitation affecting Java class tags in inline contexts. The Tag[Any] fallback
-      * preserves the Primitive(String, _) shape while avoiding the crash. This is identical to the workaround
-      * applied in Phase 03 for the same type. Compiler bug followup: Scala 3 issue with Java class type bounds
-      * in TagMacro when asInstanceOf is used at a structural type position.
+      * preserves the Primitive(String, _) shape while avoiding the crash. This is a workaround for the same
+      * Scala 3 TagMacro limitation that affects all Java class types in inline contexts. Compiler bug followup:
+      * Scala 3 issue with Java class type bounds in TagMacro when asInstanceOf is used at a structural type
+      * position.
       */
     given localDateTimeSchema: Schema[java.time.LocalDateTime] =
         Schema.init[java.time.LocalDateTime](
@@ -1468,8 +1469,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
-            // Deviation D-1: Tag[List[A]] requires implicit Tag[A] which non-inline givens do not
-            // have in scope. Fall back to Tag[Any] per prep Deviation D-1 policy. Phase 09 remediation.
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "List",
                 Tag[Any],
@@ -1498,7 +1498,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
-            // Deviation D-1: Tag[Vector[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Vector",
                 Tag[Any],
@@ -1527,7 +1527,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
-            // Deviation D-1: Tag[Set[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Set",
                 Tag[Any],
@@ -1556,7 +1556,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
-            // Deviation D-1: Tag[Chunk[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Chunk",
                 Tag[Any],
@@ -1584,7 +1584,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
-            // Deviation D-1: Tag[Seq[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Seq",
                 Tag[Any],
@@ -1634,7 +1634,7 @@ object Schema:
             readFn = reader =>
                 if reader.isNil() then Maybe.empty
                 else Maybe(inner.serializeRead(reader)),
-            // Deviation D-1: Tag[Maybe[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Optional(
                 "Maybe",
                 Tag[Any],
@@ -1654,7 +1654,7 @@ object Schema:
             readFn = reader =>
                 if reader.isNil() then None
                 else Some(inner.serializeRead(reader)),
-            // Deviation D-1: Tag[Option[A]] requires implicit Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Optional(
                 "Option",
                 Tag[Any],
@@ -1688,7 +1688,7 @@ object Schema:
                 reader.mapEnd()
                 builder.result()
             ,
-            // Deviation D-1: Tag[Map[String,V]] requires implicit Tag[V]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Map",
                 Tag[Any],
@@ -1763,7 +1763,7 @@ object Schema:
                     case other => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
             ,
-            // Deviation D-1: Tag[Result[E,A]] requires Tag[E] + Tag[A]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[E] + Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Sum(
                 "Result",
                 Tag[Any],
@@ -1823,7 +1823,7 @@ object Schema:
                     case other   => throw UnknownVariantException(Seq.empty, other)(using reader.frame)
                 end match
             ,
-            // Deviation D-1: Tag[Either[A,B]] requires Tag[A] + Tag[B]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[A] + Tag[B] in scope; fall back to Tag[Any].
             structure = Structure.Type.Sum(
                 "Either",
                 Tag[Any],
@@ -1862,7 +1862,7 @@ object Schema:
                 reader.mapEnd()
                 dict
             ,
-            // Deviation D-1: Tag[Dict[String,V]] requires Tag[V]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
                 Tag[Any],
@@ -1900,7 +1900,7 @@ object Schema:
                 reader.arrayEnd()
                 dict
             ,
-            // Deviation D-1: Tag[Dict[K,V]] requires Tag[K] + Tag[V]. Fall back to Tag[Any].
+            // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Dict",
                 Tag[Any],

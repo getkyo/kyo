@@ -6994,7 +6994,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite B: transform Structure.compatible (INV-12, R-016)
+    // Suite B: transform Structure.compatible (INV-12)
     // =========================================================================
 
     "transform Structure.compatible" - {
@@ -7010,10 +7010,10 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Phase 08: T1, T2, T3, T4, T6 - derived structure emission
+    // Suite: derived structure emission
     // =========================================================================
 
-    // Test data types for Phase 08 structure tests
+    // Test data types for derived structure tests
     case class P08Person(name: String, age: Int) derives Schema
     sealed trait P08Shape derives Schema
     object P08Shape:
@@ -7114,7 +7114,7 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     "missing Schema produces precise error" - {
 
-        "derives Schema on case class with java.io.File field fails at compile time (T3 R-035)" in {
+        "derives Schema on case class with java.io.File field fails at compile time" in {
             typeCheckFailure("kyo.Schema.derived[SchemaTest.this.P08Wrapper]")(
                 "No given Schema[java.io.File]"
             )

@@ -2208,7 +2208,7 @@ class JsonTest extends kyo.test.Test[Any]:
     case class InstantBox(instant: java.time.Instant) derives CanEqual
     case class DurationBox(duration: java.time.Duration) derives CanEqual
 
-    "Json.jsonSchema requires Schema in scope (T3 R-028)" - {
+    "Json.jsonSchema requires Schema in scope" - {
 
         "fails to compile for a type with no Schema" in {
             typeCheckFailure("""
