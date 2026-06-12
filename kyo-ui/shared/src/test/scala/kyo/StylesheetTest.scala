@@ -45,6 +45,16 @@ class StylesheetTest extends kyo.test.Test[Any]:
         assert(q.condition == "(min-width: 768px) and (prefers-color-scheme: dark)")
     }
 
+    "reduced-motion media queries target reduce and no-preference" in {
+        assert(MediaQuery.prefersReducedMotion.condition == "(prefers-reduced-motion: reduce)")
+        assert(MediaQuery.prefersReducedMotionNoPreference.condition == "(prefers-reduced-motion: no-preference)")
+        val css = Stylesheet.media(MediaQuery.prefersReducedMotionNoPreference)(
+            Stylesheet.rule("hl", Style.animation("heroline", 320, Style.Easing.easeOut))
+        ).render
+        assert(css.contains("@media (prefers-reduced-motion: no-preference)"))
+        assert(css.contains("animation: heroline 320ms ease-out both;"))
+    }
+
     "vars produces :root { --k: v; } block" in {
         val css = Stylesheet.vars("accent" -> "#3b82f6", "gap" -> "16px").render
         assert(css.contains(":root {"))

@@ -174,6 +174,12 @@ object Stylesheet:
         /** Targets `prefers-reduced-motion: reduce`. */
         val prefersReducedMotion: MediaQuery = MediaQuery("(prefers-reduced-motion: reduce)")
 
+        /** Targets `prefers-reduced-motion: no-preference`: the user has NOT asked to reduce motion.
+          * Gate enhancement animations behind this so the default (no media match) is the still, fully
+          * visible state, and motion is opt-in for users who tolerate it.
+          */
+        val prefersReducedMotionNoPreference: MediaQuery = MediaQuery("(prefers-reduced-motion: no-preference)")
+
         /** An arbitrary media condition string, for cases the typed factories do not cover. */
         def raw(condition: String): MediaQuery = MediaQuery(condition)
     end MediaQuery
