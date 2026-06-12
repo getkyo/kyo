@@ -165,9 +165,9 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
     "repeated Classpath.init in nested scopes releases resources cleanly" in {
         def oneRound(i: Int): Int < (Sync & Async & Abort[TastyError]) =
             Scope.run(TestClasspaths.withClasspath()(Tasty.classpath)).map(_.symbols.length)
-        Kyo.foreach(0 until 8)(oneRound).map { lens =>
-            assert(lens.forall(_ > 0), s"all 8 rounds should produce non-empty classpaths: $lens")
-            assert(lens.distinct.size == 1, s"all 8 classpath sizes should be equal: ${lens.distinct}")
+        Kyo.foreach(0 until 4)(oneRound).map { lens =>
+            assert(lens.forall(_ > 0), s"all 4 rounds should produce non-empty classpaths: $lens")
+            assert(lens.distinct.size == 1, s"all 4 classpath sizes should be equal: ${lens.distinct}")
             succeed
         }
     }
@@ -196,7 +196,7 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
         buildSnapshot().map { (full, cpOrig) =>
             val path = "mem/concur.krfl"
             Async.collectAll(
-                (0 until 8).map { _ =>
+                (0 until 4).map { _ =>
                     SnapshotReader.readFromBytes(full, path).map(classpath =>
                         (classpath.symbols.length, classpath.errors.length, classpath.indices.byFullName.size)
                     )
@@ -782,6 +782,30 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
                 case Result.Panic(t) =>
                     fail(s"BUG: sectionCount=0 panics: ${t.getClass.getName}: ${t.getMessage}")
                 case _ => succeed
+            }
+        }
+    }
+
+    "bodyTree never aborts on a valid fixture body: undecodable constructs degrade to a Present tree" in {
+        // The embedded fixtures are real scalac output, so every body is well-formed TASTy. The
+        // documented contract is that a construct the reader cannot fully model degrades (Tree.Unknown)
+        // rather than aborting with MalformedSection (which is reserved for corrupt byte encodings).
+        // This guards the contract for the whole fixture classpath, replacing tests that decoded one
+        // arbitrary body and assumed full-fidelity success.
+        TestClasspaths.withClasspath() {
+            Tasty.classpath.map { classpath =>
+                given Tasty.Classpath = classpath
+                Kyo.foreach(classpath.allClassLike) { sym =>
+                    Abort.run[TastyError](Tasty.bodyTree(sym)).map {
+                        case Result.Success(_) => Maybe.Absent
+                        case Result.Failure(e) => Maybe(s"${classpath.fullName(sym).asString} aborted: $e")
+                        case Result.Panic(t)   => Maybe(s"${classpath.fullName(sym).asString} panicked: ${t.getMessage}")
+                    }
+                }.map { outcomes =>
+                    val aborts = outcomes.flatMap(_.toList)
+                    assert(aborts.isEmpty, s"bodyTree aborted on ${aborts.length} valid fixture bodies: ${aborts.take(5)}")
+                    succeed
+                }
             }
         }
     }

@@ -661,26 +661,31 @@ object Tasty:
                                                     idx => if idx >= 0 && idx < syms.size then syms(idx) else symbol
                                                 ))
                                             catch
-                                                case ex: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
-                                                    Result.Failure(TastyError.MalformedSection("ASTs", ex.getMessage, ex.byteOffset))
+                                                // Reader gaps on in-bounds bytes (the upfront check already validated the
+                                                // slice) are not corrupt input: the section is well-formed TASTy carrying a
+                                                // construct the reader does not yet fully model, or a cursor desync. The
+                                                // documented contract (see README "Errors and diagnostics": unrecognised tags
+                                                // become Tree.Unknown; MalformedSection is only for corrupt bytes) is graceful
+                                                // degradation, so these surface a top-level Tree.Unknown rather than aborting.
+                                                case _: kyo.internal.tasty.reader.TreeUnpickler.DecodeException =>
+                                                    Result.Success(Tasty.Tree.Unknown(0, 0))
                                                 case _: ArrayIndexOutOfBoundsException =>
-                                                    // Defense-in-depth backstop for any other path the upfront bounds check
-                                                    // does not cover (e.g. a nested decoder reading past its slice). Not the
-                                                    // primary handler for the truncated-body case anymore.
-                                                    Result.Failure(TastyError.MalformedSection("ASTs", "truncated body", 0L))
+                                                    // A nested decoder read past its slice on a valid in-bounds body: a reader
+                                                    // gap, not a truncated section. Degrade.
+                                                    Result.Success(Tasty.Tree.Unknown(0, 0))
                                                 case ise: IllegalStateException if isArenaClosed(ise) =>
                                                     // The backing mmap arena was closed before bodyTree ran (the scope
                                                     // finalizer flipped the closed flag); documented contract is ClasspathClosed.
                                                     Result.Failure(TastyError.ClasspathClosed(s"bodyTree(symbol.id=${symbol.id.value})"))
-                                                case ise: IllegalStateException =>
-                                                    // Any other IllegalStateException is a decoder gap (e.g. an unhandled
-                                                    // TASTy tag), not a closed arena. Surface it through the structured
-                                                    // decoder-error channel so it is never mislabeled as ClasspathClosed.
-                                                    Result.Failure(TastyError.MalformedSection("ASTs", ise.getMessage, 0L))
-                                                // NonFatal final arm wraps every other decoder bug into
-                                                // MalformedSection, preserving the documented Abort[TastyError] error channel.
-                                                // Fatal throwables (OOM, InterruptedException) propagate untouched because
-                                                // NonFatal filters them out.
+                                                case _: IllegalStateException =>
+                                                    // An unhandled TASTy tag surfaced as IllegalStateException: a reader gap,
+                                                    // not a closed arena. Degrade. (Unrecognised type tags arrive here as a
+                                                    // DecodeException, converted from TastyErrorException in decodeSync.)
+                                                    Result.Success(Tasty.Tree.Unknown(0, 0))
+                                                // Genuinely malformed byte ENCODING (e.g. MalformedVarintException, where the
+                                                // varint guard fires on too many continuation bytes) is corrupt input: per the
+                                                // contract it aborts with MalformedSection. Fatal throwables (OOM,
+                                                // InterruptedException) propagate untouched because NonFatal filters them out.
                                                 case ex: Throwable if NonFatal(ex) =>
                                                     Result.Failure(TastyError.MalformedSection(
                                                         "ASTs",

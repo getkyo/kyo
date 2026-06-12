@@ -134,7 +134,15 @@ object TreeUnpickler:
             typeSession,
             treeAddrCache
         )
-        decodeSymBody(symbol, view, body.bodyEnd, ctx)
+        try decodeSymBody(symbol, view, body.bodyEnd, ctx)
+        catch
+            case ex: TastyErrorException =>
+                // The type decoder hit an unrecognised tag (the carried error is UnknownTagInPosition).
+                // Re-surface it as a DecodeException so the body-decode boundary degrades reader gaps
+                // uniformly and by type; matching by exception type here is cross-platform-safe, unlike a
+                // getClass.getSimpleName check at the caller (fragile under JS/Native linking).
+                throw new DecodeException(ex.error.toString, 0L)
+        end try
     end decodeSync
 
     /** Decode a body slice whose layout depends on the symbol kind.
@@ -584,8 +592,10 @@ object TreeUnpickler:
                 view.goto(end)
                 if trees.isEmpty then
                     throw new DecodeException(s"BLOCK at $startAddr has empty payload", startAddr.toLong)
-                val stats = trees.dropRight(1)
-                val expr  = trees.last
+                // TASTy pickles BLOCK as `expr_Term Stat*`: the result expression is first, the
+                // statements follow. Decode order therefore puts the expr at the head.
+                val expr  = trees.head
+                val stats = trees.tail
                 Tasty.Tree.Block(stats, expr)
 
             case TastyFormat.IF =>
@@ -1123,14 +1133,16 @@ object TreeUnpickler:
     )(using AllowUnsafe): (Chunk[Tasty.Tree], Chunk[Tasty.Tree]) =
         val implicits = new mutable.ArrayBuffer[Tasty.Tree]()
         val patterns  = new mutable.ArrayBuffer[Tasty.Tree]()
+        // TASTy pickles UNAPPLY as `fun (IMPLICITarg arg)* type_Type pattern*`: after the optional
+        // implicit args comes the mandatory result type, then the pattern trees. The type must be read
+        // with readType, not readTree; consuming it as a tree desyncs the cursor before the patterns.
+        while view.position < end && (view.peekByte(view.position) & 0xff) == TastyFormat.IMPLICITarg do
+            discard(view.readByte())
+            implicits += readTree(view, ctx)
+        end while
+        if view.position < end then discard(readType(view, ctx)) // unapply result type
         while view.position < end do
-            val peek = view.peekByte(view.position) & 0xff
-            if peek == TastyFormat.IMPLICITarg then
-                discard(view.readByte())
-                implicits += readTree(view, ctx)
-            else
-                patterns += readTree(view, ctx)
-            end if
+            patterns += readTree(view, ctx)
         end while
         (Chunk.from(implicits.toSeq), Chunk.from(patterns.toSeq))
     end readUnapplyParts
@@ -1323,7 +1335,12 @@ object TreeUnpickler:
     // ── Tag classification helpers ────────────────────────────────────────────
 
     /** Returns true for tags 1-59 (modifier/flag tags, category 1). */
-    private def isModifierTag(tag: Int): Boolean = tag >= 1 && tag <= 59
+    // Modifier-flag tags are the single-byte flag markers PRIVATE(6)..INTO(49). The lower single-byte
+    // tags UNITconst(2)..NULLconst(5) are tag-only literal *trees*, not modifiers; treating them as
+    // modifiers makes readTreesUntil skip a bare `()`/`false`/`true`/`null` result expression, which
+    // desyncs the cursor and surfaces downstream as a false empty-BLOCK, a BIND-in-type-position, or a
+    // truncated body. firstASTtag is 60, so 50..59 are unused.
+    private def isModifierTag(tag: Int): Boolean = tag >= TastyFormat.PRIVATE && tag <= TastyFormat.INTO
 
     /** Returns true for tags that introduce type nodes (both cat-2 type-only and cat-5 type-prefixed nodes). */
     private def isTypeTag(tag: Int): Boolean =
