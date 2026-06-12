@@ -57,7 +57,7 @@ object YamlBenchData:
                     steps = List(
                         YamlWorkflowStep("Checkout", Maybe("actions/checkout@v4"), Absent),
                         YamlWorkflowStep("Setup Java", Maybe("actions/setup-java@v4"), Absent),
-                        YamlWorkflowStep("Test", Absent, Maybe("sbt kyo-schema/test"))
+                        YamlWorkflowStep("Test", Absent, Maybe("sbt kyo-schemaJVM/test"))
                     )
                 ),
                 "lint" -> YamlWorkflowJob(

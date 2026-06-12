@@ -112,7 +112,7 @@ lazy val `kyo-settings` = Seq(
     // reconcileClasspath strips the mismatched scala3-library before the fork starts.
     Test / unmanagedJars ++= {
         if (scalaVersion.value == scala3Version)
-            (LocalProject("kyo-doctest") / Compile / fullClasspath).value
+            (LocalProject("kyo-doctestJVM") / Compile / fullClasspath).value
         else
             Seq.empty[Attributed[File]]
     },
@@ -120,7 +120,7 @@ lazy val `kyo-settings` = Seq(
         if (scalaVersion.value == scala3Version)
             Seq.empty[File]
         else
-            (LocalProject("kyo-doctest") / Compile / fullClasspath).value.files
+            (LocalProject("kyo-doctestJVM") / Compile / fullClasspath).value.files
     }
 )
 
@@ -387,7 +387,6 @@ lazy val kyoWasm = project
 
 lazy val `kyo-scheduler` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-scheduler"))
@@ -415,7 +414,6 @@ lazy val `kyo-scheduler` =
         )
 
 lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform, NativePlatform)
-    .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .dependsOn(`kyo-scheduler`)
     .settings(
@@ -433,7 +431,6 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
 
 lazy val `kyo-scheduler-cats` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
         .in(file("kyo-scheduler-cats"))
@@ -450,7 +447,6 @@ lazy val `kyo-scheduler-cats` =
 
 lazy val `kyo-scheduler-pekko` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
         .in(file("kyo-scheduler-pekko"))
@@ -468,7 +464,6 @@ lazy val `kyo-scheduler-pekko` =
 
 lazy val `kyo-scheduler-finagle` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-scheduler-finagle"))
         .settings(
@@ -502,7 +497,6 @@ lazy val `kyo-scheduler-finagle` =
 
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-data"))
@@ -519,7 +513,6 @@ lazy val `kyo-data` =
 
 lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
         .withKyoTest
@@ -539,7 +532,6 @@ lazy val `kyo-kernel` =
 
 lazy val `kyo-prelude` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-kernel`)
         .withKyoTest
@@ -556,7 +548,6 @@ lazy val `kyo-prelude` =
 
 lazy val `kyo-parse` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-prelude`)
         .withKyoTest
@@ -569,7 +560,6 @@ lazy val `kyo-parse` =
 
 lazy val `kyo-schema` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data` % "test->test;compile->compile")
         .in(file("kyo-schema"))
@@ -582,7 +572,6 @@ lazy val `kyo-schema` =
 
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
         .dependsOn(`kyo-prelude`)
@@ -606,7 +595,6 @@ lazy val `kyo-core` =
 
 lazy val `kyo-offheap` =
     crossProject(JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
@@ -623,7 +611,6 @@ lazy val `kyo-offheap` =
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-direct"))
         .dependsOn(`kyo-core`)
@@ -646,7 +633,6 @@ lazy val `kyo-direct` =
 
 lazy val `kyo-stm` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stm"))
         .dependsOn(`kyo-core`)
@@ -659,7 +645,6 @@ lazy val `kyo-stm` =
 
 lazy val `kyo-actor` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
@@ -672,7 +657,6 @@ lazy val `kyo-actor` =
 
 lazy val `kyo-logging-jpl` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-logging-jpl"))
         .dependsOn(`kyo-core`)
@@ -682,7 +666,6 @@ lazy val `kyo-logging-jpl` =
 
 lazy val `kyo-logging-slf4j` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-logging-slf4j"))
         .dependsOn(`kyo-core`)
@@ -696,7 +679,6 @@ lazy val `kyo-logging-slf4j` =
 
 lazy val `kyo-stats-registry` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-config`)
         .in(file("kyo-stats-registry"))
@@ -713,7 +695,6 @@ lazy val `kyo-stats-registry` =
 
 lazy val `kyo-config` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-config"))
         .settings(
@@ -729,7 +710,6 @@ lazy val `kyo-config` =
 
 lazy val `kyo-stats-otlp` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stats-otlp"))
         .dependsOn(`kyo-http`)
@@ -747,7 +727,6 @@ lazy val `kyo-stats-otlp` =
 
 lazy val `kyo-reactive-streams` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-reactive-streams"))
         .dependsOn(`kyo-core`)
@@ -769,7 +748,6 @@ lazy val `kyo-reactive-streams` =
 
 lazy val `kyo-aeron` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-aeron"))
         .dependsOn(`kyo-core`)
@@ -793,7 +771,6 @@ lazy val `kyo-aeron` =
 
 lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-http"))
         .dependsOn(`kyo-core`, `kyo-config`, `kyo-schema`)
@@ -816,7 +793,6 @@ lazy val `kyo-http` =
 
 lazy val `kyo-flow` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-flow"))
         .dependsOn(`kyo-http`)
@@ -833,7 +809,6 @@ lazy val `kyo-flow` =
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-caliban"))
         .dependsOn(`kyo-core`)
@@ -850,7 +825,6 @@ lazy val `kyo-caliban` =
 
 lazy val `kyo-zio-test` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio-test"))
         .dependsOn(`kyo-core`)
@@ -872,7 +846,6 @@ lazy val `kyo-zio-test` =
 
 lazy val `kyo-zio` =
     crossProject(JVMPlatform, JSPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-zio"))
         .dependsOn(`kyo-core`)
@@ -894,7 +867,6 @@ lazy val `kyo-zio` =
 // TODO(wasm): re-enable once cats-effect supports WASM (typelevel/cats-effect#4608).
 lazy val `kyo-cats` =
     crossProject(JSPlatform, JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-cats"))
         .dependsOn(`kyo-core`)
@@ -910,7 +882,6 @@ lazy val `kyo-cats` =
 
 lazy val `kyo-compat-future` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/future"))
         .settings(
@@ -948,7 +919,6 @@ lazy val `kyo-compat-future` =
 
 lazy val `kyo-compat-kyo` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/kyo"))
         .dependsOn(`kyo-core`, `kyo-data`)
@@ -981,7 +951,6 @@ lazy val `kyo-compat-kyo` =
 
 lazy val `kyo-compat-zio` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/zio"))
         .settings(
@@ -1017,7 +986,6 @@ lazy val `kyo-compat-zio` =
 // TODO(wasm): re-enable with cats-effect WASM support; depends on cats-effect (see kyo-cats).
 lazy val `kyo-compat-ce` =
     crossProject(JSPlatform, JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/ce"))
         .settings(
@@ -1049,7 +1017,6 @@ lazy val `kyo-compat-ce` =
 
 lazy val `kyo-compat-ox` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/ox"))
         .settings(
@@ -1079,7 +1046,6 @@ lazy val `kyo-compat-ox` =
 
 lazy val `kyo-compat-twitter-future` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compat/bindings/twitter-future"))
         .settings(
@@ -1133,7 +1099,6 @@ lazy val `kyo-compat-tests` =
 
 lazy val `kyo-combinators` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-combinators"))
         .dependsOn(`kyo-core`)
@@ -1146,7 +1111,6 @@ lazy val `kyo-combinators` =
 
 lazy val `kyo-case-app` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-case-app"))
         .dependsOn(`kyo-core`)
@@ -1162,7 +1126,6 @@ lazy val `kyo-case-app` =
 
 lazy val `kyo-pod` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-pod"))
         .dependsOn(`kyo-core`, `kyo-http`)
@@ -1265,7 +1228,6 @@ lazy val `kyo-pod` =
 
 lazy val `kyo-browser` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
         .dependsOn(`kyo-http`)
@@ -1322,7 +1284,6 @@ lazy val `kyo-browser` =
 
 lazy val `kyo-ui` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ui"))
         .dependsOn(`kyo-core`, `kyo-http`)
@@ -1379,7 +1340,6 @@ lazy val `kyo-ui` =
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-examples"))
         .dependsOn(`kyo-http`)
@@ -1401,7 +1361,6 @@ lazy val `kyo-examples` =
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
@@ -1474,7 +1433,6 @@ lazy val `kyo-bench` =
 
 lazy val `kyo-doctest` =
     crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-doctest"))
         .dependsOn(`kyo-core`)
@@ -1696,7 +1654,6 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
 
 lazy val `kyo-test-api` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
         .in(file("kyo-test/api"))
@@ -1707,13 +1664,13 @@ lazy val `kyo-test-api` =
         .jvmSettings(
             mimaCheck(false),
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value,
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value
         )
         .nativeSettings(
             `native-settings`,
@@ -1751,7 +1708,6 @@ lazy val `kyo-test-api` =
 
 lazy val `kyo-test-runner` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-scheduler`)
@@ -1766,13 +1722,13 @@ lazy val `kyo-test-runner` =
             mainClass                             := Some("kyo.test.runner.Cli"),
             libraryDependencies += "org.scala-sbt" % "test-interface" % "1.0" % Provided,
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value,
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value
         )
         .nativeSettings(
             `native-settings`,
@@ -1813,7 +1769,6 @@ lazy val `kyo-test-runner` =
 
 lazy val `kyo-test-prop` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
@@ -1826,13 +1781,13 @@ lazy val `kyo-test-prop` =
         .jvmSettings(
             mimaCheck(false),
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value,
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value
         )
         .nativeSettings(
             `native-settings`,
@@ -1870,7 +1825,6 @@ lazy val `kyo-test-prop` =
 
 lazy val `kyo-test-snapshot` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-test-api`)
         .dependsOn(`kyo-data`)
@@ -1883,13 +1837,13 @@ lazy val `kyo-test-snapshot` =
         .jvmSettings(
             mimaCheck(false),
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Compile / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value,
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-prelude") / Compile / fullClasspath).value,
+                (LocalProject("kyo-preludeJVM") / Compile / fullClasspath).value,
             Test / unmanagedClasspath ++=
-                (LocalProject("kyo-core") / Compile / fullClasspath).value,
+                (LocalProject("kyo-coreJVM") / Compile / fullClasspath).value,
             Compile / unmanagedSourceDirectories +=
                 baseDirectory.value.getParentFile / "jvm-native" / "src" / "main" / "scala",
             Test / unmanagedSourceDirectories +=

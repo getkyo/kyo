@@ -4,7 +4,7 @@ import kyo.*
 
 /** Minimal runnable Quickstart that mirrors the README's first code block.
   *
-  * Run via `sbt 'kyo-browser/runMain demo.QuickstartApp'`. On first invocation it downloads Chrome-for-Testing (cached under
+  * Run via `sbt 'kyo-browserJVM/runMain demo.QuickstartApp'`. On first invocation it downloads Chrome-for-Testing (cached under
   * `~/Library/Caches/kyo-browser/` thereafter), navigates to a self-contained HTML page (a `data:` URL, no third-party site needed), types
   * a query into an input, clicks a button to populate a result heading, asserts the heading became visible with the expected text, prints
   * the page title, and shuts everything down on scope exit. Demonstrates the five most common operations (`goto`, `fill`, `click`,

@@ -272,7 +272,7 @@ class YamlParserTest extends kyo.test.Test[Any]:
                   |        uses: actions/checkout@v4
                   |      - name: Test
                   |        run: |-
-                  |          sbt 'kyo-schema/test'
+                  |          sbt 'kyo-schemaJVM/test'
                   |          echo done
                   |        with:
                   |          cache: sbt
@@ -286,7 +286,7 @@ class YamlParserTest extends kyo.test.Test[Any]:
                         "ubuntu-latest",
                         List(
                             YamlGithubStep(Some("Checkout"), Some("actions/checkout@v4"), None, None),
-                            YamlGithubStep(Some("Test"), None, Some("sbt 'kyo-schema/test'\necho done"), Some(Map("cache" -> "sbt")))
+                            YamlGithubStep(Some("Test"), None, Some("sbt 'kyo-schemaJVM/test'\necho done"), Some(Map("cache" -> "sbt")))
                         )
                     )
                 )

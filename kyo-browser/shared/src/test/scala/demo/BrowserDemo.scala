@@ -9,7 +9,7 @@ import kyo.*
   * bodies can focus on the interaction being demonstrated.
   *
   * Demos are dual-purpose:
-  *   1. Runnable via `sbt 'kyo-browser/runMain demo.XxxApp'`: prints a narrated trace and renders screenshots inline.
+  *   1. Runnable via `sbt 'kyo-browserJVM/runMain demo.XxxApp'`: prints a narrated trace and renders screenshots inline.
   *   2. Validated in tests via `DemoValidationTest`: each demo's `flow` runs against the shared test Chrome and its `validate` hook must
   *      return `Absent`.
   */

@@ -10,7 +10,7 @@ import kyo.UI.*
   * fresh full-page renders on any signal change). This demo takes that first frame, the canonical SSR snapshot, and prints it. The same
   * `UI` value would mount to the DOM with `UI.runMount` or drive a server-push app with `UI.runHandlers`; only the runner changes.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.HtmlSnapshot'`.
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.HtmlSnapshot'`.
   *
   * Demonstrates: `UI.runRender` for SSR, and that one `UI` value renders to plain HTML with no DOM or browser.
   */

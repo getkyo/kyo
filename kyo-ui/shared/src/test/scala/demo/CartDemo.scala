@@ -10,7 +10,7 @@ import kyo.UI.*
   * `SignalRef[Map[String, Int]]` on the server; the cart lines and the running total are derived signals, so the server pushes just the
   * affected DOM diffs over SSE.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Cart'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Cart'` (optional port as the first argument).
   *
   * Demonstrates: a single source-of-truth `SignalRef`, derived `Signal`s via `.map` (cart lines and total), keyed list rendering with
   * `foreachKeyed`, per-row +/- steppers, `when` empty-state, and equal-column layout via `flexGrow(1).flexBasis(0.px)`.

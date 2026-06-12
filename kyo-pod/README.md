@@ -650,7 +650,7 @@ kyo-pod compiles on JVM, JavaScript (Node.js), and Scala Native from a single so
 
 ## Demos
 
-Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-pod/Test/runMain demo.<Name>'`.
+Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-podJVM/Test/runMain demo.<Name>'`.
 
 - [**ServiceMesh**](shared/src/test/scala/demo/ServiceMesh.scala): three-tier app (nginx edge, python api, redis cache) on a private network with container-name DNS.
 - [**PrometheusExporter**](shared/src/test/scala/demo/PrometheusExporter.scala): polls container `stats` on a schedule and emits Prometheus text-format metric families.

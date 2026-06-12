@@ -33,8 +33,8 @@ checkProjects := {
     val ext      = sbt.Project.extract(s)
     // compatLibrary pins defaultAxes to (jvm, scalaABIVersion(scalaVersions.head))
     // so the JVM and Scala suffixes are suppressed in project ids — leaving
-    // just the backend suffix (matching sbt-crossproject's
-    // `.withoutSuffixFor(JVMPlatform)` convention from the previous design).
+    // just the backend suffix (the plugin's own canonical-row id choice;
+    // the root build's cross-projects carry explicit JVM suffixes).
     val expected = Set("myLibFuture", "myLibKyo", "myLibZio", "myLibCe", "myLibOx")
     val actual   = ext.structure.allProjectRefs.map(_.project).toSet
     val missing  = expected -- actual
