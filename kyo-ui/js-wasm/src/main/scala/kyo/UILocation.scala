@@ -125,6 +125,16 @@ object UILocation:
             dom.window.history.go(delta)
         }
 
+    /** Hard browser navigation to `uri` via `window.location.assign`. Unlike [[push]] / [[replace]]
+      * (History-API client-side routing that keeps the SPA mounted), `assign` hands the route to a full
+      * browser navigation, used for off-tree routes the SPA cannot resolve client-side.
+      */
+    def assign(uri: String)(using Frame): Unit < Sync =
+        Sync.defer {
+            ensureInit()
+            dom.window.location.assign(uri)
+        }
+
     private def readWindowPath(): String =
         dom.window.location.pathname + dom.window.location.search
 
