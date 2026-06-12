@@ -824,8 +824,21 @@ object WebsiteStyles:
             .rule(
                 "rungs",
                 Style.column.width(Length.Pct(100)).minWidth(0.px).maxWidth(900.px).margin(40.px, Length.Auto, 0.px, Length.Auto)
+                    .position(_.relative).padding(0.px, 0.px, 0.px, 38.px).borderLeft(2.px, whiteBorder12)
             )
-            .rule("rung", Style.row.flexWrap(_.wrap).gap(26.px).padding(30.px, 4.px).borderTop(1.px, whiteBorder12))
+            .rule(
+                "rung",
+                Style.row.flexWrap(_.wrap).gap(26.px).padding(30.px, 4.px).borderTop(1.px, whiteBorder12).position(_.relative)
+            )
+            // The numbered node sits on the `.rungs` left rail (38px gutter), at the beat's level, so the
+            // four rungs read as an ordered layered-safety ladder.
+            .rule(
+                "rung-node",
+                Style.row.align(_.center).justify(_.center)
+                    .position(_.absolute).left((-49).px).top(26.px).width(26.px).height(26.px).rounded(99.px)
+                    .bg(inkSection).border(2.px, darkAccentTxt).color(darkAccentTxt)
+                    .fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(12.px).fontWeight(_.w600)
+            )
             .rule(
                 "beat",
                 Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(12.px)

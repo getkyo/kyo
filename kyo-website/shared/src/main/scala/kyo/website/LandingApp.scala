@@ -273,6 +273,7 @@ object LandingApp:
                 ),
                 UI.div.cssClass("rungs")(
                     rung(
+                        1,
                         "As you write",
                         "The APIs refuse invalid states.",
                         Seq(
@@ -285,6 +286,7 @@ object LandingApp:
                         Seq(mod("kyo-ui") -> "kyo-ui · UI", mod("kyo-core") -> "kyo-core · Queue", mod("kyo-core") -> "kyo-core · Scope")
                     ),
                     rung(
+                        2,
                         "As it compiles",
                         "The contracts catch what slipped through.",
                         Seq(
@@ -297,6 +299,7 @@ object LandingApp:
                         Seq(mod("kyo-prelude") -> "kyo-prelude · Abort")
                     ),
                     rung(
+                        3,
                         "As it runs",
                         "The runtime acts on its own.",
                         Seq(
@@ -315,6 +318,7 @@ object LandingApp:
                         )
                     ),
                     rung(
+                        4,
                         "When it fails anyway",
                         "Progress survives.",
                         Seq(
@@ -342,11 +346,14 @@ object LandingApp:
     /** One rung of the ladder: a left-column beat label, a bold lead, the body blocks, and the module
       * receipt tags. Stacks to a single column on narrow viewports (see WebsiteStyles `.rung`).
       */
-    private def rung(beat: String, lead: String, bodyBlocks: Seq[UI], tags: Seq[(String, String)])(using Frame): UI =
+    private def rung(num: Int, beat: String, lead: String, bodyBlocks: Seq[UI], tags: Seq[(String, String)])(using Frame): UI =
         val tagChips =
             UI.div.cssClass("tags")(html(tags.map((href, label) => UI.a.cssClass("tag").href(Href.Path(href))(label)))*)
         val blocks = UI.h3.cssClass("rung-lead")(lead) +: bodyBlocks :+ tagChips
+        // The numbered node sits on the `.rungs` rail (left gutter), turning the four rungs into a visible
+        // layered-safety ladder ordered by when each layer catches a mistake.
         UI.div.cssClass("rung")(
+            UI.div.cssClass("rung-node")(num.toString),
             UI.div.cssClass("beat")(beat),
             UI.div.cssClass("rung-body")(html(blocks)*)
         )
