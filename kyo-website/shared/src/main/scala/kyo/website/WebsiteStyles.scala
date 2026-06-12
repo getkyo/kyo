@@ -733,6 +733,12 @@ object WebsiteStyles:
                 Selector.cls("pf-head").descendant(Selector.tag("p")),
                 Style.margin(13.px, 0.px, 0.px, 0.px).color(darkDim).fontSize(16.px).lineHeight(1.6)
             )
+            // the "one codebase -> four platforms" fan-out, centered between the heading and the cards.
+            .rule("pf-diagram", Style.row.justify(_.center).margin(30.px, 0.px, 0.px, 0.px))
+            .rule(
+                Selector.cls("pf-diagram").descendant(Selector.tag("svg")),
+                Style.display(_.block).width(320.px).maxWidth(Length.Pct(100)).height(Length.Auto)
+            )
             .rule(
                 "pf-cards",
                 Style.row.flexWrap(_.wrap).gap(16.px).margin(32.px, 0.px, 0.px, 0.px)

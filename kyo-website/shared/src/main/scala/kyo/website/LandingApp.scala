@@ -529,6 +529,7 @@ object LandingApp:
                     UI.div.cssClass("eyebrow")("Platforms and the floor"),
                     UI.h2("One codebase. Four platforms. One process that carries the load.")
                 ),
+                platformsDiagram,
                 UI.div.cssClass("pf-cards")(
                     UI.div.cssClass("pf")(
                         UI.div.cssClass("pf-k")("Servers and services"),
@@ -557,6 +558,32 @@ object LandingApp:
             )
         )
     end platforms
+
+    // "One codebase, four platforms": a source-code chip on the left fanning four branches out to four
+    // target nodes, drawn on the Svg DSL. The band is always dark, so the colors are fixed light values
+    // (not theme vars). The 320-unit viewBox renders ~1:1 (the `.pf-diagram svg` rule), so strokes stay crisp.
+    private def platformsDiagram(using Frame): UI =
+        val light  = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.5))
+        val faint  = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.28))
+        val branch = Svg.Paint.Color(Style.Color.rgba(255, 255, 255, 0.16))
+        val node   = Svg.Paint.Color(Style.Color.Hex("#9D97F0"))
+        val tys    = Seq(13.0, 37.0, 61.0, 85.0)
+        val branches = tys.map(ty =>
+            Svg.path.d(Svg.PathData.from(58.0, 49.0).cubicTo(178.0, 49.0, 190.0, ty, 294.0, ty))
+                .fill(Svg.Paint.None).stroke(branch).strokeWidth(1.5)
+        )
+        val dots = tys.map(ty => Svg.circle.cx(300).cy(ty).r(5.0).fill(node))
+        val codeLines = Seq(26.0, 18.0, 22.0).zipWithIndex.map { (w, i) =>
+            val ly = 43.0 + i * 6.0
+            Svg.line.x1(14).y1(ly).x2(14.0 + w).y2(ly).stroke(faint).strokeWidth(2.0).strokeLinecap(Svg.StrokeLinecap.Round)
+        }
+        val chip = Svg.rect.x(6).y(34).width(50).height(30).rx(7.0).fill(Svg.Paint.None).stroke(light).strokeWidth(1.5)
+        UI.div.cssClass("pf-diagram")(
+            Svg.svg.viewBox(Svg.ViewBox(0, 0, 320, 98)).width(320).height(98)(
+                (branches ++ Seq(chip) ++ codeLines ++ dots)*
+            )
+        )
+    end platformsDiagram
 
     // ---- 6. Social proof ----
 
