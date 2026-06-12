@@ -69,10 +69,14 @@ class LandingAppTest extends WebsiteTest:
             assert(html.contains("One codebase. Four platforms."), "platforms heading must render")
             val cards = countOccurrences(html, "class=\"pf\"")
             assert(cards == 4, s"expected 4 platform cards, got $cards")
-            assert(html.contains("JVM"))
-            assert(html.contains("Browser and Node"))
-            assert(html.contains("Native binary"))
-            assert(html.contains("WebAssembly"))
+            // The prominent label on each card is the compile target, so the four big labels read as
+            // one parallel set (the targets in `Platforms(jvm, js, native, wasm)`), not a mix of role,
+            // environment, and target. The `>Label<` form pins the pf-n div text, not a body mention.
+            assert(html.contains(">JVM<"))
+            assert(html.contains(">JavaScript<"))
+            assert(html.contains(">Native<"))
+            assert(html.contains(">WebAssembly<"))
+            // The WasmGC backend detail stays in the WebAssembly card body.
             assert(html.contains("WasmGC"))
         }
     }

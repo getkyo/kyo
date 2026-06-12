@@ -376,24 +376,24 @@ object LandingApp:
                 ),
                 UI.div.cssClass("pf-cards")(
                     UI.div.cssClass("pf")(
-                        UI.div.cssClass("pf-k")("Server"),
+                        UI.div.cssClass("pf-k")("Servers and services"),
                         UI.div.cssClass("pf-n")("JVM"),
                         UI.p("Backends, APIs, and services, on the platform most production systems already run on.")
                     ),
                     UI.div.cssClass("pf")(
-                        UI.div.cssClass("pf-k")("JavaScript"),
-                        UI.div.cssClass("pf-n")("Browser and Node"),
+                        UI.div.cssClass("pf-k")("Web and edge"),
+                        UI.div.cssClass("pf-n")("JavaScript"),
                         UI.p("Web frontends in the browser, plus serverless and edge functions on Node, from the same code as the backend.")
                     ),
                     UI.div.cssClass("pf")(
-                        UI.div.cssClass("pf-k")("Native"),
-                        UI.div.cssClass("pf-n")("Native binary"),
+                        UI.div.cssClass("pf-k")("Command line"),
+                        UI.div.cssClass("pf-n")("Native"),
                         UI.p("Command-line tools and binaries that start in milliseconds, with no runtime to install.")
                     ),
                     UI.div.cssClass("pf")(
-                        UI.div.cssClass("pf-k")("WebAssembly"),
-                        UI.div.cssClass("pf-n")("WasmGC"),
-                        UI.p("The Scala.js WebAssembly backend on Node 24, from the same source as the rest.")
+                        UI.div.cssClass("pf-k")("Browser, near-native"),
+                        UI.div.cssClass("pf-n")("WebAssembly"),
+                        UI.p("The Scala.js WasmGC backend on Node 24, from the same source as the rest.")
                     )
                 ),
                 UI.p.cssClass("floor")(
