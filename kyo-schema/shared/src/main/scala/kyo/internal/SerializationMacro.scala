@@ -835,11 +835,11 @@ private[internal] object SerializationMacro:
             val isMaybe                       = maybeFields.contains(idx)
             val isOption                      = optionFields.contains(idx)
             if isMaybe then
-                // Maybe[T]: `subSchemas[idx]` is `Schema[T]` (the inner type — the macro strips the Maybe wrapper to
+                // Maybe[T]: `subSchemas[idx]` is `Schema[T]` (the inner type; the macro strips the Maybe wrapper to
                 // avoid double-wrapping the read result, see `summonFieldSchemaResolvers` in FocusMacro), so we add the
                 // null dispatch here. Without it, an explicit JSON null bypasses `Schema[Maybe[T]]`'s `if isNil then
                 // Absent else Present(...)` branch and reaches the non-nullable inner schema, which throws "expected
-                // T but got Null" — that's what made the LSP-spec `processId: null` and `rootUri: null` decode-fail.
+                // T but got Null", which caused the LSP-spec `processId: null` and `rootUri: null` decode-fail.
                 // When the inner is itself nullable (Maybe[Maybe[T]] / Maybe[Option[T]]), defer to the inner schema's
                 // own nil handling so `Present(Maybe.empty)` round-trips correctly instead of collapsing to
                 // `Maybe.empty`.

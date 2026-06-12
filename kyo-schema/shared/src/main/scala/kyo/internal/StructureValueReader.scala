@@ -119,7 +119,7 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
 
     def string(): String =
         // Strict: only Str decodes as String. JSON-RPC / MCP / LSP schemas declare typed fields and the wire must
-        // respect them — an integer or boolean where a string is expected is a client bug, not a coercion to absorb.
+        // respect them: an integer or boolean where a string is expected is a client bug, not a coercion to absorb.
         // Coercing `Integer(42)` to `"42"` silently accepted a malformed `{"path": 42}` against a `path: String`
         // tool argument and let the server treat it as a real path; that's the correctness gap this rejects.
         currentValue match

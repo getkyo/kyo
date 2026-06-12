@@ -198,6 +198,9 @@ object Structure:
           * any wire shape. No fixed structural projection exists at compile time. Used by
           * Schema[Structure.Value], Schema[Json.JsonSchema], and any future shape-dynamic Schema.
           *
+          * Compatibility with another Open is determined by tag equality, not structural recursion.
+          * An Open type is never compatible with any non-Open type.
+          *
           * @param tag
           *   runtime tag for the open-shape type
           */

@@ -1060,7 +1060,7 @@ class JsonTest extends kyo.test.Test[Any]:
 
         "Json.jsonSchema[Unit] is an empty object schema" in {
             // Unit serializes as an empty JSON object (`{}`), so its JSON Schema description is an object
-            // shape with no properties — not `{"type":"null"}`. The MCP tool inputSchema and other JSON
+            // shape with no properties, not `{"type":"null"}`. The MCP tool inputSchema and other JSON
             // Schema consumers require the object form; the kyo-schema-wide convention is "Unit = empty
             // object" (see Schema.unitSchema).
             assert(Json.jsonSchema[Unit] == Json.JsonSchema.Obj(List.empty, List.empty))

@@ -239,7 +239,7 @@ private[kyo] object SchemaSerializer:
                 end if
             case Structure.Value.VariantCase(name, v) =>
                 // Shape-aware VariantCase: single-field object whose key is the variant name. Symmetric with reading a
-                // single-field object as a Record(name, value) — the universal Structure.Value tree treats VariantCase
+                // single-field object as a Record(name, value); the universal Structure.Value tree treats VariantCase
                 // and Record(<single field>) as the same wire shape; round-trips through the shape-aware identity
                 // Schema therefore canonicalize to Record on read.
                 writer.objectStart(name, 1)

@@ -798,11 +798,14 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     // --- Structure integration ---
 
     /** Runtime structural projection for A. Sole source of truth for "what shape does this Schema produce
-      * on the wire" -- consumed by Json.JsonSchema.from[A], Protobuf.ProtoSchema.from[A], and the
+      * on the wire": consumed by Json.JsonSchema.from[A], Protobuf.ProtoSchema.from[A], and the
       * case-class derivation macro to build product/sum structures.
       *
-      * Provided by every concrete Schema instance (via Schema.init's anonymous-class override).
-      * Abstract: omitting `structure` when calling Schema.init is a compile error.
+      * Provided by every concrete Schema instance via Schema.init's anonymous-class override.
+      * Omitting `structure` when calling Schema.init is a compile error.
+      *
+      * The returned Structure.Type is one of: Primitive, Product, Sum, Collection, Optional,
+      * Mapping, or Open. Schema.transform preserves the structure of the source schema.
       */
     def structure: Structure.Type
 
@@ -1424,7 +1427,7 @@ object Schema:
       * and would break JSON Schema describers like [[Json.JsonSchema]] that need a `type: "object"` shape for
       * downstream consumers (MCP tool `inputSchema`, OpenAPI request bodies, JSON Schema validators).
       *
-      * On read the schema consumes one object value, ignoring any contents — so legacy producers that emit
+      * On read the schema consumes one object value, ignoring any contents, so legacy producers that emit
       * literal `null` for Unit would fail to decode against this schema. Callers that need to accept `null`
       * bodies for Unit-typed endpoints (e.g. HTTP) should short-circuit at the boundary, not rely on
       * `Schema[Unit]` to tolerate the wire-incorrect shape.
