@@ -310,13 +310,15 @@ The project's own reusable cross-platform test framework, plus a bridge for runn
 
 ### Concurrency
 
-Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-actor` for typed message passing; `kyo-stm` for multi-cell atomicity; `kyo-offheap` for typed arrays outside the JVM heap.
+Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-actor` for typed message passing; `kyo-stm` for multi-cell atomicity; `kyo-memory` for arena-scoped typed primitive arrays.
 
 | Module                                         | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | ---------------------------------------------- | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
 | [kyo-actor](kyo-actor/README.md)               | ✅  | ✅  | ✅     | ✅   | Typed actors over `Channel` and `Fiber`: `Subject[A]`, `ask`, supervision by composition                  |
 | [kyo-stm](kyo-stm/README.md)                   | ✅  | ✅  | ✅     | ✅   | STM with `TRef` / `TMap` / `TChunk` / `TTable`, including compile-checked `TTable.Indexed` queries        |
-| [kyo-offheap](kyo-offheap/README.md)           | ✅  |     | ✅     |      | Arena-scoped typed primitive arrays via JEP 442 (JVM 22+) and `calloc`/`free` (Native)                    |
+| [kyo-memory](kyo-memory/README.md)             | ✅  | ✅* | ✅     | ✅*  | Arena-scoped typed primitive arrays via JEP 442 (JVM 22+) and `calloc`/`free` (Native); heap `ArrayBuffer` fallback on JS and Wasm |
+
+\*On Scala.js and the WebAssembly backend, `kyo-memory` stores buffers on the GC-managed JS heap (`ArrayBuffer`), not true off-heap memory, and `Arena` close is a no-op. See [Cross-platform behavior](kyo-memory/README.md#cross-platform-behavior).
 
 ### Specialized tools
 

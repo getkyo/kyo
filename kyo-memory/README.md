@@ -1,8 +1,8 @@
-# kyo-offheap
+# kyo-memory
 
 `Memory[A]` is a typed handle to an off-heap segment whose lifetime is governed by an `Arena`. You enter an `Arena.run` block, call `Memory.init[A](size)` to allocate, and read or write with `get`, `set`, `fill`, `fold`, `view`, or `copy`. Every operation is tracked in the effect row as `Arena`, so the type system enforces that allocation, access, and release all stay inside the same scope. When `Arena.run` exits, normally or on error, every segment allocated inside it is freed.
 
-Primitive element types (`Byte`, `Short`, `Int`, `Long`, `Float`, `Double`) are supported through a `Layout[A]` type class that pins down per-element byte size and the foreign-memory accessors. The API is inlined for performance and exposes a parallel `Memory.Unsafe[A]` surface (no `Arena` effect, requires `AllowUnsafe`) for hot loops. Allocation deliberately has no unsafe variant because arena tracking is required for the cleanup guarantee. The same source compiles on JVM (Java's `java.lang.foreign`) and Scala Native (a `calloc`/`free`/`memcpy`-backed shim).
+Primitive element types (`Byte`, `Short`, `Int`, `Long`, `Float`, `Double`) are supported through a `UnsafeLayout[A]` type class (from `kyo.internal`) that pins down per-element byte size and the accessors that read and write a value at a byte offset. The API is inlined for performance and exposes a parallel `Memory.Unsafe[A]` surface (no `Arena` effect, requires `AllowUnsafe`) for hot loops. Allocation deliberately has no unsafe variant because arena tracking is required for the cleanup guarantee. The same source compiles on JVM, Scala Native, Scala.js, and Wasm: `Memory[A]` is an opaque alias over kyo-data's `kyo.internal.UnsafeBuffer`, genuinely off-heap on the JVM (`java.lang.foreign`) and Scala Native (`malloc`), and a heap `ArrayBuffer` fallback on Scala.js and Wasm (see "Cross-platform behavior").
 
 The pattern is always the same: enter `Arena.run`, allocate with `Memory.init`, read and write by element index, exit. The segment is freed when the block exits:
 
@@ -31,7 +31,7 @@ Every off-heap operation lives inside `Arena.run`. The arena is the lifetime; th
 
 ### `Arena.run`: opens and closes the scope
 
-`Arena.run` opens a fresh shared `java.lang.foreign.Arena`, runs the body, and frees every segment allocated against it when the body completes. The discharge removes `Arena` from the effect row:
+`Arena.run` opens a fresh allocation scope, runs the body, and frees every segment allocated against it when the body completes. The discharge removes `Arena` from the effect row:
 
 ```scala
 import kyo.*
@@ -47,7 +47,7 @@ val first: Int < Sync =
 
 > **Caution:** A `Memory[A]` value can syntactically escape its `Arena.run` (a `val` capture, or returning the segment from the block). Using it after the arena closes is a runtime panic, not a type error. Treat `Memory[A]` as scope-local; do not hand it to callers that outlive the surrounding `Arena.run`.
 
-> **Note:** `Arena.run` uses a shared arena, so segments allocated inside it can be touched from any fiber or thread within the scope. The close itself runs on the fiber exiting the scope.
+> **Note:** `Arena.run` uses a shared scope, so segments allocated inside it can be touched from any fiber within the scope. The close itself runs on the fiber exiting the scope.
 
 ### `Memory.init`: allocates a typed segment
 
@@ -104,7 +104,7 @@ val pair: (Int, Int) < Sync =
     }
 ```
 
-A freshly initialized segment reads as zero in every slot. This holds on the current JVM and Native backings (Native allocates with `calloc`), but `init` does not contractually guarantee zeroed memory, so do not rely on it as a portable invariant. Use `fill` when you need a known initial value. Setting an out-of-range index raises an `IndexOutOfBoundsException` from the underlying `MemorySegment`.
+A freshly initialized segment reads as zero in every slot on the current JVM and Native backings, but `init` does not contractually guarantee zeroed memory, so do not rely on it as a portable invariant. Use `fill` when you need a known initial value. The safe API is safe by default: every indexed and range operation (`get`, `set`, `view`, `copy`, `copyTo`) bounds-checks its arguments before touching the buffer and raises a managed `IndexOutOfBoundsException`, surfaced as a panic in the effect, uniformly on all four platforms. The unsafe tier (`Memory.Unsafe`) skips this check as the hot-path escape hatch (see "Dropping to unsafe").
 
 ### `fill`: bulk write
 
@@ -180,7 +180,7 @@ val count: Long < Sync =
 // 32, not 128
 ```
 
-> **Note:** `size` is `byteSize / Layout[A].size`. If you expect it to mirror `MemorySegment.byteSize`, multiply by the per-element width of `A`.
+> **Note:** `size` is the backing `UnsafeBuffer`'s byte size divided by `UnsafeLayout[A].size`. If you expect it to mirror the buffer's byte size, multiply by the per-element width of `A`.
 
 ## Slicing and copying
 
@@ -260,16 +260,16 @@ This is the operation you want when staging bytes through a pre-sized output buf
 
 ## Supported element types
 
-`Memory[A]` is parametric in `A`, but only types with a `Layout[A]` instance can be allocated. The companion ships instances for the six JVM primitives.
+`Memory[A]` is parametric in `A`, but only types with a `UnsafeLayout[A]` instance can be allocated. The companion ships instances for the six JVM primitives.
 
-### `Layout[A]`: the type-class contract
+### `UnsafeLayout[A]`: the type-class contract
 
-`Layout[A]` is sealed and abstract. It specifies the per-element byte size and the unsafe accessors that read and write a value at a byte offset:
+`UnsafeLayout[A]` lives in `kyo.internal`. It is an internal-namespace type that appears on the public signatures of `init`, `get`, `set`, and the rest as an implicit context bound; for the shipped primitives users never construct it. It specifies the per-element byte size and the accessors that read and write a value at a byte offset:
 
 ```scala
 import kyo.*
 
-// Allocation is constrained by `Layout`, picked up implicitly:
+// Allocation is constrained by `UnsafeLayout`, picked up implicitly:
 val ints   = Arena.run(Memory.init[Int](4).map(_.size))   // OK
 val longs  = Arena.run(Memory.init[Long](4).map(_.size))  // OK
 val floats = Arena.run(Memory.init[Float](4).map(_.size)) // OK
@@ -277,7 +277,7 @@ val floats = Arena.run(Memory.init[Float](4).map(_.size)) // OK
 
 ### Shipped instances
 
-A `given Layout[A]` ships for each of:
+A `given UnsafeLayout[A]` ships for each of:
 
 | Type    | Per-element bytes |
 | ------- | ----------------- |
@@ -307,7 +307,7 @@ val sum: Double < Sync =
 // 3.875
 ```
 
-> **Note:** No `Layout` derivation ships for composite types. Structs and case classes are not supported out of the box; if you need them, define your own `Layout[A]` and read/write each field through the primitive instances at the field's byte offset.
+> **Note:** No `UnsafeLayout` derivation ships for composite types. Structs and case classes are not supported out of the box; if you need them, define your own `UnsafeLayout[A]` and read/write each field through the primitive instances at the field's byte offset.
 
 ## Dropping to unsafe
 
@@ -315,7 +315,7 @@ When the per-element effect overhead matters (tight loops, parsers, FFI marshali
 
 ### `unsafe` and `safe`: round-trip conversion
 
-`memory.unsafe` returns a `Memory.Unsafe[A]` over the same `MemorySegment`. `unsafe.safe` lifts back to `Memory[A]`. Both are zero-cost view conversions:
+`memory.unsafe` returns a `Memory.Unsafe[A]` over the same `UnsafeBuffer`. `unsafe.safe` lifts back to `Memory[A]`. Both are zero-cost view conversions:
 
 ```scala
 import kyo.*
@@ -448,11 +448,14 @@ Every value (`readings`, `tail`) is allocated against the same arena and freed w
 
 ## Cross-platform behavior
 
-`kyo-offheap` compiles for JVM and Scala Native from the same source under `shared/`. There is no JS target; off-heap memory is not part of the JS runtime model.
+`kyo-memory` compiles for JVM, Scala Native, Scala.js, and Wasm from the same source under `shared/`. `Memory[A]` is an opaque alias over `kyo.internal.UnsafeBuffer`, kyo-data's cross-platform buffer primitive, so each platform's backing is whatever `UnsafeBuffer` provides there.
 
-- **JVM** uses `java.lang.foreign` directly. `Memory[A]` is an opaque alias for `java.lang.foreign.MemorySegment`; `Arena.run` opens a shared `java.lang.foreign.Arena`. Requires a JVM that exposes the foreign-function and memory API.
-- **Scala Native** uses a minimal `Arena`/`MemorySegment` shim under `kyo-offheap/native/` that wraps `calloc`/`free`/`memcpy`. `Arena.close` calls `free` on each tracked segment; allocating against an already-closed arena throws `IllegalStateException`.
+- **JVM** backs the buffer with a `java.lang.foreign.MemorySegment`, genuinely off-heap. `Arena.run` frees every tracked segment when the scope exits. Requires a JVM that exposes the foreign-function and memory API.
+- **Scala Native** backs it with `malloc`/`free`, genuinely off-heap. `Arena.run` frees every tracked segment when the scope exits.
+- **Scala.js and Wasm** (the Scala.js WebAssembly backend) back it with a heap `ArrayBuffer` reclaimed by the JS garbage collector, through the shared `js-wasm` buffer implementation. The whole API behaves identically (Arena scoping, the typed surface, the unsafe twin), but the storage is not truly off-heap and the buffer's `close` is a no-op, so reclamation is the GC's job rather than `Arena.run`'s.
 
 > **Caution:** On Scala Native, reads and writes against a segment whose arena has already closed are undefined behavior (segfault or silently corrupt data), not a managed panic. The cleanup invariant of `Arena.run` exists precisely to prevent this; do not let `Memory[A]` escape the scope.
 
-The public API (`Memory`, `Memory.init`, `Memory.initWith`, the extension methods, `Memory.Unsafe`, and the `Layout` instances) is identical on both platforms.
+> **Note:** On JS and Wasm the "off-heap" framing is nominal: the buffer lives on the JS heap. The planned follow-up is a Node-only off-heap backing via koffi (it would move `UnsafeBuffer` into `kyo-ffi`, where koffi lives, and make `kyo-memory` depend on `kyo-ffi`); the browser and Wasm backends keep the heap fallback. The same caveat is flagged as a `TODO` in `Memory.scala`.
+
+The public API (`Memory`, `Memory.init`, `Memory.initWith`, the extension methods, `Memory.Unsafe`, and the `UnsafeLayout` instances) is identical on all four platforms.

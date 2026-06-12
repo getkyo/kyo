@@ -169,7 +169,7 @@ Global / onLoad := {
 
     val javaVersion  = System.getProperty("java.version")
     val majorVersion = javaVersion.split("\\.")(0).toInt
-    // The foreign-API modules (kyo-data, kyo-ffi, kyo-offheap, kyo-tasty) compile at -release 25, which
+    // The foreign-API modules (kyo-data, kyo-ffi, kyo-tasty) compile at -release 25, which
     // requires a JDK >= 25; the rest of the build stays at -release 17. So the whole build needs JDK 25.
     if (majorVersion < 25) {
         throw new IllegalStateException(
@@ -259,7 +259,7 @@ lazy val kyoJVM: Project = project
         `kyo-prelude`.jvm,
         `kyo-parse`.jvm,
         `kyo-core`.jvm,
-        `kyo-offheap`.jvm,
+        `kyo-memory`.jvm,
         `kyo-ffi`.jvm,
         `kyo-ffi-codegen`,
         `kyo-ffi-plugin`,
@@ -327,6 +327,7 @@ lazy val kyoJS = project
         `kyo-core`.js,
         `kyo-ffi`.js,
         `kyo-ffi-it`.js,
+        `kyo-memory`.js,
         `kyo-direct`.js,
         `kyo-stm`.js,
         `kyo-stats-registry`.js,
@@ -378,7 +379,7 @@ lazy val kyoNative = project
         `kyo-config`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
-        `kyo-offheap`.native,
+        `kyo-memory`.native,
         `kyo-ffi`.native,
         `kyo-ffi-it`.native,
         `kyo-direct`.native,
@@ -431,6 +432,7 @@ lazy val kyoWasm = project
         `kyo-core`.wasm,
         `kyo-direct`.wasm,
         `kyo-stm`.wasm,
+        `kyo-memory`.wasm,
         `kyo-combinators`.wasm,
         `kyo-actor`.wasm,
         `kyo-reactive-streams`.wasm,
@@ -667,13 +669,15 @@ lazy val `kyo-core` =
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
 
-lazy val `kyo-offheap` =
-    crossProject(JVMPlatform, NativePlatform)
+lazy val `kyo-memory` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-offheap"))
+        .in(file("kyo-memory"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`, foreignRelease)
+        .settings(`kyo-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
         .jvmSettings(mimaCheck(false))
         .jvmConfigure(_.settings(
             doctestScalacOptions := Seq("-release", "25")

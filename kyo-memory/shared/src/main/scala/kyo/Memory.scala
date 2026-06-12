@@ -1,14 +1,15 @@
 package kyo
 
-import java.lang.foreign.{Arena as JArena, *}
+import kyo.internal.UnsafeBuffer
+import kyo.internal.UnsafeLayout
 import scala.annotation.tailrec
 
 /** Memory provides a safe, effect-tracked interface for off-heap memory management.
   *
   * Traditional off-heap memory management is error-prone, requiring manual deallocation and careful tracking of memory lifetimes. This
   * implementation leverages Kyo's effect system to guarantee proper resource cleanup through Arena-managed lifetimes. Additionally, while
-  * off-heap operations are inherently untyped and unsafe, Memory[A] provides type-safe operations through Layout type classes, ensuring
-  * memory reads and writes maintain type safety.
+  * off-heap operations are inherently untyped and unsafe, Memory[A] provides type-safe operations through UnsafeLayout type classes,
+  * ensuring memory reads and writes maintain type safety.
   *
   * Memory operations must be performed within an Arena.run block, which provides a scoped context for memory management. The Arena tracks
   * all allocations within its scope and automatically frees them when the block completes, whether normally or due to an error.
@@ -25,10 +26,17 @@ import scala.annotation.tailrec
   * Note that memory allocation operations (init, initWith) are intentionally not provided in the Unsafe API. This ensures that all memory
   * allocations are tracked by the Arena effect, which is necessary for automatic resource cleanup.
   *
+  * Platform backing: Memory is an opaque alias over kyo-data's UnsafeBuffer, so the concrete storage follows that buffer per platform. On
+  * the JVM (java.lang.foreign MemorySegment) and Scala Native (malloc/free) the storage is genuinely off-heap, outside the GC, with
+  * deterministic deallocation when the Arena closes. On Scala.js and Wasm (the Scala.js WebAssembly backend) the backing is a heap
+  * ArrayBuffer reclaimed by the JS garbage collector: the Arena scoping and the whole typed API behave identically, but the storage is not
+  * truly off-heap and the buffer's close is a no-op. Code that relies on deterministic, outside-the-GC deallocation should treat JS and Wasm
+  * as a heap fallback.
+  *
   * @tparam A
   *   The type of elements stored in this memory segment
   */
-opaque type Memory[A] = MemorySegment
+opaque type Memory[A] = UnsafeBuffer
 
 export Memory.Arena
 
@@ -43,8 +51,19 @@ object Memory:
       * @return
       *   A new Memory instance within an Arena context
       */
-    def init[A: Layout as l](size: Int)(using Frame): Memory[A] < Arena =
-        initWith[A](size)(identity)
+    def init[A: UnsafeLayout as l](size: Int)(using Frame): Memory[A] < Arena =
+        Arena.use { tracker =>
+            Sync.Unsafe.defer {
+                // TODO: on Scala.js and Wasm UnsafeBuffer.alloc returns a heap ArrayBuffer, not off-heap memory, so the
+                // Arena's close is a no-op and deallocation is left to the GC. The planned follow-up is a Node-only
+                // off-heap backing via koffi (koffi.alloc/free), which requires moving UnsafeBuffer into kyo-ffi (where
+                // koffi lives) and making kyo-memory depend on kyo-ffi; the browser and Wasm backends keep this heap
+                // fallback. See kyo-memory/README.md "Cross-platform behavior".
+                val buf = UnsafeBuffer.alloc(size.toLong * l.size)
+                tracker.register(buf)
+                buf
+            }
+        }
 
     /** Initializes a memory segment and immediately applies a function to it.
       *
@@ -57,12 +76,17 @@ object Memory:
       * @return
       *   The result of applying f to the new memory segment
       */
-    def initWith[A: Layout as l](size: Int)[B, S](f: Memory[A] => B < S)(using Frame): B < (Arena & S) =
-        Arena.use { arena =>
-            Sync.Unsafe.defer(f(arena.allocate(l.size * size)))
+    def initWith[A: UnsafeLayout as l](size: Int)[B, S](f: Memory[A] => B < S)(using Frame): B < (Arena & S) =
+        Arena.use { tracker =>
+            Sync.Unsafe.defer {
+                // TODO: heap-backed on Scala.js pending the koffi off-heap backing described in init.
+                val buf = UnsafeBuffer.alloc(size.toLong * l.size)
+                tracker.register(buf)
+                f(buf)
+            }
         }
 
-    extension [A: Layout as l](self: Memory[A])
+    extension [A: UnsafeLayout as l](self: Memory[A])
 
         /** Retrieves the element at the specified index.
           *
@@ -73,6 +97,7 @@ object Memory:
           */
         inline def get(index: Int)(using inline frame: Frame): A < Arena =
             Sync.Unsafe.defer {
+                checkIndex(self, index)
                 // TODO inference issue without the val
                 val x = Unsafe.get(self)(index)
                 x
@@ -87,7 +112,10 @@ object Memory:
           *   The value to write
           */
         inline def set(index: Int, value: A)(using inline frame: Frame): Unit < Arena =
-            Sync.Unsafe.defer(Unsafe.set(self)(index, value))
+            Sync.Unsafe.defer {
+                checkIndex(self, index)
+                Unsafe.set(self)(index, value)
+            }
 
         /** Fills the entire memory segment with the specified value.
           *
@@ -139,7 +167,10 @@ object Memory:
           *   A new Memory instance viewing the specified range
           */
         def view(from: Int, len: Int)(using Frame): Memory[A] < Arena =
-            Sync.Unsafe.defer(Unsafe.view(self)(from, len))
+            Sync.Unsafe.defer {
+                checkRange(self, from, len)
+                Unsafe.view(self)(from, len)
+            }
 
         /** Creates a copy of a portion of this memory segment.
           *
@@ -151,7 +182,16 @@ object Memory:
           *   A new Memory instance containing the copied data
           */
         def copy(from: Int, len: Int)(using Frame): Memory[A] < Arena =
-            Sync.Unsafe.defer(Unsafe.copy(self)(from, len))
+            Arena.use { tracker =>
+                Sync.Unsafe.defer {
+                    checkRange(self, from, len)
+                    val byteLen = len.toLong * l.size
+                    val newBuf  = UnsafeBuffer.alloc(byteLen)
+                    tracker.register(newBuf)
+                    self.copyTo(newBuf, from.toLong * l.size, 0L, byteLen)
+                    newBuf
+                }
+            }
 
         /** Copies elements from this memory segment to another.
           *
@@ -165,7 +205,11 @@ object Memory:
           *   Number of elements to copy
           */
         def copyTo(target: Memory[A], srcPos: Int, targetPos: Int, len: Int)(using Frame): Unit < Arena =
-            Sync.Unsafe.defer(Unsafe.copyTo(self)(target, srcPos, targetPos, len))
+            Sync.Unsafe.defer {
+                checkRange(self, srcPos, len)
+                checkRange(target, targetPos, len)
+                Unsafe.copyTo(self)(target, srcPos, targetPos, len)
+            }
 
         /** Returns the number of elements this memory segment can hold. */
         def size: Long = self.byteSize / l.size
@@ -174,11 +218,26 @@ object Memory:
         def unsafe: Unsafe[A] = self
     end extension
 
-    /** Represents a memory arena that manages the lifecycle of allocated Memory segments. */
+    /** Represents a memory arena that manages the lifecycle of allocated Memory segments.
+      *
+      * Arena tracks UnsafeBuffer instances and closes them on scope exit, replacing the previous JVM-specific java.lang.foreign.Arena
+      * approach with a cross-platform solution.
+      */
     opaque type Arena <: (Env[Arena.State] & Sync) = Env[Arena.State] & Sync
 
     object Arena:
-        opaque type State = JArena
+
+        /** Tracks UnsafeBuffer lifecycle -- manages buffer registration and bulk close. */
+        final class State private[Arena] ():
+            private val buffers                                = new java.util.concurrent.ConcurrentLinkedQueue[UnsafeBuffer]()
+            private[kyo] def register(buf: UnsafeBuffer): Unit = discard(buffers.add(buf))
+            private[kyo] def closeAll()(using AllowUnsafe): Unit =
+                var b = buffers.poll()
+                while b != null do
+                    if !b.isClosed then b.close()
+                    b = buffers.poll()
+            end closeAll
+        end State
 
         /** Runs an operation that requires an Arena, ensuring proper cleanup.
           *
@@ -189,51 +248,56 @@ object Memory:
           */
         def run[A, S](f: A < (Arena & S))(using Frame): A < (Sync & S) =
             Sync.defer {
-                val arena = JArena.ofShared()
-                Sync.ensure(Sync.defer(arena.close))(Env.run(arena)(f))
+                val tracker = new State()
+                Sync.ensure(Sync.Unsafe.defer(tracker.closeAll()))(Env.run(tracker)(f))
             }
 
-        given isolate: Isolate[Arena, Sync, Any] = Isolate.derive[Env[Arena.State] & Sync, Sync, Any]
+        given isolate: Isolate[Arena, Sync, Any] = Isolate.derive[Env[State] & Sync, Sync, Any]
 
-        private[kyo] def use[A, S](f: JArena => A < S)(using Frame): A < (S & Arena) =
+        private[kyo] def use[A, S](f: State => A < S)(using Frame): A < (S & Arena) =
             Env.use[State](f)
     end Arena
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    opaque type Unsafe[A] = MemorySegment
+    opaque type Unsafe[A] = UnsafeBuffer
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        extension [A: Layout as l](self: Unsafe[A])
+        extension [A: UnsafeLayout as l](self: Unsafe[A])
             inline def get(index: Int)(using AllowUnsafe): A =
-                l.get(self, index * l.size)
+                checkNotClosed(self)
+                l.read(self, index.toLong * l.size)
 
             inline def set(index: Int, value: A)(using AllowUnsafe): Unit =
-                l.set(self, index * l.size, value)
+                checkNotClosed(self)
+                l.write(self, index.toLong * l.size, value)
 
             inline def fill(value: A)(using AllowUnsafe): Unit =
+                checkNotClosed(self)
                 val len = size
                 @tailrec def loop(i: Int): Unit =
                     if i < len then
-                        set(i, value)
+                        l.write(self, i.toLong * l.size, value)
                         loop(i + 1)
                 loop(0)
             end fill
 
             inline def fold[B](z: B)(inline f: (B, A) => B)(using AllowUnsafe): B =
+                checkNotClosed(self)
                 val len = size
                 @tailrec def loop(i: Int, acc: B): B =
                     if i < len then
-                        loop(i + 1, f(acc, get(i)))
+                        loop(i + 1, f(acc, l.read(self, i.toLong * l.size)))
                     else acc
                 loop(0, z)
             end fold
 
             inline def findIndex(inline f: A => Boolean)(using AllowUnsafe): Maybe[Int] =
+                checkNotClosed(self)
                 val len = size
                 @tailrec def loop(i: Int): Maybe[Int] =
                     if i < len then
-                        if f(get(i)) then Present(i)
+                        if f(l.read(self, i.toLong * l.size)) then Present(i)
                         else loop(i + 1)
                     else Absent
                 loop(0)
@@ -245,17 +309,24 @@ object Memory:
                     case Absent     => false
 
             def view(from: Int, len: Int)(using AllowUnsafe): Unsafe[A] =
-                self.asSlice(from * l.size, len * l.size)
+                checkNotClosed(self)
+                self.view(from.toLong * l.size, len.toLong * l.size)
 
             def copy(from: Int, len: Int)(using Frame): Unsafe[A] < Arena =
-                Arena.use { arena =>
-                    val newMem = arena.allocate(l.size * len)
-                    MemorySegment.copy(self, from * l.size, newMem, 0, len * l.size)
-                    newMem
+                Arena.use { tracker =>
+                    Sync.Unsafe.defer {
+                        checkNotClosed(self)
+                        val byteLen = len.toLong * l.size
+                        val newBuf  = UnsafeBuffer.alloc(byteLen)
+                        tracker.register(newBuf)
+                        self.copyTo(newBuf, from.toLong * l.size, 0L, byteLen)
+                        newBuf
+                    }
                 }
 
             def copyTo(target: Unsafe[A], srcPos: Int, targetPos: Int, len: Int)(using AllowUnsafe): Unit =
-                MemorySegment.copy(self, srcPos * l.size, target, targetPos * l.size, len * l.size)
+                checkNotClosed(self)
+                self.copyTo(target, srcPos.toLong * l.size, targetPos.toLong * l.size, len.toLong * l.size)
 
             def size: Long = self.byteSize / l.size
 
@@ -263,63 +334,21 @@ object Memory:
         end extension
     end Unsafe
 
-    /** Defines how values of type A are laid out in memory. */
-    sealed abstract class Layout[A] extends Serializable:
-        inline def get(memory: Unsafe[A], offset: Long)(using AllowUnsafe): A
-        inline def set(memory: Unsafe[A], offset: Long, value: A)(using AllowUnsafe): Unit
-        def size: Long
-    end Layout
+    private inline def checkNotClosed(buf: UnsafeBuffer): Unit =
+        if buf.isClosed then throw new IllegalStateException("Memory accessed after Arena was closed")
 
-    /** Provides Layout implementations for primitive types. */
-    object Layout:
-        import ValueLayout.*
+    // Bounds validation for the safe API. The unsafe tier stays unchecked as the hot-path escape hatch, so these run
+    // only on the safe extension methods, where they raise a managed IndexOutOfBoundsException uniformly on every
+    // platform (the native backing does no bounds checking of its own).
+    private def checkIndex[A](self: Memory[A], index: Int)(using l: UnsafeLayout[A]): Unit =
+        val size = self.byteSize / l.size
+        if index < 0 || index >= size then
+            throw new IndexOutOfBoundsException(s"Memory index $index out of bounds for size $size")
+    end checkIndex
 
-        given Layout[Byte] with
-            inline def get(memory: Unsafe[Byte], offset: Long)(using AllowUnsafe): Byte =
-                memory.get(JAVA_BYTE, offset)
-            inline def set(memory: Unsafe[Byte], offset: Long, value: Byte)(using AllowUnsafe): Unit =
-                memory.set(JAVA_BYTE, offset, value)
-            def size = JAVA_BYTE.byteSize
-        end given
-
-        given Layout[Short] with
-            inline def get(memory: Unsafe[Short], offset: Long)(using AllowUnsafe): Short =
-                memory.get(JAVA_SHORT, offset)
-            inline def set(memory: Unsafe[Short], offset: Long, value: Short)(using AllowUnsafe): Unit =
-                memory.set(JAVA_SHORT, offset, value)
-            def size = JAVA_SHORT.byteSize
-        end given
-
-        given Layout[Int] with
-            inline def get(memory: Unsafe[Int], offset: Long)(using AllowUnsafe): Int =
-                memory.get(JAVA_INT, offset)
-            inline def set(memory: Unsafe[Int], offset: Long, value: Int)(using AllowUnsafe): Unit =
-                memory.set(JAVA_INT, offset, value)
-            def size = JAVA_INT.byteSize
-        end given
-
-        given Layout[Long] with
-            inline def get(memory: Unsafe[Long], offset: Long)(using AllowUnsafe): Long =
-                memory.get(JAVA_LONG, offset)
-            inline def set(memory: Unsafe[Long], offset: Long, value: Long)(using AllowUnsafe): Unit =
-                memory.set(JAVA_LONG, offset, value)
-            def size = JAVA_LONG.byteSize
-        end given
-
-        given Layout[Float] with
-            inline def get(memory: Unsafe[Float], offset: Long)(using AllowUnsafe): Float =
-                memory.get(JAVA_FLOAT, offset)
-            inline def set(memory: Unsafe[Float], offset: Long, value: Float)(using AllowUnsafe): Unit =
-                memory.set(JAVA_FLOAT, offset, value)
-            def size = JAVA_FLOAT.byteSize
-        end given
-
-        given Layout[Double] with
-            inline def get(memory: Unsafe[Double], offset: Long)(using AllowUnsafe): Double =
-                memory.get(JAVA_DOUBLE, offset)
-            inline def set(memory: Unsafe[Double], offset: Long, value: Double)(using AllowUnsafe): Unit =
-                memory.set(JAVA_DOUBLE, offset, value)
-            def size = JAVA_DOUBLE.byteSize
-        end given
-    end Layout
+    private def checkRange[A](self: Memory[A], from: Int, len: Int)(using l: UnsafeLayout[A]): Unit =
+        val size = self.byteSize / l.size
+        if from < 0 || len < 0 || from.toLong + len > size then
+            throw new IndexOutOfBoundsException(s"Memory range [$from, ${from.toLong + len}) out of bounds for size $size")
+    end checkRange
 end Memory
