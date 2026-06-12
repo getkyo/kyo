@@ -59,8 +59,27 @@ object LandingApp:
 
     // ---- 1. Hero ----
 
+    // A quiet geometric backdrop for the hero: concentric arcs radiating from the top-right corner, in the
+    // accent color at a low overall opacity (set on `.hero-bg`), clipped by the section's overflow so they
+    // read as soft layers fanning out behind the code sample. Decorative only (aria-hidden), and it sits on
+    // `z-index: 0` under the content's `z-index: 1`, so it never intercepts a click or a text selection.
+    private def heroBackdrop(using Frame): UI =
+        val accent = Svg.Paint.Color(Style.Color.variable("accent"))
+        val rings  = Chunk(150.0, 232.0, 314.0, 396.0, 478.0, 560.0)
+        UI.div.cssClass("hero-bg").aria("hidden", "true")(
+            Svg.svg.viewBox(Svg.ViewBox(0, 0, 620, 540)).width(620).height(540)(
+                Svg.g(
+                    rings.map(r =>
+                        Svg.circle.cx(620.0).cy(0.0).r(r).fill(Svg.Paint.None).stroke(accent).strokeWidth(1.4)
+                    )*
+                )
+            )
+        )
+    end heroBackdrop
+
     private def hero(home: String)(using Frame): UI =
         UI.section.cssClass("hero").id("top").data("section", "hero")(
+            heroBackdrop,
             UI.div.cssClass("wrap")(
                 UI.div.cssClass("hero-grid")(
                     UI.div.cssClass("hero-text")(

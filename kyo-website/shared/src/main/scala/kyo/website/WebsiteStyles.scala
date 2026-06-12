@@ -381,7 +381,18 @@ object WebsiteStyles:
                 "hero",
                 Style.column.align(_.center).textAlign(_.center)
                     .padding(74.px, 0.px, 56.px, 0.px)
-                    .position(_.flow).overflow(_.hidden)
+                    .position(_.relative).overflow(_.hidden)
+            )
+            // The decorative arc backdrop, anchored to the top-right corner and clipped by the hero's
+            // overflow. Low opacity so it reads as a quiet layer behind the content; z-index 0 keeps it
+            // under the content (which gets z-index 1 below), so it never intercepts a click.
+            .rule(
+                "hero-bg",
+                Style.position(_.absolute).top((-70).px).right((-80).px).zIndex(0).opacity(0.1)
+            )
+            .rule(
+                Selector.cls("hero").descendant(Selector.cls("wrap")),
+                Style.position(_.relative).zIndex(1)
             )
             .rule(
                 // block (not the reset's flex-column): the headline mixes text, a <br>, and an inline

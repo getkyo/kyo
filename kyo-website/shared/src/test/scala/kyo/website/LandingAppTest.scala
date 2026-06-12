@@ -49,6 +49,16 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
+    "hero renders a decorative arc backdrop (aria-hidden, behind the content)" in {
+        renderLanding.map { html =>
+            // A quiet concentric-arc motif sits behind the hero content. It is decorative, so it is
+            // aria-hidden, and it is an inline <svg> of circles sharing the top-right corner (cx=620 cy=0).
+            assert(html.contains("class=\"hero-bg\""), s"the hero must render the .hero-bg backdrop: $html")
+            assert(html.contains("aria-hidden=\"true\""), "the decorative backdrop must be aria-hidden")
+            assert(html.contains("cx=\"620\""), "the arcs share the top-right corner center cx=620")
+        }
+    }
+
     "one-foundation feat-grid names the five capability categories" in {
         renderLanding.map { html =>
             assert(html.contains("Everything you need, on the same ground."), "foundation heading must render")
