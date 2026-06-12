@@ -194,7 +194,7 @@ val example: UI < Async =
     yield div(
         button("Toggle").onClick(loggedIn.updateAndGet(!_)),
         when(loggedIn)(
-            p("Welcome, ", username: Signal[String]).style(themed)
+            p("Welcome, ", username).style(themed)
         ),
         input.placeholder("Your name").value(username).hidden(loggedIn)
     )
@@ -246,7 +246,7 @@ val explicit: UI < Async =
 
 val implicitForm: UI < Async =
     for ref <- Signal.initRef("")
-    yield span(ref: Signal[String])
+    yield span(ref)
 ```
 
 > **Note:** Only `Signal[A <: UI]` and `Signal[String]` auto-coerce. A `Signal[Style]` does NOT (it has its own `.style(Signal[Style])` overload). A `Signal[Boolean]` does NOT. Reading any other signal type in a `UI*` position produces a type error.
@@ -365,7 +365,7 @@ val nameField: UI < Async =
     for name <- Signal.initRef("")
     yield div(
         input.id("name").placeholder("Your name").value(name),
-        p("Hi, ", name: Signal[String])
+        p("Hi, ", name)
     )
 ```
 
@@ -1475,7 +1475,7 @@ val interactiveCell: UI < Async =
     yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
         Svg.g
             .onClick(Console.printLine("clicked"))
-            .onHover((e: UI.MouseEvent) => hovered.set(true))
+            .onHover(hovered.set(true))
             .onUnhover(hovered.set(false))(
                 Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
             )

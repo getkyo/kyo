@@ -156,7 +156,7 @@ def query(): Result[Timeout | BadCredentials, Int] = Result.fail(Timeout(5.secon
 
 // Recover only Timeout; BadCredentials would remain in the result type
 val recovered: Result[BadCredentials, Int] =
-    query().flatMapError[Timeout]((e: Timeout | Throwable) => Result.succeed(0))
+    query().flatMapError[Timeout](_ => Result.succeed(0))
 ```
 
 ### Narrowing to expected failures only
