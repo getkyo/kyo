@@ -4,7 +4,6 @@ import kyo.UI.Ast.*
 import kyo.UI.foreach
 import kyo.UI.render
 import kyo.internal.HtmlRenderer
-import scala.language.implicitConversions
 
 /** Tests for the reactive-boundary typing: parameterized `Reactive[C]`, `Foreach[A, C]`, `Fragment[C]`,
   * and the narrowed return types on `when`, `render`, `foreach*`, and the Signal-overloaded setters.

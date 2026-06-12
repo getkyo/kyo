@@ -3,6 +3,7 @@ package kyo.test.runner
 import kyo.Abort
 import kyo.Async
 import kyo.Chunk
+import kyo.Clock
 import kyo.Duration
 import kyo.Fiber
 import kyo.Frame
@@ -153,7 +154,9 @@ object TestRunner:
                         val leafInfo = LeafInfo(suiteInfo.name, path, builder.tags)
                         val cursor   = cursorMap.getOrElse(path, Chunk.empty)
                         Sync.defer(reporter.onLeafStart(leafInfo)).andThen(
-                            runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
+                            withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, reporter)(
+                                runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
+                            )
                         ).map { entries =>
                             entries.headMaybe match
                                 case Maybe.Present((_, result)) => reporter.onLeafComplete(leafInfo, result)
@@ -287,6 +290,29 @@ object TestRunner:
     end walkNode
 
     // ── Execution: one leaf ───────────────────────────────────────────────────────────────────
+
+    /** Wrap a leaf computation with a forked heartbeat fiber that reports the leaf as still running once it has run longer than `interval`,
+      * repeating every interval thereafter, via `reporter.onLeafHeartbeat`. `Clock.repeatWithDelay` forks the fiber; `Sync.acquireReleaseWith`
+      * interrupts it the instant the leaf finishes (or fails), so a leaf that completes before the interval produces no extra output.
+      * `Duration.Infinity` disables it (the body runs unchanged). This is an ordinary forked fiber, not a dedicated thread: a leaf that is
+      * merely parked (waiting on a channel, fiber, or latch, the common hung-test shape) is still observed, because the scheduler runs the
+      * heartbeat fiber on another worker. It cannot report a leaf that has wedged every worker; that rarer case is out of scope here.
+      */
+    private def withHeartbeat[A](
+        info: LeafInfo,
+        interval: Duration,
+        reporter: TestReporter
+    )(body: A < Async)(using Frame): A < Async =
+        if interval == Duration.Infinity then body
+        else
+            Sync.acquireReleaseWith(
+                Clock.stopwatch.map { sw =>
+                    Clock.repeatWithDelay(interval, interval) {
+                        sw.elapsed.map(elapsed => reporter.onLeafHeartbeat(info, elapsed))
+                    }
+                }
+            )(_.interrupt)(_ => body)
+    end withHeartbeat
 
     /** Run one leaf at `cursor`, producing its result entry plus any synthetic stray entries.
       *

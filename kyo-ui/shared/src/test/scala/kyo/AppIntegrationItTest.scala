@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Browser.*
 import kyo.UI.foreach
-import scala.language.implicitConversions
 
 class AppIntegrationItTest extends UITest:
 

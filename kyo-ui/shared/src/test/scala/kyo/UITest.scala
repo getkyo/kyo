@@ -1,7 +1,5 @@
 package kyo
 
-import scala.language.implicitConversions
-
 abstract class UITest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds

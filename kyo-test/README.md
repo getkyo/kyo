@@ -515,10 +515,10 @@ You run a module's suites through sbt; the runner discovers every `Test` subclas
 
 ```sh
 # Run every suite in a module
-sbt 'kyo-core/test'
+sbt 'kyo-coreJVM/test'
 
 # Run a single suite
-sbt 'kyo-core/testOnly kyo.ChannelTest'
+sbt 'kyo-coreJVM/testOnly kyo.ChannelTest'
 ```
 
 ### CLI flags

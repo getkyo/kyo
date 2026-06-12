@@ -3,7 +3,6 @@ package kyo
 import kyo.Browser.*
 import kyo.UI.*
 import kyo.UI.Ast.*
-import scala.language.implicitConversions
 
 class FileInputTest extends UITest:
 

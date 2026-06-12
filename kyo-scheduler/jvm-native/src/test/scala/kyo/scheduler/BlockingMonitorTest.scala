@@ -1053,16 +1053,17 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "ordering preserved with preemption set" in {
-            import scala.collection.mutable.PriorityQueue
             val t1 = Task((), 1)
             val t2 = Task((), 2)
             val t3 = Task((), 3)
             t2.doPreempt()
-            val q      = PriorityQueue(t2, t3, t1)
-            val result = q.dequeueAll
-            assert(result(0) eq t1, "lowest runtime first")
-            assert(result(1) eq t2, "middle runtime second (preemption shouldn't affect order)")
-            assert(result(2) eq t3, "highest runtime last")
+            val q = new WorkerQueue()
+            q.add(t2)
+            q.add(t3)
+            q.add(t1)
+            assert((q.poll(): Task) eq t1, "lowest runtime first")
+            assert((q.poll(): Task) eq t2, "middle runtime second (preemption shouldn't affect order)")
+            assert((q.poll(): Task) eq t3, "highest runtime last")
         }
     }
 

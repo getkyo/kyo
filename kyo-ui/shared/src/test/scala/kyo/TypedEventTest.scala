@@ -5,7 +5,6 @@ import kyo.internal.MouseEventData
 import kyo.internal.ReactiveUI
 import kyo.internal.UIEvent
 import kyo.internal.UIExchange
-import scala.language.implicitConversions
 
 /** Typed event payloads. Unit tests dispatching UIEvents directly through ReactiveUI.
   *

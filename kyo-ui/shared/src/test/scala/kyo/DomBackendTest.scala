@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 // DomBackend.scala is a JS-only source. These tests exercise its behaviour
 // end-to-end via the JVM browser test infrastructure (SSE/event POST cycle).

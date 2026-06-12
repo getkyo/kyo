@@ -51,8 +51,9 @@ class SummaryTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
         // Summary line is the first line; failures append a TOTAL FAILURES block after it.
+        // The cancelled leaf is excluded from TOTAL FAILURES: only Failed and TimedOut are real failures.
         assert(summary.startsWith("kyo-test: 7 tests, 1 passed, 1 failed, 1 cancelled, 1 pending, 1 ignored, 1 timed out, 1 skipped")): Unit
-        assert(summary.contains("TOTAL FAILURES (3)")): Unit
+        assert(summary.contains("TOTAL FAILURES (2)")): Unit
     }
 
     // ── Test 3: empty reports and empty positional args ───────────────────────────────────────────
@@ -198,7 +199,7 @@ class SummaryTest extends kyo.test.Test[Any]:
         assert(!summary.contains("FAILURES"), s"Expected no FAILURES section in all-green output:\n$summary"): Unit
     }
 
-    "phase10-test-3: TimedOut and Cancelled leaves appear; Pending Skipped Ignored do not" in {
+    "phase10-test-3: only TimedOut is a failure; Cancelled Pending Skipped Ignored do not appear in TOTAL FAILURES" in {
         val sr = SuiteReport(
             "MixedSuite",
             Chunk(
@@ -211,11 +212,13 @@ class SummaryTest extends kyo.test.Test[Any]:
             zeroDuration
         )
         val summary = Summary.render(Iterable(TestReport(Chunk(sr))), Chunk.empty, Chunk.empty)
-        assert(summary.contains("TOTAL FAILURES (2)"), s"Expected TOTAL FAILURES (2) in:\n$summary"): Unit
+        // Only the timeout is a real failure. The cancelled leaf is a deliberate non-run, counted on
+        // the summary line (1 cancelled) but excluded from TOTAL FAILURES, alongside pending/skipped/ignored.
+        assert(summary.contains("TOTAL FAILURES (1)"), s"Expected TOTAL FAILURES (1) in:\n$summary"): Unit
         assert(summary.contains("[TIMEOUT]"), s"Expected [TIMEOUT] tag in:\n$summary"): Unit
-        assert(summary.contains("[CANCELLED]"), s"Expected [CANCELLED] tag in:\n$summary"): Unit
         assert(summary.contains("MixedSuite > t1"), s"Expected path MixedSuite > t1 in:\n$summary"): Unit
-        assert(summary.contains("MixedSuite > c1"), s"Expected path MixedSuite > c1 in:\n$summary"): Unit
+        assert(!summary.contains("[CANCELLED]"), s"Cancelled must not appear in TOTAL FAILURES:\n$summary"): Unit
+        assert(!summary.contains("MixedSuite > c1"), s"Cancelled leaf must not appear in TOTAL FAILURES:\n$summary"): Unit
         assert(!summary.contains("MixedSuite > pnd"), s"Pending leaf must not appear in TOTAL FAILURES:\n$summary"): Unit
         assert(!summary.contains("MixedSuite > skp"), s"Skipped leaf must not appear in TOTAL FAILURES:\n$summary"): Unit
         assert(!summary.contains("MixedSuite > ign"), s"Ignored leaf must not appear in TOTAL FAILURES:\n$summary"): Unit
@@ -235,6 +238,64 @@ class SummaryTest extends kyo.test.Test[Any]:
         )
         assert(summary.contains("TOTAL FAILURES (1)"), s"expected TOTAL FAILURES (1)"): Unit
         assert(summary.length < 64000, s"summary length ${summary.length} exceeds the 64KB writeUTF cap"): Unit
+    }
+
+    "many failing leaves keep the summary under the writeUTF cap (the real native crash)" in {
+        // The actual Scala Native crash: when very many leaves fail with the same reason (e.g. ~1300 leaves
+        // failing because a shared fixture is broken), the TOTAL FAILURES block lists them all and the
+        // summary overflows writeUTF. Per-line capping alone is not enough; the whole block must be bounded.
+        // Note: Cancelled leaves are no longer failures (they are deliberate skips) so this test uses Failed.
+        val reason = "chrome-headless-shell unavailable on linux-arm64; install chromium and pass Browser.LaunchConfig.chromium. " * 3
+        val leaves = (1 to 3000).map(i => (Chunk("Suite", s"leaf$i"), TestResult.Failed(reason, Maybe.empty, oneMilli): TestResult))
+        val summary = Summary.render(
+            Iterable(TestReport(Chunk(SuiteReport("Suite", Chunk.from(leaves), zeroDuration)))),
+            Chunk.empty,
+            Chunk.empty
+        )
+        assert(summary.contains("TOTAL FAILURES (3000)"), s"expected the full count in the header"): Unit
+        assert(
+            summary.contains("[FAIL] x3000"),
+            s"expected the 3000 same-reason failures collapsed into one grouped line:\n${summary.take(500)}"
+        ): Unit
+        assert(!summary.contains("leaf2999"), s"grouped leaves should not list individual paths:\n${summary.take(500)}"): Unit
+        assert(summary.length < 64000, s"summary length ${summary.length} exceeds the 64KB writeUTF cap"): Unit
+    }
+
+    "distinct reasons are not grouped (each failing leaf keeps its own line + path)" in {
+        val summary = Summary.render(
+            reportOf(
+                leafResult(TestResult.Failed("a == b", Maybe.empty, oneMilli)),
+                leafResult(TestResult.Failed("c == d", Maybe.empty, oneMilli))
+            ),
+            Chunk.empty,
+            Chunk.empty
+        )
+        assert(summary.contains("TOTAL FAILURES (2)"), summary): Unit
+        assert(summary.contains("a == b") && summary.contains("c == d"), s"distinct reasons must both appear:\n$summary"): Unit
+        assert(!summary.contains(" x2"), s"distinct reasons must not be grouped:\n$summary"): Unit
+    }
+
+    "many DISTINCT multi-byte failures stay under the writeUTF byte cap (not just the char cap)" in {
+        // Grouping does not help when every failure is distinct, so the backstop must hold. writeUTF caps at
+        // 65535 *bytes* of modified UTF-8 (up to 3 bytes/char), so a char-only bound is not enough: 5000
+        // distinct reasons built from 3-byte CJK characters would be ~150KB of bytes while well under any
+        // character cap. The byte-aware guard must keep the rendered summary under the real byte cap.
+        // Note: Cancelled leaves are no longer failures (they are deliberate skips) so this test uses Failed.
+        val leaves = (1 to 5000).map { i =>
+            val reason = ("中" * 300) + i.toString // 300 CJK chars (3 bytes each) + a unique suffix
+            (Chunk("Suite", s"leaf$i"), TestResult.Failed(reason, Maybe.empty, oneMilli): TestResult)
+        }
+        val summary = Summary.render(
+            Iterable(TestReport(Chunk(SuiteReport("Suite", Chunk.from(leaves), zeroDuration)))),
+            Chunk.empty,
+            Chunk.empty
+        )
+        val byteLen = summary.foldLeft(0) { (acc, c) =>
+            val code = c.toInt
+            acc + (if code >= 0x0001 && code <= 0x007f then 1 else if code <= 0x07ff then 2 else 3)
+        }
+        assert(byteLen < 65535, s"summary modified-UTF-8 byte length $byteLen exceeds the 65535 writeUTF cap"): Unit
+        assert(summary.contains("TOTAL FAILURES (5000)"), s"header must still carry the true count:\n${summary.take(200)}"): Unit
     }
 
 end SummaryTest

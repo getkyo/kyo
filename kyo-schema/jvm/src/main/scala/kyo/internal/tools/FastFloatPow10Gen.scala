@@ -129,7 +129,7 @@ import java.nio.file.Paths
     sb.append("    )\n")
 
     // Resolve the output path.
-    // When run via `sbt "kyo-schema/runMain ..."` (forked), user.dir = <worktree>/kyo-schema/jvm.
+    // When run via `sbt "kyo-schemaJVM/runMain ..."` (forked), user.dir = <worktree>/kyo-schema/jvm.
     // Walk up two levels to reach the worktree root, then resolve the shared path.
     val jvmDir   = Paths.get(System.getProperty("user.dir"))
     val worktree = jvmDir.getParent.getParent // kyo-schema/jvm -> kyo-schema -> worktree

@@ -169,6 +169,27 @@ class IOPromiseTest extends kyo.test.Test[Any]:
             p.interruptDiscard(Result.Panic(new Exception("Interrupted")))
             assert(p.block(deadline()).isPanic)
         }
+
+        "onInterrupted fires once, after the CAS, only on the interrupt path" in {
+            class HookedPromise extends IOPromise[Nothing, Int]:
+                var fired         = 0
+                var pendingAtHook = true
+                override protected def onInterrupted(): Unit =
+                    fired += 1
+                    pendingAtHook = !done()
+            end HookedPromise
+
+            val interrupted = new HookedPromise
+            assert(interrupted.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(interrupted.fired == 1)
+            assert(!interrupted.pendingAtHook, "hook must observe the promise already completed (post-CAS)")
+            assert(!interrupted.interrupt(Result.Panic(new Exception("again"))))
+            assert(interrupted.fired == 1)
+
+            val completed = new HookedPromise
+            assert(completed.complete(Result.succeed(1)))
+            assert(completed.fired == 0)
+        }
     }
 
     "onComplete" - {

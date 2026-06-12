@@ -116,10 +116,10 @@ export JAVA_OPTS="-Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M -XX:ReservedCo
 export JVM_OPTS="$JAVA_OPTS"
 
 # Test a specific module (JVM)
-sbt 'kyo-core/test'
+sbt 'kyo-coreJVM/test'
 
 # Test a specific test class
-sbt 'kyo-core/testOnly kyo.ChannelTest'
+sbt 'kyo-coreJVM/testOnly kyo.ChannelTest'
 ```
 
 ## Project Structure

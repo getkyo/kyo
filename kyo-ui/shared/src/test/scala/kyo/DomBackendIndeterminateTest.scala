@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 // Test 13: DomBackend removes the data-kyo-prop-indeterminate source attribute after
 // applying the JS-side .indeterminate property on mount.

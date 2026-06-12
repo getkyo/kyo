@@ -2,7 +2,6 @@ package kyo
 
 import UI.*
 import UI.Ast.*
-import scala.language.implicitConversions
 
 class UIDslTest extends kyo.test.Test[Any]:
 
