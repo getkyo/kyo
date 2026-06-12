@@ -14,7 +14,7 @@ import kyo.UI.*
   *
   * Demonstrates: `UI.runRender` for SSR, and that one `UI` value renders to plain HTML with no DOM or browser.
   */
-object HtmlSnapshot extends KyoApp:
+object HtmlSnapshotDemo extends KyoApp:
 
     case class Product(name: String, price: String)
 
@@ -43,4 +43,4 @@ object HtmlSnapshot extends KyoApp:
             _ <- Console.printLine(html)
         yield ()
     }
-end HtmlSnapshot
+end HtmlSnapshotDemo

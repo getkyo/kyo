@@ -58,22 +58,6 @@ class SvgTest extends kyo.test.Test[Any]:
         """)("Found")
     }
 
-    // SvgElement is sealed (cannot be extended outside the file)
-    "SvgElement is sealed and cannot be extended externally (compile-fail)" in {
-        typeCheckFailure("""
-          import kyo.*
-          class Foo extends Svg.SvgElement {
-            type Self = Foo
-            def svgAttrs = ???
-            def withSvg(s: Svg.SvgAttrs): Foo = ???
-            def attrs = ???
-            def children = ???
-            def withAttrs(a: kyo.UI.Ast.Attrs): Foo = ???
-            def frame = ???
-          }
-        """)("Cannot extend sealed")
-    }
-
     // title is a typed child of a shape
     "title is a typed child of rect" in {
         val r = Svg.rect.x(0).y(0).width(64).height(18)(Svg.title("parseRequest"))

@@ -17,7 +17,7 @@ import kyo.UI.*
   * Demonstrates: an `Async` event handler calling `HttpClient.getJson`, typed error recovery with `Abort.run`, two-way `value` binding, a
   * reactive results list via `signal.foreach`, and a tri-state (loading / error / results) driven by `signal.render`.
   */
-object Search extends KyoApp:
+object SearchDemo extends KyoApp:
 
     // Wikipedia API response shape (only the fields we read).
     case class WikiResponse(query: WikiQuery) derives Schema
@@ -106,4 +106,4 @@ object Search extends KyoApp:
         yield ()
         end for
     }
-end Search
+end SearchDemo

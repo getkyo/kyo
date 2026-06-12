@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Browser.*
 import kyo.UI.foreach
-import scala.language.implicitConversions
 
 /** Port of FormDemoQATest. The TUI test referenced cursor characters (█) and TUI rendering artifacts; in browser the equivalent invariants
   * are checked via DOM properties (placeholder attribute, value attribute, document.activeElement, selectionStart). Tests that drove TUI

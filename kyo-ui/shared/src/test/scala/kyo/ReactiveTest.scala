@@ -6,7 +6,6 @@ import kyo.UI.foreach
 import kyo.UI.foreachIndexed
 import kyo.UI.foreachKeyed
 import kyo.UI.render
-import scala.language.implicitConversions
 
 class ReactiveTest extends UITest:
 

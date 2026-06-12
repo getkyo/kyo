@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.UI.Ast.*
-import scala.language.implicitConversions
 
 class SvgValueDslTest extends kyo.test.Test[Any]:
 
@@ -41,8 +40,8 @@ class SvgValueDslTest extends kyo.test.Test[Any]:
         assert(r2.cx == Present(10.0))
     }
 
-    // Paint.Color via given Conversion from Style.Color
-    "Style.Color converts to Paint.Color via given Conversion" in {
+    // Paint.Color via implicit conversion from Style.Color
+    "Style.Color converts to Paint.Color via implicit conversion" in {
         val p: Svg.Paint = Style.Color.blue
         assert(p == Svg.Paint.Color(Style.Color.blue))
     }

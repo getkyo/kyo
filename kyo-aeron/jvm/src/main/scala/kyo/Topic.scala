@@ -231,31 +231,39 @@ object Topic:
                         def loop(): Unit < (Emit[Chunk[A]] & Async & Abort[Backpressured]) =
                             Retry[Backpressured](retrySchedule) {
                                 Sync.defer {
-                                    if !subscription.isConnected() then backpressured
+                                    val fragmentsRead =
+                                        try
+                                            if !subscription.isConnected() then 0
+                                            else
+                                                // clear previous result before polling
+                                                result = Absent
+                                                subscription.poll(handler, 1)
+                                        catch
+                                            // Aeron transport errors under load (a registration timeout, or a log
+                                            // buffer closed by an interrupt during teardown) are treated as "nothing
+                                            // read" so the retry schedule applies, instead of escaping as a panic.
+                                            case _: io.aeron.exceptions.AeronException           => 0
+                                            case _: java.nio.channels.ClosedByInterruptException => 0
+                                    if fragmentsRead == 0 then
+                                        backpressured
                                     else
-                                        // clear previous result before polling
-                                        result = Absent
-                                        val fragmentsRead = subscription.poll(handler, 1)
-                                        if fragmentsRead == 0 then
-                                            backpressured
-                                        else
-                                            result match
-                                                case Present((tag2String, messages)) =>
-                                                    // verify message type matches expected type
-                                                    if tag2String != tag.show then
-                                                        Abort.panic(
-                                                            new IllegalStateException(
-                                                                s"Expected messages of type ${tag.show} but got ${tag2String}"
-                                                            )
+                                        result match
+                                            case Present((tag2String, messages)) =>
+                                                // verify message type matches expected type
+                                                if tag2String != tag.show then
+                                                    Abort.panic(
+                                                        new IllegalStateException(
+                                                            s"Expected messages of type ${tag.show} but got ${tag2String}"
                                                         )
-                                                    else
-                                                        result = Absent
-                                                        Emit.valueWith(messages)(loop())
-                                                    end if
-                                                case Absent =>
-                                                    Abort.panic(new IllegalStateException(s"No results"))
-                                            end match
-                                        end if
+                                                    )
+                                                else
+                                                    result = Absent
+                                                    Emit.valueWith(messages)(loop())
+                                                end if
+                                            case Absent =>
+                                                Abort.panic(new IllegalStateException(s"No results"))
+                                        end match
+                                    end if
                                 }
                             }
                         end loop

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 /** Tests that exercise realistic keyboard/mouse interaction patterns. Where the original test used char-by-char `pressKey`, we use
   * `Browser.fill` instead; kyo-browser's `press` re-focuses before each call (cursor reset), so consecutive

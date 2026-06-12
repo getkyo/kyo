@@ -17,7 +17,7 @@ import kyo.UI.*
   * `Signal.combineLatestAll`, `.disabled(Signal[Boolean])` submit gating, `when` for conditional inline errors and the post-submit view, and
   * `Form.onSubmit`.
   */
-object Signup extends KyoApp:
+object SignupDemo extends KyoApp:
 
     private val pageStyle  = Style.padding(24.px).fontFamily(FontFamily.SansSerif).maxWidth(420.px)
     private val fieldStyle = Style.column.gap(4.px).padding(8.px, 0.px)
@@ -112,4 +112,4 @@ object Signup extends KyoApp:
         yield ()
         end for
     }
-end Signup
+end SignupDemo

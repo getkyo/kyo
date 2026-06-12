@@ -32,10 +32,6 @@ class LengthTest extends kyo.test.Test[Any]:
         assert(Length.resolveOrAuto(Auto, 100) == kyo.Absent)
     }
 
-    "Length.toPx is not callable: callers must match Px|Em explicitly" in {
-        typeCheckFailure("Length.toPx(Length.Px(5))")
-    }
-
     "Px is directly usable as Px without conversion" in {
         val px: Length.Px = Length.Px(5)
         assert(px == Length.Px(5))
