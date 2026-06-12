@@ -78,6 +78,22 @@ class TapReporterTest extends kyo.test.Test[Any]:
         assert(output.contains("# SKIP no env"), s"Missing '# SKIP no env' in: $output")
     }
 
+    "cancelled tests are an ok # SKIP line, not a failure" in {
+        val output = capture { r =>
+            r.onRunStart(RunInfo(1, 1))
+            fireSuite(
+                r,
+                "CancelSuite",
+                List(Chunk("coresTest") -> TestResult.Cancelled("Needs >4 cores", 1L.millis))
+            )
+        }
+        // A cancelled precondition is a deliberate skip, so it is a passing `ok` line with a SKIP
+        // directive, never `not ok`, which would mark the build red.
+        assert(output.contains("ok 1 - "), s"Missing 'ok 1' in: $output")
+        assert(output.contains("# SKIP cancelled: Needs >4 cores"), s"Missing SKIP directive in: $output")
+        assert(!output.contains("not ok"), s"Cancelled must not produce 'not ok' in: $output")
+    }
+
     // ── Empty and edge-case suites ─────────────────────────────────────────────────────────────────
 
     "zero-leaf suite emits exactly TAP version 13 plan 0" in {

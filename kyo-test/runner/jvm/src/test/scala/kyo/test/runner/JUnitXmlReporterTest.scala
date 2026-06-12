@@ -155,6 +155,24 @@ class JUnitXmlReporterTest extends kyo.test.Test[Any]:
         }
     }
 
+    "cancelled leaf is <skipped>, not <failure>, and counts as skipped" in {
+        withTempDir { dir =>
+            val reporter  = JUnitXmlReporter(dir)
+            val suiteInfo = SuiteInfo("CancS", "com.example.CancS", Maybe.empty)
+            val leaves = List(
+                LeafInfo("CancS", Chunk("p1"), Set.empty) -> TestResult.Passed(1L.millis),
+                LeafInfo("CancS", Chunk("c1"), Set.empty) -> TestResult.Cancelled("Needs >4 cores", 1L.millis)
+            )
+            runOneSuite(reporter, suiteInfo, leaves)
+            val xml = Files.readString(dir.resolve("TEST-CancS.xml"))
+            // A cancelled precondition is a deliberate skip, not a failure.
+            assert(xml.contains("failures=\"0\""), s"Expected failures=\"0\" in: $xml"): Unit
+            assert(xml.contains("skipped=\"1\""), s"Expected skipped=\"1\" in: $xml"): Unit
+            assert(xml.contains("<skipped"), s"Expected <skipped element in: $xml"): Unit
+            assert(!xml.contains("<failure"), s"Cancelled must not produce <failure> in: $xml"): Unit
+        }
+    }
+
     "testsuite tests count correct" in {
         withTempDir { dir =>
             val reporter  = JUnitXmlReporter(dir)
