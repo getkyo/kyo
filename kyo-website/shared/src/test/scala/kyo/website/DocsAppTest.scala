@@ -106,6 +106,35 @@ class DocsAppTest extends WebsiteTest:
         end for
     }
 
+    // The mobile navigation chrome: a floating menu button, a slide-in drawer's header (title + close),
+    // and the hamburger glyph on both the top toggle and the floating button. All present in the markup
+    // (gated to mobile by CSS); the toggle/fab/close all drive the same disclosure.
+    "mobile nav chrome: floating menu button + drawer header + hamburger glyph" in {
+        for
+            route <- fixedRoute("/latest/kyo-data/")
+            content = WebsiteContent(
+                intro = "",
+                groups = Chunk(
+                    WebsiteContent.Group(
+                        "Foundation",
+                        Chunk(WebsiteModule("kyo-data", "Foundation", "kyo-data", "", WebsiteModule.Platforms(true, true, true, true)))
+                    )
+                ),
+                version = WebsiteVersion("latest", "latest", true)
+            )
+            html <- rendered(content, route, Chunk.empty, UI.empty)
+        yield
+            assert(html.contains("class=\"docs-menu-fab\""), s"floating menu button missing: $html")
+            assert(html.contains("Open the documentation menu"), "the floating button needs an aria-label (glyph-led)")
+            assert(html.contains("class=\"docs-drawer-head\""), s"drawer header missing: $html")
+            assert(html.contains("class=\"docs-drawer-close\""), s"drawer close button missing: $html")
+            assert(html.contains("class=\"docs-nav-toggle-label\""), s"the toggle label span missing: $html")
+            // The hamburger glyph: three <line> elements. The top toggle and the fab each carry one glyph,
+            // plus the close X (two lines), so the inline SVG line count is well above zero.
+            assert("<line ".r.findAllIn(html).length >= 6, s"the menu/close glyphs must render as inline SVG lines: $html")
+        end for
+    }
+
     private def coreContent(ver: WebsiteVersion = WebsiteVersion("latest", "latest", true))(using Frame): WebsiteContent =
         WebsiteContent(
             intro = "",

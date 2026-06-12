@@ -105,8 +105,10 @@ object DocsApp:
             // the active module (the rail is the single source of in-page navigation).
             UI.div.cssClass("docs-shell")(
                 navToggle(navOpenRef),
+                drawerBackdrop(navOpenRef),
                 sidebar(content, route, prefix, navOpenRef, tocSignal),
-                contentArea(article, allModules, route, prefix, contentLoading)
+                contentArea(article, allModules, route, prefix, contentLoading),
+                mobileMenuFab(navOpenRef)
             )
     end body
 
@@ -125,7 +127,7 @@ object DocsApp:
         content: WebsiteContent,
         route: Signal[String],
         prefix: String,
-        navOpenRef: Signal[Boolean],
+        navOpenRef: SignalRef[Boolean],
         tocSignal: Signal[Chunk[DocsMarkdown.Heading]]
     )(using Frame): UI =
         val nav =
@@ -164,10 +166,20 @@ object DocsApp:
         // open it overrides the <860px `display:none`, revealing the module list as a drawer. On wide
         // viewports the base `docs-sidebar` rule already shows it and the class is a no-op (B6).
         // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
+        // The drawer header is shown only inside the mobile drawer (hidden on the wide-viewport inline
+        // rail by the stylesheet): a "Menu" title and a close (X) button that dismisses the drawer.
+        val drawerHead =
+            UI.div.cssClass("docs-drawer-head")(
+                UI.span.cssClass("docs-drawer-title")("Menu"),
+                UI.button.cssClass("docs-drawer-close").aria("label", "Close the menu").onClick(navOpenRef.updateAndGet(_ => false).unit)(
+                    closeGlyph
+                )
+            )
         UI.Ast.Reactive(navOpenRef.map { open =>
             val base     = UI.div.cssClass("docs-sidebar")
             val withOpen = if open then base.cssClass("docs-sidebar-open") else base
             withOpen(
+                drawerHead,
                 versionBanner(content.version),
                 nav
             )
@@ -213,13 +225,60 @@ object DocsApp:
         )
     end overviewItem
 
+    // A crisp 1:1 hamburger glyph (viewBox == display px, strokes on whole coords) shared by the top
+    // toggle and the floating menu button. currentColor, so it takes the control's text color.
+    private def menuGlyph(using Frame): UI =
+        Svg.svg.viewBox(Svg.ViewBox(0, 0, 20, 20)).width(20).height(20)(
+            Svg.g.stroke(Svg.Paint.CurrentColor).strokeWidth(2.0).strokeLinecap(Svg.StrokeLinecap.Round)(
+                Svg.line.x1(3.0).y1(5.0).x2(17.0).y2(5.0),
+                Svg.line.x1(3.0).y1(10.0).x2(17.0).y2(10.0),
+                Svg.line.x1(3.0).y1(15.0).x2(17.0).y2(15.0)
+            )
+        )
+
+    // A crisp 1:1 close (X) glyph for the drawer's close control.
+    private def closeGlyph(using Frame): UI =
+        Svg.svg.viewBox(Svg.ViewBox(0, 0, 20, 20)).width(20).height(20)(
+            Svg.g.stroke(Svg.Paint.CurrentColor).strokeWidth(2.0).strokeLinecap(Svg.StrokeLinecap.Round)(
+                Svg.line.x1(5.0).y1(5.0).x2(15.0).y2(15.0),
+                Svg.line.x1(15.0).y1(5.0).x2(5.0).y2(15.0)
+            )
+        )
+
     // The mobile-only nav toggle reveals/hides the sidebar drawer (B6). It is hidden on wide viewports
     // by the stylesheet; the label flips between open/closed with the disclosure state.
     private def navToggle(navOpenRef: SignalRef[Boolean])(using Frame): UI =
         UI.Ast.Reactive(navOpenRef.map { open =>
             UI.button
                 .cssClass("docs-nav-toggle")
-                .onClick(navOpenRef.updateAndGet(!_).unit)(if open then "Close modules" else "Browse modules")
+                .aria("expanded", if open then "true" else "false")
+                .onClick(navOpenRef.updateAndGet(!_).unit)(
+                    menuGlyph,
+                    UI.span.cssClass("docs-nav-toggle-label")(if open then "Close modules" else "Browse modules")
+                )
+        })
+
+    // The floating menu button: a compact pill pinned to the bottom-left on mobile docs, so the module
+    // and section menu is one tap away from anywhere on a long page (the top toggle scrolls out of view).
+    // Hidden on wide viewports (where the rail is always visible) by the stylesheet. Opens the same
+    // drawer the top toggle does. aria-label because the button is glyph-led.
+    private def mobileMenuFab(navOpenRef: SignalRef[Boolean])(using Frame): UI =
+        UI.button
+            .cssClass("docs-menu-fab")
+            .aria("label", "Open the documentation menu")
+            .onClick(navOpenRef.updateAndGet(_ => true).unit)(
+                menuGlyph,
+                UI.span.cssClass("docs-menu-fab-label")("Menu")
+            )
+
+    // The scrim behind the open mobile drawer: a translucent backdrop that dims the page and closes the
+    // drawer on tap (the standard modal-drawer dismissal). Always rendered so its fade transitions both
+    // ways; the reactive `open` class drives opacity + pointer-events, and the stylesheet hides it on wide
+    // viewports. Decorative target, so it is aria-hidden.
+    private def drawerBackdrop(navOpenRef: SignalRef[Boolean])(using Frame): UI =
+        UI.Ast.Reactive(navOpenRef.map { open =>
+            val base = UI.div.cssClass("docs-drawer-backdrop").aria("hidden", "true").onClick(navOpenRef.updateAndGet(_ => false).unit)
+            if open then base.cssClass("docs-drawer-backdrop-open") else base
         })
 
     private def contentArea(

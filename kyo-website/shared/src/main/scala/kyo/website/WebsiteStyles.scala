@@ -1257,12 +1257,64 @@ object WebsiteStyles:
             // media query honors to override the sidebar's mobile `display:none`.
             .rule(
                 "docs-nav-toggle",
-                Style.row.align(_.center).justify(_.center).gap(8.px)
+                Style.row.align(_.center).justify(_.center).gap(9.px)
                     .width(Length.Pct(100)).margin(0.px, 0.px, 18.px, 0.px).padding(11.px, 16.px)
                     .border(1.px, _.variable("line")).rounded(10.px).bg(_.variable("surface"))
                     .color(_.variable("ink")).fontWeight(_.w600).fontSize(14.px).cursor(_.pointer)
                     .transition(150, Style.Easing.ease)
                     .hover(_.borderColor(_.variable("faint")))
+            )
+            // The hamburger glyph inside the toggle and the floating button renders block at its intrinsic
+            // 20px and never shrinks under the flex label.
+            .rule(Selector.cls("docs-nav-toggle").descendant(Selector.tag("svg")), Style.block.flexShrink(0.0))
+            // ---- Mobile docs navigation: a floating menu button + a slide-in drawer with a scrim. All
+            // hidden by default (display:none) and switched on only in the <860px block below; the wide
+            // viewport keeps the inline rail untouched. ----
+            // The floating menu button: a compact pill pinned bottom-left, so the menu is one tap from
+            // anywhere on a long page. >=44px tall (touch target); solid surface + border + shadow so it
+            // stays legible over any scrolling content.
+            .rule("docs-menu-fab", Style.displayNone)
+            .rule(Selector.cls("docs-menu-fab").descendant(Selector.tag("svg")), Style.block.flexShrink(0.0))
+            // The text labels next to the glyphs: line-height 1 so they do not add a tall line box that
+            // would unbalance the flex row's vertical centering.
+            .rule("docs-nav-toggle-label", Style.lineHeight(1.0))
+            .rule("docs-menu-fab-label", Style.lineHeight(1.0))
+            // The scrim behind the open drawer: a translucent backdrop covering the viewport. Hidden until
+            // the drawer opens (the reactive `-open` class switches it on in the mobile block).
+            .rule("docs-drawer-backdrop", Style.displayNone)
+            // The drawer header (title + close button), shown only inside the mobile drawer.
+            .rule("docs-drawer-head", Style.displayNone)
+            .rule(
+                "docs-drawer-title",
+                Style.fontFamily(Style.FontFamily.Custom("var(--mono)")).fontSize(11.px)
+                    .letterSpacing(0.12.em).textTransform(_.uppercase).color(_.variable("faint"))
+            )
+            .rule(
+                "docs-drawer-close",
+                Style.row.align(_.center).justify(_.center).width(34.px).height(34.px)
+                    .rounded(8.px).border(1.px, Color.transparent).bg(Color.transparent)
+                    .color(_.variable("dim")).cursor(_.pointer).transition(150, Style.Easing.ease)
+                    .hover(_.bg(_.variable("accent-ghost")))
+            )
+            .rule(Selector.cls("docs-drawer-close").descendant(Selector.tag("svg")), Style.block)
+            // Drawer slide-in and scrim fade-in, gated behind no-preference so reduced-motion readers get
+            // an instant open. The open drawer/backdrop are freshly mounted on each open (the reactive
+            // disclosure replaces the node), so the entrance plays on mount as an animation, not a
+            // transition.
+            .keyframes(
+                "drawer-in",
+                Stylesheet.Keyframe.from -> Style.translate(Length.Pct(-100), 0.px),
+                Stylesheet.Keyframe.to   -> Style.translate(0.px, 0.px)
+            )
+            .keyframes(
+                "backdrop-in",
+                Stylesheet.Keyframe.from -> Style.opacity(0.0),
+                Stylesheet.Keyframe.to   -> Style.opacity(1.0)
+            )
+            .media(Stylesheet.MediaQuery.prefersReducedMotionNoPreference)(
+                Stylesheet.empty
+                    .rule("docs-sidebar-open", Style.animation("drawer-in", 260, _.easeOut))
+                    .rule("docs-drawer-backdrop-open", Style.animation("backdrop-in", 220, _.easeOut))
             )
             // Entrance keyframes for the active module's .sidebar-sections outline: a subtle slide-down
             // + fade. Referenced by name from the .sidebar-sections rule's `animation` prop. Defined
@@ -1710,25 +1762,55 @@ object WebsiteStyles:
             // the closed `display:none`, turning the sidebar into a full-width drawer above the article.
             .media(Stylesheet.MediaQuery.maxWidth(860.px))(
                 Stylesheet.empty
-                    // The shell wraps so the full-width toggle + revealed drawer stack ABOVE the content
-                    // instead of sharing the row and squishing the article into a sliver (B6).
+                    // The shell wraps so the full-width toggle + content stack in one column; the open
+                    // sidebar is a fixed overlay drawer (below), so it no longer shares the row.
                     .rule("docs-shell", Style.row.flexWrap(_.wrap))
-                    .rule("docs-sidebar", Style.displayNone.width(Length.Pct(100)))
-                    // The revealed drawer is a normal full-width block above the article, NOT a sticky
-                    // float: reset position back to static and top to 0 (overriding the wide-viewport
-                    // position:sticky/top:60px on the base rule) and lift the calc max-height to a tall
-                    // value, so the drawer expands inline to its content rather than pinning and
-                    // scrolling within itself on a phone.
+                    // Closed: the rail is removed from layout (and the a11y/focus tree). The open class
+                    // turns it into the drawer.
+                    .rule("docs-sidebar", Style.displayNone)
+                    // The open drawer: a fixed panel pinned to the left edge over the page, so it is
+                    // reachable at any scroll position (not stacked at the top where it would scroll away).
+                    // Capped to most of the viewport width, scrollable within, lifted above the content and
+                    // the sticky header on its own z-index. The slide-in plays via the `drawer-in` keyframe
+                    // (gated on no-preference) when this freshly-mounted open node appears.
                     .rule(
                         "docs-sidebar-open",
-                        Style.block.position(_.flow).top(0.px).width(Length.Pct(100)).maxHeight(Length.Px(10000))
-                            .margin(0.px, 0.px, 12.px, 0.px).borderRight(0.px, Color.transparent)
-                            .border(1.px, _.variable("line")).rounded(12.px).padding(16.px, 16.px, 20.px, 16.px)
+                        Style.block.position(_.fixed).top(0.px).left(0.px).bottom(0.px)
+                            .width(304.px).maxWidth(Length.Pct(86)).zIndex(120).margin(0.px)
+                            .bg(_.variable("bg")).borderRight(1.px, _.variable("line"))
+                            .shadow(0.px, 0.px, 44.px, 0.px, Color.rgba(0, 0, 0, 0.3))
+                            .overflowY(_.auto).maxHeight(Length.Pct(100)).padding(16.px, 18.px, 40.px, 18.px)
                     )
-                    // flex-basis 100% so the content always claims a full row of its own under the toggle;
-                    // maxWidth back to 100% so the narrow article fills its row instead of keeping the
-                    // wide-viewport 820px reading cap (which would leave dead space on a phone).
-                    .rule("docs-content", Style.flexBasis(Length.Pct(100)).maxWidth(Length.Pct(100)).padding(28.px, 22.px, 80.px, 22.px))
+                    // The scrim under the open drawer: a full-viewport fixed overlay that dims the page and
+                    // closes the drawer on tap. `block` re-asserts visibility over the base display:none.
+                    .rule(
+                        "docs-drawer-backdrop-open",
+                        Style.block.position(_.overlay).zIndex(110).bg(Color.rgba(0, 0, 0, 0.5))
+                    )
+                    // The drawer header (title left, close button right), only inside the drawer. Explicit
+                    // display:flex overrides the base display:none, and `.row` overrides the reset's
+                    // flex-direction:column (a <div> defaults to a flex column) so the two sit on one row.
+                    .rule(
+                        "docs-drawer-head",
+                        Style.display(_.flex).row.align(_.center).justify(_.spaceBetween).margin(2.px, 0.px, 16.px, 0.px)
+                    )
+                    // The floating menu button: pinned bottom-left, so the menu is one tap from anywhere on
+                    // the page. 46px tall touch target; solid surface + border + shadow so it reads over any
+                    // content beneath it.
+                    .rule(
+                        "docs-menu-fab",
+                        Style.display(_.inlineFlex).align(_.center).gap(8.px)
+                            .position(_.fixed).left(16.px).bottom(16.px).zIndex(95)
+                            .minHeight(46.px).padding(0.px, 18.px, 0.px, 14.px)
+                            .rounded(999.px).bg(_.variable("surface")).border(1.px, _.variable("line"))
+                            .color(_.variable("ink")).fontWeight(_.w600).fontSize(14.px)
+                            .shadow(0.px, 6.px, 22.px, 0.px, Color.rgba(20, 20, 15, 0.18)).cursor(_.pointer)
+                            .transition(150, Style.Easing.ease).hover(_.borderColor(_.variable("faint")))
+                    )
+                    // flex-basis 100% so the content always claims a full row of its own; maxWidth back to
+                    // 100% so the narrow article fills its row. Extra bottom padding leaves room above the
+                    // floating button so it never covers the last lines of prose.
+                    .rule("docs-content", Style.flexBasis(Length.Pct(100)).maxWidth(Length.Pct(100)).padding(28.px, 22.px, 96.px, 22.px))
             )
             // OS dark-mode default: re-theme the whole palette when the user's system is set to dark
             // (the same `darkVars` the explicit toggle uses). The `data-theme` toggle in `themeOverrides`
