@@ -1251,22 +1251,6 @@ object WebsiteStyles:
                     .transition(150, Style.Easing.ease)
                     .hover(_.color(_.variable("ink")).bg(_.variable("accent-ghost")))
             )
-            // Mobile module-nav toggle (B6): a full-width disclosure button shown by default and
-            // hidden on wide viewports by the >=861px media query (where the sidebar is always
-            // visible). Clicking it flips the sidebar's `docs-sidebar-open` class, which the <860px
-            // media query honors to override the sidebar's mobile `display:none`.
-            .rule(
-                "docs-nav-toggle",
-                Style.row.align(_.center).justify(_.center).gap(9.px)
-                    .width(Length.Pct(100)).margin(0.px, 0.px, 18.px, 0.px).padding(11.px, 16.px)
-                    .border(1.px, _.variable("line")).rounded(10.px).bg(_.variable("surface"))
-                    .color(_.variable("ink")).fontWeight(_.w600).fontSize(14.px).cursor(_.pointer)
-                    .transition(150, Style.Easing.ease)
-                    .hover(_.borderColor(_.variable("faint")))
-            )
-            // The hamburger glyph inside the toggle and the floating button renders block at its intrinsic
-            // 20px and never shrinks under the flex label.
-            .rule(Selector.cls("docs-nav-toggle").descendant(Selector.tag("svg")), Style.block.flexShrink(0.0))
             // ---- Mobile docs navigation: a floating menu button + a slide-in drawer with a scrim. All
             // hidden by default (display:none) and switched on only in the <860px block below; the wide
             // viewport keeps the inline rail untouched. ----
@@ -1274,10 +1258,11 @@ object WebsiteStyles:
             // anywhere on a long page. >=44px tall (touch target); solid surface + border + shadow so it
             // stays legible over any scrolling content.
             .rule("docs-menu-fab", Style.displayNone)
+            // The hamburger glyph inside the floating button renders block at its intrinsic 20px and never
+            // shrinks under the flex label.
             .rule(Selector.cls("docs-menu-fab").descendant(Selector.tag("svg")), Style.block.flexShrink(0.0))
-            // The text labels next to the glyphs: line-height 1 so they do not add a tall line box that
-            // would unbalance the flex row's vertical centering.
-            .rule("docs-nav-toggle-label", Style.lineHeight(1.0))
+            // The "Menu" label: line-height 1 so it does not add a tall line box that would unbalance the
+            // flex row's vertical centering.
             .rule("docs-menu-fab-label", Style.lineHeight(1.0))
             // The scrim behind the open drawer: a translucent backdrop covering the viewport. Hidden until
             // the drawer opens (the reactive `-open` class switches it on in the mobile block).
@@ -1751,15 +1736,13 @@ object WebsiteStyles:
             .media(Stylesheet.MediaQuery.minWidth(1024.px))(
                 Stylesheet.empty.rule("docs-shell", Style.row.align(_.start).flexWrap(_.noWrap))
             )
-            // Wide viewports show the sidebar inline and have no need for the disclosure button.
-            .media(Stylesheet.MediaQuery.minWidth(861.px))(
-                Stylesheet.empty
-                    .rule("docs-nav-toggle", Style.displayNone)
-            )
-            // Narrow viewports: the sidebar is collapsed by default; the docs-nav-toggle button reveals
-            // it (B6). `docs-sidebar-open` is declared AFTER `docs-sidebar` so, when both classes are
-            // present (open state), its `display:block` wins the equal-specificity cascade and overrides
-            // the closed `display:none`, turning the sidebar into a full-width drawer above the article.
+            // Wide viewports show the inline rail and need no mobile chrome; the floating button, drawer
+            // overlay, and scrim are all base-hidden (display:none) and only switched on below 860px, so
+            // there is nothing to hide here.
+            // Narrow viewports: the sidebar is collapsed by default; the floating menu button reveals it.
+            // `docs-sidebar-open` is declared AFTER `docs-sidebar` so, when both classes are present (open
+            // state), its `display:block` wins the equal-specificity cascade and overrides the closed
+            // `display:none`, turning the sidebar into the slide-in drawer.
             .media(Stylesheet.MediaQuery.maxWidth(860.px))(
                 Stylesheet.empty
                     // The shell wraps so the full-width toggle + content stack in one column; the open

@@ -106,9 +106,9 @@ class DocsAppTest extends WebsiteTest:
         end for
     }
 
-    // The mobile navigation chrome: a floating menu button, a slide-in drawer's header (title + close),
-    // and the hamburger glyph on both the top toggle and the floating button. All present in the markup
-    // (gated to mobile by CSS); the toggle/fab/close all drive the same disclosure.
+    // The mobile navigation chrome: a single floating menu button (the top toggle is gone), a slide-in
+    // drawer's header (title + close), and the hamburger glyph. All present in the markup (gated to mobile
+    // by CSS); the fab opens and the close button / a nav tap dismiss the same disclosure.
     "mobile nav chrome: floating menu button + drawer header + hamburger glyph" in {
         for
             route <- fixedRoute("/latest/kyo-data/")
@@ -128,10 +128,10 @@ class DocsAppTest extends WebsiteTest:
             assert(html.contains("Open the documentation menu"), "the floating button needs an aria-label (glyph-led)")
             assert(html.contains("class=\"docs-drawer-head\""), s"drawer header missing: $html")
             assert(html.contains("class=\"docs-drawer-close\""), s"drawer close button missing: $html")
-            assert(html.contains("class=\"docs-nav-toggle-label\""), s"the toggle label span missing: $html")
-            // The hamburger glyph: three <line> elements. The top toggle and the fab each carry one glyph,
-            // plus the close X (two lines), so the inline SVG line count is well above zero.
-            assert("<line ".r.findAllIn(html).length >= 6, s"the menu/close glyphs must render as inline SVG lines: $html")
+            // The old full-width top toggle is gone; the floating button is the sole menu opener.
+            assert(!html.contains("docs-nav-toggle"), s"the redundant top toggle must be removed: $html")
+            // Inline SVG glyphs: the fab's hamburger (three <line>s) + the drawer close X (two <line>s).
+            assert("<line ".r.findAllIn(html).length >= 5, s"the menu/close glyphs must render as inline SVG lines: $html")
         end for
     }
 
