@@ -127,4 +127,99 @@ class UIRunRenderPageTest extends kyo.test.Test[Any]:
         }
     }
 
+    "jsonLd renders an ld+json block before </head> with no id" in {
+        val head = UI.PageHead(
+            title = "t",
+            jsonLd = Present(UI.dataIsland("application/ld+json", Absent, """{"@type":"Thing"}"""))
+        )
+        renderPage(head, UI.div).map { html =>
+            assert(html.contains("""<script type="application/ld+json">{"@type":"Thing"}</script>"""))
+            assert(html.indexOf("application/ld+json") < html.indexOf("</head>"))
+            assert(!html.substring(0, html.indexOf("</head>")).contains("id="))
+        }
+    }
+
+    "dataIslands render both id-carrying json blocks before </body> in order" in {
+        val head = UI.PageHead(
+            title = "t",
+            dataIslands = Seq(
+                UI.dataIsland("application/json", Present("docs-island"), """{"a":1}"""),
+                UI.dataIsland("application/json", Present("versions-island"), """[{"t":"v1"}]""")
+            )
+        )
+        renderPage(head, UI.div).map { html =>
+            assert(html.contains("""<script type="application/json" id="docs-island">{"a":1}</script>"""))
+            assert(html.contains("""<script type="application/json" id="versions-island">[{"t":"v1"}]</script>"""))
+            assert(html.indexOf("docs-island") < html.indexOf("versions-island"))
+            assert(html.indexOf("docs-island") < html.indexOf("</body>"))
+            assert(html.indexOf("versions-island") < html.indexOf("</body>"))
+        }
+    }
+
+    "a </script> substring in a JSON body is escaped to the JS-unicode form" in {
+        val head = UI.PageHead(
+            title = "t",
+            dataIslands = Seq(
+                UI.dataIsland("application/json", Present("x"), """{"s": "</script><script>alert(1)"}""")
+            )
+        )
+        renderPage(head, UI.div).map { html =>
+            // The escape replaces < with < and > with > (literal backslash-u sequences).
+            assert(html.contains("\\u003c/script\\u003e\\u003cscript\\u003ealert(1)"))
+            // The only literal </script> in the document is the island's own closing tag, not inside the body.
+            val bodyStart  = html.indexOf("""<script type="application/json" id="x">""")
+            val bodyEnd    = html.indexOf("</script>", bodyStart)
+            val islandBody = html.substring(bodyStart, bodyEnd)
+            assert(!islandBody.contains("</script>"))
+        }
+    }
+
+    "the escape uses the JS-unicode form, not the HTML-entity &lt; form" in {
+        val head = UI.PageHead(
+            title = "t",
+            jsonLd = Present(UI.dataIsland("application/ld+json", Absent, """{"x":"<a>"}"""))
+        )
+        renderPage(head, UI.div).map { html =>
+            val ldStart = html.indexOf("""<script type="application/ld+json">""")
+            val ldEnd   = html.indexOf("</script>", ldStart)
+            val ldBody  = html.substring(ldStart, ldEnd)
+            // The body must contain the JS-unicode escaped form (literal < / >), not HTML entities.
+            assert(ldBody.contains("\\u003ca\\u003e"))
+            assert(!ldBody.contains("&lt;a&gt;"))
+        }
+    }
+
+    "a PageHead with no islands renders neither block" in {
+        val head = UI.PageHead(title = "t")
+        renderPage(head, UI.div).map { html =>
+            assert(!html.contains("application/ld+json"))
+            assert(!html.contains("application/json"))
+        }
+    }
+
+    "an existing minimal PageHead still renders the prior document shape" in {
+        renderPage(UI.PageHead(title = "t"), UI.div(UI.h1("Hi"))).map { html =>
+            assert(html.startsWith("<!DOCTYPE html>"))
+            assert(html.contains(">Hi<"))
+            assert(html.endsWith("</html>"))
+            val styleStart = html.indexOf("<style>")
+            val styleEnd   = html.indexOf("</style>")
+            val style      = html.substring(styleStart + "<style>".length, styleEnd)
+            assert(style == UI.baseCss)
+        }
+    }
+
+    "UI.dataIsland returns a DataIsland value with the verbatim json" in {
+        val di = UI.dataIsland("application/json", Present("k"), """{"v":2}""")
+        assert(di.scriptType == "application/json")
+        assert(di.id == Present("k"))
+        assert(di.json == """{"v":2}""")
+    }
+
+    "two DataIsland values with equal fields compare equal (CanEqual)" in {
+        val a = UI.dataIsland("application/json", Present("k"), "{}")
+        val b = UI.dataIsland("application/json", Present("k"), "{}")
+        assert(a == b)
+    }
+
 end UIRunRenderPageTest

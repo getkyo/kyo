@@ -189,6 +189,51 @@ object UI:
       */
     def rawHtml(html: String)(using Frame): UI = Ast.RawHtml(html)
 
+    /** Build a `<script type="...">` data island carrying a verbatim JSON body and an optional `id`.
+      *
+      * A data island is an inert structured-data block read back by a script (the JSON-LD
+      * SEO block, the SSG-seeded boot payload), NOT a reactive element. It returns a
+      * [[kyo.UI.DataIsland]], which does NOT extend [[kyo.UI]], so the type system rejects
+      * placing it as a live tree child: it can be placed ONLY through the [[kyo.UI.PageHead]]
+      * `jsonLd` (head) / `dataIslands` (body-end) fields. `scriptType` is
+      * `application/ld+json` for the JSON-LD block and `application/json` for a data island;
+      * `id` is `Present` for an addressable island (read back by `querySelector("#id")`) and
+      * `Absent` for the JSON-LD block.
+      *
+      * The `json` body is stored verbatim at construction and escaped only at render time
+      * (`<` becomes `<`, `>` becomes `>`), so a literal `</script>` substring in
+      * any field renders as inert text that cannot close the element. This factory owns the
+      * one escape; callers pass trusted JSON and never pre-escape it.
+      *
+      * @param scriptType
+      *   the `type` attribute (`application/ld+json` or `application/json`)
+      * @param id
+      *   the element `id` (`Present` for an addressable island, `Absent` for the JSON-LD block)
+      * @param json
+      *   the verbatim JSON body (trusted; escaped at render time)
+      * @see
+      *   [[kyo.UI.PageHead.jsonLd]], [[kyo.UI.PageHead.dataIslands]] for the fields that place it
+      * @see
+      *   [[kyo.UI.rawHtml]] for the verbatim-HTML leaf
+      */
+    def dataIsland(scriptType: String, id: Maybe[String], json: String)(using Frame): UI.DataIsland =
+        UI.DataIsland(scriptType, id, json)
+
+    /** A `<script type="..." id="...?">json</script>` document-level payload, built by
+      * [[kyo.UI.dataIsland]] and carried on [[kyo.UI.PageHead]] (the `jsonLd` head field and the
+      * `dataIslands` body-end field).
+      *
+      * It does NOT extend [[kyo.UI]]: a data island is a `PageHead` payload, not a renderable UI
+      * node. Because it is not a `UI`, the type system rejects placing it as a live tree child,
+      * and the renderer never sees it as a tree node; it is rendered only from the `PageHead`
+      * fields that carry it, as an inert, position-stable block with no `data-kyo-path`, no
+      * attributes, and no event handler. The `json` body is verbatim at construction and escaped
+      * at render time. `derives CanEqual` because [[kyo.UI.PageHead]] carries these values and
+      * itself `derives CanEqual`.
+      */
+    final case class DataIsland(scriptType: String, id: Maybe[String], json: String)(using val frame: Frame)
+        derives CanEqual
+
     /** Conditional rendering: shows `body` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
     def when[C <: UI](condition: Signal[Boolean])(body: => C)(using Frame): Reactive[C] =
         Reactive[C](condition.map(v => if v then body else UI.empty))
@@ -264,14 +309,23 @@ object UI:
       * for canonical, icons, preconnect, and stylesheet links such as web fonts. `css` is extra
       * stylesheet text emitted in a `<style>` block AFTER [[kyo.UI.baseCss]] so site rules win at
       * equal specificity. `moduleScript` is an optional `<script type="module" src="...">` ESModule
-      * reference (a custom Scala.js bundle); `Absent` emits no script.
+      * reference (a custom Scala.js bundle); `Absent` emits no script. `jsonLd` is an optional
+      * head-level data island (a `<script type="application/ld+json">` structured-data
+      * block) rendered immediately before `</head>`; `Absent` (the default) emits none.
+      * `dataIslands` is an ordered list of body-end data islands (`<script
+      * type="application/json" id="...">` blocks) rendered immediately before `</body>`;
+      * empty (the default) emits none. Both carry [[kyo.UI.DataIsland]] values built by
+      * [[kyo.UI.dataIsland]]; the renderer escapes their JSON bodies so a `</script>`
+      * substring cannot close the element early.
       */
     final case class PageHead(
         title: String,
         meta: Seq[(String, String)] = Seq.empty,
         links: Seq[(String, String)] = Seq.empty,
         css: String = "",
-        moduleScript: Maybe[String] = Absent
+        moduleScript: Maybe[String] = Absent,
+        jsonLd: Maybe[UI.DataIsland] = Absent,
+        dataIslands: Seq[UI.DataIsland] = Seq.empty
     ) derives CanEqual
 
     /** Read-only stream of a COMPLETE HTML document (`<!DOCTYPE html>` ... `</html>`) for static-site

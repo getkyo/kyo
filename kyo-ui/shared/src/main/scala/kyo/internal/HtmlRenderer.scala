@@ -59,6 +59,10 @@ private[kyo] object HtmlRenderer:
         val script = head.moduleScript match
             case Present(src) => s"""<script type="module" src="${esc(src)}"></script>"""
             case Absent       => ""
+        val ldBlock = head.jsonLd match
+            case Present(di) => renderDataIsland(di)
+            case Absent      => ""
+        val islands = head.dataIslands.map(renderDataIsland).mkString
         s"""<!DOCTYPE html>
            |<html lang="en">
            |<head>
@@ -67,11 +71,30 @@ private[kyo] object HtmlRenderer:
            |<title>${esc(head.title)}</title>
            |$metaTags$linkTags
            |<style>$baseCss${head.css}</style>
-           |</head>
-           |<body>$body</body>
+           |$ldBlock</head>
+           |<body>$body$islands</body>
            |$script
            |</html>""".stripMargin
     end page
+
+    // Render a data island as `<script type="..."[ id="..."]>ESCAPED-JSON</script>`. The type
+    // and id attributes use the HTML-entity escape (`esc`); the JSON body uses the JS-unicode
+    // escape (`escScript`) so a `</script>` substring renders as `</script>`, inert
+    // text the consumer's JSON.parse still reads, rather than the HTML-entity form `&lt;` that
+    // would change the bytes and break JSON.parse on read-back.
+    private def renderDataIsland(di: UI.DataIsland): String =
+        val idAttr = di.id match
+            case Present(v) => s""" id="${esc(v)}""""
+            case Absent     => ""
+        s"""<script type="${esc(di.scriptType)}"$idAttr>${escScript(di.json)}</script>"""
+    end renderDataIsland
+
+    // The single owner of the data-island body escape: a literal "</script>" in the JSON body
+    // would close the element early, so "<"/">" become their JSON unicode escapes. This is the
+    // JS-unicode form ("<"/">"), NOT the HTML-entity esc(...) form, because the body
+    // is JSON read back by JSON.parse, not HTML re-parsed.
+    private def escScript(json: String): String =
+        json.replace("<", "\\u003c").replace(">", "\\u003e")
 
     // ---- Core rendering ----
 
