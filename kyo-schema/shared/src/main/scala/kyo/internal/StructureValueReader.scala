@@ -170,9 +170,11 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
             case other                      => throw TypeMismatchException(Seq.empty, "Byte", other.toString)
 
     def char(): Char =
+        // Strict: a Char field requires a single-character String. Accepting multi-character strings and silently
+        // discarding the tail (the prior behaviour) hides client bugs by the same argument that `string()` uses
+        // to reject non-Str inputs; the symmetric strict-on-text rule applies here.
         currentValue match
             case Structure.Value.Str(s) if s.length == 1 => s.charAt(0)
-            case Structure.Value.Str(s) if s.nonEmpty    => s.charAt(0)
             case other                                   => throw TypeMismatchException(Seq.empty, "Char", other.toString)
 
     def isNil(): Boolean =

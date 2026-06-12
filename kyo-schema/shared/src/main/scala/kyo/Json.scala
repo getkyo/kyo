@@ -518,6 +518,17 @@ object Json:
             )
         end fromInteger
 
+        /** Decodes a JSON Schema `oneOf` array into a `JsonSchema`.
+          *
+          * Three branches:
+          *   1. All elements are single-field named-variant wrappers (`{"VariantName": {inner}}`): emit `OneOf` with the original variant
+          *      names. This is the round-trip path for `JsonSchema` values produced by this codec's `writeJsonSchema`.
+          *   2. Exactly two elements, one being `{"type":"null"}`: emit `Nullable(other)`.
+          *   3. Otherwise: foreign-schema input whose `oneOf` elements are direct sub-schemas with no encapsulating name. The variant names
+          *      do not exist in the source; synthesise `"variant0"`, `"variant1"`, ... so callers still receive `N` variants of the right
+          *      shape. The synthetic names are deterministic from position and never collide with a kyo-emitted `oneOf` (which always
+          *      lands in branch 1).
+          */
         private def fromOneOf(elems: Chunk[Structure.Value]): JsonSchema =
             // Determine whether the elements are named-variant wrappers (MCP discriminated-union style) or direct
             // sub-schemas (Nullable style: `[{inner}, {"type":"null"}]`).
@@ -549,7 +560,9 @@ object Json:
                 if hasNull && nonNullElems.lengthCompare(1) == 0 then
                     Nullable(fromStructureValue(nonNullElems.head))
                 else
-                    // Fall back to numbering unnamed variants so callers see N variants of the right shape.
+                    // Foreign-schema input: the `oneOf` carries direct sub-schemas with no carried name, so no name can be recovered.
+                    // Synthesise positional names so callers still receive N variants of the right shape; kyo-emitted `oneOf` arrays
+                    // always wrap variants in named records (branch 1 above) and therefore never reach this branch.
                     val variants = elems.iterator.zipWithIndex.map { (sv, i) =>
                         s"variant$i" -> fromStructureValue(sv)
                     }.toList

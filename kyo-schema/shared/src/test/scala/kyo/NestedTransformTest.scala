@@ -72,17 +72,26 @@ class NestedTransformTest extends kyo.test.Test[Any]:
         assert(js.contains("\"derived\":6"), js)
     }
 
-    "discriminator + drop combine on a nested schema".ignore(
-        "chaining .discriminator and .drop on the same sum-type schema is not expressible today: the API rejects .drop on sealed traits"
-    ) in {
-        ()
-        // Design follow-up: chaining `.discriminator(...)` and `.drop(...)` on
-        // the same sum-type schema is not expressible today — the API rejects
-        // `.drop` on sealed traits at compile time ("Schema.drop is not
-        // supported for sealed traits") because transforms operate on case
-        // class fields. Supporting this combination would require either a
-        // sum-level field-removal primitive or per-variant `.drop` that
-        // survives discriminator dispatch at nested positions.
+    "Schema.drop on a sealed trait is rejected at compile time" in {
+        // The API rejects `.drop` on sealed traits at compile time; pin the rejection so the
+        // compose surface stays type-driven. SchemaTransformMacro.scala reports
+        // "Schema.drop is not supported for sealed traits" via report.errorAndAbort.
+        val errors = scala.compiletime.testing.typeCheckErrors(
+            """
+            import kyo.Schema
+            sealed trait DropOnSealed derives CanEqual
+            object DropOnSealed:
+                final case class A(x: Int) extends DropOnSealed derives CanEqual, Schema
+                final case class B(y: String) extends DropOnSealed derives CanEqual, Schema
+            end DropOnSealed
+            val s: Schema[DropOnSealed] = Schema.derived[DropOnSealed].discriminator("type").drop("x")
+            """
+        )
+        assert(errors.nonEmpty, "Expected .drop on a sealed trait to be rejected by the macro")
+        assert(
+            errors.exists(_.message.contains("Schema.drop is not supported for sealed traits")),
+            s"Expected rejection message to include 'Schema.drop is not supported for sealed traits', got: ${errors.map(_.message).mkString("; ")}"
+        )
     }
 
     "discriminator survives Protobuf round-trip" in {

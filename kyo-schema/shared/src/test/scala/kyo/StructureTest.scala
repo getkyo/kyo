@@ -1166,6 +1166,28 @@ class StructureTest extends kyo.test.Test[Any]:
             ()
         }
 
+        "StructureValueReader.char rejects multi-character strings" in {
+            // Regression guard: char() must not silently truncate a multi-character string to its first char.
+            // The strict-on-text-input symmetry argument (matching `string()` rejecting Integer-as-String) applies.
+            val dv = Structure.Value.Str("ab")
+            val r  = new StructureValueReader(dv)
+            intercept[TypeMismatchException](r.char())
+            ()
+        }
+
+        "StructureValueReader.char rejects empty strings" in {
+            val dv = Structure.Value.Str("")
+            val r  = new StructureValueReader(dv)
+            intercept[TypeMismatchException](r.char())
+            ()
+        }
+
+        "StructureValueReader.char accepts a single-character string" in {
+            val dv = Structure.Value.Str("x")
+            val r  = new StructureValueReader(dv)
+            assert(r.char() == 'x')
+        }
+
         "json int parse error throws ParseException" in {
             val r  = JsonReader("3.14")
             val ex = intercept[ParseException](r.int())

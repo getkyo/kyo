@@ -1514,6 +1514,24 @@ class JsonTest extends kyo.test.Test[Any]:
                     assert(oneOf.variants.exists(_._1 == "Lit"))
                     assert(oneOf.variants.exists(_._1 == "Add"))
                     assert(oneOf.variants.exists(_._1 == "Neg"))
+                    // Recursive-variant field-shape preservation guard: `Add(left: Expr, right: Expr)` and
+                    // `Lit(value: Int)` must surface their non-recursive fields on the variant JsonSchema.
+                    // Internal helper schemas inside the macro use `Open(Tag[Any])` as structure but those
+                    // helpers are not visible here; the parent sum's `variants` carry the real Product shape
+                    // (via `summonFieldStructure` -> `deriveTypeFallback` for cyclic descent).
+                    val litVariant = oneOf.variants.find(_._1 == "Lit").get._2
+                    litVariant match
+                        case obj: JsonSchema.Obj =>
+                            assert(obj.properties.exists(_._1 == "value"))
+                        case other => fail(s"Expected Lit Obj with 'value' property, got $other")
+                    end match
+                    val addVariant = oneOf.variants.find(_._1 == "Add").get._2
+                    addVariant match
+                        case obj: JsonSchema.Obj =>
+                            assert(obj.properties.exists(_._1 == "left"))
+                            assert(obj.properties.exists(_._1 == "right"))
+                        case other => fail(s"Expected Add Obj with 'left'/'right' properties, got $other")
+                    end match
                 case other => fail(s"Expected OneOf, got $other")
             end match
         }
