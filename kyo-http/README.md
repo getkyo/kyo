@@ -1096,7 +1096,7 @@ For a complete working example, see [kyo-examples ledger](../kyo-examples/jvm/sr
 
 ## Demos
 
-Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-http/Test/runMain demo.<Name>'`.
+Runnable end-to-end demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-httpJVM/Test/runMain demo.<Name>'`.
 
 - [**ChatRoom**](shared/src/test/scala/demo/ChatRoom.scala): text messages plus a live SSE activity feed, with server-level CORS and OpenAPI security metadata.
 - [**ApiGateway**](shared/src/test/scala/demo/ApiGateway.scala): aggregates weather and currency APIs through typed routes, parallel client calls, and OpenAPI generation.

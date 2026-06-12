@@ -28,7 +28,7 @@ import kyo.UI.*
   * is ever blocked (the cadence is `Async.sleep`). A pause control flips a `SignalRef[Boolean]`; while paused the engine
   * idles on a short sleep and leaves every metric untouched.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.LiveDashboard'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.LiveDashboard'` (optional port as the first argument).
   */
 object LiveDashboardDemo extends KyoApp:
 

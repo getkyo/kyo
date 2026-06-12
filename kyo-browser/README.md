@@ -584,7 +584,7 @@ A single CDP WebSocket carries every command and event for a Chrome process. A `
 
 ## Demos
 
-Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-browser/Test/runMain demo.<Name>'`.
+Runnable demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo). Run any with `sbt 'kyo-browserJVM/Test/runMain demo.<Name>'`.
 
 - [**QuickstartApp**](shared/src/test/scala/demo/QuickstartDemo.scala): minimal quickstart against a self-contained page, exercising `goto`, `fill`, `click`, `assertText`, and `title`.
 - [**GitHubTrendingDemoApp**](shared/src/test/scala/demo/GitHubTrendingDemo.scala): SPA navigation that waits for client-rendered content, clicks into a repo, and switches the time range.

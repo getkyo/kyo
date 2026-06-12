@@ -20,11 +20,18 @@ object Cats:
             import cats.effect.unsafe.implicits.global
             val p                = Promise.Unsafe.init[A, Any]()
             val (future, cancel) = io.unsafeToFutureCancelable()
+            val interrupted      = new java.util.concurrent.atomic.AtomicBoolean(false)
             future.onComplete {
-                case Success(v)  => p.complete(Result.succeed(v))
-                case Failure(ex) => p.complete(Result.panic(ex))
+                case Success(v) => p.complete(Result.succeed(v))
+                // A failure caused by our own cancellation (the Kyo fiber was interrupted) is
+                // not a panic: the interrupt settles the promise, so the boxed cancellation
+                // exception must not race in and leak as an unexpected panic.
+                case Failure(ex) => if !interrupted.get() then discard(p.complete(Result.panic(ex)))
             }(using ExecutionContext.parasitic)
-            p.onInterrupt(_ => discard(cancel()))
+            p.onInterrupt { _ =>
+                interrupted.set(true)
+                discard(cancel())
+            }
             p.safe.get
         }
     end get

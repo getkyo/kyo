@@ -11,7 +11,7 @@ import kyo.UI.Ast.HtmlContent
   * is pushed to the browser as a fine-grained DOM diff over SSE. No JavaScript build step is involved: open the printed URL and the page is
   * driven entirely by the server.
   *
-  * Run via `sbt 'kyo-ui/runMain demo.Kanban'` (optional port as the first argument). Add a card with the form, then walk a card across the
+  * Run via `sbt 'kyo-uiJVM/runMain demo.Kanban'` (optional port as the first argument). Add a card with the form, then walk a card across the
   * three columns with the ◀/▶ buttons or remove it with ✕.
   *
   * Demonstrates: `UI.runHandlers` server-push deployment, a single `SignalRef[Board]` as the source of truth, three derived per-column

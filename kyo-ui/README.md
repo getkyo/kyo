@@ -1620,7 +1620,7 @@ This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_
 
 ## Demos
 
-Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<NameDemo>'`; the server-push demos print a `localhost` URL to open.
+Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-uiJVM/Test/runMain demo.<NameDemo>'`; the server-push demos print a `localhost` URL to open.
 
 - [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: add, move, and delete cards across columns.
 - [**Signup**](shared/src/test/scala/demo/SignupDemo.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.

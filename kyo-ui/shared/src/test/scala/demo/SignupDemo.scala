@@ -10,7 +10,7 @@ import kyo.UI.*
   * inline error messages appear and disappear, and the submit button enables only once every field is valid. On submit the server records a
   * confirmation message that replaces the form.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Signup'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Signup'` (optional port as the first argument).
   *
   * Demonstrates: the full input family (`input`, `emailInput`, `passwordInput`, `numberInput`, `dateInput`, `select`/`option`, `checkbox`),
   * two-way `value`/`checked` binding via `SignalRef`, per-field derived `Signal[Boolean]` validity, aggregate validity via
