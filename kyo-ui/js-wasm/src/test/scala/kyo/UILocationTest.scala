@@ -16,12 +16,16 @@ package kyo
   */
 class UILocationTest extends kyo.test.Test[Any]:
 
-    "UILocation object is accessible (compile gate: assign member compiles without a DOM)" in {
-        // Verifies that the UILocation object and the new `assign` member compile and are reachable.
-        // No DOM-dependent method is invoked. Observable behavior (actual navigation) requires a
-        // live browser and is validated by running the compiled bundle there.
-        val _ = UILocation
-        assert(true)
+    "UILocation Sync-effect members compile to the expected effect types (type-level gate)" in {
+        // Each val ascription is a compile-time witness: it fails if the member's return type
+        // drifts. The lambdas are never called, so no DOM global is accessed at runtime.
+        val _: String => Unit < Sync = uri => UILocation.assign(uri)
+        val _: String => Unit < Sync = uri => UILocation.push(uri)
+        val _: String => Unit < Sync = uri => UILocation.replace(uri)
+        val _: Unit < Sync           = UILocation.back
+        val _: Unit < Sync           = UILocation.forward
+        val _: Int => Unit < Sync    = n => UILocation.go(n)
+        succeed
     }
 
 end UILocationTest

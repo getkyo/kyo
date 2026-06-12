@@ -25,13 +25,15 @@ package kyo
   */
 class UIWindowTest extends kyo.test.Test[Any]:
 
-    "UIWindow object is accessible (compile gate: new members compile without a DOM)" in {
-        // This test asserts that the UIWindow object and its members compile and are reachable.
-        // It does not invoke any DOM-dependent method; it only checks that the type-level API is
-        // present. All observable behaviors require a live browser and are validated by running
-        // the compiled bundle there.
-        val _ = UIWindow
-        assert(true)
+    "UIWindow Sync-effect members compile to the expected effect types (type-level gate)" in {
+        // Each val ascription is a compile-time witness: it fails if the member's return type
+        // drifts. The lambdas are never called, so no DOM global is accessed at runtime.
+        val _: String => Unit < Sync           = s => UIWindow.writeClipboard(s)
+        val _: String => Maybe[String] < Sync  = k => UIWindow.storageGet(k)
+        val _: (String, String) => Unit < Sync = (k, v) => UIWindow.storageSet(k, v)
+        val _: String => Unit < Sync           = t => UIWindow.setTitle(t)
+        val _: String => Boolean < Sync        = id => UIWindow.scrollIntoViewById(id)
+        succeed
     }
 
 end UIWindowTest

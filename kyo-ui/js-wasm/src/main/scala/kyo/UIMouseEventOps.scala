@@ -10,12 +10,12 @@ import scala.scalajs.js
   *
   * The association lives in a `js.WrappedMap` (backed by a native `js.Map`) keyed by the
   * `UI.MouseEvent` instance, with an explicit per-click lifecycle: [[kyo.UIWindow.onClick]] calls
-  * `remember` before running the user handler and `forget` after the handler effect completes (on
-  * success, failure, and interrupt). JavaScript is single-threaded, so a reference-keyed map needs
-  * no synchronization, and because the entry is added at the start of a click and removed when that
-  * click's handler finishes, the table holds at most one live entry and cannot accumulate across
-  * dispatches. `remember` runs before the handler effect and `targetClosest` runs inside it, both
-  * on the same click, so the entry is present when read.
+  * `remember` before running the user handler and `forget` via `Sync.ensure` after the handler
+  * effect completes (on success, failure, and interrupt). The table holds one live entry per
+  * in-flight click handler: each entry is keyed by reference identity on its own distinct
+  * `UI.MouseEvent` instance, and it is removed when that handler's effect finishes. Concurrent
+  * suspended handlers each hold their own entry and none collides with another, so the table is
+  * bounded by the number of concurrently in-flight handlers and never leaks.
   */
 private[kyo] object UIMouseEventOps:
 
@@ -35,8 +35,9 @@ end UIMouseEventOps
 
 /** A narrow typed handle over a DOM element matched outside the reactive tree (the elements injected
   * by [[kyo.UI.rawHtml]], which carry no `data-kyo-path`). It exposes only what a document-level
-  * click handler needs: walk to an ancestor or descendant, read/write attributes, read text. The one
-  * cast an opaque type legitimately owns lives at this boundary, never in a public signature.
+  * click handler needs: walk to an ancestor or descendant, read/write attributes, read text. The
+  * opaque-type boundary lives here, keeping the raw `dom.Element` out of public signatures without
+  * any runtime cast.
   *
   * Built by [[kyo.UI.MouseEvent.targetClosest]]; a top-level js-wasm type paralleling
   * [[kyo.UIWindow]] and [[kyo.UILocation]].

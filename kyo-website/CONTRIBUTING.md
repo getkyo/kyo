@@ -146,15 +146,20 @@ JVM-only and never ships to the browser.
 ### Mechanism 5: the boot islands seed the SPA
 
 Each docs page embeds a `#docs-island` and a `#versions-island` JSON
-`<script type="application/json">`, injected immediately before `</body>` with `<`
-and `>` escaped to `&lt;`/`&gt;` so a `</script>` substring in any field cannot
-close the element early (`WebsiteGenerator.scala:491-509`). `escScript` does the
-escaping (`WebsiteGenerator.scala:508-509`). The `#docs-island` is the first-paint
-payload schema: `WebsiteBundleMain` reads it at bundle entry to seed the SPA with
-the current page's content before navigation, and the `article` field carries the
-pre-rendered HTML so the client never needs to call the transpiler
-(`WebsiteGenerator.scala:472-489`). Reading the island at JS entry is a synchronous
-parse before any Kyo fiber is running, marked Unsafe (`WebsiteBundleMain.scala:78-81`).
+`<script type="application/json">`, injected immediately before `</body>`. The
+islands are built as `UI.DataIsland` values via `UI.dataIsland(...)` and carried on
+`PageHead.dataIslands` (`WebsiteGenerator.scala:502-505`). The kyo-ui
+`HtmlRenderer` renders them and owns the single `escScript` implementation that
+escapes `<` and `>` to `&lt;`/`&gt;`, ensuring a `</script>` substring in any
+field cannot close the element early (`HtmlRenderer.scala:82-97`). The website
+contains no `escScript` call of its own. The `#docs-island` is the first-paint
+payload schema: `WebsiteBundleMain` reads it at bundle entry via `readDocsIsland`
+to seed the SPA with the current page's content before navigation, and the
+`article` field carries the pre-rendered HTML so the client never needs to call
+the transpiler. The same rendered bytes are produced by the new path, so the
+bundle's island reader (`WebsiteBundleMain.scala:63-82`) is unaffected. Reading
+the island at JS entry is a synchronous parse before any Kyo fiber is running,
+marked Unsafe (`WebsiteBundleMain.scala:78-81`).
 
 Island JSON is parsed by a hand-rolled depth-aware scanner in `DocsClient`
 (`splitJsonArray` tracks brace/bracket depth and string state,
@@ -173,7 +178,32 @@ cross-platform (`DocsClient.scala:391-401`).
 3. Mount `SiteApp` **once** around one reactive content slot driven by a single
    nav fiber.
 
-Both JS entry crossings are Unsafe-marked (`WebsiteBundleMain.scala:85-90`).
+The JS-bootstrap island reads and the mount are the Unsafe-marked crossings
+(`WebsiteBundleMain.scala:85-90`). Beyond these boot crossings the bundle
+holds zero `js.Dynamic` calls; all remaining browser interactions use the typed
+kyo-ui members. Five typed DOM boundaries that the kyo-ui DSL does not cover
+remain as confined casts or direct DOM calls in the bundle:
+
+1. **`data-theme` + `color-scheme` writes** on `<html>`: `setTheme` calls
+   `UIWindow.storageGet/Set`, `UIWindow.prefersColorScheme`, and a single
+   `root.asInstanceOf[dom.html.Element].style.setProperty(...)` for the CSS
+   `color-scheme` property, which `Element` does not expose
+   (`WebsiteBundleMain.scala:191-241`).
+2. **Canonical link update**: `updateHead` calls `UIWindow.setTitle` for
+   the title and a direct `dom.document.querySelector` + `setAttribute` for
+   the `<link rel=canonical>` element, which has no kyo-ui counterpart
+   (`WebsiteBundleMain.scala:485-519`).
+3. **URL-hash read**: `scrollToHash` / `maybeScrollToHash` call
+   `dom.window.location.hash` because `UILocation.current` omits the fragment
+   (`WebsiteBundleMain.scala:556-570`).
+4. **`UI.rawHtml` article injection**: the pre-rendered article HTML is injected
+   via `UI.rawHtml` (the named escape hatch for trusted HTML content) so the
+   Markdown transpiler never runs on the client
+   (`WebsiteBundleMain.scala:137,471`).
+5. **JS-bootstrap island reads** (read `#docs-island` / `#versions-island`
+   via `document.getElementById` then parse JSON): these are the Unsafe-marked
+   synchronous crossings at bundle entry before any Kyo fiber starts
+   (`WebsiteBundleMain.scala:63-82,612-621`).
 
 The nav fiber classifies each route into four kinds (`RouteKind` enum: `Landing`,
 `Module`, `Intro`, `OffTree`, `WebsiteBundleMain.scala:351-352`) and dispatches.

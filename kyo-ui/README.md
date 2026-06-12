@@ -1167,6 +1167,35 @@ val ssgPage: Stream[String, Async] =
 val html: String < Async = ssgPage.take(1).run.map(_.headMaybe.getOrElse(""))
 ```
 
+### Data islands and JSON-LD (`UI.dataIsland`, `PageHead.jsonLd`, `PageHead.dataIslands`)
+
+A data island is a `<script type="...">` element used to pass structured data from the server render into the page without running any JavaScript. `UI.dataIsland(scriptType, id, json)` builds a `UI.DataIsland` value; the renderer escapes `<` and `>` inside `json` so a `</script>` substring in any field cannot close the element early. You never call an escape function yourself.
+
+```scala
+import UI.*
+import kyo.*
+
+// JSON-LD structured data in <head>:
+val ldIsland: UI.DataIsland =
+    dataIsland("application/ld+json", Absent, """{"@context":"https://schema.org","@type":"WebPage"}""")
+
+// Boot-payload island injected before </body>:
+val bootIsland: UI.DataIsland =
+    dataIsland("application/json", Present("my-island"), """{"version":"1.0"}""")
+
+val page: Stream[String, Async] =
+    runRenderPage(
+        PageHead(
+            title = "My Site",
+            css = "",
+            jsonLd = Present(ldIsland),
+            dataIslands = Seq(bootIsland)
+        )
+    )(div(h1("Hello")))
+```
+
+`PageHead.jsonLd` is an `Maybe[UI.DataIsland]`; when `Present`, the renderer emits it as a `<script type="application/ld+json">` block inside `<head>`. `PageHead.dataIslands` is a `Seq[UI.DataIsland]`; each is emitted in order immediately before `</body>`. `UI.DataIsland` does NOT extend `UI`: it is a head/body-end payload, not a tree node, so placing it as a child of a `div` or other element is a compile error.
+
 ## Window and routing (Scala.js)
 
 `UIWindow` and `UILocation` are JS-only namespaces useful inside `UI.runMount` apps. Both expose reactive `Signal`s for browser state plus thin wrappers over the underlying browser APIs, so a Scala.js component reads window size or the current path the same way it reads any other signal.
@@ -1201,6 +1230,33 @@ val keyboardShortcuts: Unit < (Async & Scope) =
 ```
 
 The handler closure receives a `UI.KeyboardEvent` (key, modifiers, targetId), matching the typed payload from in-element `onKeyDown` handlers.
+
+`UIWindow.onClick` is the document-level counterpart for clicks. It fires in the capture phase for the lifetime of the enclosing scope and delivers a `UI.MouseEvent`. The primary use cases are clicks on targets inside `UI.rawHtml`-injected content (which carries no `data-kyo-path` so the element-level `.onClick` cannot reach them) and dismiss-on-outside-click patterns. Inside the handler, `e.targetClosest(selector)` walks from the click target to the nearest matching ancestor, returning `Maybe[kyo.ElementRef]`.
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+val copyButtons: Unit < (Async & Scope) =
+    UIWindow.onClick { e =>
+        e.targetClosest("[data-copy]") match
+            case Present(el) =>
+                val text = el.getAttribute("data-copy").getOrElse("")
+                UIWindow.writeClipboard(text)
+            case Absent => Kyo.unit
+    }
+```
+
+`kyo.ElementRef` is an opaque handle over a DOM element. Its extension methods are `closest(selector)`, `querySelector(selector)`, `getAttribute(name)`, `setAttribute(name, value)`, `removeAttribute(name)`, and `textContent`. All return `Maybe` or `Unit`; no `null` escapes the boundary. `ElementRef` is only built by `UI.MouseEvent.targetClosest`; you never construct one directly.
+
+Additional `UIWindow` members (all JS-only, all return typed Kyo effects):
+
+- `UIWindow.prefersColorScheme: Signal[Boolean]` is `true` when the OS prefers dark. Updates on the media query `change` event; backed by a single process-lifetime listener installed lazily on first read.
+- `UIWindow.writeClipboard(text): Unit < Sync` writes to the system clipboard (fire-and-forget; rejection is non-fatal).
+- `UIWindow.storageGet(key): Maybe[String] < Sync` / `UIWindow.storageSet(key, value): Unit < Sync` read/write `localStorage`; `null` is mapped to `Absent`.
+- `UIWindow.setTitle(title): Unit < Sync` sets `document.title`.
+- `UIWindow.scrollToTop: Unit < Sync` scrolls to `(0, 0)`.
+- `UIWindow.scrollIntoViewById(id): Boolean < Sync` scrolls the element with `id` into view, returning `true` when found, `false` when absent (total, no throw).
 
 ### `UILocation`: client-side routing
 
@@ -1241,6 +1297,8 @@ val navBar: UI =
         a.href(Href.External("https", "example.com"), Target.Blank)("external") // not intercepted
     )
 ```
+
+`UILocation.assign(uri): Unit < Sync` performs a full browser navigation via `window.location.assign`. Unlike `push`/`replace` (History-API client-side routing that keeps the SPA mounted), `assign` hands control to the browser entirely. Use it for off-tree routes the SPA cannot resolve client-side.
 
 ## Pattern-matching on UI (AST access)
 

@@ -1229,7 +1229,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
-    "the INV-005 island escScript fixture stays green after move to kyo-ui renderer" in {
+    "docs-island JSON escapes </script> to the JS-unicode form (no literal closing tag)" in {
         val readme = "# Test\n## Usage\n`myFunc` does things.\n"
         val mod    = WebsiteModule("escape-chk", "Foundation", "escape-chk", readme, WebsiteModule.Platforms(true, true, true, true))
         val content =

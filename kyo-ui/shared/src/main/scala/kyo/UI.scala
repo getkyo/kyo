@@ -231,7 +231,7 @@ object UI:
       * at render time. `derives CanEqual` because [[kyo.UI.PageHead]] carries these values and
       * itself `derives CanEqual`.
       */
-    final case class DataIsland(scriptType: String, id: Maybe[String], json: String)(using val frame: Frame)
+    final case class DataIsland(scriptType: String, id: Maybe[String], json: String)
         derives CanEqual
 
     /** Conditional rendering: shows `body` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
