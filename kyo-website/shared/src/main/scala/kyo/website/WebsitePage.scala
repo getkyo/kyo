@@ -20,8 +20,10 @@ object WebsitePage:
     /** Per-route configuration for the page wrapper.
       *
       * `jsonLd` is the schema.org structured-data JSON for this page (SEO-5). When non-empty it is
-      * injected as a `<script type="application/ld+json">` block at the end of the `<head>`. Empty
-      * (the default) emits no JSON-LD block, so existing call sites are unaffected. `noindex`, when
+      * carried as `PageHead.jsonLd` and rendered by kyo-ui as a `<script type="application/ld+json">`
+      * block immediately before `</head>`. Empty (the default) emits no JSON-LD block, so existing
+      * call sites are unaffected. `dataIslands` carries body-end data islands (`PageHead.dataIslands`),
+      * empty by default. `noindex`, when
       * true, emits `<meta name="robots" content="noindex">` so thin pages (the empty docs intro,
       * DECISION-SEO-B) are excluded from search indexes while remaining reachable.
       */
@@ -31,7 +33,8 @@ object WebsitePage:
         canonical: String,
         bundleHref: String,
         jsonLd: String = "",
-        noindex: Boolean = false
+        noindex: Boolean = false,
+        dataIslands: Seq[UI.DataIsland] = Seq.empty
     ) derives CanEqual
 
     /** Wraps `view` in a complete HTML document and returns a stream of rendered HTML.
@@ -45,7 +48,6 @@ object WebsitePage:
       */
     def wrap(opts: Options)(view: UI)(using Frame): Stream[String, Async] =
         UI.runRenderPage(pageHead(opts))(view)
-            .map(html => if opts.jsonLd.nonEmpty then injectJsonLd(html, opts.jsonLd) else html)
 
     // ---- Private helpers ----
 
@@ -73,28 +75,12 @@ object WebsitePage:
             css = UI.stylesheetCss(WebsiteStyles.sheet),
             moduleScript = validBundleHref(opts.bundleHref) match
                 case s if s.nonEmpty => Present(s)
-                case _               => Absent
+                case _               => Absent,
+            jsonLd =
+                if opts.jsonLd.nonEmpty then Present(UI.dataIsland("application/ld+json", Absent, opts.jsonLd))
+                else Absent,
+            dataIslands = opts.dataIslands
         )
-
-    /** Inject a `<script type="application/ld+json">` block carrying `jsonLd` immediately before the
-      * `</head>` of the rendered document (SEO-5). The JSON has its angle brackets escaped to their
-      * JSON unicode escapes (`escScript`) so a `</script>` substring in any field cannot close the
-      * element early. This is a string-level page-wrap concern (the kyo-ui `PageHead` has no raw-script
-      * slot), mirroring `WebsiteGenerator.injectIslands` at the head level instead of the body level.
-      */
-    private def injectJsonLd(html: String, jsonLd: String): String =
-        val block  = s"""<script type="application/ld+json">${escScript(jsonLd)}</script>"""
-        val marker = "</head>"
-        val idx    = html.indexOf(marker)
-        if idx < 0 then html + block
-        else html.substring(0, idx) + block + html.substring(idx)
-    end injectJsonLd
-
-    // Angle-bracket escape for JSON embedded in a <script> element. Mirrors
-    // WebsiteGenerator.escScript: a literal "</script>" in any field would otherwise close the
-    // element early, so "<"/">" become their JSON unicode escapes.
-    private def escScript(json: String): String =
-        json.replace("<", "\\u003c").replace(">", "\\u003e")
 
     private def validBundleHref(s: String): String =
         // Reject javascript: scheme and other potentially unsafe hrefs; fall back to main.js

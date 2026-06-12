@@ -229,9 +229,12 @@ object WebsiteGenerator:
             // first paint does (loadingRef initialised false), keeping SSG and bundle output identical.
             body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
             view <- siteShell(versions, docsHome(c, prefix), body)
-            html <- wrapFirst(introOpts(c, prefix, route, rendered.headings, isCurrentLatest), view)
             island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
-            _ <- writeRoute(outDir / prefix / "index.html", injectIslands(html, island, versions))
+            html <- wrapFirst(
+                introOpts(c, prefix, route, rendered.headings, isCurrentLatest).copy(dataIslands = islands(island, versions)),
+                view
+            )
+            _ <- writeRoute(outDir / prefix / "index.html", html)
             _ <- writeString(s"$prefix/content.md", outDir / prefix / "content.md", c.intro)
             _ <- writeString(
                 s"$prefix/content.html",
@@ -257,9 +260,12 @@ object WebsiteGenerator:
             // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
             body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
             view <- siteShell(versions, docsHome(c, prefix), body)
-            html <- wrapFirst(docOpts(c, prefix, module.slug, route, isCurrentLatest), view)
             island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
-            _ <- writeRoute(outDir / prefix / module.slug / "index.html", injectIslands(html, island, versions))
+            html <- wrapFirst(
+                docOpts(c, prefix, module.slug, route, isCurrentLatest).copy(dataIslands = islands(island, versions)),
+                view
+            )
+            _ <- writeRoute(outDir / prefix / module.slug / "index.html", html)
             _ <- writeString(
                 s"$prefix/${module.slug}/content.md",
                 outDir / prefix / module.slug / "content.md",
@@ -488,25 +494,16 @@ object WebsiteGenerator:
             )}, "article": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}}"""
     end docsIsland
 
-    /** Inject the `#docs-island` and `#versions-island` `<script type="application/json">` elements
-      * immediately before `</body>` in the rendered SSG HTML. The JSON has its angle brackets escaped
-      * to their JSON unicode escapes (via escScript) so a `</script>` substring in any field cannot
-      * close the element early. This is a string-level SSG concern, not a kyo-ui API or a `UI.rawHtml`
-      * use, so the raw-HTML boundary (the transpiler's inline-HTML node) is preserved.
+    /** Build the two body-end data islands (`#docs-island`, `#versions-island`) carried on the page
+      * head and rendered before `</body>` by kyo-ui. The docs-island JSON is the route's island
+      * payload; the versions-island JSON is the versions list. The JSON content is unchanged; only the
+      * `<script>` wrapper and the `</script>` escape moved into kyo-ui.
       */
-    private def injectIslands(html: String, docsIslandJson: String, versions: Chunk[WebsiteVersion]): String =
-        val versionsIslandJson = buildVersionsJson(versions)
-        val scripts =
-            s"""<script type="application/json" id="docs-island">${escScript(docsIslandJson)}</script>""" +
-                s"""<script type="application/json" id="versions-island">${escScript(versionsIslandJson)}</script>"""
-        val marker = "</body>"
-        val idx    = html.lastIndexOf(marker)
-        if idx < 0 then html + scripts
-        else html.substring(0, idx) + scripts + html.substring(idx)
-    end injectIslands
-
-    private def escScript(json: String): String =
-        json.replace("<", "\\u003c").replace(">", "\\u003e")
+    private def islands(docsIslandJson: String, versions: Chunk[WebsiteVersion])(using Frame): Seq[UI.DataIsland] =
+        Seq(
+            UI.dataIsland("application/json", Present("docs-island"), docsIslandJson),
+            UI.dataIsland("application/json", Present("versions-island"), buildVersionsJson(versions))
+        )
 
     // Serialize a heading outline to a JSON array of `{"level": N, "text": "...", "slug": "..."}`
     // objects. Mirrors the `tocJson` pattern in `manifestEntry` verbatim (prep doc lines 122-127).
@@ -544,10 +541,12 @@ object WebsiteGenerator:
         for
             body <- LandingApp.body(landingHome)
             view <- siteShell(versions, landingHome, body)
-            html <- wrapFirst(opts, view)
-            island      = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, "", Chunk.empty))
-            withIslands = if island.isEmpty then html else injectIslands(html, island, versions)
-            _ <- writeRoute(outDir / "index.html", withIslands)
+            island = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, "", Chunk.empty))
+            html <- wrapFirst(
+                if island.isEmpty then opts else opts.copy(dataIslands = islands(island, versions)),
+                view
+            )
+            _ <- writeRoute(outDir / "index.html", html)
         yield ()
         end for
     end emitLanding

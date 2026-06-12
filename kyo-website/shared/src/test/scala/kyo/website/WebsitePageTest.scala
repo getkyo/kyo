@@ -168,6 +168,38 @@ class WebsitePageTest extends WebsiteTest:
         }
     }
 
+    "wrap renders ld+json via PageHead.jsonLd slot, byte-identical to prior splice behavior" in {
+        renderPage(defaultOpts.copy(jsonLd = """{"@type":"TechArticle","x":"</script>"}"""), UI.div).map { html =>
+            assert(html.contains("""<script type="application/ld+json">"""), s"ld+json block must be present: $html")
+            val block   = extractJsonLd(html)
+            val ldIdx   = html.indexOf("application/ld+json")
+            val headEnd = html.indexOf("</head>")
+            assert(ldIdx >= 0 && ldIdx < headEnd, "ld+json must be before </head>")
+            assert(!block.contains("</script>"), s"ld+json body must not contain literal </script>: $block")
+            assert(block.contains("\\u003c"), s"angle brackets must be unicode-escaped: $block")
+            assert(!html.contains("id="), s"ld+json block must carry no id attribute: $html")
+        }
+    }
+
+    "wrap emits no ld+json block when jsonLd is empty via PageHead.jsonLd default" in {
+        renderPage(defaultOpts, UI.div).map { html =>
+            assert(!html.contains("application/ld+json"), s"no ld+json block with empty jsonLd: $html")
+        }
+    }
+
+    "wrap renders Options.dataIslands before </body> when set" in {
+        renderPage(
+            defaultOpts.copy(dataIslands = Seq(UI.dataIsland("application/json", Present("docs-island"), """{"a":1}"""))),
+            UI.div
+        ).map { html =>
+            val islandStr = """<script type="application/json" id="docs-island">{"a":1}</script>"""
+            assert(html.contains(islandStr), s"island must be present: $html")
+            val islandIdx = html.indexOf(islandStr)
+            val bodyEnd   = html.indexOf("</body>")
+            assert(islandIdx >= 0 && islandIdx < bodyEnd, s"island must be before </body>: $html")
+        }
+    }
+
     // ---- DECISION-SEO-B: noindex robots meta ----
 
     "wrap emits noindex robots meta when noindex=true, absent when false (DECISION-SEO-B)" in {

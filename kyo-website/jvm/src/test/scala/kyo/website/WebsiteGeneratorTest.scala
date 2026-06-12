@@ -1203,6 +1203,55 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
+    "module page carries both islands before </body>, byte-identical to prior splice behavior" in {
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(vWithModules), out, bundleDir)
+            html      <- readFile(out / "v1.0.0-RC2" / "kyo-data" / "index.html")
+        yield
+            assert(
+                html.contains("""<script type="application/json" id="docs-island">"""),
+                s"docs-island must be present: $html"
+            )
+            assert(
+                html.contains("""<script type="application/json" id="versions-island">"""),
+                s"versions-island must be present: $html"
+            )
+            val docsIdx    = html.indexOf("""id="docs-island">""")
+            val versIdx    = html.indexOf("""id="versions-island">""")
+            val bodyEndIdx = html.indexOf("</body>")
+            assert(docsIdx < versIdx, "docs-island must precede versions-island")
+            assert(versIdx < bodyEndIdx, "both islands must be before </body>")
+            val islandJson = extractIsland(html, "docs-island")
+            val decoded    = islandJson.replace("\\u003c", "<").replace("\\u003e", ">")
+            assert(decoded.contains("\"slug\": \"kyo-data\""), s"decoded island must carry kyo-data slug: $decoded")
+        end for
+    }
+
+    "the INV-005 island escScript fixture stays green after move to kyo-ui renderer" in {
+        val readme = "# Test\n## Usage\n`myFunc` does things.\n"
+        val mod    = WebsiteModule("escape-chk", "Foundation", "escape-chk", readme, WebsiteModule.Platforms(true, true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            html      <- readFile(out / "v1.0.0" / "escape-chk" / "index.html")
+        yield
+            val islandJson = extractIsland(html, "docs-island")
+            assert(
+                islandJson.contains("\\u003c"),
+                s"island must contain unicode-escaped < (\\u003c): $islandJson"
+            )
+            assert(
+                !islandJson.contains("</script>"),
+                s"island must not contain literal </script>: $islandJson"
+            )
+        end for
+    }
+
     // No-regression roll-up: concrete level==2 check across island, content.html,
     // content.md, sitemap, manifest, and article ids in a single multi-version emit.
     "level-carrying headings in island, content.html, and manifest" in {
