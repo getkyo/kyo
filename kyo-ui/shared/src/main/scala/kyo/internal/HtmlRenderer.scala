@@ -1210,6 +1210,7 @@ private[kyo] object HtmlRenderer:
         }
         s.strokeDashoffset.foreach(l => svgAttr(sb, "stroke-dashoffset", svgLength(l)))
         s.strokeMiterlimit.foreach(v => svgAttr(sb, "stroke-miterlimit", fmtD(v)))
+        s.pathLength.foreach(v => svgAttr(sb, "pathLength", fmtD(v)))
         s.opacity.foreach(v => svgAttr(sb, "opacity", fmtD(v)))
         if s.transform.nonEmpty then
             svgAttr(sb, "transform", s.transform.map(transform).mkString(" "))

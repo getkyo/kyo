@@ -174,6 +174,42 @@ object UIWindow:
             end if
         }
 
+    /** Run `action` once, the first time the element with `id` scrolls into view (any part of it crosses
+      * `minVisible`, the visible fraction, default `0.2`), then stop observing it. Backed by an
+      * `IntersectionObserver` bound to the enclosing [[kyo.Scope]]: closing the scope disconnects it. A
+      * missing `id` installs no observer and never fires (total: no throw, no `null` escapes). This is the
+      * reveal-on-scroll primitive: a below-the-fold element runs its entrance the moment the reader
+      * reaches it, rather than on page load where the motion plays unseen.
+      */
+    def onIntersectById(id: String, minVisible: Double = 0.2)(action: => Any < Async)(using Frame): Unit < (Async & Scope) =
+        Sync.defer {
+            val el = dom.document.getElementById(id)
+            if el == null then Maybe.empty[dom.IntersectionObserver]
+            else
+                val thresholds = js.Array[Double](minVisible)
+                val observer = new dom.IntersectionObserver(
+                    (entries, obs) =>
+                        var hit = false
+                        entries.foreach(e => if e.isIntersecting then hit = true)
+                        if hit then
+                            // Fire once: disconnect before running so a second batch cannot re-enter.
+                            obs.disconnect()
+                            import AllowUnsafe.embrace.danger
+                            // Unsafe: bridges the native IntersectionObserver callback into the Kyo effect
+                            // system; Fiber.initUnscoped detaches the fiber so the callback returns at once.
+                            discard(Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(action.unit)))
+                        end if
+                    ,
+                    new dom.IntersectionObserverInit:
+                        threshold = thresholds
+                )
+                observer.observe(el)
+                Maybe(observer)
+            end if
+        }.map { observer =>
+            Scope.ensure(Sync.defer(observer.foreach(_.disconnect())))
+        }
+
     private def registerClickListener(
         f: UI.MouseEvent => Any < Async
     )(using Frame): Unit < (Async & Scope) =

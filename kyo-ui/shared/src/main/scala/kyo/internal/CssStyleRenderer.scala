@@ -299,6 +299,8 @@ private[kyo] object CssStyleRenderer:
             s"animation: $name ${durationMs}ms ${easing(ease)} both;"
         case AnimationDelayProp(ms) =>
             s"animation-delay: ${ms}ms;"
+        case StrokeDashoffsetProp(v) =>
+            s"stroke-dashoffset: ${fmt(v)};"
         case _: HoverProp | _: FocusProp | _: ActiveProp | _: DisabledProp => ""
 
 end CssStyleRenderer

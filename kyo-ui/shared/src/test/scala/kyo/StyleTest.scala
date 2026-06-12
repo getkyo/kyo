@@ -1351,6 +1351,21 @@ class StyleTest extends kyo.test.Test[Any]:
         }
     }
 
+    "strokeDashoffset" - {
+        "renders unitless stroke-dashoffset css (for a pathLength-normalized stroke draw)" in {
+            assert(Style.strokeDashoffset(1.0).toCss == "stroke-dashoffset: 1;")
+            assert(Style.strokeDashoffset(0.0).toCss == "stroke-dashoffset: 0;")
+        }
+
+        "is the keyframe value an SVG stroke-draw animation tweens between" in {
+            // The gap chart's `gapdraw` keyframe goes from offset 1 (hidden) to 0 (drawn).
+            val from = Style.strokeDashoffset(1.0)
+            val to   = Style.strokeDashoffset(0.0)
+            assert(from.toCss == "stroke-dashoffset: 1;")
+            assert(to.toCss == "stroke-dashoffset: 0;")
+        }
+    }
+
     "disabled pseudo-state" - {
         "disabled builder" in {
             val s = Style.disabled(Style.bg(Color.hex("#ccc").get).opacity(0.5))

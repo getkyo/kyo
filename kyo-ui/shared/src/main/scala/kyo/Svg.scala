@@ -358,6 +358,7 @@ object Svg:
         strokeDasharray: Maybe[Chunk[Double]] = Absent,
         strokeDashoffset: Maybe[SvgLength] = Absent,
         strokeMiterlimit: Maybe[Double] = Absent,
+        pathLength: Maybe[Double] = Absent,
         opacity: Maybe[Double] = Absent,
         transform: Chunk[Transform] = Chunk.empty,
         // geometry (coords are Double; an explicit SvgLength is stored boxed)
@@ -725,10 +726,15 @@ object Svg:
     ) extends SvgElement with HasId with HasFill with HasStroke with HasOpacity with HasTransform with HasFilter
         with UI.Ast.SvgInteractiveNode:
         type Self = Path
-        def withAttrs(a: Attrs): Path          = copy(attrs = a)
-        def withSvg(s: SvgAttrs): Path         = copy(svgAttrs = s)
-        def apply(cs: ShapeChild*): Path       = copy(children = children ++ liftSvg(cs))
-        def d(data: PathData): Path            = withSvg(svgAttrs.copy(d = Present(data)))
+        def withAttrs(a: Attrs): Path    = copy(attrs = a)
+        def withSvg(s: SvgAttrs): Path   = copy(svgAttrs = s)
+        def apply(cs: ShapeChild*): Path = copy(children = children ++ liftSvg(cs))
+        def d(data: PathData): Path      = withSvg(svgAttrs.copy(d = Present(data)))
+        // `pathLength` reparameterizes the path so dash and offset values are read in `pathLength`
+        // units rather than user units. Setting it to 1 normalizes the geometry, so a CSS stroke-draw
+        // keyframe can tween `stroke-dashoffset` from 1 (hidden) to 0 (drawn) without knowing the real
+        // length. Used by the landing gap chart's scroll-revealed line draw.
+        def pathLength(v: Double): Path        = withSvg(svgAttrs.copy(pathLength = Present(v)))
         override def id(v: String): Path       = withSvg(svgAttrs.copy(defId = Present(v)))
         def markerStart(ref: Marker.Ref): Path = withSvg(svgAttrs.copy(markerStart = Present(ref.id)))
         def markerMid(ref: Marker.Ref): Path   = withSvg(svgAttrs.copy(markerMid = Present(ref.id)))

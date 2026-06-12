@@ -50,6 +50,19 @@ class SvgRendererTest extends kyo.test.Test[Any]:
         yield assert(html.contains("""d="M12 0a12 12 0 100 24z""""), s"raw d must pass through: $html")
     }
 
+    "path pathLength normalizes the path length (for CSS stroke-draw)" in {
+        // pathLength=1 reparameterizes dash/offset to 0..1, so a CSS keyframe can tween
+        // stroke-dashoffset 1 -> 0 independent of the path's real length.
+        val p = Svg.path.d(Svg.PathData.from(0, 0).lineTo(10, 0)).pathLength(1.0)
+            .strokeDasharray(Seq(1.0)).strokeDashoffset(Svg.SvgLength.user(0.0))
+        for html <- HtmlRenderer.render(p, Seq.empty)
+        yield
+            assert(html.contains("""pathLength="1""""), s"pathLength must render camelCase: $html")
+            assert(html.contains("""stroke-dasharray="1""""), s"dash base must render: $html")
+            assert(html.contains("""stroke-dashoffset="0""""), s"offset base must render unitless: $html")
+        end for
+    }
+
     // transform list joins
     "transform list renders as space-separated functions" in {
         val g = Svg.g.transform(Svg.Transform.Translate(10, 20), Svg.Transform.Scale(2))
