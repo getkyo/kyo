@@ -297,6 +297,8 @@ private[kyo] object CssStyleRenderer:
             s"transition: ${transitionProperty(prop)} ${durationMs}ms ${easing(ease)};"
         case AnimationProp(name, durationMs, ease) =>
             s"animation: $name ${durationMs}ms ${easing(ease)} both;"
+        case AnimationDelayProp(ms) =>
+            s"animation-delay: ${ms}ms;"
         case _: HoverProp | _: FocusProp | _: ActiveProp | _: DisabledProp => ""
 
 end CssStyleRenderer

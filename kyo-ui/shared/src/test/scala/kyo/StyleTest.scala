@@ -1334,6 +1334,23 @@ class StyleTest extends kyo.test.Test[Any]:
         }
     }
 
+    "animationDelay" - {
+        "renders animation-delay css" in {
+            assert(Style.animationDelay(150).toCss == "animation-delay: 150ms;")
+        }
+
+        "allows a negative delay (starts mid-animation)" in {
+            assert(Style.animationDelay(-200).toCss == "animation-delay: -200ms;")
+        }
+
+        "is a distinct kind that coexists with animation, for staggered cascades" in {
+            val s = Style.animation("heroline", 320, Easing.easeOut).animationDelay(96)
+            assert(s.props.size == 2)
+            assert(s.toCss.contains("animation: heroline 320ms ease-out both;"))
+            assert(s.toCss.contains("animation-delay: 96ms;"))
+        }
+    }
+
     "disabled pseudo-state" - {
         "disabled builder" in {
             val s = Style.disabled(Style.bg(Color.hex("#ccc").get).opacity(0.5))

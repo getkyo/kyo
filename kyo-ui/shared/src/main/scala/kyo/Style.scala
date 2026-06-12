@@ -584,6 +584,12 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def animation(name: String, durationMs: Int, easing: Easing.type => Easing): Style =
         animation(name, durationMs, easing(Easing))
 
+    /** Sets `animation-delay` in milliseconds: the offset before the element's [[animation]] starts. Pairs
+      * with [[animation]] to stagger siblings into a cascade by giving each an increasing delay. A negative
+      * value starts the animation as if it had already been running for that long.
+      */
+    def animationDelay(ms: Int): Style = appendProp(Prop.AnimationDelayProp(ms))
+
 end Style
 
 /** Companion of [[kyo.Style]]: the `empty` identity, factory setters, the [[kyo.Style.Color]] model, the value enums, and the
@@ -783,6 +789,7 @@ object Style:
     def animation(name: String, durationMs: Int, easing: Easing): Style = empty.animation(name, durationMs, easing)
     def animation(name: String, durationMs: Int, easing: Easing.type => Easing): Style =
         empty.animation(name, durationMs, easing)
+    def animationDelay(ms: Int): Style          = empty.animationDelay(ms)
     def hover(s: Style): Style                  = empty.hover(s)
     def hover(f: Style.type => Style): Style    = empty.hover(f)
     def focus(s: Style): Style                  = empty.focus(s)
@@ -1136,6 +1143,7 @@ object Style:
         // Motion
         case TransitionProp(property: TransitionProperty, durationMs: Int, easing: Easing)
         case AnimationProp(name: String, durationMs: Int, easing: Easing)
+        case AnimationDelayProp(ms: Int)
         // Pseudo-states
         case HoverProp(style: Style)
         case FocusProp(style: Style)
