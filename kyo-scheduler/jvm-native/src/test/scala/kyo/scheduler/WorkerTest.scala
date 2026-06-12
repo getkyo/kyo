@@ -202,6 +202,44 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             )
         }
 
+        "a task interrupted during its slice is re-run immediately, never requeued behind queued load" in {
+            // The mount-boundary race: the interrupt lands while the task is running, so its runtime
+            // key is untrustworthy at requeue time (the reset races addRuntime/doPreempt RMWs). The
+            // worker must re-run the task instead of requeueing it, or queued load starves it.
+            val worker = createWorker()
+            val order  = new ConcurrentLinkedQueue[String]()
+
+            def late(name: String): TestTask = TestTask(_run = () => { order.add(name); Done })
+            val late1                        = late("late1")
+            val late2                        = late("late2")
+
+            lazy val victim: TestTask = TestTask(_run = () => {
+                if (!victim.interrupted) {
+                    order.add("victim")
+                    // Fresh low-runtime arrivals land while the victim runs; the interrupt then
+                    // lands mid-slice, before the worker decides whether to requeue.
+                    worker.enqueue(late1)
+                    worker.enqueue(late2)
+                    victim.interrupted = true
+                    Preempted
+                } else {
+                    // An IOTask whose promise is complete finalizes and returns Done when re-run.
+                    order.add("victim-final")
+                    Done
+                }
+            })
+            victim.addRuntime(1000000) // accumulated slice runtime: a stale key if requeued
+
+            worker.enqueue(victim)
+            worker.run()
+
+            val l = order.toArray.toList.map(_.toString)
+            assert(
+                l == List("victim", "victim-final", "late1", "late2"),
+                s"interrupted task was requeued instead of re-run immediately: $l"
+            )
+        }
+
         "repeated epoch advances within one frozen tick fire at most one rebuild (bounded under storm)" in {
             // Every busy task advances the epoch (an interrupt storm), but the frozen test clock keeps
             // now - lastRebuildMs at 0 after the first rebuild, so the minInterval gate fires exactly one
