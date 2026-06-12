@@ -26,10 +26,26 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
-# Build sbt command string — escape inner quotes for shell-in-shell
+# Build sbt command string, escaping inner quotes for shell-in-shell
 SBT_CMDS=""
 for arg in "$@"; do
   SBT_CMDS="$SBT_CMDS '$arg'"
+done
+
+# Build the step-2 block: one sbt invocation per command, continuing past failures so every
+# requested command runs (one sbt session would abort the remaining commands on the first red
+# test). Each invocation forks a fresh test JVM, isolating commands from each other. The
+# container-side variables are escaped (\$) so they evaluate in the container, not here.
+SBT_STEP2=""
+RUN_I=0
+for arg in "$@"; do
+  RUN_I=$((RUN_I+1))
+  SBT_STEP2="$SBT_STEP2
+echo \"=== run $RUN_I: $arg ===\"
+sbt '$arg'
+RUN_EXIT=\$?
+echo \"=== run $RUN_I exit: \$RUN_EXIT ===\"
+if [ \$RUN_EXIT -ne 0 ]; then SBT_EXIT=\$RUN_EXIT; fi"
 done
 
 # Ensure podman is running
@@ -52,11 +68,15 @@ if [ -s "$PATCH" ]; then
   echo "Including uncommitted changes"
 fi
 
-# Also capture untracked files in kyo-http native resources (native_deps.h etc)
+# Also capture untracked files in kyo-http native resources (native_deps.h etc) and kyo-net C
+# sources (e.g. the BoringSSL shim/stub under shared/src/main), which git archive omits.
+# COPYFILE_DISABLE=1 stops macOS BSD tar from emitting AppleDouble (._*) sidecar files for inputs that
+# carry extended attributes; otherwise a ._kyo_net_boringssl_stub.c lands in the container's bundled C
+# sources and the non-UTF-8 metadata file fails the Scala Native C compile (and scalafmt on ._*.scala).
 UNTRACKED="$TMPDIR/untracked.tar"
 (cd "$PROJECT_DIR" && git ls-files --others --exclude-standard \
-  kyo-http/native/src/ scripts/ .github/ \
-  | tar cf "$UNTRACKED" -T - 2>/dev/null) || tar cf "$UNTRACKED" --files-from=/dev/null
+  kyo-http/native/src/ kyo-net/shared/src/ kyo-net/jvm-native/src/ kyo-net/jvm/src/ kyo-net/native/src/ scripts/ .github/ \
+  | COPYFILE_DISABLE=1 tar cf "$UNTRACKED" -T - 2>/dev/null) || COPYFILE_DISABLE=1 tar cf "$UNTRACKED" --files-from=/dev/null
 
 echo "Platform: $PLATFORM"
 echo "Commands:$SBT_CMDS"
@@ -65,6 +85,9 @@ echo "---"
 podman run --rm \
   --platform "$PLATFORM" \
   --security-opt label=disable \
+  --privileged \
+  --ulimit memlock=-1:-1 \
+  -e "STAGE_BORINGSSL=${STAGE_BORINGSSL:-}" \
   -v "$TMPDIR:/build-input:ro" \
   "$DISTRO" \
   bash -c "
@@ -84,9 +107,11 @@ else
   echo 'No uncommitted changes to apply'
 fi
 
-# Install native deps
+# Install native deps (kyo-http: libcurl/libidn2/libh2o; kyo-net: liburing for the io_uring shim,
+# libunwind for Scala Native, nodejs/npm for the JS koffi tests; libssl is the OpenSSL TLS fallback).
+# cmake/golang-go/build-essential/git build the vendored BoringSSL when STAGE_BORINGSSL=1 (below).
 apt-get update -qq >/dev/null 2>&1
-apt-get install -y -qq wget clang libcurl4-openssl-dev libidn2-dev $H2O_PKG libssl-dev >/dev/null 2>&1
+apt-get install -y -qq wget clang libcurl4-openssl-dev libidn2-dev $H2O_PKG libssl-dev liburing-dev libunwind-dev nodejs npm cmake golang-go build-essential git >/dev/null 2>&1
 
 # Install JDK
 ARCH=\$(dpkg --print-architecture)
@@ -107,6 +132,34 @@ export PATH=\$JAVA_HOME/bin:/opt/sbt/bin:\$PATH
 export JAVA_OPTS='-Xms4G -Xmx6G -Xss10M'
 export JVM_OPTS='-Xms4G -Xmx6G -Xss10M'
 
-echo '=== sbt clean +$SBT_CMDS ==='
-sbt clean$SBT_CMDS
+echo '=== step 1: clean ==='
+sbt clean
+
+# Optional: build + stage the vendored BoringSSL into the worktree before the test step so the
+# kyonet_boringssl shim links against real libssl/libcrypto and the BoringSSL TLS tests run (not
+# cancel). OFF by default (STAGE_BORINGSSL unset) to keep unrelated runs fast; the staged/ tree is
+# gitignored so git archive never carries it into the container, which is why it must be built here.
+if [ \"\${STAGE_BORINGSSL:-}\" = '1' ]; then
+  case \$ARCH in
+    amd64) BSSL_OSARCH='linux-x86_64' ;;
+    arm64) BSSL_OSARCH='linux-aarch64' ;;
+    *) echo \"Unsupported BoringSSL arch: \$ARCH\" && exit 1 ;;
+  esac
+  echo \"=== step 1b: stage BoringSSL (\$BSSL_OSARCH) ===\"
+  bash kyo-net/build/boringssl/build-boringssl.sh \"\$BSSL_OSARCH\"
+fi
+
+echo '=== step 2: requested commands (kyo-ffi codegen runs in-build via ffiCodegenClasspath) ==='
+set +e
+SBT_EXIT=0
+$SBT_STEP2
+set -e
+echo \"=== sbt exit: \$SBT_EXIT ===\"
+# Dump any JVM fatal-error logs (a native SIGSEGV/SIGABRT in BoringSSL / io_uring leaves an hs_err_pid*.log with the crashing
+# thread's Java + native stack). The --rm container is discarded on exit, so surface the log to the captured output here.
+for f in \$(find /workspace -maxdepth 3 -name 'hs_err_pid*.log' 2>/dev/null); do
+  echo \"===== \$f =====\"
+  cat \"\$f\"
+done
+exit \$SBT_EXIT
 "

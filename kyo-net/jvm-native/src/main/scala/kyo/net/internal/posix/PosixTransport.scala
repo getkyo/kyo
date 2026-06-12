@@ -1,0 +1,1704 @@
+package kyo.net.internal.posix
+
+import kyo.*
+import kyo.ffi.Buffer
+import kyo.ffi.Ffi
+import kyo.net.Connection
+import kyo.net.Connection as NetConnection
+import kyo.net.Listener as NetListener
+import kyo.net.NetAddress
+import kyo.net.NetAlreadyDetachedException
+import kyo.net.NetBindException
+import kyo.net.NetConnectException
+import kyo.net.NetConnectTimeoutException
+import kyo.net.NetDnsResolutionException
+import kyo.net.NetErrno
+import kyo.net.NetException
+import kyo.net.NetNotUpgradableException
+import kyo.net.NetStdioAlreadyOpenException
+import kyo.net.NetTlsConfig
+import kyo.net.NetTlsHandshakeException
+import kyo.net.NetUnixConnectException
+import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.tls.TlsProviderPlatform
+import kyo.net.internal.transport.Connection as InternalConnection
+import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.IoDriverPool
+import kyo.net.internal.transport.ListenerImpl
+import kyo.net.internal.transport.TransportImpl
+import kyo.net.internal.transport.WriteResult
+import kyo.scheduler.IOPromise
+
+/** The unified `PosixHandle`-backed transport: the full TCP / UDS / stdio surface over [[SocketBindings]] plus an [[IoDriver]] (the readiness
+  * [[PollerIoDriver]] on epoll/kqueue or the completion [[IoUringDriver]] on io_uring). It is the production transport on every posix host:
+  * the sole Native transport, and the posix tier above the pure-JDK `NioTransport` floor on the JVM.
+  *
+  * `connect` / `connectUnix` open a client socket, set it non-blocking, and drive a non-blocking connect: an immediate success (loopback)
+  * completes inline, otherwise the driver awaits connect completion and the readiness arm reads `SO_ERROR` to confirm. `listen` / `listenUnix`
+  * bind + listen, resolve the actual (possibly ephemeral) port, and run a dedicated accept loop via the poller-armed `scheduleNextAccept` +
+  * `acceptAll` pattern (the listen fd is set non-blocking; `acceptNow` drains all pending connections inline before re-arming the driver).
+  * Each accepted client fd is made non-blocking with `TCP_NODELAY`, wrapped in a [[Connection]], and handed to the handler in its own fiber.
+  *
+  * TLS reuses the existing handshake machinery: `connect(tls)` / `listen(tls)` build the engine via `TlsProviderPlatform.engine` and drive it
+  * over the same fd with [[driveHandshake]] (the very loop the STARTTLS path uses), then attach the engine to the handle. No legacy OpenSSL
+  * handshake code is involved.
+  *
+  * `stdio` opens a [[Connection]] over `PosixHandle.stdio()` (readFd = 0, writeFd = 1), guarded by a process-wide CAS so exactly one stdio
+  * connection exists at a time (fd 0/1 are process-global and must not be double-owned). Before wiring the connection
+  * it runs the pollability probe: a regular-file stdin under an epoll backend is the one cell the poller cannot register, so it falls back
+  * to the [[BlockingReaderDriver]]; every other case (io_uring, kqueue, pipes, ttys) uses the real driver.
+  *
+  * `upgradeToTls` is the STARTTLS path: it detaches the plaintext connection, feeds any staged ciphertext into the new TLS engine before
+  * the first post-upgrade socket read (so no byte is dropped), drives the handshake over the same fd, and rebuilds the connection.
+  */
+final private[net] class PosixTransport private[posix] (
+    config: kyo.net.TransportConfig,
+    ioDriver: IoDriver[PosixHandle],
+    sockets: SocketBindings,
+    backendIsEpoll: Boolean
+) extends TransportImpl[PosixHandle]:
+
+    import PosixTransport.AcceptDrain
+
+    // Unsafe: created at object initialization with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the
+    // caller's AllowUnsafe.
+    private val stdioClaimed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    /** Backoff before re-arming accept interest after `accept` returned `EMFILE`/`ENFILE` (out of file descriptors). The pending connection
+      * stays in the backlog and the listen fd stays read-ready, so an immediate re-arm re-fires the same error in a tight CPU spin; the backoff
+      * breaks the spin while keeping the accept loop alive, so accepting resumes once a fd frees. 50ms drops the carrier from 100% CPU to one
+      * cheap retry per interval yet recovers promptly when a fd frees (libuv backs off ~1s on the same condition; a shorter interval here
+      * resumes serving faster without measurably loading an otherwise idle poll loop).
+      */
+    private val acceptResourceBackoff: Duration = 50.millis
+
+    /** Cap on consecutive `EINTR`/`ECONNABORTED` retries within a single drain cycle. These are transient (accept(2) says retry like `EAGAIN`),
+      * but bounding the in-cycle retries stops a persistently-firing transient error from itself spinning the drain; past the cap the cycle
+      * re-arms normally and the next readiness event drives it forward.
+      */
+    private val maxTransientAcceptRetries = 8
+
+    /** Every live listener this transport opened. `close()` closes them all (so their accept loops terminate) before the pool shuts down, and a
+      * listener removes itself once closed; without this, a transport shutdown would strand accept loops parked in a blocking `accept`.
+      */
+    // Concurrent-collection audit: a raw ConcurrentHashMap-backed key-set tracking the open listeners so close() can wind them all down.
+    // kyo has no concurrent-set/map type, and its effect-based collections cannot back this set, which is added to on each listen carrier and
+    // iterated on the transport-close carrier without suspension. Retained as a documented no-equivalent exception.
+    private val listeners = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixListener]()
+
+    /** Count of accept loops that have started but not yet exited. Each loop increments it on start and decrements it on exit (every path), so a
+      * caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has
+      * wound down. That matters for orderly shutdown: a blocking `accept` cannot be cancelled, so after closing a listen fd the only way to know
+      * its parked `accept` has woken (and the fd is safe to recycle without a stale loop stealing a connection) is to watch this drop to 0.
+      */
+    // Unsafe: a field initializer runs at construction, outside any effect, so there is no ambient AllowUnsafe to thread; the bridge only
+    // allocates the counter (no side effect on the network).
+    private val acceptLoopsActive = AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+
+    /** The number of accept loops still running (in `scheduleNextAccept` or `acceptAll`). Drops to 0 once every closed listener's loop has exited. */
+    private[posix] def activeAcceptLoops(using AllowUnsafe): Long = acceptLoopsActive.get()
+
+    /** The driver pool powering this transport. A single-driver pool wrapping `ioDriver`: stdio, connect, listen, accept, and the TLS
+      * handshake all run on that one driver, and `close()` shuts it down through the pool (no additional driver seam is introduced).
+      */
+    val pool: IoDriverPool[PosixHandle] =
+        // Unsafe: this val is computed once at transport construction, outside any effect, so there is no ambient AllowUnsafe; the bridge only
+        // wraps the already-built single driver in a one-element pool (no I/O is performed here).
+        import AllowUnsafe.embrace.danger
+        IoDriverPool.init(Array(ioDriver))
+    end pool
+
+    /** Open the stdio connection: read side is process stdin (fd 0), write side is process stdout (fd 1). A second concurrent call aborts
+      * `Closed` (the CAS fails) so fd 0/1 are never double-owned. The connection closes its driver registration on scope exit but never closes
+      * fds 0/1 (the process owns them).
+      */
+    override def stdio()(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+        if !stdioClaimed.compareAndSet(false, true) then
+            // Exactly one stdio per process (no double-ownership of fd 0/1).
+            Fiber.Unsafe.fromResult(Result.fail(NetStdioAlreadyOpenException()))
+        else
+            Fiber.Unsafe.init {
+                val handle           = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+                val conn: Connection = openWith(handle, selectDriver(handle.readFd))
+                conn.start()
+                conn
+            }.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
+
+    /** The driver that should back a stdio handle whose read end is `fd`: the real `ioDriver` when the fd is pollable, else the
+      * [[BlockingReaderDriver]] fallback (the one fallback cell: epoll + regular file).
+      */
+    private[posix] def selectDriver(fd: Int)(using AllowUnsafe): IoDriver[PosixHandle] =
+        if pollable(fd) then ioDriver
+        else BlockingReaderDriver.init(ioDriver)
+
+    /** Build an internal connection over `handle`/`driver`, returned as the public `Connection`. The caller starts it. */
+    private[posix] def openWith(handle: PosixHandle, driver: IoDriver[PosixHandle])(using
+        AllowUnsafe,
+        Frame
+    ): InternalConnection[PosixHandle] =
+        InternalConnection.init(handle, driver, config.channelCapacity)
+
+    // ---------------------------------------------------------------------------------------------------------------------------------------
+    // TCP / UDS client connect
+    // ---------------------------------------------------------------------------------------------------------------------------------------
+
+    /** Connect a non-blocking TCP socket to `host:port` and complete with an open plaintext [[Connection]]. */
+    def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        connectResolving(host, port, nodelay = true, tls = Absent)
+
+    /** Connect a non-blocking TCP socket to `host:port`, then drive a client TLS handshake before completing. */
+    def connect(host: String, port: Int, tls: NetTlsConfig)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        connectResolving(host, port, nodelay = true, tls = Present((tls, host)))
+
+    /** Resolve `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then drive the connect.
+      *
+      * The connect must return its `Fiber.Unsafe` synchronously, but resolution is an `< Async` step (it can suspend the fiber on the system
+      * resolver). So this builds the result promise immediately, spawns a fiber that resolves + encodes the address, and on success hands the
+      * encoded `sockaddr` to the existing synchronous [[connectImpl]] (which completes the same promise). A resolution failure (or a panic)
+      * fails the promise `Closed` without ever opening a socket. The numeric and loopback fast paths resolve inline, so the spawned fiber
+      * completes without parking and the connect is no slower than before for them.
+      */
+    private def connectResolving(
+        host: String,
+        port: Int,
+        nodelay: Boolean,
+        tls: Maybe[(NetTlsConfig, String)]
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        val target  = s"$host:$port"
+        val promise = new IOPromise[NetException, NetConnection]
+        resolveAndEncode(host, port).onComplete {
+            case Result.Success(resolved) =>
+                resolved.eval match
+                    case Result.Success(encoded) =>
+                        connectImpl(Present(encoded), nodelay, target, host, port, tls, promise)
+                    case Result.Failure(closed) =>
+                        promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
+                    case Result.Panic(e) =>
+                        promise.completeDiscard(Result.panic(e))
+            case Result.Failure(e) =>
+                // Resolve-fiber infrastructure failure (Any channel): a Closed is a name-resolution failure; anything else is a clean Panic.
+                e match
+                    case closed: Closed => promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
+                    case t: Throwable   => promise.completeDiscard(Result.panic(t))
+                    case other => promise.completeDiscard(Result.panic(Closed(
+                            "PosixTransport",
+                            summon[Frame],
+                            s"unexpected resolver failure: $other"
+                        )))
+            case Result.Panic(e) =>
+                promise.completeDiscard(Result.panic(e))
+        }
+        promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+    end connectResolving
+
+    /** Connect a non-blocking Unix-domain socket to `path` and complete with an open plaintext [[Connection]] (no `TCP_NODELAY`). A Unix path
+      * needs no name resolution, so the encoded `sockaddr` is built inline and handed straight to [[connectImpl]] with no resolver fiber.
+      */
+    def connectUnix(path: String)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
+        val promise = new IOPromise[NetException, NetConnection]
+        connectImpl(
+            SockAddr.encodeUnix(PosixConstants.AF_UNIX, path).map((b, l) => (PosixConstants.AF_UNIX, b, l)),
+            nodelay = false,
+            target = path,
+            host = path,
+            port = -1, // sentinel: a Unix socket has no port; connectFail routes port < 0 to NetUnixConnectException
+            tls = Absent,
+            promise = promise
+        )
+        promise.asInstanceOf[Fiber.Unsafe[NetConnection, Abort[NetException]]]
+    end connectUnix
+
+    /** Encode an inet `sockaddr` for `host` WITHOUT any DNS resolution: IPv6 when `host` is a v6 literal, otherwise IPv4. Returns the family,
+      * buffer, and length, or `Absent` when `host` is neither a valid IPv4 nor IPv6 literal (i.e. it needs name resolution).
+      *
+      * The well-known loopback host NAMES (`localhost`, `ip6-localhost`, `ip6-loopback`) are normalized to their loopback literal first via
+      * [[SockAddr.resolveLoopbackName]]: they have a fixed RFC answer no resolver varies, so encoding them without DNS matches what the old
+      * NIO `InetSocketAddress` produced and is what the kyo-http client (which passes a hostname, commonly `localhost`, straight through)
+      * needs. Any OTHER non-numeric hostname returns `Absent` here so [[resolveAndEncode]] sends it through the [[HostResolver]] (offloaded
+      * blocking system resolution); keeping the numeric and loopback cases on this synchronous fast path means they never touch the resolver.
+      */
+    private def encodeInetFast(host: String, port: Int)(using AllowUnsafe): Maybe[(Int, Buffer[Byte], Int)] =
+        val resolved = SockAddr.resolveLoopbackName(host)
+        if resolved.contains(':') then
+            SockAddr.encodeInet6(PosixConstants.AF_INET6, resolved, port).map((b, l) => (PosixConstants.AF_INET6, b, l))
+        else
+            SockAddr.encodeInet4(PosixConstants.AF_INET, resolved, port).map((b, l) => (PosixConstants.AF_INET, b, l))
+        end if
+    end encodeInetFast
+
+    /** Encode an inet `sockaddr` for `host`, resolving a non-numeric, non-loopback hostname through the [[HostResolver]] when the synchronous
+      * [[encodeInetFast]] cannot (a numeric IPv4/IPv6 literal or a loopback name encodes inline with no resolution). Resolution is an offloaded
+      * blocking system call (`InetAddress` on JVM, the `getaddrinfo` C shim on Native), cached and TTL-bounded, so a hostname connect suspends
+      * the fiber rather than blocking a carrier, and repeated connects to the same host hit the cache.
+      *
+      * The family hint passed to the resolver mirrors [[encodeInetFast]]'s dispatch: a host containing ':' requests `AF_INET6`, otherwise
+      * `AF_INET`. The resolver returns the first A or AAAA, and its family drives the encoder (`encodeInet6Raw` vs `encodeInet4Raw`) on the
+      * resolved bytes, so IPv4/IPv6 selection stays consistent with the synchronous fast path. A resolution failure (unknown host, resolver
+      * error) is surfaced as `Closed`, exactly the failure the caller already produced for an unencodable address.
+      */
+    private def resolveAndEncode(host: String, port: Int)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Result[Closed, (Int, Buffer[Byte], Int)], Any] =
+        encodeInetFast(host, port) match
+            case Present(encoded) =>
+                // Numeric literal or loopback name: already-complete fiber, no resolver call.
+                Fiber.Unsafe.fromResult(Result.succeed(Result.succeed(encoded): Result[Closed, (Int, Buffer[Byte], Int)]))
+            case Absent =>
+                val familyHint = if host.contains(':') then PosixConstants.AF_INET6 else PosixConstants.AF_INET
+                HostResolver.resolveWith(host, familyHint, SystemResolver.resolveRaw, HostResolver.DefaultTtl).map {
+                    case Result.Success((family, rawAddr)) =>
+                        encodeResolved(family, rawAddr, port) match
+                            case Present(encoded) => Result.succeed(encoded)
+                            case Absent =>
+                                Result.fail(Closed(
+                                    "PosixTransport",
+                                    summon[Frame],
+                                    s"connect: could not encode resolved address for $host"
+                                ))
+                    case Result.Failure(closed) => Result.fail(closed)
+                    case Result.Panic(e)        => Result.panic(e)
+                }
+        end match
+    end resolveAndEncode
+
+    /** Encode a sockaddr from a resolver's raw address bytes (4 for `AF_INET`, 16 for `AF_INET6`) and family, through the [[SockAddr]] raw
+      * encoders, which lay the bytes out exactly as the numeric fast path does (family + network-order port + the address bytes + padding).
+      * Returns `Absent` only if the byte length does not match the family (not reachable for well-formed resolver output).
+      */
+    private def encodeResolved(family: Int, rawAddr: Array[Byte], port: Int)(using AllowUnsafe): Maybe[(Int, Buffer[Byte], Int)] =
+        if family == PosixConstants.AF_INET6 then
+            SockAddr.encodeInet6Raw(PosixConstants.AF_INET6, rawAddr, port).map((b, l) => (PosixConstants.AF_INET6, b, l))
+        else
+            SockAddr.encodeInet4Raw(PosixConstants.AF_INET, rawAddr, port).map((b, l) => (PosixConstants.AF_INET, b, l))
+    end encodeResolved
+
+    /** Open a client socket of the encoded address's family, set it non-blocking (+ `TCP_NODELAY` / macOS `SO_NOSIGPIPE` when `nodelay`),
+      * and drive the non-blocking connect to completion, optionally followed by a TLS handshake. The encoded `sockaddr` buffer is stashed on
+      * the handle as its `connectTarget` so the io_uring driver can submit the connect SQE; on the readiness arm the transport issues the
+      * `connect` syscall itself and the driver only waits for write-readiness. The buffer is closed once the connect resolves (success or
+      * failure), and on any pre-connection failure the raw fd is closed.
+      */
+    /** Build the connect-stage [[NetException]] leaf for `host:port`: a TCP connect failure ([[NetConnectException]]), or a Unix-socket connect
+      * failure ([[NetUnixConnectException]], signaled by the sentinel `port < 0` the Unix path passes since a Unix socket has no port). `cause`
+      * carries the underlying failure (a [[NetErrno]] on the Posix errno paths, a driver `Closed` on the readiness paths).
+      */
+    private def connectFail(host: String, port: Int, cause: String | Throwable)(using Frame): NetException =
+        if port < 0 then NetUnixConnectException(host, cause) else NetConnectException(host, port, cause)
+
+    private def connectImpl(
+        encoded: Maybe[(Int, Buffer[Byte], Int)],
+        nodelay: Boolean,
+        target: String,
+        host: String,
+        port: Int,
+        tls: Maybe[(NetTlsConfig, String)],
+        promise: IOPromise[NetException, NetConnection]
+    )(using AllowUnsafe, Frame): Unit =
+        encoded match
+            case Absent =>
+                promise.completeDiscard(Result.fail(connectFail(host, port, "")))
+            case Present((family, addr, len)) =>
+                val sockR = sockets.socket(family, PosixConstants.SOCK_STREAM, 0)
+                val fd    = sockR.value
+                if fd < 0 then
+                    addr.close()
+                    promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(sockR.errorCode))))
+                else if !prepareClientSocket(fd, nodelay) then
+                    addr.close()
+                    closeRawFd(fd)
+                    promise.completeDiscard(Result.fail(connectFail(host, port, "")))
+                else
+                    val driver = pool.next()
+                    val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)))
+                    // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
+                    // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
+                    // NetConnectTimeoutException; an OS-failure close surfaces NetConnectException through `connectFail`: the close cause is
+                    // discriminated by which arm completes `promise` first (completeDiscard, at most once).
+                    armConnectDeadline(promise, host, port)
+                    if isCompletionConnect(driver) then
+                        // Completion arm (io_uring): the driver submits the connect SQE itself against `handle.connectTarget`.
+                        awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = false)
+                    else
+                        // Readiness arm (epoll/kqueue): issue the non-blocking connect, then wait for write-readiness + SO_ERROR.
+                        driveReadinessConnect(handle, addr, len, driver, target, host, port, tls, promise)
+                    end if
+                end if
+        end match
+    end connectImpl
+
+    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring the accept-path `armHandshakeDeadline`. When
+      * `config.handshakeTimeout` is finite (and the target is a TCP host:port, not a Unix socket whose `port < 0` has no typed timeout leaf),
+      * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `promise`
+      * with `NetConnectTimeoutException(host, port, handshakeTimeout)` when the deadline fires. `promise.completeDiscard` completes the promise at
+      * most once, so the deadline and the OS connect outcome are mutually exclusive. This is the close-cause discrimination: the deadline arm is
+      * the only producer of the typed timeout leaf, so a deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close
+      * (refused/unreachable/errno) surfaces `NetConnectException` through the existing `connectFail` path. When the connect completes first it
+      * disarms the timer by interrupting the timer fiber, so the timer never fires. `Duration.Infinity` (the default) arms no timer and preserves
+      * the caller-composes-via-`Async.timeout` behavior exactly.
+      */
+    private def armConnectDeadline(
+        promise: IOPromise[NetException, NetConnection],
+        host: String,
+        port: Int
+    )(using AllowUnsafe, Frame): Unit =
+        val timeout = config.handshakeTimeout
+        if port >= 0 && timeout.isFinite then
+            val timer = Clock.live.unsafe.sleep(timeout)
+            timer.onComplete { _ =>
+                promise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, timeout)))
+            }
+            // Disarm: when the connect outcome completes `promise` first, interrupt the timer fiber so it never fires.
+            promise.onComplete { _ =>
+                timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "connect completed before deadline")))
+            }
+        end if
+    end armConnectDeadline
+
+    /** Issue the readiness-arm non-blocking connect: 0 means the connect completed inline (loopback), `EINPROGRESS` means it is in flight and
+      * the driver must signal write-readiness, any other error fails `Closed`. The `addr` buffer is consumed synchronously by the kernel here,
+      * so it is closed by the eventual completion path (inline complete, or after the awaited SO_ERROR read).
+      */
+    private def driveReadinessConnect(
+        handle: PosixHandle,
+        addr: Buffer[Byte],
+        len: Int,
+        driver: IoDriver[PosixHandle],
+        target: String,
+        host: String,
+        port: Int,
+        tls: Maybe[(NetTlsConfig, String)],
+        promise: IOPromise[NetException, NetConnection]
+    )(using AllowUnsafe, Frame): Unit =
+        takeNow(sockets.connect(handle.writeFd, addr, len)) match
+            case Present(result) =>
+                val rc = result.value
+                if rc == 0 then
+                    // Immediate connect (loopback): no SO_ERROR check needed.
+                    completeOrTls(handle, addr, driver, target, port, tls, promise)
+                else if result.errorCode == PosixConstants.EINPROGRESS then
+                    awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true)
+                else
+                    addr.close()
+                    closeRawFd(handle.writeFd)
+                    promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(result.errorCode))))
+                end if
+            case Absent =>
+                // The inline-completed connect fiber yielded no value (only possible off JVM/Native, where the poller does not run).
+                awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true)
+        end match
+    end driveReadinessConnect
+
+    /** Register for connect completion and continue once the driver signals it. On the readiness arm (`checkSoError`) the signal is mere
+      * write-readiness, so `SO_ERROR` is read to confirm the connect actually succeeded; on the completion arm the driver already verified the
+      * connect result, so success flows straight through. Failure / interrupt closes the fd (no `Connection` exists yet).
+      */
+    private def awaitConnectThen(
+        handle: PosixHandle,
+        addr: Buffer[Byte],
+        driver: IoDriver[PosixHandle],
+        target: String,
+        host: String,
+        port: Int,
+        tls: Maybe[(NetTlsConfig, String)],
+        promise: IOPromise[NetException, NetConnection],
+        checkSoError: Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        val writablePromise = new IOPromise[Closed, Unit]
+        writablePromise.onComplete { result =>
+            result match
+                case Result.Success(_) =>
+                    val err = if checkSoError then soError(handle.writeFd) else 0
+                    if err != 0 then
+                        addr.close()
+                        closeRawFd(handle.writeFd)
+                        promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
+                    else completeOrTls(handle, addr, driver, target, port, tls, promise)
+                    end if
+                case Result.Failure(closed) =>
+                    addr.close()
+                    closeRawFd(handle.writeFd)
+                    promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
+                case Result.Panic(e) =>
+                    addr.close()
+                    closeRawFd(handle.writeFd)
+                    promise.completeDiscard(Result.panic(e))
+            end match
+        }
+        driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+    end awaitConnectThen
+
+    /** Build the handshake engine for a config/host/role via [[TlsProviderPlatform.engine]], which honors a [[NetTlsConfig.tlsProvider]] pin
+      * (fail-closed if unavailable) and otherwise the platform-selected default.
+      */
+    private def buildEngine(config: NetTlsConfig, hostname: String, isServer: Boolean)(using AllowUnsafe, Frame): TlsEngine =
+        TlsProviderPlatform.engine(config, hostname, isServer)
+
+    /** The posix transport drives any TLS engine the platform registry exposes (BoringSSL and the JDK SslEngine on JVM; BoringSSL and system
+      * OpenSSL on Native), so a connection may pin any of those via [[NetTlsConfig.tlsProvider]]. This is the architectural set; whether a given
+      * provider's library is staged on the host is a separate [[TlsProvider.isAvailable]] probe.
+      */
+    override private[net] def supportedTlsProviders: Set[String] =
+        TlsProviderPlatform.registered.map(_.name).toSet
+
+    /** After the TCP connect is established: for a plaintext connect complete immediately; for a TLS connect drive a client handshake over the
+      * same fd (reusing [[driveHandshake]]) and complete once it succeeds. The `addr` buffer is closed here (the connect is done with it). The
+      * handshake is kicked synchronously (no extra carrier); its suspension points arm `onComplete` callbacks that fire from the driver carrier.
+      */
+    private def completeOrTls(
+        handle: PosixHandle,
+        addr: Buffer[Byte],
+        driver: IoDriver[PosixHandle],
+        target: String,
+        port: Int,
+        tls: Maybe[(NetTlsConfig, String)],
+        promise: IOPromise[NetException, NetConnection]
+    )(using AllowUnsafe, Frame): Unit =
+        addr.close()
+        tls match
+            case Absent               => completeConnect(handle, driver, promise)
+            case Present((cfg, host)) =>
+                // buildEngine fails closed (throws Closed) when a verifying client has no reference identity (an empty connect host), so a
+                // build failure must fail the connect promise and close the fd rather than escaping into the driver carrier.
+                val engine =
+                    try buildEngine(cfg, host, isServer = false)
+                    catch
+                        case closed: Closed =>
+                            closeRawFd(handle.writeFd)
+                            PosixHandle.close(handle)
+                            promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
+                            return
+                driveHandshake(
+                    handle,
+                    engine,
+                    onFinished = () =>
+                        handle.tls = Present(engine)
+                        completeConnect(handle, driver, promise)
+                    ,
+                    onFailed = closed =>
+                        // The handshake never reached onFinished, so the engine was not attached to handle.tls and PosixHandle.close (which
+                        // only frees an attached engine) cannot free it. Free it directly here: the handshake is over and no pump started, so
+                        // nothing else touches the engine. It is mutually exclusive with onFinished, so there is no double-free.
+                        engine.free()
+                        closeRawFd(handle.writeFd)
+                        PosixHandle.close(handle)
+                        promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
+                    ,
+                    onPanic = e =>
+                        engine.free()
+                        closeRawFd(handle.writeFd)
+                        PosixHandle.close(handle)
+                        promise.completeDiscard(Result.panic(e))
+                )
+        end match
+    end completeOrTls
+
+    /** Wire and start the [[Connection]] over `handle`/`driver` and complete the connect promise. Mirrors the native transport: it installs
+      * the STARTTLS `upgradeFn` (delegating to [[upgradeToTls]]) and the `certHashFn` (the engine's RFC 5929 token), so an accepted or
+      * connected plaintext connection can still upgrade and a TLS connection can report its channel-binding hash. If the promise was already
+      * interrupted, the freshly built connection is closed so nothing leaks.
+      */
+    private def completeConnect(
+        handle: PosixHandle,
+        driver: IoDriver[PosixHandle],
+        promise: IOPromise[NetException, NetConnection]
+    )(using AllowUnsafe, Frame): Unit =
+        val connection = InternalConnection.init(handle, driver, config.channelCapacity)
+        connection.upgradeFn = Present { (cfg, frame) =>
+            given Frame = frame
+            upgradeToTls(connection, cfg, config.channelCapacity)
+        }
+        installCertHash(connection, handle)
+        // Prefix safety: the handshake may have pulled the peer's first application record off the socket and into the engine
+        // (loopback delivers the final handshake flight and the first data together). That plaintext is in the engine buffer, NOT the socket, so
+        // the ReadPump's socket-readiness read would never fire for it. Deliver it into inbound before starting the pumps so it is not stranded.
+        deliverHandshakePlaintext(handle, connection.inbound)
+        connection.start()
+        if !promise.complete(Result.succeed(connection)) then
+            // The connect was interrupted before delivery: nobody will use this connection, so close it.
+            connection.close()
+    end completeConnect
+
+    /** Drain any application plaintext the TLS handshake already decrypted into the engine buffer, delivering it into `inbound` before the pumps
+      * start (a no-op for a plaintext handle). On a loopback the peer's first record can arrive with the handshake's final flight and be consumed
+      * into the engine during the handshake read; that data sits in the engine, not the socket, so the readiness-based ReadPump would never see a
+      * socket event for it and the bytes would be stranded. Injecting them first keeps ordering (this is the FIRST application data) and unblocks
+      * the consumer without a phantom socket read.
+      */
+    private def deliverHandshakePlaintext(handle: PosixHandle, inbound: Channel.Unsafe[Span[Byte]])(using AllowUnsafe, Frame): Unit =
+        handle.tls match
+            case Absent => ()
+            case Present(engine) =>
+                val acc = new java.io.ByteArrayOutputStream
+                if engine.hasBufferedPlaintext then
+                    val buffered = engine.readBuffered()
+                    if buffered.nonEmpty then acc.write(buffered.toArrayUnsafe)
+                // Also pull any further records the engine can decrypt from ciphertext it already holds.
+                var more = true
+                while more do
+                    val out = Buffer.alloc[Byte](handle.readBufferSize)
+                    try
+                        val n = engine.readPlain(out, handle.readBufferSize)
+                        if n > 0 then acc.write(Buffer.copyToArray[Byte](out, 0, n))
+                        else more = false
+                    finally out.close()
+                    end try
+                end while
+                val bytes = acc.toByteArray
+                if bytes.length > 0 then discard(inbound.offer(Span.fromUnsafe(bytes)))
+        end match
+    end deliverHandshakePlaintext
+
+    /** Install `connection.certHashFn` for the RFC 5929 tls-server-end-point token. The leaf certificate is fixed for the connection's
+      * lifetime, so the hash is computed ONCE here and then served from a cache. This is called from each connection-wiring site (a directly
+      * connected client, an accepted server connection, a STARTTLS upgrade). Every call site runs at handshake completion, BEFORE
+      * `connection.start()` launches the read and write pumps, so no read or write engine op for this connection can exist yet: the single
+      * `certSha256()` read here cannot race any other engine touch. The installed function then does NO engine touch: it reads the cached value
+      * and returns Absent once the connection is closed. Without the cache, `serverCertificateHash` would touch the live engine on the caller's
+      * carrier, racing the driver's FIFO read/write ops (concurrent native `SSL` access is undefined behavior, and the touch could read a freed
+      * `ssl`). The cache also makes `serverCertificateHash` return Absent deterministically after close.
+      */
+    private def installCertHash(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
+        val cached = handle.tls.flatMap(_.certSha256())
+        connection.certHashFn = Present(() => if connection.isOpen then cached else Absent)
+        installCloseReason(connection, handle)
+    end installCertHash
+
+    /** Install `connection.closeReasonFn` so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. It reads the handle's
+      * observed read-side close signals (set on the driver / engine-FIFO carrier): `peerCleanClose` (the peer's authenticated close_notify was
+      * consumed) and `peerEof` (a bare TCP FIN with no close_notify, the truncation-attack condition). While the connection is open it reports
+      * Active; once it has closed with neither peer signal set, it was a local close. The function touches no engine, only the handle's
+      * `@volatile` flags, so it is safe to call on the caller's carrier after close.
+      */
+    private def installCloseReason(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
+        connection.closeReasonFn = Present(() =>
+            if handle.peerCleanClose then NetConnection.CloseReason.CleanClose
+            else if handle.peerEof then NetConnection.CloseReason.Truncated
+            else if connection.isOpen then NetConnection.CloseReason.Active
+            else NetConnection.CloseReason.LocalClose
+        )
+    end installCloseReason
+
+    // ---------------------------------------------------------------------------------------------------------------------------------------
+    // TCP / UDS server listen + accept
+    // ---------------------------------------------------------------------------------------------------------------------------------------
+
+    /** Listen for plaintext TCP connections on `host:port`, resolving the actual (possibly ephemeral) port. */
+    def listen(host: String, port: Int, backlog: Int)(
+        handler: NetConnection => Unit
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        listenResolving(host, port, backlog, handler, tls = Absent)
+
+    /** Listen for TLS TCP connections on `host:port`; each accepted connection drives a server handshake before reaching the handler. */
+    def listen(host: String, port: Int, backlog: Int, tls: NetTlsConfig)(
+        handler: NetConnection => Unit
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        listenResolving(host, port, backlog, handler, tls = Present(tls))
+
+    /** Resolve the bind `host` (numeric / loopback inline, otherwise through the offloaded-blocking [[HostResolver]]) and then bind + listen.
+      *
+      * Mirrors [[connectResolving]]: a `listen` returns its `Fiber.Unsafe` synchronously, but resolution is an `< Async` step, so this builds
+      * the result promise immediately, spawns a fiber that resolves + encodes the bind address, and on success hands it to the synchronous
+      * [[listenImpl]]. A bind host is almost always numeric or a loopback name (a server binds an interface, not a remote name), so resolution
+      * usually completes inline; resolving a bind hostname is supported for symmetry. A resolution failure fails the promise `Closed`.
+      */
+    private def listenResolving(
+        host: String,
+        port: Int,
+        backlog: Int,
+        handler: NetConnection => Unit,
+        tls: Maybe[NetTlsConfig]
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        val promise = new IOPromise[NetException, NetListener]
+        resolveAndEncode(host, port).onComplete {
+            case Result.Success(resolved) =>
+                resolved.eval match
+                    case Result.Success(encoded) =>
+                        listenImpl(Present(encoded), nodelay = true, host, port, unixPath = Absent, backlog, handler, tls, promise)
+                    case Result.Failure(closed) =>
+                        promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
+                    case Result.Panic(e) =>
+                        promise.completeDiscard(Result.panic(e))
+            case Result.Failure(e) =>
+                // Resolve-fiber infrastructure failure (Any channel): a Closed is a name-resolution failure; anything else is a clean Panic.
+                e match
+                    case closed: Closed => promise.completeDiscard(Result.fail(NetDnsResolutionException(host, closed)))
+                    case t: Throwable   => promise.completeDiscard(Result.panic(t))
+                    case other => promise.completeDiscard(Result.panic(Closed(
+                            "PosixTransport",
+                            summon[Frame],
+                            s"unexpected resolver failure: $other"
+                        )))
+            case Result.Panic(e) =>
+                promise.completeDiscard(Result.panic(e))
+        }
+        promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
+    end listenResolving
+
+    /** Listen for plaintext connections on a Unix-domain socket `path` (no `TCP_NODELAY`, `NetAddress.Unix`, port -1). A Unix path needs no
+      * name resolution, so the encoded `sockaddr` is built inline and handed straight to [[listenImpl]] with no resolver fiber.
+      */
+    def listenUnix(path: String, backlog: Int)(
+        handler: NetConnection => Unit
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
+        val promise = new IOPromise[NetException, NetListener]
+        listenImpl(
+            SockAddr.encodeUnix(PosixConstants.AF_UNIX, path).map((b, l) => (PosixConstants.AF_UNIX, b, l)),
+            nodelay = false,
+            host = path,
+            port = -1,
+            unixPath = Present(path),
+            backlog,
+            handler,
+            tls = Absent,
+            promise = promise
+        )
+        promise.asInstanceOf[Fiber.Unsafe[NetListener, Abort[NetException]]]
+    end listenUnix
+
+    /** Bind + listen on the encoded address, resolve the bound port (for TCP; -1 for Unix), build a [[PosixListener]], and launch the accept
+      * loop. The listen socket is set non-blocking before arming the poller so accept never parks; `acceptNow` returns a fd or EAGAIN inline.
+      * On any setup failure the partially opened fd is closed and the promise fails `Closed`.
+      */
+    private def listenImpl(
+        encoded: Maybe[(Int, Buffer[Byte], Int)],
+        nodelay: Boolean,
+        host: String,
+        port: Int,
+        unixPath: Maybe[String],
+        backlog: Int,
+        handler: NetConnection => Unit,
+        tls: Maybe[NetTlsConfig],
+        promise: IOPromise[NetException, NetListener]
+    )(using AllowUnsafe, Frame): Unit =
+        encoded match
+            case Absent =>
+                promise.completeDiscard(Result.fail(NetBindException(host, port, "")))
+            case Present((family, addr, len)) =>
+                try
+                    val sockR = sockets.socket(family, PosixConstants.SOCK_STREAM, 0)
+                    val fd    = sockR.value
+                    if fd < 0 then
+                        promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(sockR.errorCode))))
+                    else
+                        setReuseAddr(fd)
+                        val bindR = sockets.bind(fd, addr, len)
+                        if bindR.value != 0 then
+                            closeRawFd(fd)
+                            promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(bindR.errorCode))))
+                        else
+                            val listenR = sockets.listen(fd, backlog)
+                            if listenR.value != 0 then
+                                closeRawFd(fd)
+                                promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(listenR.errorCode))))
+                            else
+                                val (actualPort, address) = unixPath match
+                                    case Present(path) => (-1, NetAddress.Unix(path))
+                                    case Absent =>
+                                        val resolved = resolvePort(fd, family)
+                                        (resolved, NetAddress.Tcp(host, resolved))
+                                val listener = new PosixListener(fd, actualPort, host, address, sockets, listeners)
+                                discard(listeners.add(listener))
+                                // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
+                                if shim.kyo_posix_set_nonblocking(fd) != 0 then
+                                    Log.live.unsafe.warn(s"listen: failed to set listen fd non-blocking fd=$fd")
+                                startAcceptLoop(listener, handler, tls)
+                                promise.completeDiscard(Result.succeed(listener))
+                            end if
+                        end if
+                    end if
+                finally addr.close()
+                end try
+        end match
+    end listenImpl
+
+    /** Run the accept loop for a listener. The listen fd is non-blocking (set in [[listenImpl]] just before this call). Termination: when
+      * the listener is closed, the driver completes the pending accept promise with `Failure(Closed)`, which decrements `acceptLoopsActive`
+      * and stops scheduling further accepts. Each accepted fd is made non-blocking + `TCP_NODELAY`, wrapped in a [[Connection]] (after a
+      * server TLS handshake when `tls` is present), and dispatched to the handler.
+      *
+      * Two accept models are unified here. The readiness driver (epoll/kqueue) completes the accept promise with -1 as a sentinel; the
+      * transport then calls `acceptNow` in a loop to drain all pending connections. The completion driver (io_uring) completes the promise
+      * with the accepted fd directly (>= 0); the transport handles it first, then calls `acceptAll` to drain any further queued connections.
+      */
+    private def startAcceptLoop(
+        listener: PosixListener,
+        handler: NetConnection => Unit,
+        tls: Maybe[NetTlsConfig]
+    )(using AllowUnsafe, Frame): Unit =
+        discard(acceptLoopsActive.incrementAndGet())
+        val driver = pool.next()
+        val handle = PosixHandle.socket(listener.serverFd, config.readChunkSize, connectTarget = Absent)
+
+        // Tear down this listener's accept interest AND its fd through the driver when the listener closes, so the two are sequenced safely
+        // for the driver's model. On the readiness drivers `closeListener` cancels synchronously (clearing the fd-keyed pendingAccepts /
+        // activeFds entries while the fd is still open, so a recycled fd number never trips over stale accept state) and then closes the fd.
+        // On io_uring the whole teardown runs on the reap carrier BEHIND any accept arm still queued on the engine FIFO: closing the fd on
+        // this carrier first would let the fd number recycle (typically to the very next listener) before the queued arm preps its SQE, and
+        // that ghost arm would then accept on the NEW socket with THIS listener's promise and handler, stealing one connection per close.
+        // The shutdown wakes a blocked/armed accept so it observes the close deterministically on every platform (close() alone does not
+        // reliably interrupt an accept on Linux); it is harmless where the accept already failed (ENOTCONN on a listener is discarded).
+        listener.onClose { () =>
+            driver.closeListener(
+                handle,
+                () =>
+                    discard(sockets.shutdown(listener.serverFd, PosixConstants.SHUT_RDWR))
+                    discard(sockets.close(listener.serverFd))
+            )
+        }
+
+        def scheduleNextAccept()(using AllowUnsafe, Frame): Unit =
+            if listener.isClosed then
+                discard(acceptLoopsActive.decrementAndGet())
+            else
+                val acceptPromise = new IOPromise[Closed, Int]
+                acceptPromise.onComplete {
+                    case Result.Success(fd) =>
+                        // io_uring completes with the real accepted fd (>= 0); the poller uses -1 as a readiness sentinel.
+                        // Handle the already-accepted fd directly before draining any further pending connections.
+                        if fd >= 0 then handleAccepted(fd, handler, tls)
+                        acceptAll() match
+                            case AcceptDrain.Drained =>
+                                // Backlog emptied (EAGAIN/EWOULDBLOCK) or a non-resource error consumed the event: re-arm immediately.
+                                scheduleNextAccept()
+                            case AcceptDrain.ResourceExhausted =>
+                                // EMFILE/ENFILE: accept(2) did NOT dequeue the pending connection, so the listen fd stays read-ready. An
+                                // immediate re-arm would re-fire the same error in a tight CPU spin (joyent/libuv #690, asyncio Tulip #78).
+                                // Re-arm after a bounded backoff instead: the poll loop stops pegging the CPU, and accepting resumes when the
+                                // backoff elapses (succeeding once a fd frees elsewhere in the process). The accept loop stays alive throughout.
+                                scheduleAcceptAfterBackoff()
+                        end match
+                    case Result.Failure(_) =>
+                        // Listener closed; driver completed the accept promise with Failure(Closed).
+                        discard(acceptLoopsActive.decrementAndGet())
+                    case Result.Panic(e) =>
+                        Log.live.unsafe.error("PosixTransport accept loop panic", e)
+                        discard(acceptLoopsActive.decrementAndGet())
+                }
+                driver.awaitAccept(handle, acceptPromise.asInstanceOf[Promise.Unsafe[Int, Abort[Closed]]])
+        end scheduleNextAccept
+
+        // Re-arm accept interest after the resource-exhaustion backoff, without blocking the poll-loop carrier. `Clock.live.unsafe.sleep`
+        // schedules a timer on the clock executor and returns a fiber; its completion callback re-enters scheduleNextAccept. If the listener
+        // closed during the backoff, scheduleNextAccept observes isClosed and winds the loop down (no re-arm on a dead fd).
+        def scheduleAcceptAfterBackoff()(using AllowUnsafe, Frame): Unit =
+            Clock.live.unsafe.sleep(acceptResourceBackoff).onComplete(_ => scheduleNextAccept())
+
+        def acceptAll()(using AllowUnsafe, Frame): AcceptDrain =
+            val noAddr = Buffer.alloc[Byte](SockAddr.inet6Size)
+            val noLen  = Buffer.alloc[Int](1)
+            noLen.set(0, SockAddr.inet6Size)
+            try
+                @scala.annotation.tailrec
+                def drain(transientRetries: Int): AcceptDrain =
+                    val r  = sockets.acceptNow(listener.serverFd, noAddr, noLen)
+                    val fd = r.value
+                    if fd >= 0 then
+                        handleAccepted(fd, handler, tls)
+                        drain(transientRetries)
+                    else if isWouldBlock(r.errorCode) then
+                        // Backlog drained: re-arm read interest normally.
+                        AcceptDrain.Drained
+                    else if r.errorCode == PosixConstants.EMFILE || r.errorCode == PosixConstants.ENFILE then
+                        // Resource exhaustion: the connection stays in the backlog. Stop draining and signal a backoff re-arm.
+                        AcceptDrain.ResourceExhausted
+                    else if (r.errorCode == PosixConstants.EINTR || r.errorCode == PosixConstants.ECONNABORTED)
+                        && transientRetries < maxTransientAcceptRetries
+                    then
+                        // EINTR (interrupted) / ECONNABORTED (peer aborted before accept returned) are transient: accept(2) says treat them
+                        // like EAGAIN by retrying. Retry the accept (do NOT drop the connection), bounded so a persistent transient error
+                        // cannot itself spin this cycle; past the bound, fall through to a normal re-arm.
+                        drain(transientRetries + 1)
+                    else
+                        // Listener closed mid-drain, the transient-retry budget is spent, or an unclassified errno: re-arm normally (the next
+                        // readiness event, or scheduleNextAccept's isClosed check, drives the loop forward as before).
+                        AcceptDrain.Drained
+                    end if
+                end drain
+                drain(0)
+            finally
+                noAddr.close()
+                noLen.close()
+            end try
+        end acceptAll
+
+        scheduleNextAccept()
+    end startAcceptLoop
+
+    /** Configure an accepted client fd (non-blocking + `TCP_NODELAY` / macOS `SO_NOSIGPIPE`), build its [[Connection]] (driving a server TLS
+      * handshake first when `tls` is present), and spawn the handler fiber. A failure to configure closes the raw fd; TLS handshake failures
+      * are surfaced via the `onFailed`/`onPanic` callbacks. The handshake is kicked synchronously (no extra carrier); its suspension points arm
+      * `onComplete` callbacks that fire from the driver carrier.
+      */
+    private def handleAccepted(
+        clientFd: Int,
+        handler: NetConnection => Unit,
+        tls: Maybe[NetTlsConfig]
+    )(using AllowUnsafe, Frame): Unit =
+        if !prepareClientSocket(clientFd, nodelay = true) then closeRawFd(clientFd)
+        else
+            val driver = pool.next()
+            val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent)
+            tls match
+                case Absent =>
+                    spawnHandler(InternalConnection.init(handle, driver, config.channelCapacity), driver, handler)
+                case Present(cfg) =>
+                    val engine = buildEngine(cfg, "", isServer = true)
+                    // Once the teardown has run, every still-enqueued engine-touching handshake thunk must skip (it would otherwise feed a freed
+                    // engine). The reap flag is set by teardown BEFORE engine.free and read by the driveHandshake / recvAndFeed / awaitReadCiphertext
+                    // thunks via the isReaped guard; teardown and those thunks all run on the one per-driver engine FIFO worker, so the set is
+                    // serialized against the reads (the AtomicBoolean is for safe publication across the timer / handshake carriers).
+                    val reaped = AtomicBoolean.Unsafe.init(false)
+                    // Teardown reused by both the handshake failure / panic paths and the handshake-deadline expiry. The deadline path is the #243
+                    // use-after-free: when handshakeTimeout reaps a handshake parked in awaitReadCiphertext, an io_uring recv SQE is in flight into
+                    // handle.readBuffer. The old teardown freed that buffer (PosixHandle.close) and the engine while the recv SQE was still kernel-
+                    // owned, so the kernel wrote recv data into freed memory and a late recv-Success enqueued a feed on a freed engine. The fix routes
+                    // the buffer + engine teardown through the driver's UAF-safe ioDriver.closeHandle:
+                    //   - ioDriver.closeHandle -> cancel(handle) fails the parked read promise (so awaitReadCiphertext's Success feed cannot run
+                    //     post-reap) and DEFERS PosixHandle.close (the readBuffer free) on io_uring until the in-flight recv CQE reaps, so the kernel
+                    //     never writes into freed memory. On the poller closeHandle frees inline (already safe: the poller never hands the kernel the
+                    //     buffer) AND closes the fd itself through handle.claimFdClose (after the fatal-alert send drainAllDirect already flushed inline
+                    //     on the failure path, so the peer still gets the alert before the FIN).
+                    // The fd close is coordinated by handle.claimFdClose so it happens EXACTLY once across the two backends:
+                    //   - poller: closeHandle already claimed and closed the fd, so claimFdClose here returns false and this skips it (no double-close,
+                    //     and the alert the poller's inline send already put on the wire is not truncated by a redundant close).
+                    //   - io_uring: closeHandle does NOT close the fd (it has no socket bindings), so claimFdClose here wins; shutdown(SHUT_RDWR) then
+                    //     forces the kernel-owned recv to complete (EOF) so its CQE reaps, draining the in-flight count to zero and running the deferred
+                    //     PosixHandle.close (io_uring's cancel submits no async-cancel SQE and a stalled client sends nothing, so without this the recv
+                    //     CQE would never arrive and the buffer free would never run, a leak); then closeRawFd closes the fd. The recv SQE references
+                    //     the original file, not the fd number, so closing the fd here does not affect the pending recv's completion.
+                    // engine.free() runs AFTER the cancel and after the reap flag is set: the handshake engine was never attached to handle.tls
+                    // (onFinished did not run), so closeHandle does not free it, and with reaped set + the read promise cancelled no feed can follow,
+                    // so it frees the engine exactly once.
+                    def teardown(): Unit =
+                        reaped.set(true)
+                        ioDriver.closeHandle(handle)
+                        if handle.claimFdClose() then
+                            discard(sockets.shutdown(clientFd, PosixConstants.SHUT_RDWR))
+                            closeRawFd(clientFd)
+                        engine.free()
+                    end teardown
+                    // One deadline per accepted connection: when handshakeTimeout is finite, a client that completed the TCP accept but stalls
+                    // the TLS handshake (sends nothing / a partial ClientHello) would otherwise pin this fd + engine + buffers forever
+                    // (a slowloris handshake-stall DoS, CWE-400). The guard ensures exactly one of (handshake outcome, deadline) runs the
+                    // teardown / completion; the deadline reuses the same teardown a failed handshake runs. The deadline teardown is submitted
+                    // on the engine FIFO worker (submitEngineOp) so it is serialized against any in-flight feedCiphertext from a read that completed
+                    // just before the deadline, matching the engine-op single-owner discipline. handshakeTimeout = Infinity arms no timer
+                    // (preserving the original behavior). See [[armHandshakeDeadline]].
+                    val disarm = armHandshakeDeadline(clientFd, () => ioDriver.submitEngineOp(() => teardown()))
+                    driveHandshake(
+                        handle,
+                        engine,
+                        onFinished = () =>
+                            if disarm() then
+                                handle.tls = Present(engine)
+                                spawnHandler(InternalConnection.init(handle, driver, config.channelCapacity), driver, handler),
+                        onFailed = cause =>
+                            if disarm() then
+                                Log.live.unsafe.warn(
+                                    s"PosixTransport server TLS handshake failed fd=$clientFd: ${NetException.show(cause)}"
+                                )
+                                teardown(),
+                        onPanic = e =>
+                            if disarm() then
+                                Log.live.unsafe.error(s"PosixTransport server TLS handshake panic fd=$clientFd", e)
+                                teardown(),
+                        isReaped = () => reaped.get()
+                    )
+            end match
+        end if
+    end handleAccepted
+
+    /** Arm a `Clock`-driven deadline for one accepted connection's TLS handshake, returning a `disarm` thunk the handshake outcome calls to
+      * claim completion. The returned thunk returns `true` exactly once: the first caller (the handshake's `onFinished`/`onFailed`/`onPanic`,
+      * OR the deadline's expiry) wins and proceeds; every later caller returns `false` and is a no-op. So the handshake outcome and the
+      * deadline are mutually exclusive: only one runs the teardown / completion.
+      *
+      *   - When `config.handshakeTimeout` is finite, this schedules `Clock.live.unsafe.sleep(d).onComplete(...)` (the same non-blocking timer
+      *     idiom [[startAcceptLoop.scheduleAcceptAfterBackoff]] uses: a timer fiber on the clock executor, never a blocked carrier). If the
+      *     deadline fires before the handshake completes, the timer wins the guard and runs `onDeadline` (the connection's fd + engine
+      *     teardown), reaping a stalled handshake. When the handshake completes first it wins the guard and interrupts the timer fiber, so the
+      *     timer never fires.
+      *   - When `config.handshakeTimeout` is `Duration.Infinity` (the default), NO timer is armed and the guard is a permanently-open gate: the
+      *     returned `disarm` always returns `true`, so the handshake outcome runs exactly as it did before this deadline existed. No allocation
+      *     beyond the gate, no semantic change for existing callers.
+      */
+    private def armHandshakeDeadline(clientFd: Int, onDeadline: () => Unit)(using AllowUnsafe, Frame): () => Boolean =
+        val timeout = config.handshakeTimeout
+        if !timeout.isFinite then () => true
+        else
+            val settled = AtomicBoolean.Unsafe.init(false)
+            val timer   = Clock.live.unsafe.sleep(timeout)
+            timer.onComplete { _ =>
+                if settled.compareAndSet(false, true) then
+                    Log.live.unsafe.warn(s"PosixTransport server TLS handshake timed out fd=$clientFd after ${timeout.show}")
+                    onDeadline()
+            }
+            () =>
+                if settled.compareAndSet(false, true) then
+                    // The handshake won the race: disarm the deadline so the timer never fires (its onComplete sees the guard already set).
+                    timer.interruptDiscard(Result.Panic(Closed("PosixTransport", summon[Frame], "handshake completed before deadline")))
+                    true
+                else false
+        end if
+    end armHandshakeDeadline
+
+    /** Wire `connection` (upgrade + cert-hash functions), start it, and invoke the handler in its own carrier fiber.
+      * The connection's lifecycle is managed by its pumps, not by the handler's return. The handler is fire-and-forget: if it needs async
+      * work it spawns its own carrier via Fiber.Unsafe.init. A throw from the handler is logged and does not propagate to the accept loop.
+      */
+    private def spawnHandler(
+        connection: InternalConnection[PosixHandle],
+        driver: IoDriver[PosixHandle],
+        handler: NetConnection => Unit
+    )(using AllowUnsafe, Frame): Unit =
+        // Server-accepted connection: mark its origin so a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role
+        // (upgradeToTls reads isServerOrigin), and route its upgradeFn through the same public entry as the client so the role lives in one
+        // place. Otherwise both peers would handshake as clients and the upgrade aborts Closed.
+        connection.isServerOrigin = true
+        connection.upgradeFn = Present { (cfg, frame) =>
+            given Frame = frame
+            upgradeToTls(connection, cfg, config.channelCapacity)
+        }
+        installCertHash(connection, connection.handle)
+        // Deliver any application plaintext the server handshake already decrypted (the client's first record may have arrived with the final
+        // handshake flight) before the pumps start, so it is not stranded in the engine awaiting a socket read that never comes.
+        deliverHandshakePlaintext(connection.handle, connection.inbound)
+        connection.start()
+        discard(Fiber.Unsafe.init {
+            // Contain ANY throw from the user handler (not just NonFatal): a throw must never escape to the carrier, abort the process, or stall
+            // the accept loop. On Scala Native an exception that unwinds out of the carrier can abort via the libunwind compact-unwind walk, so the
+            // containment is mandatory on every platform, including for the fatal/control throwables NonFatal would let through.
+            try handler(connection)
+            catch case e: Throwable => Log.live.unsafe.error("listen handler panic", e)
+        })
+    end spawnHandler
+
+    /** Shut the transport down: close every live listener first (so the driver completes each pending accept promise with a Closed failure,
+      * causing the accept loop to decrement `acceptLoopsActive` and stop scheduling further accepts) and then the driver pool. Without
+      * closing the listeners first, their accept loops would continue arming the driver for new accept events after the pool is gone.
+      */
+    def close()(using AllowUnsafe, Frame): Unit =
+        listeners.forEach(l => l.close())
+        pool.close()
+    end close
+
+    // ---------------------------------------------------------------------------------------------------------------------------------------
+    // Low-level socket helpers
+    // ---------------------------------------------------------------------------------------------------------------------------------------
+
+    /** True when `driver` performs the connect itself via a completion SQE (io_uring) rather than relying on the transport to issue the
+      * `connect` syscall and then waiting for write-readiness (epoll/kqueue). The io_uring driver's `awaitConnect` submits an
+      * `IORING_OP_CONNECT` against the handle's `connectTarget`, so for it the transport must NOT also call `connect` (which would race a
+      * second connect on the same fd).
+      */
+    private def isCompletionConnect(driver: IoDriver[PosixHandle]): Boolean =
+        driver.label == "IoUringDriver"
+
+    /** Set a client / accepted fd non-blocking, opt it out of SIGPIPE on macOS/BSD, and (when `nodelay`) disable Nagle. Returns false if the
+      * non-blocking shim fails; the `SO_NOSIGPIPE` / `TCP_NODELAY` options are best-effort (a failure there does not abort the connection).
+      *
+      * `SO_NOSIGPIPE` is set on EVERY client fd on macOS/BSD regardless of `nodelay`: it is the per-socket SIGPIPE opt-out, not a performance
+      * knob, and on macOS/BSD `MSG_NOSIGNAL` is the 0 sentinel so a `send` to a peer-closed socket relies entirely on `SO_NOSIGPIPE` to avoid a
+      * SIGPIPE (process kill on Native). Gating it behind `nodelay` left `connectUnix` (which passes `nodelay = false`) exposed. `TCP_NODELAY`
+      * stays gated on `nodelay`: disabling Nagle is a TCP-only performance choice and is meaningless on a Unix-domain socket.
+      */
+    private def prepareClientSocket(fd: Int, nodelay: Boolean)(using AllowUnsafe): Boolean =
+        if shim.kyo_posix_set_nonblocking(fd) != 0 then false
+        else
+            if PosixConstants.isMacOrBsd then
+                setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_NOSIGPIPE, 1)
+            if nodelay then
+                setIntOpt(fd, PosixConstants.IPPROTO_TCP, PosixConstants.TCP_NODELAY, 1)
+            true
+    end prepareClientSocket
+
+    /** Set `SO_REUSEADDR` on a listen socket so repeated binds do not trip `TIME_WAIT`. */
+    private def setReuseAddr(fd: Int)(using AllowUnsafe): Unit =
+        setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_REUSEADDR, 1)
+
+    /** Set a 4-byte integer socket option. Best-effort: the value buffer is laid out little-endian (all supported targets are LE). */
+    private def setIntOpt(fd: Int, level: Int, optname: Int, value: Int)(using AllowUnsafe): Unit =
+        val opt = Buffer.alloc[Byte](4)
+        try
+            var i = 0
+            while i < 4 do
+                opt.set(i, ((value >> (i * 8)) & 0xff).toByte)
+                i += 1
+            discard(sockets.setsockopt(fd, level, optname, opt, 4))
+        finally opt.close()
+        end try
+    end setIntOpt
+
+    /** Read `SO_ERROR` for `fd` after a non-blocking connect signalled write-readiness: 0 means the connect succeeded, any other value is the
+      * connect's `errno`. The option is a 4-byte int read little-endian.
+      */
+    private def soError(fd: Int)(using AllowUnsafe): Int =
+        val opt = Buffer.alloc[Byte](4)
+        val len = Buffer.alloc[Int](1)
+        len.set(0, 4)
+        try
+            if sockets.getsockopt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_ERROR, opt, len).value != 0 then -1
+            else
+                (opt.get(0) & 0xff) |
+                    ((opt.get(1) & 0xff) << 8) |
+                    ((opt.get(2) & 0xff) << 16) |
+                    ((opt.get(3) & 0xff) << 24)
+        finally
+            opt.close()
+            len.close()
+        end try
+    end soError
+
+    /** Close a raw fd that is not yet owned by a [[Connection]] (a connect / accept failure path). Extracts the result of the
+      * already-inline-completed `@Ffi.blocking` `close` fiber via `takeNow` (poll-based, no park); a live connection's fd is instead closed
+      * through `Connection.close` so in-flight driver ops are cancelled first.
+      */
+    private def closeRawFd(fd: Int)(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
+        discard(takeNow(sockets.close(fd)))
+    end closeRawFd
+
+    /** The non-blocking fcntl shim (loaded once), used to set client / accepted sockets non-blocking on every architecture (RI: variadic
+      * fcntl is ABI-unsafe on arm64).
+      */
+    private val shim = Ffi.load[PosixShimBindings]
+
+    /** Extract the value of an already-inline-completed `@Ffi.blocking` fiber via `poll()` (non-parking peek). Returns `Absent` only if the
+      * fiber is still pending (not reachable on JVM/Native where this transport runs). Uses `poll()` rather than any parking call.
+      */
+    // Unsafe: poll() is the non-parking extraction of an already-inline-completed @Ffi.blocking fiber (JVM/Native).
+    private def takeNow[A](fiber: Fiber.Unsafe[A, Any])(using AllowUnsafe, Frame): Maybe[A] =
+        if fiber.done() then
+            fiber.poll() match
+                case Present(Result.Success(v)) => Present(v.eval)
+                case _                          => Absent
+        else Absent
+    end takeNow
+
+    /** Resolve the bound port via `getsockname` (the ephemeral port chosen when binding to port 0). The port lives at offset 2 (network
+      * order) for both `sockaddr_in` and `sockaddr_in6`. Returns the requested family's nominal port (0) on a `getsockname` failure.
+      */
+    private def resolvePort(fd: Int, family: Int)(using AllowUnsafe): Int =
+        val size = if family == PosixConstants.AF_INET6 then SockAddr.inet6Size else SockAddr.inet4Size
+        val out  = Buffer.alloc[Byte](size)
+        val ol   = Buffer.alloc[Int](1)
+        ol.set(0, size)
+        try
+            if sockets.getsockname(fd, out, ol).value != 0 then 0
+            else ((out.get(2) & 0xff) << 8) | (out.get(3) & 0xff)
+        finally
+            out.close()
+            ol.close()
+        end try
+    end resolvePort
+
+    /** The read end is pollable unless it is a regular file under an epoll backend. epoll rejects regular files (the one cell needing
+      * the fallback), while io_uring and kqueue stream them natively, and pipes (`S_ISFIFO`) and ttys (`S_ISCHR`) are pollable on every
+      * backend. The probe is single-sided (readFd only) and runs once via `fstat` + `S_ISREG`, never a register-and-detect-EPERM attempt
+      * (EPERM is not a portable non-pollable signal: kqueue tolerates regular files, so a failed registration would have to be unwound).
+      */
+    private[posix] def pollable(fd: Int)(using AllowUnsafe): Boolean =
+        !(ioDriver.label == "PollerIoDriver" && backendIsEpoll && isRegularFile(fd))
+
+    private def isRegularFile(fd: Int)(using AllowUnsafe): Boolean =
+        val stat = Buffer.alloc[Byte](PosixConstants.statSize)
+        try
+            if sockets.fstat(fd, stat).value < 0 then false
+            else (PosixStat.stMode(stat) & PosixConstants.S_IFMT) == PosixConstants.S_IFREG
+        finally stat.close()
+        end try
+    end isRegularFile
+
+    /** STARTTLS upgrade through [[TlsEngine]]. Detaches the plaintext connection (closing its channels but keeping the fd open via
+      * `detachForUpgrade`), feeds any staged ciphertext the plaintext `ReadPump` had already pulled off the socket into the new engine BEFORE
+      * the first post-upgrade socket read (so no byte is dropped), drives the handshake over the same fd, attaches the engine to the handle,
+      * and builds a NEW `Connection[PosixHandle]` over the SAME fd. A connection that is not upgradable (`detachForUpgrade` returns `Absent`,
+      * e.g. the in-memory connection) aborts `Closed` rather than silently no-op.
+      */
+    def upgradeToTls(
+        conn: Connection,
+        tls: NetTlsConfig,
+        channelCapacity: Int
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+        // The TLS role follows the connection's TCP origin: an accepted connection upgrades as the TLS server, a connected one as the client.
+        // The origin is set at connection creation (`spawnHandler` -> server, `completeConnect` -> client); a non-upgradable connection
+        // (e.g. the in-memory connection) is not an InternalConnection and falls back to the client role, then aborts Closed in upgradeRole.
+        val isServer = conn match
+            case ic: InternalConnection[?] @unchecked => ic.isServerOrigin
+            case _                                    => false
+        upgradeRole(conn, tls, channelCapacity, isServer = isServer)
+    end upgradeToTls
+
+    /** STARTTLS upgrade for the given role. The public `upgradeToTls` is the client (`isServer = false`) STARTTLS path; the server-accept role
+      * shares every step (detach, feed staged ciphertext, drive the handshake, rebuild over the same fd) and differs only in the engine the
+      * registry builds, so a server peer (the test, kyo-sql's server side) drives the same machinery.
+      */
+    private[posix] def upgradeRole(
+        conn: Connection,
+        tls: NetTlsConfig,
+        channelCapacity: Int,
+        isServer: Boolean
+    )(using AllowUnsafe, Frame): Fiber.Unsafe[Connection, Abort[NetException]] =
+        conn match
+            case posixConn: InternalConnection[PosixHandle] @unchecked if posixConn.handle.isInstanceOf[PosixHandle] =>
+                val out    = new IOPromise[NetException, Connection]
+                val handle = posixConn.handle
+                posixConn.detachForUpgrade() match
+                    case Absent =>
+                        out.completeDiscard(Result.fail(NetAlreadyDetachedException()))
+                    case Present(staged) =>
+                        // buildEngine fails closed (throws Closed) when a verifying STARTTLS client has no reference identity (no sniHostname),
+                        // so a build failure must release the detached-but-open fd and fail the upgrade promise rather than escaping. No engine
+                        // exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees the engine, which is absent here).
+                        val engine =
+                            try buildEngine(tls, upgradeHost(tls, isServer), isServer)
+                            catch
+                                case closed: Closed =>
+                                    if handle.claimFdClose() then closeRawFd(handle.writeFd)
+                                    PosixHandle.close(handle)
+                                    out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, closed)))
+                                    return out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
+                        // Feed every staged ciphertext byte into the engine before the first post-upgrade read.
+                        feedStaged(engine, staged)
+                        // Recover the peer's first handshake flight when it arrived coalesced with the upgrade signal. A STARTTLS
+                        // client writes its signal byte and its ClientHello back to back, so on a loopback the kernel can hand both
+                        // to one `recv`; the consumer takes the whole chunk as "the signal" and discards the ClientHello bytes riding
+                        // behind it. feedCoalescedHandshake re-feeds those bytes (everything from the chunk's first TLS record on) so
+                        // the engine sees the ClientHello the handshake would otherwise wait for forever. A no-op when the last read
+                        // was the bare signal or ordinary plaintext (no TLS record found). The last read is skipped when it is itself
+                        // one of the staged spans (the ClientHello arrived in its own read and `feedStaged` already fed it), so it is
+                        // never fed twice.
+                        feedCoalescedHandshake(handle, engine, staged)
+                        handle.lastPlaintextRead = Absent
+                        // io_uring only: the plaintext ReadPump's recv SQE submitted before detachForUpgrade is still kernel-owned (io_uring cannot
+                        // cancel it) and will consume the peer's first post-signal flight. Mark the handle so the handshake routes that recv's bytes
+                        // through the upgrade carry-over instead of issuing a second, racing recv (see recvAndFeed). False on the pollers (synchronous
+                        // reads, no in-flight recv), so they read normally. Set after detach (the recv is parked awaiting the flight, not yet reaped)
+                        // and after the coalesced-flight recovery, so a flight already in the socket buffer was handled above.
+                        handle.upgradeActive = ioDriver.hasInFlightRead(handle)
+                        driveHandshake(
+                            handle,
+                            engine,
+                            onFinished = () =>
+                                handle.tls = Present(engine)
+                                val upgraded = InternalConnection.init(handle, ioDriver, channelCapacity)
+                                // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
+                                // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
+                                // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
+                                // serverCertificateHash returns Absent). The re-upgrade function keeps the same role this upgrade ran in.
+                                wireUpgraded(upgraded, isServer)
+                                // Deliver any application plaintext the handshake already decrypted before the pumps start, so a record
+                                // that arrived with the handshake's final flight is not stranded in the engine (see completeConnect).
+                                deliverHandshakePlaintext(handle, upgraded.inbound)
+                                upgraded.start()
+                                out.completeDiscard(Result.succeed(upgraded: Connection))
+                            ,
+                            onFailed = closed =>
+                                releaseFailedUpgrade(handle, engine)
+                                out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, closed)))
+                            ,
+                            onPanic = e =>
+                                releaseFailedUpgrade(handle, engine)
+                                out.completeDiscard(Result.panic(e))
+                        )
+                end match
+                out.asInstanceOf[Fiber.Unsafe[Connection, Abort[NetException]]]
+            case _ =>
+                // Not an upgradable Posix connection (e.g. Connection.inMemory): abort loudly.
+                Fiber.Unsafe.fromResult(Result.fail(NetNotUpgradableException()))
+        end match
+    end upgradeRole
+
+    /** Release everything a FAILED STARTTLS upgrade strands. `detachForUpgrade` detached the plaintext connection (closing its channels and
+      * cancelling its driver registration) but deliberately kept the fd OPEN for the upgrade to reuse, and the new engine was built but never
+      * attached to `handle.tls` (onFinished never ran). So on the failure / panic path BOTH the fd and the engine leak unless released here.
+      *
+      * The new engine is known only to this upgrade (it is never attached to `handle.tls` on the failure path), so this is the sole place it can
+      * be freed: `engine.free()` runs it exactly once (the handshake is over and no pump runs on this handle, so nothing else touches it). A
+      * concurrent `closeHandle` cannot free it (it finds `handle.tls` Absent), so there is no double-free. The fd, by contrast, CAN also be
+      * closed by a racing `closeHandle`, so the close goes through `handle.claimFdClose()`: whoever wins the one-shot claim closes it, the other
+      * skips it, so the fd is closed exactly once. `PosixHandle.close` then releases the reused read buffer (idempotent via the handle guard).
+      */
+    private def releaseFailedUpgrade(handle: PosixHandle, engine: TlsEngine)(using AllowUnsafe): Unit =
+        engine.free()
+        if handle.claimFdClose() then closeRawFd(handle.writeFd)
+        PosixHandle.close(handle)
+    end releaseFailedUpgrade
+
+    /** The reference identity (and SNI host) for a STARTTLS upgrade engine. The `PosixHandle` is fd-only and no longer carries the original
+      * connect host, so the client role draws it from `tls.sniHostname` (the only host the caller can supply at upgrade time). The provider
+      * then decides what to do with it: a `trustAll` or `hostnameVerification = false` client does not check it, but a verifying client with
+      * an empty identity FAILS CLOSED at `buildEngine` time rather than handshaking with no name bound (RFC 9525 §6.1). A verifying STARTTLS
+      * client must therefore set `sniHostname`; this is the intended behavior change that surfaces a previously-masked insecure config
+      * (STARTTLS-without-SNI verifying clients now fail at the upgrade instead of silently accepting any chain-valid cert). The server role
+      * takes accept state with no SNI, so its host is always empty and never fails closed.
+      */
+    private def upgradeHost(tls: NetTlsConfig, isServer: Boolean): String =
+        if isServer then "" else tls.sniHostname.getOrElse("")
+
+    /** Wire the cert-hash and re-upgrade functions on a STARTTLS-upgraded connection, mirroring [[completeConnect]] (client) and `spawnHandler`
+      * (server). `certHashFn` exposes the engine's RFC 5929 channel-binding token now that the handle is TLS; `upgradeFn` keeps the same role
+      * the connection was upgraded in, so a further upgrade does not silently flip client/server.
+      */
+    private def wireUpgraded(upgraded: InternalConnection[PosixHandle], isServer: Boolean)(using AllowUnsafe, Frame): Unit =
+        upgraded.isServerOrigin = isServer
+        upgraded.upgradeFn = Present { (cfg, frame) =>
+            given Frame = frame
+            upgradeToTls(upgraded, cfg, config.channelCapacity)
+        }
+        installCertHash(upgraded, upgraded.handle)
+    end wireUpgraded
+
+    /** Feed each staged ciphertext span into the engine's read side. No byte is dropped. */
+    private def feedStaged(engine: TlsEngine, staged: Chunk[Span[Byte]])(using AllowUnsafe): Unit =
+        staged.foreach { sp =>
+            val arr = sp.toArrayUnsafe
+            if arr.length > 0 then
+                val buf = Buffer.fromArray[Byte](arr)
+                try discard(engine.feedCiphertext(buf, arr.length))
+                finally buf.close()
+            end if
+        }
+
+    /** If the connection's last plaintext read carried the peer's first TLS handshake flight behind the upgrade signal, feed those bytes into
+      * the engine. The chunk is `[signal][TLS record ...]`; the signal is non-TLS (a byte, a text command, a length-prefixed request), so the
+      * handshake starts at the first byte that opens a well-formed TLS record. Only handshake (`0x16`) records are accepted, with a TLS major
+      * version (`0x03`), a minor in `0x00..0x04`, and a length within a record's 16 KB ceiling, so an ordinary plaintext tail cannot be
+      * mistaken for ciphertext. When no such record is found (the common case: the read was just the bare signal) nothing is fed.
+      */
+    private def feedCoalescedHandshake(handle: PosixHandle, engine: TlsEngine, staged: Chunk[Span[Byte]])(using AllowUnsafe): Unit =
+        handle.lastPlaintextRead match
+            case Absent       => ()
+            case Present(arr) =>
+                // If this exact buffer is one of the staged (unconsumed) spans, `feedStaged` already fed it: the handshake flight arrived in its
+                // own read and sits in the channel, not behind a consumed signal. Re-feeding it would hand the engine the same ClientHello twice
+                // and corrupt the handshake. The pump delivers the read buffer by reference, so identity (`eq`) distinguishes the two cases.
+                val alreadyStaged = staged.exists(_.toArrayUnsafe eq arr)
+                if !alreadyStaged then
+                    val start = tlsRecordStart(arr)
+                    if start >= 0 && start < arr.length then
+                        val tail = java.util.Arrays.copyOfRange(arr, start, arr.length)
+                        val buf  = Buffer.fromArray[Byte](tail)
+                        try discard(engine.feedCiphertext(buf, tail.length))
+                        finally buf.close()
+                    end if
+                end if
+        end match
+    end feedCoalescedHandshake
+
+    /** Index of the first byte in `arr` that opens a TLS handshake record (`0x16`, major version `0x03`, minor `0x00..0x04`, fragment length
+      * `<= 16384`), or `-1` if none. Identifies where a coalesced ClientHello/ServerHello begins after a STARTTLS signal prefix.
+      */
+    private def tlsRecordStart(arr: Array[Byte]): Int =
+        val limit = arr.length - 5 // a record needs at least its 5-byte header
+        var i     = 0
+        var found = -1
+        while found < 0 && i <= limit do
+            val contentType = arr(i) & 0xff
+            val major       = arr(i + 1) & 0xff
+            val minor       = arr(i + 2) & 0xff
+            val length      = ((arr(i + 3) & 0xff) << 8) | (arr(i + 4) & 0xff)
+            if contentType == 0x16 && major == 0x03 && minor <= 0x04 && length > 0 && length <= 16384 then found = i
+            i += 1
+        end while
+        found
+    end tlsRecordStart
+
+    /** Drive the TLS handshake over the handle's fd using a synchronous `step()` state machine with `onComplete` continuations for I/O.
+      * Each engine call (handshakeStep, drainCiphertext, feedCiphertext) runs inside a submitEngineOp thunk so it is serialized against
+      * the read and write pumps on the same engine. The recv/send syscalls and the awaitReadCiphertext/awaitWritable continuations run
+      * outside the thunk. Each step submits ONE coarse-grained thunk covering all engine ops for that step; the continuation (which may
+      * re-submit a new thunk for the next step) is called after the FIFO worker finishes the current thunk, avoiding reentrancy.
+      * The engine consumes any staged ciphertext first (fed before this runs), so a server whose ClientHello was already staged
+      * completes without an extra read. All I/O suspension points (EAGAIN on write, EAGAIN on read) arm a driver promise and return;
+      * the driver carrier fires the promise's `onComplete` continuation to resume the handshake.
+      *
+      * `isReaped` is the reap guard for the server-accept handshake deadline (finding #243): when a finite `handshakeTimeout` reaps a
+      * stalled handshake it frees the handshake engine, so any engine-touching thunk that runs AFTER the reap (an in-flight recv CQE that
+      * delivered just before the deadline and enqueued a feed) MUST skip rather than touch a freed engine. The guard is checked at the top of
+      * every `submitEngineOp` thunk the handshake submits (`step`, and the feed thunks in `recvAndFeed` / `awaitReadCiphertext`); the reap and
+      * these thunks all run on the one per-driver engine FIFO worker, so the flag write in the reap thunk is serialized against these reads.
+      * The connect and STARTTLS handshakes arm no deadline and pass `() => false` (never reaped).
+      */
+    private def driveHandshake(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        onFinished: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit,
+        isReaped: () => Boolean = () => false
+    )(using AllowUnsafe, Frame): Unit =
+        def step(): Unit =
+            // Submit one coarse-grained thunk: run handshakeStep + drainCiphertext inside the FIFO worker so no concurrent
+            // read or write op can touch the engine during this step. The send and recv calls stay outside the thunk.
+            ioDriver.submitEngineOp { () =>
+                // Reap guard: a deadline reap that ran ahead of this thunk on the FIFO worker has already freed the engine; skip rather
+                // than call handshakeStep on freed native state (the disarm guard already ensured onFinished / onFailed will not fire).
+                if isReaped() then ()
+                else
+                    try
+                        val s = engine.handshakeStep()
+                        if s == 1 then
+                            // DONE: drain any final ciphertext (engine op, inside thunk), then call onFinished (outside thunk).
+                            drainAllDirect(handle, engine, cont = onFinished, onFailed, onPanic)
+                        else if s == -2 then
+                            // Fatal alert (RFC 5246 7.2 / RFC 8446 6.2): drain and send the alert record the engine queued (e.g. protocol_version,
+                            // bad_certificate) so the peer learns the failure reason before the fd closes, THEN fail. Every other arm (done,
+                            // want-write, want-read) already drains; this arm did not, dropping the alert.
+                            //
+                            // openssl returns the fatal -2 from the first SSL_do_handshake but does not flush the queued alert into the write BIO
+                            // until a SECOND SSL_do_handshake call, so re-step once (it returns -2 again, the handshake does not otherwise proceed)
+                            // to force the flush before draining. BoringSSL already flushed on the first call, so the re-step adds no new bytes there.
+                            // drainAllDirect is bounded (one drain+send pass on the closing handshake) and routes a send failure to onFailed as well,
+                            // so the handshake always terminates.
+                            discard(engine.handshakeStep())
+                            drainAllDirect(
+                                handle,
+                                engine,
+                                cont = () => onFailed(""),
+                                onFailed,
+                                onPanic
+                            )
+                        else if s == -1 then
+                            // WANT_WRITE: drain ciphertext (engine op, inside thunk), send it (syscall, outside thunk via sendAll), then re-step.
+                            drainAllDirect(handle, engine, cont = step, onFailed, onPanic)
+                        else
+                            // WANT_READ (0): drain output first, then probe recv and maybe arm read (both outside thunk).
+                            drainAllDirect(
+                                handle,
+                                engine,
+                                cont = () => recvAndFeed(handle, engine, step, onFailed, onPanic, isReaped),
+                                onFailed,
+                                onPanic
+                            )
+                        end if
+                    catch case e: Throwable => onPanic(e)
+                    end try
+            }
+        end step
+        try step()
+        catch case e: Throwable => onPanic(e)
+        end try
+    end driveHandshake
+
+    /** Drain all outbound ciphertext the engine has queued and send it. Called from INSIDE a submitEngineOp thunk, so calls drainCiphertext
+      * directly (no nested submitEngineOp: that would enqueue a new entry to the FIFO but the current thunk still holds the worker; the
+      * @tailrec drainEngineOps picks it up next, but only AFTER this thunk returns, so there is no reentrancy deadlock as long as this method
+      * does not wait for that next entry). The send call (sendAll) happens outside the FIFO thunk on the continuation. When nothing is drained,
+      * calls cont() immediately.
+      */
+    private def drainAllDirect(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit
+    )(using AllowUnsafe, Frame): Unit =
+        try
+            val out = Buffer.alloc[Byte](handle.readBufferSize)
+            try
+                val n = engine.drainCiphertext(out, handle.readBufferSize)
+                if n <= 0 then cont()
+                else
+                    val arr = Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))
+                    // sendAll calls the socket send (a syscall) + may arm awaitWritable: both stay outside the engine thunk.
+                    sendAll(handle, arr, 0, cont = () => drainAllDirect(handle, engine, cont, onFailed, onPanic), onFailed, onPanic)
+                end if
+            finally out.close()
+            end try
+        catch case e: Throwable => onPanic(e)
+        end try
+    end drainAllDirect
+
+    /** Send a full span over the socket starting at `offset`. On a partial write, arms write interest via [[awaitWritable]] and resumes
+      * via `onComplete` with the advanced offset.
+      */
+    private def sendAll(
+        handle: PosixHandle,
+        data: Span[Byte],
+        offset: Int,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit
+    )(using AllowUnsafe, Frame): Unit =
+        try
+            ioDriver.write(handle, data, offset) match
+                case WriteResult.Done  => cont()
+                case WriteResult.Error => onFailed("")
+                case WriteResult.Partial(rem, newOffset) =>
+                    awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
+        catch case e: Throwable => onPanic(e)
+        end try
+    end sendAll
+
+    /** Arm write interest on the driver; the `cont` callback fires from the driver carrier when the socket becomes writable. */
+    private def awaitWritable(
+        handle: PosixHandle,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit
+    )(using AllowUnsafe, Frame): Unit =
+        val writablePromise = new IOPromise[Closed, Unit]
+        writablePromise.onComplete {
+            case Result.Success(_)      => cont()
+            case Result.Failure(closed) => onFailed(closed)
+            case Result.Panic(e)        => onPanic(e)
+        }
+        ioDriver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+    end awaitWritable
+
+    private def isWouldBlock(errno: Int): Boolean =
+        errno == PosixConstants.EAGAIN || errno == PosixConstants.EWOULDBLOCK
+
+    /** Read one chunk of ciphertext from the socket and feed it into the engine. An empty read (EOF) calls `onFailed`.
+      *
+      * Tries one synchronous `recvNow` first, with `MSG_DONTWAIT`: if the peer's next flight is already in the socket buffer it
+      * is fed straight away. `MSG_DONTWAIT` keeps this probe non-blocking even if the fd is momentarily blocking, so it never
+      * stalls the handshake fiber inline (a freshly accepted fd is blocking by default; `accept` does not inherit `O_NONBLOCK`).
+      * Only when the buffer is empty (`EAGAIN`) does it fall back to [[awaitReadCiphertext]], which arms read interest and
+      * resumes via `onComplete` when the poller delivers the flight. The feedCiphertext call goes through submitEngineOp so it is
+      * serialized against concurrent read and write ops on the same engine.
+      */
+    private def recvAndFeed(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit,
+        isReaped: () => Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        // STARTTLS on io_uring: a stale recv (armed by the plaintext pump before detachForUpgrade) is still kernel-owned and will consume the peer's
+        // first flight. Route it through the handle carry-over rather than issuing a second, racing recv; once it is consumed (upgradeActive cleared)
+        // later reads fall to the normal recvNow path. See PosixHandle.upgradeActive and IoUringDriver.complete.
+        if handle.upgradeActive then driveUpgradeRead(handle, engine, cont, onFailed, onPanic, isReaped)
+        else recvNowAndFeed(handle, engine, cont, onFailed, onPanic, isReaped)
+    end recvAndFeed
+
+    /** Feed `arr` (ciphertext read off the socket) into the handshake engine on the engine FIFO, then continue the handshake. Shared by the
+      * recvNow path and the STARTTLS upgrade carry-over path. The `isReaped` guard skips the feed if a deadline reap freed the engine first (#243).
+      */
+    private def feedCiphertextThenCont(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        arr: Array[Byte],
+        cont: () => Unit,
+        onPanic: Throwable => Unit,
+        isReaped: () => Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        ioDriver.submitEngineOp { () =>
+            if isReaped() then ()
+            else
+                try
+                    val buf = Buffer.fromArray[Byte](arr)
+                    try discard(engine.feedCiphertext(buf, arr.length))
+                    finally buf.close()
+                    cont()
+                catch case e: Throwable => onPanic(e)
+                end try
+        }
+    end feedCiphertextThenCont
+
+    /** The STARTTLS upgrade read path on io_uring: consume the stale recv's bytes via the handle carry-over, or park the upgrade-read waiter for the
+      * stale recv's completion to fulfil ([[IoUringDriver]]'s `complete` upgrade branch). It never issues its own recv, so it cannot race the stale
+      * recv for the same byte stream. Exactly one stale recv exists, so after its bytes flow the next read takes the normal recvNow path.
+      */
+    private def driveUpgradeRead(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit,
+        isReaped: () => Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        handle.upgradeCarryover match
+            case Present(arr) =>
+                handle.upgradeCarryover = Absent
+                handle.upgradeActive = false
+                feedCiphertextThenCont(handle, engine, arr, cont, onPanic, isReaped)
+            case Absent =>
+                val waiter = new IOPromise[Closed, Span[Byte]]
+                waiter.onComplete {
+                    case Result.Success(bytes) =>
+                        // An empty read is EOF mid-handshake: the peer closed before completing it. Surface that as the failure cause (rendered as a
+                        // ": peer closed during read" suffix) so a bare close is distinguishable from a received fatal alert (which carries its own
+                        // engine-level failure, never this phrase): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
+                        if bytes.isEmpty then onFailed("peer closed during read")
+                        else feedCiphertextThenCont(handle, engine, bytes.toArrayUnsafe, cont, onPanic, isReaped)
+                    case Result.Failure(closed) => onFailed(closed)
+                    case Result.Panic(e)        => onPanic(e)
+                }
+                handle.upgradeReadWaiter = Present((waiter.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]], summon[Frame]))
+    end driveUpgradeRead
+
+    private def recvNowAndFeed(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit,
+        isReaped: () => Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        try
+            val result = sockets.recvNow(handle.readFd, handle.readBuffer, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
+            val n      = result.value.toInt
+            if n > 0 then
+                val cipherArr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
+                // feedCiphertext is an engine op: submit it through the FIFO so it is serialized against concurrent ops.
+                // The continuation (cont) is called from inside the FIFO thunk after the feed; cont itself may re-enter step(),
+                // which submits a NEW submitEngineOp and returns (no reentrancy: the inner submit enqueues, this thunk returns first).
+                ioDriver.submitEngineOp { () =>
+                    // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
+                    if isReaped() then ()
+                    else
+                        try
+                            val buf = Buffer.fromArray[Byte](cipherArr)
+                            try discard(engine.feedCiphertext(buf, n))
+                            finally buf.close()
+                            cont()
+                        catch case e: Throwable => onPanic(e)
+                        end try
+                }
+            else if n == 0 then
+                // EOF mid-handshake: the peer closed before completing it. The descriptive cause distinguishes a bare close from a received fatal
+                // alert (see awaitReadCiphertext / PosixTransportHandshakeAlertTest).
+                onFailed("peer closed during read")
+            else if isWouldBlock(result.errorCode) then
+                awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
+            else
+                onFailed(new NetErrno(result.errorCode))
+            end if
+        catch case e: Throwable => onPanic(e)
+        end try
+    end recvNowAndFeed
+
+    /** Arm read interest on the driver; when the poller delivers ciphertext the `cont` callback fires from the driver carrier. The
+      * feedCiphertext call goes through submitEngineOp so it is serialized against concurrent ops on the same engine.
+      *
+      * This is the park point a stalled server handshake reaches (finding #243): the io_uring `awaitRead` submits an in-flight recv SQE
+      * into `handle.readBuffer`. If a finite `handshakeTimeout` reaps the handshake while this is parked, the reap routes through
+      * `ioDriver.closeHandle` (which `cancel`s `readPromise`, so the Success branch below cannot fire post-reap, and defers the buffer/fd
+      * free until the recv CQE drains). A recv CQE that delivered Success just before the reap may still have enqueued the feed thunk below;
+      * the `isReaped` guard makes that thunk skip rather than feed a freed engine.
+      */
+    private def awaitReadCiphertext(
+        handle: PosixHandle,
+        engine: TlsEngine,
+        cont: () => Unit,
+        onFailed: (String | Throwable) => Unit,
+        onPanic: Throwable => Unit,
+        isReaped: () => Boolean
+    )(using AllowUnsafe, Frame): Unit =
+        val readPromise = new IOPromise[Closed, Span[Byte]]
+        readPromise.onComplete {
+            case Result.Success(bytes) =>
+                if bytes.isEmpty then
+                    // EOF mid-handshake: the peer closed before completing it. The descriptive cause distinguishes a bare close from a received fatal
+                    // alert (which fails the handshake with its own engine-level cause, never this phrase): the dropped-alert symptom
+                    // PosixTransportHandshakeAlertTest guards against (#229).
+                    onFailed("peer closed during read")
+                else
+                    val arr = bytes.toArrayUnsafe
+                    // feedCiphertext is an engine op: submit through the FIFO. The continuation runs inside the FIFO thunk.
+                    ioDriver.submitEngineOp { () =>
+                        // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
+                        if isReaped() then ()
+                        else
+                            try
+                                val buf = Buffer.fromArray[Byte](arr)
+                                try discard(engine.feedCiphertext(buf, arr.length))
+                                finally buf.close()
+                                cont()
+                            catch case e: Throwable => onPanic(e)
+                            end try
+                    }
+            case Result.Failure(closed) => onFailed(closed)
+            case Result.Panic(e)        => onPanic(e)
+        }
+        ioDriver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+    end awaitReadCiphertext
+
+end PosixTransport
+
+private[net] object PosixTransport:
+
+    /** Outcome of draining the listen-fd backlog via `acceptNow` in one readiness cycle, telling the accept loop how to re-arm.
+      *
+      *   - [[AcceptDrain.Drained]]: the backlog is empty (`EAGAIN`/`EWOULDBLOCK`), or the cycle ended on a closed listener / spent transient
+      *     budget / unclassified errno. Re-arm read interest immediately, as the accept loop always did.
+      *   - [[AcceptDrain.ResourceExhausted]]: `accept` failed with `EMFILE`/`ENFILE`. The kernel did NOT dequeue the pending connection, so the
+      *     listen fd stays read-ready; an immediate re-arm would re-fire the same error in a tight CPU spin. Re-arm after a bounded backoff.
+      */
+    private enum AcceptDrain derives CanEqual:
+        case Drained
+        case ResourceExhausted
+
+    /** Build the production transport over the OS-selected poller/io_uring `ioDriver`, loading the real socket bindings and detecting whether
+      * the active poller backend is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
+      */
+    def init(config: kyo.net.TransportConfig, ioDriver: IoDriver[PosixHandle])(using AllowUnsafe): PosixTransport =
+        new PosixTransport(config, ioDriver, Ffi.load[SocketBindings], backendIsEpoll(ioDriver))
+
+    /** True when `ioDriver` is the readiness poller AND that poller is epoll (the only backend the regular-file fallback applies to). io_uring's driver has
+      * a different label, and kqueue is selected on macOS/BSD, so both correctly report false.
+      */
+    private def backendIsEpoll(ioDriver: IoDriver[PosixHandle])(using AllowUnsafe): Boolean =
+        ioDriver.label == "PollerIoDriver" && (PollerBackend.default() eq EpollPollerBackend)
+
+end PosixTransport
+
+/** Active server-side listener over a bound `PosixHandle` socket fd.
+  *
+  * Holds the listen fd, the resolved port (`-1` for Unix sockets), the bind host, and the [[NetAddress]]. `close()` flips a CAS-guarded flag,
+  * deregisters the accept interest from the driver, and closes the listen fd. The deregister runs BEFORE the fd close: it clears the driver's
+  * `pendingAccepts` / `activeFds` entries for this listen fd (and removes the poller interest while the fd is still open, so EV_DELETE / epoll_ctl
+  * DEL land on a live fd). Without it, a closed listen fd's stale `pendingAccepts` entry survives; when the OS recycles that fd number for a new
+  * CLIENT connection, the recycled fd's read-readiness is routed to the stale accept dispatch instead of the connection's ReadPump, and the
+  * connection's read never completes (the lost-wakeup hang). The close also removes itself from the owning transport's listener registry so a
+  * transport shutdown does not try to close it twice. Idempotent: a second `close()` is a no-op.
+  */
+final private[net] class PosixListener(
+    private[posix] val serverFd: Int,
+    val port: Int,
+    val host: String,
+    val address: NetAddress,
+    private val sockets: SocketBindings,
+    private val registry: java.util.Set[PosixListener]
+) extends ListenerImpl:
+
+    // Unsafe: created at object initialization with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the
+    // caller's AllowUnsafe.
+    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    /** Tears down this listener's accept interest AND closes its fd, sequenced through the driver ([[kyo.net.internal.transport.IoDriver.closeListener]]).
+      * Installed by the accept loop in `startAcceptLoop` (it holds the listen `handle` and `driver`); invoked by `close()`, which then must NOT
+      * close the fd itself (the teardown owns the shutdown + close, ordered so a queued accept arm can never run against a recycled fd number).
+      * `Absent` until the accept loop wires it.
+      */
+    @volatile private var teardownAccept: Maybe[() => Unit] = Absent
+
+    private[posix] def onClose(f: () => Unit): Unit = teardownAccept = Present(f)
+
+    def isClosed(using AllowUnsafe): Boolean = closedFlag.get()
+
+    def close()(using AllowUnsafe, Frame): Unit =
+        if closedFlag.compareAndSet(false, true) then
+            discard(registry.remove(this))
+            teardownAccept match
+                case Present(teardown) =>
+                    // The accept loop's driver-sequenced teardown owns the whole close: it cancels the accept interest while the fd is still
+                    // open (a stale fd-keyed accept entry outliving the fd would misroute a recycled fd's events; on io_uring an accept arm
+                    // still queued behind it would otherwise prep against the recycled fd), then shuts the socket down (the wake a blocked /
+                    // armed accept needs on Linux; close() alone does not reliably interrupt it) and closes the fd.
+                    teardown()
+                case Absent =>
+                    // No accept loop ever wired (listenImpl failed before startAcceptLoop): nothing is registered anywhere, close directly.
+                    discard(sockets.shutdown(serverFd, PosixConstants.SHUT_RDWR))
+                    discard(sockets.close(serverFd))
+            end match
+    end close
+
+end PosixListener

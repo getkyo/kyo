@@ -113,6 +113,23 @@ jobs:
           retry_wait_seconds: 15
           command: brew install h2o libidn2
 
+      # liburing is needed to BUILD the kyo-net io_uring shim (kyo_uring.c, RI-003).
+      # The shim is statically linked, so the shipped artifact has zero runtime
+      # liburing dependency; this is a build-time-only dep. Needed on both the JVM
+      # target (kyo-ffi plugin compiles the shim via cc) and the Native target
+      # (Scala Native linker), so it is not gated on a single target. macOS and
+      # Windows compile the shim to a stub (header #if guard) and need nothing.
+      - name: Install liburing (Linux)
+        if: contains(inputs.os, 'linux') && (matrix.target == 'JVM' || matrix.target == 'Native')
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 5
+          retry_wait_seconds: 15
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
+
       # Split from the podman start logic so only the apt install is retried — the
       # Start step below is not idempotent (background service launch, GITHUB_ENV
       # export) and must not be re-run.
@@ -173,6 +190,45 @@ jobs:
         shell: bash
         run: echo "JAVA_HOME=$JAVA_HOME_25_AARCH64" >> "$GITHUB_ENV"
 
+      # kyo-ffi-it requires `kyo-ffi-plugin`'s bundled codegen resources
+      # (kyo-ffi-codegen.jar + Scala 3 runtime jars) to exist on disk before
+      # the main build's meta-build is loaded. The meta-build
+      # (`project/plugins.sbt`) copies those resources at sbt-boot time; if
+      # they are not already generated, `KyoFfiPlugin` runs against an empty
+      # bundle and `ffiGenerate` produces no impls, causing kyo-ffi-it tests
+      # to fail with "Cannot instantiate generated FFI impl". Running
+      # `kyo-ffi-plugin/Compile/packageBin` in a separate sbt invocation
+      # materializes the resources before the main test sbt session boots.
+      - name: Prepare kyo-ffi-plugin bundled resources
+        shell: bash
+        run: sbt "kyo-ffi-plugin/Compile/packageBin"
+
+      # Build + stage the vendored BoringSSL (libssl.a + libcrypto.a) for the runner's os-arch before
+      # the test step (RI-006 / AD-007 / D6). build-boringssl.sh clones BoringSSL at the pinned commit
+      # and builds static archives via CMake + Go; cmake/go are pre-installed on GitHub-hosted runners,
+      # but install them defensively if absent. The staged tree is gitignored (a build artifact), so it
+      # must be produced on every runner. Without it the kyonet_boringssl shim links a stub and the
+      # BoringSSL TLS tests cancel; with it they run against real BoringSSL on JVM and Native.
+      - name: Prepare BoringSSL
+        if: matrix.target == 'JVM' || matrix.target == 'Native'
+        shell: bash
+        run: |
+          # Map the runner os identifier to the build-boringssl.sh / staged/<os-arch>/ naming.
+          case "${{ inputs.os }}" in
+            linux-x64)   OS_ARCH=linux-x86_64 ;;
+            linux-arm64) OS_ARCH=linux-aarch64 ;;
+            macos-arm64) OS_ARCH=darwin-aarch64 ;;
+            *) echo "BoringSSL not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+          esac
+          if [[ "${{ inputs.os }}" == linux-* ]]; then
+            command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+            command -v go >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 golang-go; }
+          else
+            command -v cmake >/dev/null 2>&1 || brew install cmake
+            command -v go >/dev/null 2>&1 || brew install go
+          fi
+          bash kyo-net/build/boringssl/build-boringssl.sh "$OS_ARCH"
+
       - name: Test ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
@@ -197,3 +253,39 @@ jobs:
           else
             sbt "$cmd"
           fi
+
+      # kyo-net ships three transport backends behind one public API: the posix
+      # transport (io_uring/epoll/kqueue over Panama FFI, the JVM default), the pure-JDK
+      # NIO floor, and Node (JS). The shared kyo.net.Transport* / Connection / ConnectBurst
+      # behavioral suite runs against NetPlatform.transport, which on the JVM is the posix
+      # default, so those same tests never exercise the NIO floor in the run above. This
+      # leg forces -Dkyo.net.backend=nio so the identical shared behavioral contract runs
+      # against NIO too, keeping the backends consistent (it caught a CWE-326 TLS
+      # version-downgrade in the NIO inline path the posix-default run could not). NIO is
+      # pure JDK and arch-independent, so one representative JVM leg suffices.
+      - name: kyo-net NIO floor consistency (shared suite forced to NIO)
+        if: inputs.os == 'linux-x64' && matrix.target == 'JVM'
+        shell: bash
+        run: sbt 'set LocalProject("kyo-net") / Test / javaOptions += "-Dkyo.net.backend=nio"' 'kyo-net/testOnly kyo.net.Transport* kyo.net.ConnectionTest kyo.net.ConnectBurstTest'
+
+      # The posix transport selects one I/O driver per host: io_uring on a capable Linux
+      # (the linux-x64 CI default), kqueue on macOS, epoll otherwise. So on linux-x64 the
+      # shared behavioral suite above runs against io_uring and never against epoll, even
+      # though epoll is a selectable backend (-Dkyo.net.backend=epoll) with a distinct
+      # readiness-based I/O model (the session found driver-specific bugs: EINTR, short
+      # submit). This leg forces epoll so the identical shared behavioral contract runs
+      # against the epoll driver too, the posix-driver analogue of the NIO floor leg.
+      - name: kyo-net epoll driver consistency (shared suite forced to epoll)
+        if: inputs.os == 'linux-x64' && matrix.target == 'JVM'
+        shell: bash
+        run: sbt 'set LocalProject("kyo-net") / Test / javaOptions += "-Dkyo.net.backend=epoll"' 'kyo-net/testOnly kyo.net.Transport* kyo.net.ConnectionTest kyo.net.ConnectBurstTest'
+
+      # kyo-ffi-plugin scripted tests exercise the plugin against real sbt
+      # projects (JVM + JS + Native). They are expensive, so run only once per
+      # matrix pass — on the linux-x64 JVM leg. The plugin publishes kyo-ffi
+      # (JVM/JS/Native) and dependencies to the local ivy cache before
+      # invoking scripted, so no extra setup is needed here.
+      - name: kyo-ffi plugin scripted tests
+        if: inputs.os == 'linux-x64' && matrix.target == 'JVM'
+        shell: bash
+        run: sbt "kyo-ffi-plugin/scripted"

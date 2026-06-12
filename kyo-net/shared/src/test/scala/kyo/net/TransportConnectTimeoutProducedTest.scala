@@ -1,0 +1,60 @@
+package kyo.net
+
+import kyo.*
+
+/** The transport PRODUCES the typed [[NetConnectTimeoutException]] on its internal connect-deadline. A client connect whose SYN
+  * goes unanswered (a black-hole endpoint) parks until the transport's finite `handshakeTimeout` fires; the deadline arm fails the connect promise
+  * with `NetConnectTimeoutException(host, port, timeout)`, the typed leaf the kyo-http client maps to `HttpConnectTimeoutException`.
+  *
+  * This is the close-cause discrimination: the deadline arm is the only producer of the timeout leaf, so a deadline-fired close
+  * surfaces `NetConnectTimeoutException` while an OS-failure close (refused/unreachable) surfaces the generic `NetConnectException`. Before the
+  * producer existed the connect parked indefinitely (or surfaced the generic connect failure), so this FAILs-before / PASSes-after.
+  *
+  * The deadline is the transport's own Clock-driven timer, NOT a caller-side `Async.timeout` (the distinct property [[TransportConnectDeadlineTest]]
+  * asserts and leaves green). The finite `handshakeTimeout` is the deterministic latch (the black hole never answers, so the deadline always wins);
+  * a generous outer `Async.timeout` survival window turns a regression (no deadline armed, so the connect hangs) into a failure rather than a hang,
+  * never a sleep-as-synchronization.
+  *
+  * Native is excluded (`.notNative`): a connect to the RFC 5737 TEST-NET-1 black hole can fail-fast with an unreachable error on a Native host
+  * rather than parking in SYN_SENT, which would surface `NetConnectException` (the OS-close arm) instead of exercising the deadline. The posix
+  * connect-deadline arm is identical on Native and is compiled there; only this black-hole-dependent reproduction is JVM/JS-scoped, matching the
+  * established `kyo-http` connect-timeout test's `.notNative` exception.
+  */
+class TransportConnectTimeoutProducedTest extends Test:
+
+    import AllowUnsafe.embrace.danger
+
+    // 192.0.2.1 is in 192.0.2.0/24, RFC 5737 TEST-NET-1: a reserved, routable-but-unanswered address, so a TCP connect parks in SYN_SENT until
+    // the deadline rather than being refused. The same black hole the kyo-http connectTimeout test uses.
+    private val blackHoleHost = "192.0.2.1"
+    private val blackHolePort = 80
+
+    "a connect that does not complete by its deadline fails with NetConnectTimeoutException".notNative in {
+        given Frame = Frame.internal
+        // A finite, short handshakeTimeout arms the transport's internal connect-deadline. The connect to the black hole never completes, so the
+        // deadline always wins; the produced leaf is the typed NetConnectTimeoutException, NOT the generic NetConnectException.
+        val timeout   = 200.millis
+        val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = timeout))
+        Abort.run[Closed | Timeout](
+            // A generous survival window: if the deadline were NOT armed (the regression) the connect would hang and this would time out, failing
+            // the assertion below rather than hanging the suite. With the deadline armed, the connect fails well within the window.
+            Async.timeout(5.seconds)(transport.connect(blackHoleHost, blackHolePort).safe.get)
+        ).map { outcome =>
+            transport.close()
+            outcome match
+                case Result.Failure(e: NetConnectTimeoutException) =>
+                    assert(
+                        e.host == blackHoleHost && e.port == blackHolePort && e.timeout == timeout,
+                        s"expected NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), got $e"
+                    )
+                case other =>
+                    assert(
+                        false,
+                        s"expected the internal connect-deadline to produce NetConnectTimeoutException($blackHoleHost, $blackHolePort, $timeout), " +
+                            s"got $other (a Timeout means no deadline was armed; a NetConnectException means an OS-close beat the deadline)"
+                    )
+            end match
+        }
+    }
+
+end TransportConnectTimeoutProducedTest

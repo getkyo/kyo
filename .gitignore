@@ -18,3 +18,4 @@ jmh-result.json
 test-output
 .DS_Store
 .jvmopts
+node_modules
