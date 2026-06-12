@@ -702,10 +702,12 @@ object WebsiteStyles:
                     .padding(0.px, 0.px, 0.px, 17.px).position(_.flow)
             )
             // The category glyph sits above the title in the brand accent (the SVG draws in currentColor).
+            // Size it 1:1 with its 24-unit viewBox so the scale factor is exactly the device-pixel ratio and
+            // the strokes stay on the pixel grid; a fractional size (e.g. 26px on a 24 viewBox) blurs them.
             .rule("fcat-ic", Style.block.color(_.variable("accent")).margin(0.px, 0.px, 14.px, 0.px))
             .rule(
                 Selector.cls("fcat-ic").descendant(Selector.tag("svg")),
-                Style.display(_.block).width(26.px).height(26.px)
+                Style.display(_.block).width(24.px).height(24.px)
             )
     end landingGrids
 

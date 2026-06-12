@@ -464,29 +464,31 @@ object LandingApp:
             UI.ul(html(items.map(s => UI.li(s)))*)
         )
 
-    // Category glyphs for the feature cards, drawn on the kyo-ui `Svg` DSL as a single-weight line set
-    // (24x24, `currentColor` so the `.fcat-ic` rule themes them). No fills except the slider knobs.
+    // Category glyphs for the feature cards, drawn on the kyo-ui `Svg` DSL as a single-weight line set.
+    // The 24-unit viewBox is rendered 1:1 (the `.fcat-ic svg` rule sizes it to 24px), so the scale factor
+    // is exactly the device-pixel ratio and strokes land on the pixel grid (no fractional-scale blur). The
+    // 2px (even) stroke keeps horizontal/vertical edges on whole pixels; `currentColor` themes to the accent.
     private def catIcon(parts: Svg.SvgChild*)(using Frame): UI =
         UI.span.cssClass("fcat-ic")(
             Svg.svg.viewBox(Svg.ViewBox(0, 0, 24, 24)).width(24).height(24)(
-                Svg.g.fill(Svg.Paint.None).stroke(Svg.Paint.CurrentColor).strokeWidth(1.7)
+                Svg.g.fill(Svg.Paint.None).stroke(Svg.Paint.CurrentColor).strokeWidth(2.0)
                     .strokeLinecap(Svg.StrokeLinecap.Round).strokeLinejoin(Svg.StrokeLinejoin.Round)(parts*)
             )
         )
 
-    // Web: a globe (outline + equator + meridian).
+    // Web: a globe (outline + equator + meridian). The equator is a whole-y horizontal stroke.
     private def webIcon(using Frame): UI = catIcon(
         Svg.circle.cx(12).cy(12).r(8.5),
-        Svg.line.x1(3.5).y1(12).x2(20.5).y2(12),
+        Svg.line.x1(4).y1(12).x2(20).y2(12),
         Svg.ellipse.cx(12).cy(12).rx(4.0).ry(8.5)
     )
 
-    // Concurrency: two rightward arrows running in parallel.
+    // Concurrency: two rightward arrows running in parallel (whole-y shafts).
     private def concurrencyIcon(using Frame): UI = catIcon(
-        Svg.line.x1(4).y1(8.5).x2(16).y2(8.5),
-        Svg.polyline.points(Svg.Points((13.0, 5.5), (16.5, 8.5), (13.0, 11.5))),
-        Svg.line.x1(8).y1(15.5).x2(20).y2(15.5),
-        Svg.polyline.points(Svg.Points((16.5, 12.5), (20.0, 15.5), (16.5, 18.5)))
+        Svg.line.x1(4).y1(8).x2(16).y2(8),
+        Svg.polyline.points(Svg.Points((13.0, 5.0), (16.0, 8.0), (13.0, 11.0))),
+        Svg.line.x1(8).y1(16).x2(20).y2(16),
+        Svg.polyline.points(Svg.Points((17.0, 13.0), (20.0, 16.0), (17.0, 19.0)))
     )
 
     // Reliability: a shield with a check.
