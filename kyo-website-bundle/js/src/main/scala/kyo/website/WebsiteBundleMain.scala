@@ -3,7 +3,6 @@ package kyo.website
 
 import kyo.*
 import org.scalajs.dom
-import scala.scalajs.js
 
 /** SPA bundle entry-point.
   *
@@ -96,7 +95,7 @@ object WebsiteBundleMain:
       * signal (and, for docs pages, the shared `articleRef`/`tocRef`), so the header never remounts on
       * navigation.
       */
-    private def build()(using Frame): UI < (Sync & Async) =
+    private def build()(using Frame): UI < (Sync & Async & Scope) =
         val island   = readDocsIsland()
         val versions = readVersions()
         val route    = UILocation.current
@@ -132,10 +131,9 @@ object WebsiteBundleMain:
             // mounts, so it overrides the OS `prefers-color-scheme` default. No stored choice leaves the
             // OS default in force (handled purely by the `@media` CSS, no flash).
             _ <- applyStoredTheme
-            // One delegated click listener wires every code-block Copy button (SSR + SPA-injected alike).
-            _ <- wireCodeCopy
-            // One delegated click listener closes the search dropdown when the user clicks outside it.
-            _          <- wireSearchDismiss
+            // One delegated document click listener wires every code-block Copy button (SSR + SPA-injected
+            // alike), removed when the app scope closes.
+            _          <- wireCodeCopy
             articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
             tocRef     <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
             // Content-loading flag, false at first paint (the boot island is already injected into
@@ -159,6 +157,9 @@ object WebsiteBundleMain:
             landingBody <- LandingApp.body(home)
             content     <- Signal.initRef[UI](if isRootRoute(initialRoute) then landingBody else docsBody)
             queryRef    <- Signal.initRef("")
+            // One delegated document click listener closes the search dropdown on an outside / result
+            // click by setting queryRef directly; removed when the app scope closes.
+            _ <- wireSearchDismiss(queryRef)
             // Seed the search index with a title-only index built synchronously from the boot island
             // (titles/slugs/groups), so the very first keystroke already matches module titles without
             // waiting on a fetch. The heading-aware index is fetched eagerly on build and upgrades
@@ -195,100 +196,89 @@ object WebsiteBundleMain:
       * only an explicit choice opposite to the OS repaints. `color-scheme` is set too so native
       * scrollbars and form controls match.
       */
-    private def applyStoredTheme(using Frame): Unit < Sync = Sync.defer {
-        val stored = dom.window.localStorage.getItem(themeKey)
-        val theme =
-            if stored == "dark" || stored == "light" then stored
-            else if dom.window.matchMedia("(prefers-color-scheme: dark)").matches then "dark"
-            else "light"
-        val root = dom.document.documentElement
-        root.setAttribute("data-theme", theme)
-        root.asInstanceOf[js.Dynamic].style.colorScheme = theme
-    }
+    private def applyStoredTheme(using Frame): Unit < Sync =
+        for
+            stored <- UIWindow.storageGet(themeKey)
+            dark   <- UIWindow.prefersColorScheme.current
+            theme = stored.filter(s => s == "dark" || s == "light").getOrElse(if dark then "dark" else "light")
+            // The data-theme write targets the single <html> element outside the reactive tree: a
+            // one-off attribute write on the document root, not a reusable browser capability, so it
+            // stays a typed bundle-local DOM call rather than a kyo-ui member.
+            _ <- Sync.defer {
+                val root = dom.document.documentElement
+                root.setAttribute("data-theme", theme)
+                setColorScheme(root, theme)
+            }
+        yield ()
 
     /** Flip the effective theme and persist the choice. The effective theme is the explicit `data-theme`
       * when one is set, otherwise the OS `prefers-color-scheme`; flipping writes the opposite as both the
       * `data-theme` attribute (so the explicit override CSS applies) and the persisted `themeKey`.
       */
-    private def toggleTheme(using Frame): Unit < Sync = Sync.defer {
-        val root = dom.document.documentElement
-        val attr = root.getAttribute("data-theme")
-        val effectiveDark =
-            if attr == "dark" then true
-            else if attr == "light" then false
-            else dom.window.matchMedia("(prefers-color-scheme: dark)").matches
-        val next = if effectiveDark then "light" else "dark"
-        root.setAttribute("data-theme", next)
-        root.asInstanceOf[js.Dynamic].style.colorScheme = next
-        dom.window.localStorage.setItem(themeKey, next)
-    }
+    private def toggleTheme(using Frame): Unit < Sync =
+        for
+            dark <- UIWindow.prefersColorScheme.current
+            next <- Sync.defer {
+                val root = dom.document.documentElement
+                val attr = root.getAttribute("data-theme")
+                val effectiveDark =
+                    if attr == "dark" then true
+                    else if attr == "light" then false
+                    else dark
+                val n = if effectiveDark then "light" else "dark"
+                root.setAttribute("data-theme", n)
+                setColorScheme(root, n)
+                n
+            }
+            _ <- UIWindow.storageSet(themeKey, next)
+        yield ()
+
+    // The color-scheme write needs `HTMLElement.style`, which `Element` does not expose. This is a
+    // typed facade narrowing (Element -> HTMLElement) over the typed `CSSStyleDeclaration.setProperty`,
+    // not an untyped dynamic. The narrowing is confined to this one helper so the theme handlers hold
+    // no cast.
+    private def setColorScheme(root: dom.Element, theme: String): Unit =
+        root.asInstanceOf[dom.html.Element].style.setProperty("color-scheme", theme)
 
     /** Wire the code-block Copy buttons with ONE delegated `document` click listener, so a single
       * registration covers every code panel on the page AND every panel injected later by an SPA content
       * swap (event delegation, no per-render rebinding). On a Copy click it copies the panel's `<pre>`
       * text to the clipboard and flips the button's `data-copied` attribute for ~1.6s, which the CSS reads
-      * to swap the "Copy" label for "Copied".
+      * to swap the "Copy" label for "Copied". The listener is removed when the enclosing Scope closes.
       */
-    private def wireCodeCopy(using Frame): Unit < Sync = Sync.defer {
-        // Unsafe: a DOM event bridge at the JS boundary. The single-threaded event loop runs the listener;
-        // no Kyo state crosses it. A click target is always an Element (so it carries `closest`); the
-        // typed facade gives Unit returns for the attribute writes, and js.Dynamic is needed only for
-        // `navigator.clipboard`, which is not in that facade. The clipboard Promise and the timer id are
-        // discarded deliberately (fire-and-forget).
-        dom.document.addEventListener(
-            "click",
-            (e: dom.Event) =>
-                val target = e.target.asInstanceOf[dom.Element]
-                if target != null then
-                    val btn = target.closest("button.code-copy")
-                    if btn != null then
-                        val block = btn.closest(".code-block")
-                        val pre   = if block != null then block.querySelector("pre") else null
-                        if pre != null then
-                            btn.setAttribute("data-copied", "true")
-                            val _ = js.Dynamic.global.navigator.clipboard.writeText(pre.textContent)
-                            val _ = dom.window.setTimeout(() => btn.removeAttribute("data-copied"), 1600.0)
-                        end if
-                    end if
-                end if
-        )
-    }
+    private def wireCodeCopy(using Frame): Unit < (Async & Scope) =
+        UIWindow.onClick { e =>
+            e.targetClosest("button.code-copy") match
+                case Present(btn) =>
+                    val preOpt = btn.closest(".code-block").flatMap(_.querySelector("pre"))
+                    preOpt match
+                        case Present(pre) =>
+                            for
+                                _ <- Sync.defer(btn.setAttribute("data-copied", "true"))
+                                _ <- UIWindow.writeClipboard(pre.textContent)
+                                _ <- Async.delay(1600.millis)(Sync.defer(btn.removeAttribute("data-copied")))
+                            yield ()
+                        case Absent => Kyo.unit
+                    end match
+                case Absent => Kyo.unit
+        }
 
     /** One delegated document click listener that closes the header search dropdown. It closes on a
       * click EITHER outside the search box (`.search-wrap`) OR on a result row (`a.search-result`, a
       * selection: the row's `href` drives the SPA navigation, and this clears the query so the dropdown
       * does not linger over the destination). A click on the input itself, or on the dropdown chrome
       * (its padding / scrollbar, which is inside `.search-wrap` but not a row), leaves it open so the
-      * user can keep typing or scrolling. Closing clears the input value and dispatches a bubbling
-      * `input` event, routing through the input's existing reactive `onInput` binding (which sets the
-      * query Signal to ""), so the dropdown hides via the same path a manual clear would.
+      * user can keep typing or scrolling. Closing sets the query Signal to "" directly (the reactive
+      * source of truth the search input and dropdown both read), so the dropdown hides through the
+      * same reactive path a manual clear drives. The listener is removed when the enclosing Scope closes.
       */
-    private def wireSearchDismiss(using Frame): Unit < Sync = Sync.defer {
-        // Unsafe: a DOM event bridge at the JS boundary. The single-threaded event loop runs the listener;
-        // no Kyo state crosses it. The click target is an Element (it carries `closest`); the synthetic
-        // bubbling `input` Event is built via js.Dynamic (the typed facade's init-dict constructor is
-        // awkward) and is what reaches the reactive binding. The dispatchEvent boolean is discarded.
-        dom.document.addEventListener(
-            "click",
-            (e: dom.Event) =>
-                val target = e.target.asInstanceOf[dom.Element]
-                if target != null then
-                    val outside  = target.closest(".search-wrap") == null
-                    val onResult = target.closest("a.search-result") != null
-                    if outside || onResult then
-                        val input = dom.document.querySelector("input.search-input")
-                        if input != null then
-                            val field = input.asInstanceOf[dom.html.Input]
-                            if field.value.nonEmpty then
-                                field.value = ""
-                                val ev = js.Dynamic.newInstance(js.Dynamic.global.Event)("input", js.Dynamic.literal(bubbles = true))
-                                val _  = field.dispatchEvent(ev.asInstanceOf[dom.Event])
-                            end if
-                        end if
-                    end if
-                end if
-        )
-    }
+    private def wireSearchDismiss(queryRef: SignalRef[String])(using Frame): Unit < (Async & Scope) =
+        UIWindow.onClick { e =>
+            val outside  = e.targetClosest(".search-wrap").isEmpty
+            val onResult = e.targetClosest("a.search-result").isDefined
+            if outside || onResult then queryRef.set("")
+            else Kyo.unit
+        }
 
     /** Build a title-only search index synchronously from the boot island: one entry per module
       * (title/slug/group) under `prefix`, with no headings yet. Used as the immediate synchronous
@@ -422,11 +412,10 @@ object WebsiteBundleMain:
                                 showContentRoute(nextRoute, island, content, articleRef, tocRef, loadingRef, docsBody)
                             case RouteKind.OffTree =>
                                 // Off-tree route: a single segment that is not a known prefix, OR a multi-
-                                // segment route whose last segment is not a known module slug. Hand off
-                                // to a full browser navigation so the server resolves the real page or a clean
-                                // 404 instead of fetching a missing content.html into a broken docs shell.
-                                // Unsafe: DOM bridge for the off-tree full-navigate fallback.
-                                Sync.defer(dom.window.location.href = nextRoute)
+                                // segment route whose last segment is not a known module slug. Hand off to a
+                                // full browser navigation so the server resolves the real page or a clean 404
+                                // instead of fetching a missing content.html into a broken docs shell.
+                                UILocation.assign(nextRoute)
                 yield Loop.continue
             }
         }
@@ -510,24 +499,27 @@ object WebsiteBundleMain:
       * `WebsiteGenerator.docOpts.canonical = s"https://getkyo.io$route"`.
       */
     private def updateHead(route: String, island: DocsClient.DocsIsland)(using Frame): Unit < Sync =
-        Sync.defer {
-            val segments = route.split('/').filter(_.nonEmpty)
-            val label    = island.content.version.label
-            val title =
-                if segments.isEmpty then "Kyo | Build with AI. Ship something that holds."
-                else if segments.length >= 2 then s"${segments(segments.length - 1)} | Kyo docs $label"
-                else s"Overview | Kyo docs $label"
-            val canonical =
-                if segments.isEmpty then "https://getkyo.io/"
-                else s"https://getkyo.io$route"
-            // Unsafe: DOM bridge for the SEO-4 head update. Single-threaded JS event loop; these are
-            // plain document property/attribute writes with no Kyo state involved.
-            dom.document.title = title
-            val link = dom.document.querySelector("link[rel=canonical]")
-            // The canonical <link> is always present in the SSG head (WebsitePage.pageHead emits it);
-            // guard the null case so a harness without the element does not throw into the console.
-            if link != null then link.setAttribute("href", canonical)
-        }
+        val segments = route.split('/').filter(_.nonEmpty)
+        val label    = island.content.version.label
+        val title =
+            if segments.isEmpty then "Kyo | Build with AI. Ship something that holds."
+            else if segments.length >= 2 then s"${segments(segments.length - 1)} | Kyo docs $label"
+            else s"Overview | Kyo docs $label"
+        val canonical =
+            if segments.isEmpty then "https://getkyo.io/"
+            else s"https://getkyo.io$route"
+        for
+            _ <- UIWindow.setTitle(title)
+            // The canonical <link> update is a one-off querySelector + setAttribute on the single
+            // server-rendered <link rel=canonical> element, not a reusable browser capability, so it
+            // stays a typed bundle-local DOM call. The element is always present in the rendered head;
+            // guard the null case so a harness without it does not throw.
+            _ <- Sync.defer {
+                val link = dom.document.querySelector("link[rel=canonical]")
+                if link != null then link.setAttribute("href", canonical)
+            }
+        yield ()
+        end for
     end updateHead
 
     /** The bounded scroll-poll budget: up to [[ScrollMaxAttempts]] lookups, [[ScrollPollInterval]]
@@ -561,28 +553,23 @@ object WebsiteBundleMain:
       * (which left the reader at the bottom of the new page).
       */
     private def scrollToHashOrTop()(using Frame): Unit < Async =
-        // Unsafe: DOM bridge to read the fragment and reset scroll. Plain DOM reads/calls on the
-        // single-threaded JS event loop; no Kyo state involved.
+        // The hash is read with a typed bundle-local DOM call: UILocation.current reports pathname +
+        // search and deliberately drops the fragment, so the fragment is read directly here.
         Sync.defer(dom.window.location.hash).map { hash =>
-            if hash.length <= 1 then Sync.defer(dom.window.scrollTo(0, 0))
+            if hash.length <= 1 then UIWindow.scrollToTop
             else scrollToHash()
         }
     end scrollToHashOrTop
 
     private def scrollToHash()(using Frame): Unit < Async =
-        // Unsafe: DOM bridge to read the fragment target. Plain DOM reads on the single-threaded JS
-        // event loop; no Kyo state involved.
+        // The hash is read with a typed bundle-local DOM call (UILocation.current drops the fragment).
         Sync.defer(dom.window.location.hash).map { hash =>
             if hash.length <= 1 then Kyo.unit
             else
                 val id = hash.substring(1)
                 Loop[Int, Unit, Async](0) { attempt =>
-                    // Unsafe: DOM bridge to look up and scroll to the fragment target. Plain DOM
-                    // reads/calls on the single-threaded JS event loop; no Kyo state involved.
-                    Sync.defer(dom.document.getElementById(id)).map { el =>
-                        if el != null then
-                            el.scrollIntoView()
-                            Loop.done
+                    UIWindow.scrollIntoViewById(id).map { scrolled =>
+                        if scrolled then Loop.done
                         else if attempt >= ScrollMaxAttempts - 1 then
                             // Bounded retry exhausted: give up cleanly, the anchor never appeared.
                             Loop.done
@@ -641,7 +628,7 @@ object WebsiteBundleMain:
 
     // Unsafe: app-entry boundary bridge; mounts the SPA fiber from JS main into the Kyo
     // scheduler. This is the sanctioned unsafe tier crossing (matches SpaHarnessMain pattern).
-    private def runMountUnsafe(view: UI < (Sync & Async)): Unit =
+    private def runMountUnsafe(view: UI < (Sync & Async & Scope)): Unit =
         import AllowUnsafe.embrace.danger
         discard(Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(Scope.run(
