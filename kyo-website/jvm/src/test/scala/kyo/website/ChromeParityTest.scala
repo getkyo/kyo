@@ -77,7 +77,8 @@ class ChromeParityTest extends WebsiteTest:
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
             // SSG and the bundle's first paint are both fully loaded: contentLoading is constant false,
             // so the prev/next pager is part of the parity contract (present in both renders).
-            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
+            body <-
+                DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), route, reactive, Signal.initConst(false))
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
@@ -113,7 +114,8 @@ class ChromeParityTest extends WebsiteTest:
             route    <- Signal.initRef[String]("/latest/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
             // Constant-false contentLoading: see the docs-route parity test above.
-            body  <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
+            body <-
+                DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), route, reactive, Signal.initConst(false))
             view  <- siteShell(versions2, docsHomeRoute, body)
             ssg   <- UI.runRender(view).take(1).run.map(_.headMaybe.getOrElse(""))
             mount <- RecordingBackend.render(view)
@@ -181,7 +183,8 @@ class ChromeParityTest extends WebsiteTest:
             rendered <- DocsMarkdownRender.transpile(src)
             route    <- Signal.initRef[String]("/latest/kyo-core/")
             reactive = UI.Ast.Reactive(route.map(_ => rendered.article))
-            view <- DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), reactive, Signal.initConst(false))
+            view <-
+                DocsApp.body(docsContent, "latest", route, Signal.initConst(rendered.headings), route, reactive, Signal.initConst(false))
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield
             assert(html.contains("data-kyo-reactive"), s"data-kyo-reactive not found: $html")

@@ -227,7 +227,15 @@ object WebsiteGenerator:
             // The SSG emits one fully-loaded static page per route, so content is never mid-load:
             // `contentLoading` is constant false and the prev/next pager renders exactly as the bundle's
             // first paint does (loadingRef initialised false), keeping SSG and bundle output identical.
-            body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
+            body <- DocsApp.body(
+                c,
+                prefix,
+                fixedRoute,
+                Signal.initConst(rendered.headings),
+                fixedRoute,
+                rendered.article,
+                Signal.initConst(false)
+            )
             view <- siteShell(versions, docsHome(c, prefix), body)
             island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
             html <- wrapFirst(
@@ -258,7 +266,15 @@ object WebsiteGenerator:
             rendered   <- DocsMarkdownRender.renderArticle(module.readme)
             fixedRoute <- Signal.initRef(route)
             // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
-            body <- DocsApp.body(c, prefix, fixedRoute, Signal.initConst(rendered.headings), rendered.article, Signal.initConst(false))
+            body <- DocsApp.body(
+                c,
+                prefix,
+                fixedRoute,
+                Signal.initConst(rendered.headings),
+                fixedRoute,
+                rendered.article,
+                Signal.initConst(false)
+            )
             view <- siteShell(versions, docsHome(c, prefix), body)
             island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
             html <- wrapFirst(

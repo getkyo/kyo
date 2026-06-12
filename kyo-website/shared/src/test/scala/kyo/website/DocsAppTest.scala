@@ -23,7 +23,7 @@ class DocsAppTest extends WebsiteTest:
         else if content.version.latest then "latest"
         else content.version.tag
         for
-            view <- DocsApp.body(content, resolvedPrefix, route, Signal.initConst(toc), article, Signal.initConst(contentLoading))
+            view <- DocsApp.body(content, resolvedPrefix, route, Signal.initConst(toc), route, article, Signal.initConst(contentLoading))
             html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield html
         end for
@@ -166,6 +166,30 @@ class DocsAppTest extends WebsiteTest:
             assert(html.contains("#channels-and-queues"), s"channels-and-queues section anchor not found: $html")
             // The level-1 page-title heading is the module link, not repeated as a #slug section link.
             assert(!html.contains("#kyo-core"), s"level-1 page title must NOT appear as a section link: $html")
+        end for
+    }
+
+    // Leaf 3c (the rail-flicker gate): the active module renders its sections ONLY when the loaded
+    // outline belongs to that same module. On a client navigation the active flag flips the instant a
+    // module link is clicked, but the new module's outline arrives a beat later (after the content.md
+    // fetch). During that window `tocRoute` still names the PREVIOUS module, so the active box must show
+    // just its link, never the previous module's `## ` headings under the new module.
+    "active module renders no sections when the outline route names a different module (gate)" in {
+        val toc = Chunk(
+            DocsMarkdown.Heading(1, "kyo-core", "kyo-core"),
+            DocsMarkdown.Heading(2, "Scope", "scope")
+        )
+        for
+            route    <- fixedRoute("/latest/kyo-core/") // kyo-core is the active module
+            tocRoute <- fixedRoute("/latest/kyo-data/") // but the loaded outline belongs to kyo-data
+            view     <- DocsApp.body(coreContent(), "latest", route, Signal.initConst(toc), tocRoute, UI.empty, Signal.initConst(false))
+            html     <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
+        yield
+            // kyo-core is the active rail item ...
+            assert(html.contains("nav-item-active"), s"kyo-core should be the active rail item: $html")
+            // ... but the outline is gated off because it is kyo-data's, not kyo-core's.
+            assert(!html.contains("sidebar-sections"), s"gate must hide the outline when the outline route mismatches: $html")
+            assert(!html.contains("#scope"), s"no section anchor must render when the gate is closed: $html")
         end for
     }
 

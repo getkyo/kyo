@@ -144,6 +144,7 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
                 "v0.9.0",
                 route,
                 Signal.initConst(toc),
+                route,
                 article2,
                 Signal.initConst(false)
             )
