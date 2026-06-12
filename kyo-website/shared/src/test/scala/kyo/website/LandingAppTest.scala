@@ -104,6 +104,23 @@ class LandingAppTest extends WebsiteTest:
         }
     }
 
+    "the gap stat renders the compounding-failure bar chart as inline SVG (no raw markup)" in {
+        renderLanding.map { html =>
+            // The stat callout is a chart card: the SVG bar chart (the chance the run has failed, climbing
+            // as steps chain) on one side, and the "compounds" caption plus explanatory copy on the other.
+            // The chart is server-rendered (present without JS); the bars redden via an accent-to-amber
+            // gradient and grow up via a SMIL tween.
+            assert(html.contains("class=\"stat-chart\""), s"stat-chart wrapper must render: $html")
+            assert(html.contains("<svg"), s"the chart must render as inline SVG: $html")
+            assert(html.contains("Small errors compound."), "the stat caption must state that errors compound")
+            assert(html.contains(">4 in 5<"), "the chart must label the four-in-five failure endpoint")
+            assert(html.contains("chance of failure"), "the chart must caption the failure dimension")
+            assert(html.contains("85%"), "the copy must give the 85% per-step reliability")
+            assert(html.contains("var(--amber)"), "the tall (past-halfway) bars shift to amber")
+            assert(html.contains("attributeName=\"height\""), "the bars grow in via a SMIL height tween")
+        }
+    }
+
     "key copy is present without JS (SSR, INV-002 consumer)" in {
         renderLanding.map { html =>
             // Hero lead, the gap framing and its stat, the layered-safety ladder, the platforms heading,
@@ -111,7 +128,7 @@ class LandingAppTest extends WebsiteTest:
             // JS), so the page is meaningful with scripting disabled.
             assert(html.contains("AI can write the code"))
             assert(html.contains("you can depend on it"))
-            assert(html.contains("1 in 5"))
+            assert(html.contains("four in five"))
             assert(html.contains("As you write. As it compiles. As it runs. When it fails."))
             assert(html.contains("One codebase. Four platforms."))
             assert(html.contains("Presented at Scalar"))

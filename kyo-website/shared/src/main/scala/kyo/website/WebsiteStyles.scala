@@ -420,20 +420,27 @@ object WebsiteStyles:
                 Selector.cls("trust").descendant(Selector.tag("span")),
                 Style.row.align(_.center).gap(8.px)
             )
-            // stat callout
+            // stat callout: a chart card with the compounding-failure chart on the left and the
+            // caption plus explanatory text on the right (it stacks on narrow viewports).
             .rule(
                 "stat",
-                Style.row.align(_.center).gap(26.px).textAlign(_.left)
+                Style.row.align(_.center).gap(22.px).textAlign(_.left)
                     .maxWidth(680.px).margin(42.px, Length.Auto, 0.px, Length.Auto)
                     .bg(_.variable("surface")).border(1.px, _.variable("line")).rounded(16.px)
-                    .padding(28.px, 30.px)
+                    .padding(24.px, 26.px)
                     .shadow(0.px, 6.px, 24.px, 0.px, shadowSoft)
             )
+            .rule("stat-chart", Style.flexBasis(196.px).flexShrink(0.0).minWidth(0.px))
             .rule(
-                "big",
+                Selector.cls("stat-chart").descendant(Selector.tag("svg")),
+                Style.display(_.block).width(Length.Pct(100)).height(Length.Auto)
+            )
+            .rule("stat-body", Style.column.gap(11.px).flexGrow(1.0).flexBasis(210.px).minWidth(0.px))
+            .rule(
+                "stat-cap",
                 Style.fontFamily(Style.FontFamily.Custom("var(--serif)")).fontWeight(_.w500)
-                    .fontSize(62.px).lineHeight(1.0).color(_.variable("accent"))
-                    .letterSpacing(Length.Em(-0.02)).flexShrink(0.0).row.align(_.start)
+                    .fontSize(21.px).lineHeight(1.15).color(_.variable("ink"))
+                    .letterSpacing(Length.Em(-0.01))
             )
             .rule(
                 "stat-txt",
