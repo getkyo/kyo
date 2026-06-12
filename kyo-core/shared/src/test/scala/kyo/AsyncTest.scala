@@ -1690,12 +1690,15 @@ class AsyncTest extends kyo.test.Test[Any]:
         "interrupt runs Sync.ensure finalizer".onlyJvm in {
             for
                 called <- AtomicBoolean.init(false)
+                ready  <- Promise.init[Unit, Any]
                 fiber <- Fiber.initUnscoped {
                     Sync.ensure(called.set(true)) {
-                        Async.sleep(1.day)
+                        ready.completeUnit.andThen(Async.sleep(1.day))
                     }
                 }
-                _           <- Async.sleep(10.millis)
+                // The finalizer is registered and the fiber is parked once `ready` completes; this
+                // replaces a racy Async.sleep(10.millis) that could interrupt before setup under load.
+                _           <- ready.get
                 interrupted <- fiber.interrupt
                 _           <- assertEventually(called.get)
                 flag        <- called.get
@@ -1707,12 +1710,17 @@ class AsyncTest extends kyo.test.Test[Any]:
         "interrupt runs Scope.ensure finalizer".onlyJvm in {
             for
                 counter <- AtomicInt.init(0)
+                ready   <- Promise.init[Unit, Any]
                 fiber <- Fiber.initUnscoped {
                     Scope.run {
-                        Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
+                        Scope.ensure(counter.incrementAndGet.unit)
+                            .andThen(ready.completeUnit)
+                            .andThen(Async.sleep(1.day))
                     }
                 }
-                _           <- Async.sleep(10.millis)
+                // The finalizer is registered and the fiber is parked once `ready` completes; this
+                // replaces a racy Async.sleep(10.millis) that could interrupt before setup under load.
+                _           <- ready.get
                 interrupted <- fiber.interrupt
                 _           <- assertEventually(counter.get.map(_ == 1))
                 count       <- counter.get
