@@ -1186,18 +1186,16 @@ object WebsiteStyles:
             )
             .rule(
                 "nav-item",
-                // A ~150ms ease transition so the hover/active background, color, and left bar fade in
-                // smoothly rather than snapping. The hover is a SUBTLE accent tint (accent-ghost, the
-                // .08 accent wash), NOT the page `surface` white: a white-on-warm-bg block read as an odd
-                // pale slab. The tint sits clearly darker than the warm page bg and lighter than the
-                // active .14 fill, so hover and active read as one accent family, and the label brightens
-                // to full-strength `ink`.
+                // Hover brightens the label to full-strength `ink` only: NO background shade and no
+                // transition. The rail re-renders on every navigation (the active flag and the page
+                // outline both tick), so a hover background that faded in and out across those re-renders
+                // read as a flicker; the active module is still clearly marked by its accent color, bold
+                // label, and left bar below.
                 Style.row.align(_.center).gap(8.px)
                     .fontSize(13.5.px).lineHeight(1.3).color(_.variable("text-dim"))
                     .padding(7.px, 10.px).rounded(8.px).cursor(_.pointer)
                     .borderLeft(2.px, Color.transparent)
-                    .transition(150, Style.Easing.ease)
-                    .hover(_.color(_.variable("ink")).bg(_.variable("accent-ghost")))
+                    .hover(_.color(_.variable("ink")))
             )
             // The active module is a COLUMN (not the base row): it stacks the module link above its
             // expanded in-page section outline (.sidebar-sections), so the sections read as a nested
@@ -1205,13 +1203,13 @@ object WebsiteStyles:
             // the outline both pinned to the left edge.
             .rule(
                 "nav-item-active",
-                // A stronger highlight than the .08 accent-ghost hover tint: a .14 accent fill, a 3px
-                // accent left bar, and a semibold label so the current module clearly reads as selected
-                // rather than as a barely-there wash.
+                // The current module: an accent label, a semibold weight, and a 3px accent left bar. No
+                // background fill and no transition, so the rail's re-renders on navigation never fade a
+                // shade in or out (the source of the flicker); the left bar + color + weight mark the
+                // active module clearly without one.
                 Style.column.align(_.start)
-                    .color(_.variable("accent")).bg(Color.rgba(78, 70, 224, 0.14)).fontWeight(_.w600)
+                    .color(_.variable("accent")).fontWeight(_.w600)
                     .borderLeft(3.px, _.variable("accent"))
-                    .transition(150, Style.Easing.ease)
             )
             // the inner anchor fills the row so the whole item is the link target. Scope to the DIRECT
             // anchor child so the nested section links (.sidebar-section, descendants of the same
@@ -1242,11 +1240,12 @@ object WebsiteStyles:
             // render), so a single base indent suffices.
             .rule(
                 "sidebar-section",
+                // Like the module rows: hover brightens the label only, no background shade and no
+                // transition, so a section list expanding under the active module never flickers a shade.
                 Style.row.align(_.start).width(Length.Pct(100))
                     .fontSize(12.5.px).lineHeight(1.35).color(_.variable("muted"))
                     .padding(4.px, 8.px, 4.px, 12.px).rounded(6.px).textDecoration(_.none)
-                    .transition(150, Style.Easing.ease)
-                    .hover(_.color(_.variable("ink")).bg(_.variable("accent-ghost")))
+                    .hover(_.color(_.variable("ink")))
             )
             // ---- Mobile docs navigation: a floating menu button + a slide-in drawer with a scrim. All
             // hidden by default (display:none) and switched on only in the <860px block below; the wide
