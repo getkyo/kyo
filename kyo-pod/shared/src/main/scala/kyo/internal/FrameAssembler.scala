@@ -8,11 +8,22 @@ import kyo.Container.LogEntry
   * Frame layout: byte[0] = stream type (1 = stdout, 2 = stderr, anything else = stdout), bytes[1-3] = padding, bytes[4-7] = uint32
   * big-endian payload size, then `size` bytes payload.
   *
+  * Multiplexing only applies to Tty=false sessions; a TTY session is one raw pty stream with nothing to demux, and callers that know the
+  * Tty flag (logs, attach) select the raw path explicitly and never reach this pipe. The exec paths always request Tty=false, so their
+  * response must be multiplexed; when a daemon deviates and responds raw anyway (a podman compat-API wobble), the first byte is not a
+  * valid stream type (0, 1, or 2) and the stream is recovered as raw stdout instead of being misparsed as a frame header, which would
+  * read a bogus payload size and silently drop the entire output. The decision is made once, on the first non-empty bytes, and is sticky.
+  *
   * Implemented as a [[Pipe]] that threads a carry-over [[Span]] across input chunks via [[Loop]], so frames whose header or payload
   * straddle a chunk boundary are correctly reassembled and emitted once the rest arrives in a later poll. Stream end discards any partial
   * residual.
   */
 object FrameAssembler:
+
+    // Stream mode, decided once on the first non-empty bytes and sticky thereafter.
+    private val Undecided   = 0
+    private val Multiplexed = 1
+    private val Raw         = 2
 
     def pipe(using
         Tag[Poll[Chunk[Span[Byte]]]],
@@ -20,13 +31,26 @@ object FrameAssembler:
         Frame
     ): Pipe[Span[Byte], (String, LogEntry.Source), Any] =
         Pipe:
-            Loop(Span.empty[Byte]) { carry =>
+            Loop(Span.empty[Byte], Undecided) { (carry, mode) =>
                 Poll.andMap[Chunk[Span[Byte]]] {
-                    case Absent => Loop.done
+                    case Absent => Loop.done(())
                     case Present(spans) =>
-                        val combined           = spans.foldLeft(carry)((acc, s) => acc ++ s)
-                        val (leftover, frames) = parseFrames(combined)
-                        Emit.valueWith(frames)(Loop.continue(leftover))
+                        val combined = spans.foldLeft(carry)((acc, s) => acc ++ s)
+                        if combined.isEmpty then Loop.continue(combined, mode)
+                        else
+                            val decided =
+                                if mode != Undecided then mode
+                                else
+                                    val first = combined.slice(0, 1).toArray(0) & 0xff
+                                    if first <= 2 then Multiplexed else Raw
+                            if decided == Raw then
+                                val text = new String(combined.toArray, java.nio.charset.StandardCharsets.UTF_8)
+                                Emit.valueWith(Chunk((text, LogEntry.Source.Stdout)))(Loop.continue(Span.empty[Byte], decided))
+                            else
+                                val (leftover, frames) = parseFrames(combined)
+                                Emit.valueWith(frames)(Loop.continue(leftover, decided))
+                            end if
+                        end if
                 }
             }
 
