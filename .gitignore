@@ -18,3 +18,7 @@ jmh-result.json
 test-output
 .DS_Store
 .jvmopts
+.mcp-validation/*.classpath
+.dev/
+boot/
+java9-rt-ext-eclipse_adoptium_*/

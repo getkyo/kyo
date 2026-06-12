@@ -320,14 +320,15 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(paths == Chunk(Chunk("lead", "name"), Chunk("lead", "age"), Chunk("size")))
         }
 
-        "Structure.of[A] matches Schema[A].structure" in {
+        "Structure.of[A] delegates to Schema[A].structure" in {
+            // Structure.of[MTPerson] calls summon[Schema[MTPerson]].structure.
+            // MTPerson uses auto-derivation (inline given), so two summons yield
+            // different Schema instances; use compatible (structural equality) not eq.
             val fromDirect = Structure.of[MTPerson]
             val fromSchema = Schema[MTPerson].structure
 
-            // Both should produce structurally identical types
             assert(Structure.Type.compatible(fromDirect, fromSchema))
 
-            // Both should be Products with the same field structure
             (fromDirect, fromSchema) match
                 case (Structure.Type.Product(n1, _, _, f1), Structure.Type.Product(n2, _, _, f2)) =>
                     assert(n1 == n2)
@@ -1165,6 +1166,28 @@ class StructureTest extends kyo.test.Test[Any]:
             ()
         }
 
+        "StructureValueReader.char rejects multi-character strings" in {
+            // Regression guard: char() must not silently truncate a multi-character string to its first char.
+            // The strict-on-text-input symmetry argument (matching `string()` rejecting Integer-as-String) applies.
+            val dv = Structure.Value.Str("ab")
+            val r  = new StructureValueReader(dv)
+            intercept[TypeMismatchException](r.char())
+            ()
+        }
+
+        "StructureValueReader.char rejects empty strings" in {
+            val dv = Structure.Value.Str("")
+            val r  = new StructureValueReader(dv)
+            intercept[TypeMismatchException](r.char())
+            ()
+        }
+
+        "StructureValueReader.char accepts a single-character string" in {
+            val dv = Structure.Value.Str("x")
+            val r  = new StructureValueReader(dv)
+            assert(r.char() == 'x')
+        }
+
         "json int parse error throws ParseException" in {
             val r  = JsonReader("3.14")
             val ex = intercept[ParseException](r.int())
@@ -1420,6 +1443,172 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(Json.decode[SealedNoArgVariants](j2).getOrThrow == unit2)
             assert(Json.decode[SealedNoArgVariants](j3).getOrThrow == unit3)
         }
+    }
+
+    // ==================== Structure.Type.Open variant ====================
+
+    "Open variant" - {
+
+        "Open.name returns 'Open'" in {
+            val open = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            assert(open.name == "Open")
+        }
+
+        "compatible returns true for two Open with same tag" in {
+            val a = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val b = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            assert(Structure.Type.compatible(a, b))
+        }
+
+        "compatible returns false for two Open with different tags" in {
+            val a = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val b = Structure.Type.Open(Tag[Int].asInstanceOf[Tag[Any]])
+            assert(!Structure.Type.compatible(a, b))
+        }
+
+        "fold visits Open node once with no children" in {
+            val open  = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val count = Structure.Type.fold(open)(0) { (acc, _) => acc + 1 }
+            assert(count == 1)
+        }
+
+        "JsonSchema.fromStructure on Open renders empty Obj" in {
+            val open   = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val schema = Json.JsonSchema.fromStructure(open)
+            assert(schema == Json.JsonSchema.Obj(List.empty, List.empty))
+        }
+
+    }
+
+    // ==================== Type.Schema round-trip via anonymous given ====================
+
+    "Type.Schema anonymous given" - {
+
+        "derives Schema absent on Type class (anonymous given resolves)" in {
+            val given1 = summon[Schema[Structure.Type]]
+            val given2 = summon[Schema[Structure.Type]]
+            assert(given1 eq given2)
+        }
+
+        "Open round-trips through Schema[Structure.Type] via JSON" in {
+            val open: Structure.Type = Structure.Type.Open(Tag[Int].asInstanceOf[Tag[Any]])
+            val encoded              = Json.encode[Structure.Type](open)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(open, decoded))
+        }
+
+        "Primitive round-trips through Schema[Structure.Type] via JSON" in {
+            val prim: Structure.Type = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val encoded              = Json.encode[Structure.Type](prim)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(prim, decoded))
+        }
+
+        "Collection round-trips through Schema[Structure.Type] via JSON" in {
+            val elem: Structure.Type = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val coll: Structure.Type = Structure.Type.Collection("List", Tag[List[Int]].asInstanceOf[Tag[Any]], elem)
+            val encoded              = Json.encode[Structure.Type](coll)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(coll, decoded))
+        }
+
+    }
+
+    "Structure.of reads Schema.structure (T2)" - {
+
+        "Int: Structure.of[Int] is same instance as Schema[Int].structure" in {
+            // intSchema is a singleton given so structure is the same lazy val instance
+            assert(Structure.of[Int] eq summon[Schema[Int]].structure)
+        }
+
+        "List[String]: Structure.of[List[String]] returns compatible structure to Schema[List[String]].structure" in {
+            // listSchema is a polymorphic given so two summons may yield different instances;
+            // use compatible (structural equality) rather than reference equality
+            assert(Structure.Type.compatible(Structure.of[List[String]], summon[Schema[List[String]]].structure))
+        }
+
+    }
+
+    // Path resolution for deletion-guard tests: the sbt test JVM's user.dir is the module's platform
+    // subdir (e.g. kyo-schema/jvm/). Navigate up 5 levels from the test-class directory to reach
+    // the project root: test-classes -> scala-x.y.z -> target -> jvm -> kyo-schema -> worktree-root.
+    private def worktreeRoot: java.nio.file.Path =
+        val classUrl = getClass.getProtectionDomain.getCodeSource.getLocation
+        java.nio.file.Paths.get(classUrl.toURI)
+            .getParent // scala-x.y.z
+            .getParent // target
+            .getParent // jvm
+            .getParent // kyo-schema
+            .getParent // worktree root
+    end worktreeRoot
+
+    "deletion-target structural test" - {
+
+        // These tests pin INV-27, INV-29, INV-30: deleted files and symbol-set defs must not exist in the source tree.
+        // They run file IO and are therefore JVM-only (guarded by Platform.isJVM).
+
+        "StructureMacro.scala is deleted (INV-27)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root = worktreeRoot
+                val f    = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/StructureMacro.scala")
+                assert(!java.nio.file.Files.exists(f))
+            else
+                assert(true) // non-JVM platforms cannot access local filesystem
+            end if
+        }
+
+        "MacroUtils.basePrimitiveSymbols def is deleted (INV-29)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val macroF  = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/MacroUtils.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(macroF))
+                assert(!content.contains("def basePrimitiveSymbols"))
+            else
+                assert(true)
+            end if
+        }
+
+        "MacroUtils extended symbol-set defs are deleted (INV-29)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val macroF  = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/MacroUtils.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(macroF))
+                assert(!content.contains("def extendedPrimitiveSymbols"))
+                assert(!content.contains("def collectionSymbols"))
+                assert(!content.contains("def optionalSymbols"))
+                assert(!content.contains("def mapSymbols"))
+            else
+                assert(true)
+            end if
+        }
+
+        "Schema.scala has no import kyo.Json.JsonSchema (INV-30)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val schemaF = root.resolve("kyo-schema/shared/src/main/scala/kyo/Schema.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(schemaF))
+                assert(!content.contains("import kyo.Json.JsonSchema"))
+            else
+                assert(true)
+            end if
+        }
+
+        "Schema.scala has no def enrichObj (INV-30)" in {
+            import kyo.internal.Platform
+            if Platform.isJVM then
+                val root    = worktreeRoot
+                val schemaF = root.resolve("kyo-schema/shared/src/main/scala/kyo/Schema.scala")
+                val content = new String(java.nio.file.Files.readAllBytes(schemaF))
+                assert(!content.contains("def enrichObj"))
+            else
+                assert(true)
+            end if
+        }
+
     }
 
 end StructureTest

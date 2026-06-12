@@ -209,14 +209,41 @@ private[kyo] object SchemaSerializer:
                 elements.foreach(e => writeStructureValue(writer, e))
                 writer.arrayEnd()
             case Structure.Value.MapEntries(entries) =>
-                writer.mapStart(entries.size)
-                entries.foreach { (k, v) =>
-                    writeStructureValue(writer, k)
-                    writeStructureValue(writer, v)
+                // Shape-aware MapEntries:
+                //   * all-String keys -> JSON object with each key as a field; round-trips through the universal Record shape.
+                //   * mixed/non-String keys -> array-of-pairs; non-String keys are inexpressible as JSON field names.
+                val allStringKeys = entries.forall {
+                    case (Structure.Value.Str(_), _) => true
+                    case _                           => false
                 }
-                writer.mapEnd()
+                if allStringKeys then
+                    writer.mapStart(entries.size)
+                    entries.foreach { (k, v) =>
+                        k match
+                            case Structure.Value.Str(s) =>
+                                writer.fieldBytes(s.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                            case _ => () // unreachable; allStringKeys is true
+                        end match
+                        writeStructureValue(writer, v)
+                    }
+                    writer.mapEnd()
+                else
+                    writer.arrayStart(entries.size)
+                    entries.foreach { (k, v) =>
+                        writer.arrayStart(2)
+                        writeStructureValue(writer, k)
+                        writeStructureValue(writer, v)
+                        writer.arrayEnd()
+                    }
+                    writer.arrayEnd()
+                end if
             case Structure.Value.VariantCase(name, v) =>
+                // Shape-aware VariantCase: single-field object whose key is the variant name. Symmetric with reading a
+                // single-field object as a Record(name, value); the universal Structure.Value tree treats VariantCase
+                // and Record(<single field>) as the same wire shape; round-trips through the shape-aware identity
+                // Schema therefore canonicalize to Record on read.
                 writer.objectStart(name, 1)
+                writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                 writeStructureValue(writer, v)
                 writer.objectEnd()
             case Structure.Value.Str(s) => writer.string(s)

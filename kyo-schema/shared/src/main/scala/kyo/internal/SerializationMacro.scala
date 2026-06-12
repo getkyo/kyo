@@ -835,12 +835,40 @@ private[internal] object SerializationMacro:
             val isMaybe                       = maybeFields.contains(idx)
             val isOption                      = optionFields.contains(idx)
             if isMaybe then
-                // Maybe[T]: wrap the inner serializeRead result in kyo.Present.
+                // Maybe[T]: `subSchemas[idx]` is `Schema[T]` (the inner type; the macro strips the Maybe wrapper to
+                // avoid double-wrapping the read result, see `summonFieldSchemaResolvers` in FocusMacro), so we add the
+                // null dispatch here. Without it, an explicit JSON null bypasses `Schema[Maybe[T]]`'s `if isNil then
+                // Absent else Present(...)` branch and reaches the non-nullable inner schema, which throws "expected
+                // T but got Null", which caused the LSP-spec `processId: null` and `rootUri: null` decode-fail.
+                // When the inner is itself nullable (Maybe[Maybe[T]] / Maybe[Option[T]]), defer to the inner schema's
+                // own nil handling so `Present(Maybe.empty)` round-trips correctly instead of collapsing to
+                // `Maybe.empty`.
+                val innerIsNullable: Boolean = ft match
+                    case AppliedType(_, List(inner)) =>
+                        inner <:< TypeRepr.of[kyo.Maybe[Any]] || inner <:< TypeRepr.of[Option[Any]]
+                    case _ => false
                 ft.asType match
                     case '[t] =>
-                        '{ kyo.Present(kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame)).asInstanceOf[t] }
+                        if innerIsNullable then
+                            '{
+                                kyo.Present(kyo.internal.SchemaSerializer.readFrom(
+                                    $schemaExpr,
+                                    $reader
+                                )(using $reader.frame)).asInstanceOf[t]
+                            }
+                        else
+                            '{
+                                if $reader.isNil() then kyo.Maybe.empty.asInstanceOf[t]
+                                else
+                                    kyo.Present(kyo.internal.SchemaSerializer.readFrom(
+                                        $schemaExpr,
+                                        $reader
+                                    )(using $reader.frame)).asInstanceOf[t]
+                            }
+                end match
             else if isOption then
-                // Option[T]: the Option schema's serializeRead already yields Option[T].
+                // Option[T]: `subSchemas[idx]` is `Schema[Option[T]]` (the full type), so `Schema.optionSchema` already
+                // handles `isNil -> None`. Pass through unchanged.
                 ft.asType match
                     case '[t] => '{ kyo.internal.SchemaSerializer.readFrom($schemaExpr, $reader)(using $reader.frame).asInstanceOf[t] }
             else if fieldIsPrimitive(idx) then
@@ -1058,116 +1086,6 @@ private[internal] object SerializationMacro:
             result
         }
     end sealedReadBody
-
-    /** Checks if a type is serializable without triggering inline given derived.
-      *
-      * Returns true for:
-      *   - Primitive types (String, Int, Long, Double, Float, Boolean, Short, Byte, Char, BigInt, BigDecimal)
-      *   - java.time.Instant, java.time.Duration
-      *   - Span[Byte]
-      *   - Known container types with serializable inner type (List, Vector, Set, Chunk, Maybe, Option, Map[String, V], Dict)
-      *   - Case classes and sealed traits (will be handled by Schema.derived)
-      */
-    private[internal] def isSerializableType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
-        import quotes.reflect.*
-
-        given CanEqual[Symbol, Symbol] = CanEqual.derived
-
-        // Primitive types with built-in schemas
-        val primitiveSymbols = Set(
-            TypeRepr.of[String].typeSymbol,
-            TypeRepr.of[Int].typeSymbol,
-            TypeRepr.of[Long].typeSymbol,
-            TypeRepr.of[Double].typeSymbol,
-            TypeRepr.of[Float].typeSymbol,
-            TypeRepr.of[Boolean].typeSymbol,
-            TypeRepr.of[Short].typeSymbol,
-            TypeRepr.of[Byte].typeSymbol,
-            TypeRepr.of[Char].typeSymbol,
-            TypeRepr.of[BigInt].typeSymbol,
-            TypeRepr.of[BigDecimal].typeSymbol,
-            TypeRepr.of[java.time.Instant].typeSymbol,
-            TypeRepr.of[java.time.Duration].typeSymbol,
-            TypeRepr.of[kyo.Frame].typeSymbol
-        )
-
-        // Container type constructors that need inner type checked
-        // NOTE: Only include types that have corresponding Schema[Container[A]] givens in Schema companion
-        val containerSymbols = Set(
-            TypeRepr.of[List].typeSymbol,
-            TypeRepr.of[Vector].typeSymbol,
-            TypeRepr.of[Set].typeSymbol,
-            // NOT Seq - there's no Schema[Seq[A]] given
-            TypeRepr.of[kyo.Chunk].typeSymbol,
-            TypeRepr.of[kyo.Maybe].typeSymbol,
-            TypeRepr.of[Option].typeSymbol,
-            TypeRepr.of[kyo.Result].typeSymbol
-        )
-
-        // Map-like types
-        val mapSymbols = Set(
-            TypeRepr.of[Map].typeSymbol,
-            TypeRepr.of[kyo.Dict].typeSymbol
-        )
-
-        // Use a mutable set to track visited types and avoid infinite recursion
-        val visited = scala.collection.mutable.Set[Symbol]()
-
-        def check(t: TypeRepr): Boolean =
-            val dealiased = t.dealias
-            val sym       = dealiased.typeSymbol
-
-            // Check if it's a primitive
-            if primitiveSymbols.contains(sym) then
-                true
-            // Check Span[Byte]
-            else if dealiased =:= TypeRepr.of[kyo.Span[Byte]] then
-                true
-            // Check Tag[A] - always serializable
-            else if sym == TypeRepr.of[kyo.Tag].typeSymbol then
-                true
-            // Check container types with single type parameter
-            else
-                dealiased match
-                    case AppliedType(tycon, List(inner)) if containerSymbols.contains(tycon.typeSymbol) =>
-                        check(inner)
-                    case AppliedType(tycon, List(key, value)) if mapSymbols.contains(tycon.typeSymbol) =>
-                        // For Map/Dict, check both key and value
-                        check(key) && check(value)
-                    case AppliedType(tycon, List(err, success)) if tycon.typeSymbol == TypeRepr.of[kyo.Result].typeSymbol =>
-                        // Result[E, A] needs both E and A serializable
-                        check(err) && check(success)
-                    case _ =>
-                        // Check if it's a case class or sealed trait
-                        if sym.isClassDef && sym.flags.is(Flags.Case) then
-                            // Avoid infinite recursion for recursive types
-                            if visited.contains(sym) then true
-                            else
-                                visited += sym
-                                // For case classes, recursively check all fields
-                                sym.caseFields.forall { field =>
-                                    check(dealiased.memberType(field))
-                                }
-                            end if
-                        else if sym.flags.is(Flags.Sealed) then
-                            // Avoid infinite recursion for recursive types
-                            if visited.contains(sym) then true
-                            else
-                                visited += sym
-                                // For sealed traits, check all children
-                                sym.children.forall { child =>
-                                    check(child.typeRef)
-                                }
-                            end if
-                        else
-                            false
-                        end if
-                end match
-            end if
-        end check
-
-        check(tpe)
-    end isSerializableType
 
     /** Checks if a type contains (references) another type, for detecting recursion. Also checks case class field types for enum variants
       * that reference the parent sealed trait.

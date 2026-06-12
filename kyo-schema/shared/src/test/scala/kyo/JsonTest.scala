@@ -1058,16 +1058,20 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        "Json.jsonSchema[Unit] is JsonSchema.Null" in {
-            assert(Json.jsonSchema[Unit] == Json.JsonSchema.Null)
+        "Json.jsonSchema[Unit] is an empty object schema" in {
+            // Unit serializes as an empty JSON object (`{}`), so its JSON Schema description is an object
+            // shape with no properties, not `{"type":"null"}`. The MCP tool inputSchema and other JSON
+            // Schema consumers require the object form; the kyo-schema-wide convention is "Unit = empty
+            // object" (see Schema.unitSchema).
+            assert(Json.jsonSchema[Unit] == Json.JsonSchema.Obj(List.empty, List.empty))
         }
 
-        "Json.encode(()) emits null (regression)" in {
-            assert(Json.encode(()) == "null")
+        "Json.encode(()) emits an empty object" in {
+            assert(Json.encode(()) == "{}")
         }
 
-        "Json.decode[Unit](\"null\") returns ()" in {
-            assert(Json.decode[Unit]("null") == Result.Success(()))
+        "Json.decode[Unit](\"{}\") returns ()" in {
+            assert(Json.decode[Unit]("{}") == Result.Success(()))
         }
 
     }
@@ -1510,6 +1514,24 @@ class JsonTest extends kyo.test.Test[Any]:
                     assert(oneOf.variants.exists(_._1 == "Lit"))
                     assert(oneOf.variants.exists(_._1 == "Add"))
                     assert(oneOf.variants.exists(_._1 == "Neg"))
+                    // Recursive-variant field-shape preservation guard: `Add(left: Expr, right: Expr)` and
+                    // `Lit(value: Int)` must surface their non-recursive fields on the variant JsonSchema.
+                    // Internal helper schemas inside the macro use `Open(Tag[Any])` as structure but those
+                    // helpers are not visible here; the parent sum's `variants` carry the real Product shape
+                    // (via `summonFieldStructure` -> `deriveTypeFallback` for cyclic descent).
+                    val litVariant = oneOf.variants.find(_._1 == "Lit").get._2
+                    litVariant match
+                        case obj: JsonSchema.Obj =>
+                            assert(obj.properties.exists(_._1 == "value"))
+                        case other => fail(s"Expected Lit Obj with 'value' property, got $other")
+                    end match
+                    val addVariant = oneOf.variants.find(_._1 == "Add").get._2
+                    addVariant match
+                        case obj: JsonSchema.Obj =>
+                            assert(obj.properties.exists(_._1 == "left"))
+                            assert(obj.properties.exists(_._1 == "right"))
+                        case other => fail(s"Expected Add Obj with 'left'/'right' properties, got $other")
+                    end match
                 case other => fail(s"Expected OneOf, got $other")
             end match
         }
@@ -2185,5 +2207,51 @@ class JsonTest extends kyo.test.Test[Any]:
     // From TimeCodecTest
     case class InstantBox(instant: java.time.Instant) derives CanEqual
     case class DurationBox(duration: java.time.Duration) derives CanEqual
+
+    "Json.jsonSchema requires Schema in scope" - {
+
+        "fails to compile for a type with no Schema" in {
+            typeCheckFailure("""
+                class NoSchemaType
+                Json.jsonSchema[NoSchemaType]
+            """)("NoSchemaType")
+        }
+
+    }
+
+    "jsonSchema enrichment via JsonSchemaEnricher" - {
+
+        // Pins INV-28: after Schema.enrichObj is removed from Schema.scala,
+        // Json.jsonSchema must still enrich the result via internal.JsonSchemaEnricher.enrichObj directly.
+
+        "jsonSchema carries root doc when Schema has doc annotation" in {
+            given schema: Schema[MTUser] = Schema[MTUser].doc("a person")
+            val js                       = Json.jsonSchema[MTUser]
+            js match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.description == Maybe("a person"))
+                case other =>
+                    fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
+        "jsonSchema carries field doc for name field" in {
+            given schema: Schema[MTUser] = Schema[MTUser].doc(_.name)("person name")
+            val js                       = Json.jsonSchema[MTUser]
+            js match
+                case obj: JsonSchema.Obj =>
+                    val nameProp = obj.properties.find(_._1 == "name").map(_._2)
+                    nameProp match
+                        case Some(np: JsonSchema.Str) =>
+                            assert(np.description == Maybe("person name"))
+                        case other =>
+                            fail(s"Expected name property as Str with description, got $other")
+                    end match
+                case other =>
+                    fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
+    }
 
 end JsonTest

@@ -306,7 +306,8 @@ import scala.quoted.*
                             ${ MacroUtils.identityGetter[A, f] },
                             ${ MacroUtils.identitySetter[A, f] },
                             Seq.empty,
-                            $fieldsExpr.fields
+                            $fieldsExpr.fields,
+                            structure = kyo.Structure.Type.Open(kyo.Tag[Any])
                         )
                     }
                 end if
@@ -322,7 +323,7 @@ import scala.quoted.*
       * @param sourceFieldsExpr
       *   the fields list expression (from Fields[A].fields for metaApply, Nil for derived)
       * @param checkSerializability
-      *   if true, checks isSerializableType and falls back to no-serialization Schema; if false, always generates serialization
+      *   if true, checks MacroSchemaClassifier.fieldKindFor and falls back to no-serialization Schema; if false, always generates serialization
       */
     private def generateCaseClassSchema[A: Type, F: Type](
         sourceFieldsExpr: Expr[List[Field[?, ?]]],
@@ -354,20 +355,22 @@ import scala.quoted.*
             if maybeFields.contains(idx) then
                 fieldType.dealias match
                     case AppliedType(_, List(innerType)) =>
-                        SerializationMacro.isSerializableType(innerType)
+                        MacroUtils.MacroSchemaClassifier.fieldKindFor(innerType) != MacroUtils.MacroSchemaClassifier.FieldKind.Generic
                     case _ => false
             else
-                SerializationMacro.isSerializableType(fieldType)
+                MacroUtils.MacroSchemaClassifier.fieldKindFor(fieldType) != MacroUtils.MacroSchemaClassifier.FieldKind.Generic
             end if
         }
 
         if cannotSerialize then
+            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields, optionFields)
             '{
                 kyo.Schema.create[A, F](
                     ${ MacroUtils.identityGetter[A, F] },
                     ${ MacroUtils.identitySetter[A, F] },
                     Seq.empty,
-                    $sourceFieldsExpr
+                    $sourceFieldsExpr,
+                    $structureExpr
                 )
             }
         else
@@ -386,6 +389,8 @@ import scala.quoted.*
             // Primitive / primitive-element container / primitive-arg Result specializations leave slots null.
             val needsSubSchema: List[Boolean] =
                 computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+
+            val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields, optionFields)
 
             if isRecursive then
                 '{
@@ -429,7 +434,8 @@ import scala.quoted.*
                                         '{ _subSchemas },
                                         '{ self }
                                     )
-                                }
+                                },
+                            $structureExpr
                         )
                     end self
                     self
@@ -480,7 +486,8 @@ import scala.quoted.*
                                     fieldSchemaExprs,
                                     '{ _subSchemas }
                                 )
-                            }
+                            },
+                        $structureExpr
                     )
                 }
             end if
@@ -492,7 +499,7 @@ import scala.quoted.*
       * @param sourceFieldsExpr
       *   the fields list expression (from Fields[A].fields for metaApply, Nil for derived)
       * @param checkSerializability
-      *   if true, checks isSerializableType and falls back to no-serialization Schema; if false, always generates serialization
+      *   if true, checks MacroSchemaClassifier.fieldKindFor and falls back to no-serialization Schema; if false, always generates serialization
       */
     private def generateSealedTraitSchema[A: Type, F: Type](
         sourceFieldsExpr: Expr[List[Field[?, ?]]],
@@ -513,16 +520,18 @@ import scala.quoted.*
         val cannotSerialize = checkSerializability && !children.forall { child =>
             val childType = child.typeRef
             if childType =:= tpe then true // self-referential - will use self schema
-            else SerializationMacro.isSerializableType(childType)
+            else MacroUtils.MacroSchemaClassifier.fieldKindFor(childType) != MacroUtils.MacroSchemaClassifier.FieldKind.Generic
         }
 
         if cannotSerialize then
+            val structureExpr = buildSealedTraitStructureExpr[A](tpe, sym, typeName, children)
             '{
                 kyo.Schema.create[A, F](
                     ${ MacroUtils.identityGetter[A, F] },
                     ${ MacroUtils.identitySetter[A, F] },
                     Seq.empty,
-                    $sourceFieldsExpr
+                    $sourceFieldsExpr,
+                    $structureExpr
                 )
             }
         else
@@ -597,6 +606,8 @@ import scala.quoted.*
                     end match
                 }
 
+            val structureExpr = buildSealedTraitStructureExpr[A](tpe, sym, typeName, children)
+
             if isRecursive then
                 '{
                     lazy val self: kyo.Schema[A] { type Focused = F } =
@@ -624,7 +635,8 @@ import scala.quoted.*
                                         (info.name, info.schemaResolver('{ self }))
                                     }
                                     SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
-                                }
+                                },
+                            $structureExpr
                         )
                     end self
                     self
@@ -656,7 +668,8 @@ import scala.quoted.*
                                     (info.name, info.schemaResolver('{ null.asInstanceOf[Schema[A]] }))
                                 }
                                 SerializationMacro.sealedReadBody[A]('{ reader }, '{ _fieldBytes }, schemaExprs)
-                            }
+                            },
+                        $structureExpr
                     )
                 }
             end if
@@ -734,6 +747,8 @@ import scala.quoted.*
                         ,
                         readFn = r =>
                             kyo.discard(r.objectStart()); r.objectEnd(); $singletonRef
+                        ,
+                        structure = kyo.Structure.Type.Product(${ Expr(child.name) }, kyo.Tag[Any], kyo.Chunk.empty, kyo.Chunk.empty)
                     ).asInstanceOf[Schema[Any]]
                 }
         else
@@ -771,11 +786,14 @@ import scala.quoted.*
                                                 "Ensure the field is declared as Maybe[T] where T is a concrete type with a given Schema."
                                         )
                             else
-                                // Normal field — summon Schema normally
-                                val schema = Expr.summon[Schema[ft]].getOrElse(
-                                    report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType))
-                                )
-                                (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                                // Normal field: try direct summon, then fall back to explicit container
+                                // schema construction for collection/optional types that require Frame.
+                                val schemaExpr: Expr[Schema[Any]] =
+                                    Expr.summon[Schema[ft]]
+                                        .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                        .orElse(buildContainerSchemaOpt[A](fieldType, fieldName))
+                                        .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
+                                (_: Expr[Schema[A]]) => schemaExpr
 
                     (fieldName, idx, resolver)
                 }
@@ -854,7 +872,8 @@ import scala.quoted.*
                                     '{ _subSchemas },
                                     dummySelf
                                 )
-                            }
+                            },
+                        structure = kyo.Structure.Type.Open(kyo.Tag[Any])
                     ).asInstanceOf[Schema[Any]]
                 }
         end if
@@ -871,6 +890,211 @@ import scala.quoted.*
                 case _                    => false
         end if
     end containsRecursiveType
+
+    /** Single-arg container kinds the macro emits schemas for: List, Vector, Set, Seq, Chunk plus the
+      *  optional containers Option and Maybe. Used by `buildContainerSchemaExpr` to fan out a parameterized
+      *  body per kind without duplicating the quoted-block boilerplate at the three macro call sites.
+      */
+    private enum ContainerKind derives CanEqual:
+        case ListK, VectorK, SetK, SeqK, ChunkK, OptionK, MaybeK
+
+    /** Maps a container type-constructor symbol to a `ContainerKind`, or `None` if the symbol is not one of
+      *  the seven supported single-arg containers. Looked up once at the call site, then passed to
+      *  `buildContainerSchemaExpr`.
+      */
+    private def containerKindOf(using Quotes)(sym: quotes.reflect.Symbol): Option[ContainerKind] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+        if sym == TypeRepr.of[List].typeSymbol then Some(ContainerKind.ListK)
+        else if sym == TypeRepr.of[Vector[Any]].typeSymbol then Some(ContainerKind.VectorK)
+        else if sym == TypeRepr.of[Set[Any]].typeSymbol then Some(ContainerKind.SetK)
+        else if sym == TypeRepr.of[Seq[Any]].typeSymbol then Some(ContainerKind.SeqK)
+        else if sym == TypeRepr.of[kyo.Chunk[Any]].typeSymbol then Some(ContainerKind.ChunkK)
+        else if sym == TypeRepr.of[Option[Any]].typeSymbol then Some(ContainerKind.OptionK)
+        else if sym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then Some(ContainerKind.MaybeK)
+        else None
+        end if
+    end containerKindOf
+
+    /** Builds a quoted `Schema[Any]` expression for a single-arg container wrapping an element schema.
+      *
+      *  The element schema is spliced from `innerSchema` and hoisted to a single local `val is` inside the
+      *  quote so the body references it once. The emitted body matches, kind for kind, the bodies that
+      *  `Schema.scala` defines for the corresponding public givens (listSchema, vectorSchema, ..., optionSchema):
+      *
+      *    - List, Vector, Set, Chunk: array-encoded with a size-checked read loop (calls
+      *      `reader.checkCollectionSize(count)` per element to bound peak allocation).
+      *    - Seq: array-encoded with an unchecked read loop, matching `Schema.seqSchema`. The drop is
+      *      intentional in the public given (same shape at Schema.scala line ~1567), so the macro preserves
+      *      it; normalizing here alone would create a behavior split between macro-emitted and
+      *      given-summoned Seq schemas.
+      *    - Option, Maybe: nil-or-inner-write dispatch with the matching empty/present pattern.
+      */
+    private def buildContainerSchemaExpr[ElemT: Type](using
+        Quotes
+    )(
+        kind: ContainerKind,
+        innerSchema: Expr[Schema[ElemT]]
+    ): Expr[Schema[Any]] =
+        kind match
+            case ContainerKind.ListK =>
+                '{
+                    val is = $innerSchema
+                    import scala.annotation.tailrec
+                    kyo.Schema.init[List[ElemT]](
+                        writeFn = (value, writer) =>
+                            writer.arrayStart(value.size)
+                            value.foreach(is.serializeWrite(_, writer))
+                            writer.arrayEnd()
+                        ,
+                        readFn = reader =>
+                            discard(reader.arrayStart())
+                            val builder = List.newBuilder[ElemT]
+                            @tailrec def loop(count: Int): Unit =
+                                if reader.hasNextElement() then
+                                    reader.checkCollectionSize(count)
+                                    builder += is.serializeRead(reader)
+                                    loop(count + 1)
+                            loop(1)
+                            reader.arrayEnd()
+                            builder.result()
+                        ,
+                        structure = kyo.Structure.Type.Collection("List", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+            case ContainerKind.VectorK =>
+                '{
+                    val is = $innerSchema
+                    import scala.annotation.tailrec
+                    kyo.Schema.init[Vector[ElemT]](
+                        writeFn = (value, writer) =>
+                            writer.arrayStart(value.size)
+                            value.foreach(is.serializeWrite(_, writer))
+                            writer.arrayEnd()
+                        ,
+                        readFn = reader =>
+                            discard(reader.arrayStart())
+                            val builder = Vector.newBuilder[ElemT]
+                            @tailrec def loop(count: Int): Unit =
+                                if reader.hasNextElement() then
+                                    reader.checkCollectionSize(count)
+                                    builder += is.serializeRead(reader)
+                                    loop(count + 1)
+                            loop(1)
+                            reader.arrayEnd()
+                            builder.result()
+                        ,
+                        structure = kyo.Structure.Type.Collection("Vector", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+            case ContainerKind.SetK =>
+                '{
+                    val is = $innerSchema
+                    import scala.annotation.tailrec
+                    kyo.Schema.init[Set[ElemT]](
+                        writeFn = (value, writer) =>
+                            writer.arrayStart(value.size)
+                            value.foreach(is.serializeWrite(_, writer))
+                            writer.arrayEnd()
+                        ,
+                        readFn = reader =>
+                            discard(reader.arrayStart())
+                            val builder = Set.newBuilder[ElemT]
+                            @tailrec def loop(count: Int): Unit =
+                                if reader.hasNextElement() then
+                                    reader.checkCollectionSize(count)
+                                    builder += is.serializeRead(reader)
+                                    loop(count + 1)
+                            loop(1)
+                            reader.arrayEnd()
+                            builder.result()
+                        ,
+                        structure = kyo.Structure.Type.Collection("Set", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+            case ContainerKind.SeqK =>
+                '{
+                    val is = $innerSchema
+                    import scala.annotation.tailrec
+                    kyo.Schema.init[Seq[ElemT]](
+                        writeFn = (value, writer) =>
+                            writer.arrayStart(value.size)
+                            value.foreach(is.serializeWrite(_, writer))
+                            writer.arrayEnd()
+                        ,
+                        readFn = reader =>
+                            discard(reader.arrayStart())
+                            val builder = List.newBuilder[ElemT]
+                            @tailrec def loop(): Unit =
+                                if reader.hasNextElement() then
+                                    builder += is.serializeRead(reader)
+                                    loop()
+                            loop()
+                            reader.arrayEnd()
+                            builder.result()
+                        ,
+                        structure = kyo.Structure.Type.Collection("Seq", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+            case ContainerKind.ChunkK =>
+                '{
+                    val is = $innerSchema
+                    import scala.annotation.tailrec
+                    kyo.Schema.init[kyo.Chunk[ElemT]](
+                        writeFn = (value, writer) =>
+                            writer.arrayStart(value.size)
+                            value.foreach(is.serializeWrite(_, writer))
+                            writer.arrayEnd()
+                        ,
+                        readFn = reader =>
+                            discard(reader.arrayStart())
+                            val builder = kyo.Chunk.newBuilder[ElemT]
+                            @tailrec def loop(count: Int): Unit =
+                                if reader.hasNextElement() then
+                                    reader.checkCollectionSize(count)
+                                    builder += is.serializeRead(reader)
+                                    loop(count + 1)
+                            loop(1)
+                            reader.arrayEnd()
+                            builder.result()
+                        ,
+                        structure = kyo.Structure.Type.Collection("Chunk", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+            case ContainerKind.OptionK =>
+                '{
+                    val is = $innerSchema
+                    kyo.Schema.init[Option[ElemT]](
+                        writeFn = (value, writer) =>
+                            value match
+                                case Some(v) => is.serializeWrite(v, writer)
+                                case None =>
+                                    writer.nil()
+                        ,
+                        readFn = reader =>
+                            if reader.isNil() then None
+                            else Some(is.serializeRead(reader)),
+                        structure = kyo.Structure.Type.Optional("Option", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+            case ContainerKind.MaybeK =>
+                '{
+                    val is = $innerSchema
+                    kyo.Schema.init[kyo.Maybe[ElemT]](
+                        writeFn = (value, writer) =>
+                            value match
+                                case kyo.Maybe.Present(v) => is.serializeWrite(v, writer)
+                                case _ =>
+                                    writer.nil()
+                        ,
+                        readFn = reader =>
+                            if reader.isNil() then kyo.Maybe.empty
+                            else kyo.Maybe(is.serializeRead(reader)),
+                        structure = kyo.Structure.Type.Optional("Maybe", kyo.Tag[Any], is.structure)
+                    ).asInstanceOf[Schema[Any]]
+                }
+        end match
+    end buildContainerSchemaExpr
 
     /** Builds a recursive schema resolver for field types that contain the recursive parent type inside containers or tuples. Handles
       * patterns like Chunk[(String, Value)], List[Value], etc.
@@ -892,95 +1116,41 @@ import scala.quoted.*
                 (self: Expr[Schema[A]]) => '{ $self.asInstanceOf[Schema[Any]] }
 
             // Container[RecursiveType] -- e.g. List[Value], Chunk[Value]
+            // Use Schema.init with inline structure to avoid the `using frame: Frame` requirement
+            // on the public container givens. Frame.derive is blocked inside the kyo package.
             case AppliedType(tycon, List(arg)) if arg.dealias =:= parentType =>
-                val containerSym = tycon.typeSymbol
-                if containerSym == TypeRepr.of[List].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.listSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.optionSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.maybeSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else if containerSym == TypeRepr.of[kyo.Chunk[Any]].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.chunkSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else if containerSym == TypeRepr.of[Vector[Any]].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.vectorSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else if containerSym == TypeRepr.of[Set[Any]].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.setSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else if containerSym == TypeRepr.of[Seq[Any]].typeSymbol then
-                    (self: Expr[Schema[A]]) =>
-                        '{ kyo.Schema.seqSchema[A](using $self).asInstanceOf[Schema[Any]] }
-                else
-                    report.errorAndAbort(
-                        s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
-                            "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]."
-                    )
-                end if
+                containerKindOf(tycon.typeSymbol) match
+                    case Some(kind) =>
+                        (self: Expr[Schema[A]]) =>
+                            val innerExpr: Expr[Schema[A]] = '{ $self.asInstanceOf[kyo.Schema[A]] }
+                            buildContainerSchemaExpr[A](kind, innerExpr)
+                    case None =>
+                        report.errorAndAbort(
+                            s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
+                                "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]."
+                        )
+                end match
 
             // Container[Tuple2[X, RecursiveType]] or Option[Map[String, RecursiveType]] etc.
+            // Use Schema.init with inline structure (same reason as Category 1: Frame.derive blocked in kyo package).
             case AppliedType(tycon, List(inner)) if containsRecursiveType(inner, parentType) =>
-                val containerSym = tycon.typeSymbol
-                // Build the inner schema resolver recursively, then wrap in the container
-                val innerResolver = buildRecursiveResolver[A](inner, parentType, fieldName)
-                inner.asType match
-                    case '[innerT] =>
-                        if containerSym == TypeRepr.of[kyo.Chunk[Any]].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{
-                                    kyo.Schema.chunkSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
-                                }
-                        else if containerSym == TypeRepr.of[List].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{
-                                    kyo.Schema.listSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]]
-                                }
-                        else if containerSym == TypeRepr.of[Vector[Any]].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{
-                                    kyo.Schema.vectorSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
-                                }
-                        else if containerSym == TypeRepr.of[Set[Any]].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{ kyo.Schema.setSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]] }
-                        else if containerSym == TypeRepr.of[Seq[Any]].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{ kyo.Schema.seqSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[Any]] }
-                        else if containerSym == TypeRepr.of[Option[Any]].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{
-                                    kyo.Schema.optionSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
-                                }
-                        else if containerSym == TypeRepr.of[kyo.Maybe[Any]].typeSymbol then
-                            (self: Expr[Schema[A]]) =>
-                                val innerSchema = innerResolver(self)
-                                '{
-                                    kyo.Schema.maybeSchema[innerT](using $innerSchema.asInstanceOf[Schema[innerT]]).asInstanceOf[Schema[
-                                        Any
-                                    ]]
-                                }
-                        else
-                            report.errorAndAbort(
-                                s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
-                                    "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]."
-                            )
-                        end if
+                containerKindOf(tycon.typeSymbol) match
+                    case Some(kind) =>
+                        // Build the inner schema resolver recursively, then wrap in the container.
+                        val innerResolver = buildRecursiveResolver[A](inner, parentType, fieldName)
+                        inner.asType match
+                            case '[innerT] =>
+                                (self: Expr[Schema[A]]) =>
+                                    val innerSchema = innerResolver(self)
+                                    val castInner: Expr[Schema[innerT]] =
+                                        '{ $innerSchema.asInstanceOf[Schema[innerT]] }
+                                    buildContainerSchemaExpr[innerT](kind, castInner)
+                        end match
+                    case None =>
+                        report.errorAndAbort(
+                            s"Cannot derive Schema for field '$fieldName': recursive type in unsupported container ${tycon.show}. " +
+                                "Supported containers: List, Vector, Set, Seq, Chunk, Option, Maybe, Map[String, _]."
+                        )
                 end match
 
             // Map[String, RecursiveType] -- e.g. Map[String, SchemaObject]
@@ -994,7 +1164,41 @@ import scala.quoted.*
                         (self: Expr[Schema[A]]) =>
                             val valueSchema = valueResolver(self)
                             '{
-                                kyo.Schema.stringMapSchema[vt](using $valueSchema.asInstanceOf[Schema[vt]]).asInstanceOf[Schema[Any]]
+                                val inner = $valueSchema.asInstanceOf[Schema[vt]]
+                                import scala.annotation.tailrec
+                                kyo.Schema.init[Map[String, vt]](
+                                    writeFn = (value, writer) =>
+                                        writer.mapStart(value.size)
+                                        value.iterator.zipWithIndex.foreach { case ((k, v), idx) =>
+                                            writer.field(k, idx)
+                                            inner.serializeWrite(v, writer)
+                                        }
+                                        writer.mapEnd()
+                                    ,
+                                    readFn = reader =>
+                                        discard(reader.mapStart())
+                                        val builder = Map.newBuilder[String, vt]
+                                        @tailrec def loop(count: Int): Unit =
+                                            if reader.hasNextEntry() then
+                                                reader.checkCollectionSize(count)
+                                                val k = reader.field()
+                                                val v = inner.serializeRead(reader)
+                                                builder += (k -> v)
+                                                loop(count + 1)
+                                        loop(1)
+                                        reader.mapEnd()
+                                        builder.result()
+                                    ,
+                                    structure = kyo.Structure.Type.Mapping(
+                                        "Map",
+                                        kyo.Tag[Any],
+                                        kyo.Structure.Type.Primitive(
+                                            kyo.Structure.PrimitiveKind.String,
+                                            kyo.Tag[String].asInstanceOf[kyo.Tag[Any]]
+                                        ),
+                                        inner.structure
+                                    )
+                                ).asInstanceOf[Schema[Any]]
                             }
                 end match
 
@@ -1098,12 +1302,15 @@ import scala.quoted.*
                                             report.errorAndAbort(noSchemaMessage(fieldName, innerType2.show, fieldType.show))
                                         )
                                         (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
-                            // For Option and other types, use full schema
+                            // For Option and other types: try direct summon, then fall back to
+                            // explicit container schema construction for types that require Frame.
                             case _ =>
-                                val schema = Expr.summon[Schema[t]].getOrElse(
-                                    report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType))
-                                )
-                                (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                                val schemaExpr: Expr[Schema[Any]] =
+                                    Expr.summon[Schema[t]]
+                                        .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                        .orElse(buildContainerSchemaOpt[A](fieldType, fieldName))
+                                        .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
+                                (_: Expr[Schema[A]]) => schemaExpr
                     else if maybeFields.contains(idx) then
                         // Non-recursive Maybe field - extract inner type and summon Schema for it
                         fieldType.dealias match
@@ -1120,11 +1327,14 @@ import scala.quoted.*
                                         "Ensure the field is declared as Maybe[T] where T is a concrete type with a given Schema."
                                 )
                     else
-                        // Non-recursive, non-Maybe field - summon Schema for full type
-                        val schema = Expr.summon[Schema[t]].getOrElse(
-                            report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType))
-                        )
-                        (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                        // Non-recursive, non-Maybe field: try direct summon, then fall back to
+                        // explicit container schema construction for types that require Frame.
+                        val schemaExpr: Expr[Schema[Any]] =
+                            Expr.summon[Schema[t]]
+                                .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                .orElse(buildContainerSchemaOpt[A](fieldType, fieldName))
+                                .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
+                        (_: Expr[Schema[A]]) => schemaExpr
                     end if
 
             (fieldName, idx, resolver)
@@ -1505,19 +1715,68 @@ import scala.quoted.*
         end if
     end defaultsImpl
 
+    /** Tries to build a Schema expression for a container type that requires Frame.
+      *
+      * Collection and optional givens (listSchema, vectorSchema, setSchema, chunkSchema, seqSchema,
+      * maybeSchema, optionSchema) require `using frame: Frame`. During macro-driven Schema derivation,
+      * `Expr.summon[Schema[Container[X]]]` cannot satisfy the Frame requirement because Frame.derive
+      * is blocked inside the kyo package and no ambient Frame exists at compile time.
+      *
+      * This helper builds container schemas using Schema.init with explicit structure arguments.
+      * The resulting schemas are used only for field serialization in the derived-schema path;
+      * their structure reflects the container type (Collection/Optional/Mapping) with the inner
+      * schema's structure as the element type.
+      *
+      * Returns `Some(expr)` if the type is a recognized single-arg container with a resolvable inner
+      * Schema; `None` otherwise.
+      */
+    /** Builds a Schema[Any] for a container type (List, Vector, Set, Seq, Chunk, Maybe, Option) by
+      * constructing the schema inline via Schema.init with an explicit structure parameter.
+      * This avoids the `using frame: Frame` requirement on the public container givens, which cannot
+      * be satisfied from inside a macro expansion in the kyo package.
+      * Returns None if the field type is not a supported container or the inner type has no Schema.
+      */
+    private def buildContainerSchemaOpt[A](using
+        Quotes
+    )(
+        fieldType: quotes.reflect.TypeRepr,
+        fieldName: String
+    ): Option[Expr[Schema[Any]]] =
+        import quotes.reflect.*
+        fieldType.dealias match
+            case AppliedType(tycon, List(innerType)) =>
+                containerKindOf(tycon.typeSymbol).flatMap { kind =>
+                    innerType.asType match
+                        case '[inner] =>
+                            val innerSchemaOpt: Option[Expr[Schema[inner]]] =
+                                Expr.summon[Schema[inner]].orElse(
+                                    buildContainerSchemaOpt[A](innerType, fieldName)
+                                        .map(_.asInstanceOf[Expr[Schema[inner]]])
+                                )
+                            innerSchemaOpt.map { innerSchema =>
+                                buildContainerSchemaExpr[inner](kind, innerSchema)
+                            }
+                }
+            case _ => None
+        end match
+    end buildContainerSchemaOpt
+
     /** Builds a consistent error message for missing Schema instances during derivation.
       *
       * For applied types (List[X], Option[X], Map[K,V], etc.) where the real issue is an unsupported type argument, identifies which type
-      * argument has no Schema by trying to summon each one.
+      * argument has no Schema by trying to summon each one. Also tries buildContainerSchemaOpt to avoid false-positive "missing schema"
+      * diagnostics for container types that require Frame.
       */
     private def noSchemaFieldMessage(using Quotes)(fieldName: String, fieldType: quotes.reflect.TypeRepr): String =
         import quotes.reflect.*
         fieldType.dealias match
             case AppliedType(_, args) if args.nonEmpty =>
-                // Find the first type argument that has no Schema
+                // Find the first type argument that has no Schema (via direct summon or container fallback)
                 val unsupported = args.find { arg =>
                     arg.asType match
-                        case '[t] => Expr.summon[Schema[t]].isEmpty
+                        case '[t] =>
+                            Expr.summon[Schema[t]].isEmpty &&
+                            buildContainerSchemaOpt[Any](arg, fieldName).isEmpty
                 }
                 unsupported match
                     case Some(inner) =>
@@ -1539,5 +1798,443 @@ import scala.quoted.*
     private def noSchemaMessage(fieldName: String, missingType: String, fieldType: String): String =
         s"No given Schema[${missingType}] for field '$fieldName' (field type: ${fieldType}). " +
             s"Define ${missingType} as a case class or sealed trait, or provide a given Schema[${missingType}]."
+
+    /** Summons `Tag[A].asInstanceOf[Tag[Any]]`, falling back to `Tag[Any]` for abstract or tag-less types.
+      *
+      * Mirrors the summonTag helper in StructureMacro to handle generic type parameters (e.g. `Changeset[A]`) that have a `Schema[A]` constraint but not
+      * necessarily `Tag[A]`.
+      */
+    private def summonStructureTag[A: Type](using Quotes): Expr[Tag[Any]] =
+        import quotes.reflect.*
+        Expr.summon[Tag[A]] match
+            case Some(tagExpr) => '{ $tagExpr.asInstanceOf[Tag[Any]] }
+            case None          => '{ Tag[Any] }
+    end summonStructureTag
+
+    /** Walks a type to detect a transitive cycle back to `target`.
+      *
+      * Returns true if `tpe` is `target`, or if `tpe`'s case-class field graph (including via containers/maps/tuples
+      * and sealed trait children) transitively contains `target`. Used as a gate before deciding whether to summon
+      * `Schema[ft].structure` (no cycle, preserves INV-6 reference equality) or to inline the structure via
+      * `deriveTypeFallback` (cycle, breaks the runtime loop with an empty Product/Sum placeholder).
+      *
+      * `seen` accumulates the fully-qualified names of types already visited on the current walk to prevent
+      * an infinite loop in the cycle-detection itself.
+      */
+    private def cyclesBackTo(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        target: quotes.reflect.TypeRepr,
+        seen: Set[String]
+    ): Boolean =
+        import quotes.reflect.*
+        val dealiased = tpe.dealias
+        if dealiased =:= target then true
+        else
+            val sym      = dealiased.typeSymbol
+            val fullName = sym.fullName
+            val argsCycle = dealiased match
+                case AppliedType(_, args) => args.exists(a => cyclesBackTo(a, target, seen))
+                case _                    => false
+            if argsCycle then true
+            else if seen.contains(fullName) then false
+            else if sym.isClassDef && (sym.flags.is(Flags.Case) || sym.flags.is(Flags.Sealed)) then
+                val newSeen = seen + fullName
+                if sym.flags.is(Flags.Sealed) then
+                    sym.children.exists { child =>
+                        val childType =
+                            if child.isType then child.typeRef
+                            else if child.flags.is(Flags.Module) then child.termRef.widen
+                            else child.typeRef
+                        cyclesBackTo(childType, target, newSeen)
+                    }
+                else
+                    sym.caseFields.exists { field =>
+                        val fieldType = dealiased.memberType(field)
+                        cyclesBackTo(fieldType, target, newSeen)
+                    }
+                end if
+            else false
+            end if
+        end if
+    end cyclesBackTo
+
+    /** Walks the type tree at compile time to produce a `Structure.Type` literal.
+      *
+      * This is the inlined fallback used for cyclic fields: it carries the compile-time
+      * type-tree-walk logic inline because StructureMacro no longer exists as a separate object.
+      *
+      * The four symbol sets (extendedPrimitiveSymbols, optionalSymbols,
+      * collectionSymbols, mapSymbols) are inlined as local vals because there are no
+      * shared MacroUtils-level defs for them.
+      */
+    private def deriveTypeFallback(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        seen: Set[String]
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+
+        val extendedPrimitiveSymbolsLocal: Set[Symbol] = Set(
+            TypeRepr.of[Int].typeSymbol,
+            TypeRepr.of[String].typeSymbol,
+            TypeRepr.of[Boolean].typeSymbol,
+            TypeRepr.of[Double].typeSymbol,
+            TypeRepr.of[Float].typeSymbol,
+            TypeRepr.of[Long].typeSymbol,
+            TypeRepr.of[Short].typeSymbol,
+            TypeRepr.of[Byte].typeSymbol,
+            TypeRepr.of[Char].typeSymbol,
+            TypeRepr.of[Unit].typeSymbol,
+            TypeRepr.of[BigDecimal].typeSymbol,
+            TypeRepr.of[BigInt].typeSymbol,
+            TypeRepr.of[java.math.BigDecimal].typeSymbol,
+            TypeRepr.of[java.math.BigInteger].typeSymbol
+        )
+        val optionalSymbolsLocal: Set[Symbol] = Set(
+            TypeRepr.of[Option].typeSymbol,
+            TypeRepr.of[kyo.Maybe].typeSymbol
+        )
+        val collectionSymbolsLocal: Set[Symbol] = Set(
+            TypeRepr.of[List].typeSymbol,
+            TypeRepr.of[Seq].typeSymbol,
+            TypeRepr.of[Vector].typeSymbol,
+            TypeRepr.of[Set].typeSymbol,
+            TypeRepr.of[kyo.Chunk].typeSymbol
+        )
+        val mapSymbolsLocal: Set[Symbol] = Set(TypeRepr.of[Map].typeSymbol)
+
+        def isPrimLocal(t: TypeRepr): Boolean =
+            extendedPrimitiveSymbolsLocal.contains(t.dealias.typeSymbol)
+
+        def isOptLocal(tycon: TypeRepr): Boolean =
+            optionalSymbolsLocal.contains(tycon.typeSymbol)
+
+        def isColLocal(tycon: TypeRepr): Boolean =
+            collectionSymbolsLocal.contains(tycon.typeSymbol)
+
+        def isMapLocal(tycon: TypeRepr): Boolean =
+            mapSymbolsLocal.contains(tycon.typeSymbol)
+
+        def summonTagLocal[A: Type]: Expr[Tag[Any]] =
+            Expr.summon[Tag[A]] match
+                case Some(tagExpr) => '{ $tagExpr.asInstanceOf[Tag[Any]] }
+                case None          => '{ Tag[Any] }
+
+        def primitiveKindExprLocal(t: TypeRepr): Expr[Structure.PrimitiveKind] =
+            val sym = t.dealias.typeSymbol
+            if sym == TypeRepr.of[Int].typeSymbol then '{ Structure.PrimitiveKind.Int }
+            else if sym == TypeRepr.of[Long].typeSymbol then '{ Structure.PrimitiveKind.Long }
+            else if sym == TypeRepr.of[Short].typeSymbol then '{ Structure.PrimitiveKind.Short }
+            else if sym == TypeRepr.of[Byte].typeSymbol then '{ Structure.PrimitiveKind.Byte }
+            else if sym == TypeRepr.of[Char].typeSymbol then '{ Structure.PrimitiveKind.Char }
+            else if sym == TypeRepr.of[Float].typeSymbol then '{ Structure.PrimitiveKind.Float }
+            else if sym == TypeRepr.of[Double].typeSymbol then '{ Structure.PrimitiveKind.Double }
+            else if sym == TypeRepr.of[String].typeSymbol then '{ Structure.PrimitiveKind.String }
+            else if sym == TypeRepr.of[Boolean].typeSymbol then '{ Structure.PrimitiveKind.Boolean }
+            else if sym == TypeRepr.of[BigInt].typeSymbol || sym == TypeRepr.of[java.math.BigInteger].typeSymbol then
+                '{ Structure.PrimitiveKind.BigInt }
+            else if sym == TypeRepr.of[BigDecimal].typeSymbol || sym == TypeRepr.of[java.math.BigDecimal].typeSymbol then
+                '{ Structure.PrimitiveKind.BigDecimal }
+            else if sym == TypeRepr.of[Unit].typeSymbol then '{ Structure.PrimitiveKind.Unit }
+            else
+                report.errorAndAbort(
+                    s"No PrimitiveKind mapping for type: ${t.show}. " +
+                        "Add a case to Structure.PrimitiveKind or remove the type from extended primitives."
+                )
+            end if
+        end primitiveKindExprLocal
+
+        def deriveCaseClassOrFallbackLocal(
+            dealiased: TypeRepr,
+            sym: Symbol,
+            seenInner: Set[String]
+        ): Expr[Structure.Type] =
+            if sym.isClassDef && sym.flags.is(Flags.Case) then
+                val name    = sym.name
+                val newSeen = seenInner + sym.fullName
+                val fieldExprs = sym.caseFields.zipWithIndex.map { (field, idx) =>
+                    val fieldName = field.name
+                    val fieldType = dealiased.memberType(field)
+                    val fieldRef  = go(fieldType, newSeen)
+                    val defaultExpr: Expr[Maybe[Structure.Value]] = MacroUtils.getDefault(dealiased, idx) match
+                        case Some(defVal) =>
+                            fieldType.asType match
+                                case '[t] =>
+                                    Expr.summon[Tag[t]] match
+                                        case Some(tagExpr) =>
+                                            '{ Maybe(Structure.Value.primitive[t]($defVal.asInstanceOf[t])(using $tagExpr)) }
+                                        case None =>
+                                            '{ Maybe.empty[Structure.Value] }
+                        case None =>
+                            '{ Maybe.empty[Structure.Value] }
+                    val isOptional = isOptLocal(fieldType.dealias match
+                        case AppliedType(tycon, _) => tycon
+                        case _                     => fieldType)
+                    '{ Structure.Field(${ Expr(fieldName) }, $fieldRef, Maybe.empty[String], $defaultExpr, ${ Expr(isOptional) }) }
+                }
+                val fieldsSeqExpr = Expr.ofSeq(fieldExprs)
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.from($fieldsSeqExpr)) }
+                end match
+            else
+                val name = dealiased.typeSymbol.name
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.empty) }
+                end match
+            end if
+        end deriveCaseClassOrFallbackLocal
+
+        def go(t: TypeRepr, seenInner: Set[String]): Expr[Structure.Type] =
+            val dealiased = t.dealias
+            val typeName  = dealiased.typeSymbol.fullName
+            if seenInner.contains(typeName) && typeName.nonEmpty then
+                val name = dealiased.typeSymbol.name
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Product(${ Expr(name) }, $tagExpr, kyo.Chunk.empty, kyo.Chunk.empty) }
+                end match
+            else if isPrimLocal(dealiased) then
+                val kindExpr = primitiveKindExprLocal(dealiased)
+                dealiased.asType match
+                    case '[a] =>
+                        val tagExpr = summonTagLocal[a]
+                        '{ Structure.Type.Primitive($kindExpr, $tagExpr) }
+                end match
+            else
+                dealiased match
+                    case AppliedType(tycon, List(inner)) if isOptLocal(tycon) =>
+                        val name     = dealiased.typeSymbol.name
+                        val innerRef = go(inner, seenInner)
+                        dealiased.asType match
+                            case '[a] =>
+                                val tagExpr = summonTagLocal[a]
+                                '{ Structure.Type.Optional(${ Expr(name) }, $tagExpr, $innerRef) }
+                        end match
+                    case AppliedType(tycon, List(k, v)) if isMapLocal(tycon) =>
+                        val name     = dealiased.typeSymbol.name
+                        val keyRef   = go(k, seenInner)
+                        val valueRef = go(v, seenInner)
+                        dealiased.asType match
+                            case '[a] =>
+                                val tagExpr = summonTagLocal[a]
+                                '{ Structure.Type.Mapping(${ Expr(name) }, $tagExpr, $keyRef, $valueRef) }
+                        end match
+                    case AppliedType(tycon, List(elem)) if isColLocal(tycon) =>
+                        val name    = dealiased.typeSymbol.name
+                        val elemRef = go(elem, seenInner)
+                        dealiased.asType match
+                            case '[a] =>
+                                val tagExpr = summonTagLocal[a]
+                                '{ Structure.Type.Collection(${ Expr(name) }, $tagExpr, $elemRef) }
+                        end match
+                    case _ =>
+                        val sym = dealiased.typeSymbol
+                        if sym.isClassDef && sym.flags.is(Flags.Sealed) then
+                            val children = sym.children
+                            if children.nonEmpty then
+                                val name    = sym.name
+                                val newSeen = seenInner + sym.fullName
+                                val enumValues = children.collect {
+                                    case child if child.flags.is(Flags.Module) || !child.isClassDef =>
+                                        child.name.stripSuffix("$")
+                                }
+                                val variantExprs = children.map { child =>
+                                    val childName = child.name.stripSuffix("$")
+                                    val childType =
+                                        if child.isType then child.typeRef
+                                        else if child.flags.is(Flags.Module) then child.termRef.widen
+                                        else child.typeRef
+                                    val variantRef = go(childType, newSeen)
+                                    '{ Structure.Variant(${ Expr(childName) }, $variantRef) }
+                                }
+                                val variantsSeqExpr = Expr.ofSeq(variantExprs)
+                                val enumValuesExpr  = Expr.ofSeq(enumValues.map(Expr(_)))
+                                dealiased.asType match
+                                    case '[a] =>
+                                        val tagExpr = summonTagLocal[a]
+                                        '{
+                                            Structure.Type.Sum(
+                                                ${ Expr(name) },
+                                                $tagExpr,
+                                                kyo.Chunk.empty,
+                                                kyo.Chunk.from($variantsSeqExpr),
+                                                kyo.Chunk.from($enumValuesExpr)
+                                            )
+                                        }
+                                end match
+                            else
+                                deriveCaseClassOrFallbackLocal(dealiased, sym, seenInner)
+                            end if
+                        else
+                            deriveCaseClassOrFallbackLocal(dealiased, sym, seenInner)
+                        end if
+                end match
+            end if
+        end go
+
+        go(tpe, seen)
+    end deriveTypeFallback
+
+    /** Builds a `Structure.Type` expression for a field type.
+      *
+      * For non-recursive types: emits `${Schema[ft]}.structure` (the runtime value). This preserves
+      * reference equality (INV-6): `Schema[Parent].structure.fields(i).fieldType eq Schema[FieldType].structure`.
+      *
+      * For recursive types (direct or mutual cycles back to `parentType`): emits a compile-time inlined
+      * `Structure.Type` via `deriveTypeFallback`. The inline tree contains empty Product/Sum placeholders
+      * at the recursion point, breaking the runtime cycle. INV-6 cannot hold inside a cycle (the inline tree
+      * is a fresh allocation), but the cycle would otherwise infinite-recurse.
+      */
+    private def summonFieldStructure[A: Type](using
+        Quotes
+    )(
+        ft: quotes.reflect.TypeRepr,
+        parentType: quotes.reflect.TypeRepr,
+        typeName: String
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+        val parentFullName = parentType.typeSymbol.fullName
+        val seen           = if parentFullName.nonEmpty then Set(parentFullName) else Set.empty[String]
+        if cyclesBackTo(ft, parentType, seen) then
+            // Cycle: walk the type tree inline at compile time with cycle protection.
+            deriveTypeFallback(ft, seen)
+        else
+            // Non-cyclic: use Schema[ft].structure (preserves reference equality per INV-6).
+            ft.asType match
+                case '[t] =>
+                    Expr.summon[Schema[t]] match
+                        case Some(schemaExpr) => '{ ${ schemaExpr }.structure }
+                        case None             =>
+                            // Soft fallback: emit Open when no explicit Schema is in scope (handles
+                            // types derived via `inline given derived` that can't be expanded in a macro).
+                            val tagExpr = summonStructureTag[t]
+                            '{ Structure.Type.Open($tagExpr) }
+        end if
+    end summonFieldStructure
+
+    /** Builds a `Structure.Type.Product` expression for a case class type `A`.
+      *
+      * Each field's `fieldType` is obtained by summoning `Schema[FieldType].structure`. Recursive fields (where the field type equals the
+      * parent type) receive `Structure.Type.Open(Tag[A])` as a cycle-safe placeholder.
+      * Captures default values via MacroUtils.getDefault
+      * and marks Option/Maybe fields as optional.
+      */
+    private def buildCaseClassStructureExpr[A: Type](using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        typeName: String,
+        maybeFields: Set[Int],
+        optionFields: Set[Int]
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+        val fields      = sym.caseFields
+        val typeParamsT = tpe.typeArgs
+
+        val fieldExprs: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (field, idx) =>
+            val rawFieldType = tpe.memberType(field)
+            // For Maybe[T] fields: resolve the inner type T for the structure.
+            val resolvedType =
+                if maybeFields.contains(idx) then
+                    rawFieldType.dealias match
+                        case AppliedType(_, List(inner)) => inner
+                        case _                           => rawFieldType
+                else rawFieldType
+            val fieldStructureExpr = summonFieldStructure[A](resolvedType, tpe, typeName)
+            // Mark both Maybe and Option fields as optional.
+            val isOptional = maybeFields.contains(idx) || optionFields.contains(idx)
+            // Capture default values for fields that have them (matches StructureMacro default handling).
+            val defaultExpr: Expr[kyo.Maybe[Structure.Value]] = MacroUtils.getDefault(tpe, idx) match
+                case Some(defVal) =>
+                    rawFieldType.asType match
+                        case '[t] =>
+                            Expr.summon[kyo.Tag[t]] match
+                                case Some(tagExpr) =>
+                                    '{ kyo.Maybe(Structure.Value.primitive[t]($defVal.asInstanceOf[t])(using $tagExpr)) }
+                                case None =>
+                                    '{ kyo.Maybe.empty[Structure.Value] }
+                case None =>
+                    '{ kyo.Maybe.empty[Structure.Value] }
+            '{ Structure.Field(${ Expr(field.name) }, $fieldStructureExpr, kyo.Maybe.empty, $defaultExpr, ${ Expr(isOptional) }) }
+        }
+
+        val typeParamExprs: List[Expr[Structure.Type]] = typeParamsT.map { tp =>
+            tp.asType match
+                case '[t] =>
+                    Expr.summon[Schema[t]] match
+                        case Some(s) => '{ $s.structure }
+                        case None =>
+                            val tagExpr = summonStructureTag[t]
+                            '{ Structure.Type.Open($tagExpr) }
+        }
+
+        val fieldsChunkExpr     = '{ kyo.Chunk.from(${ Expr.ofList(fieldExprs) }) }
+        val typeParamsChunkExpr = '{ kyo.Chunk.from(${ Expr.ofList(typeParamExprs) }) }
+
+        tpe.asType match
+            case '[a] =>
+                val tagExpr = summonStructureTag[a]
+                '{ Structure.Type.Product(${ Expr(typeName) }, $tagExpr, $typeParamsChunkExpr, $fieldsChunkExpr) }
+        end match
+    end buildCaseClassStructureExpr
+
+    /** Builds a `Structure.Type.Sum` expression for a sealed trait type `A`.
+      *
+      * Each variant's `variantType` is obtained by summoning `Schema[VariantType].structure`. Self-referential variants (where the variant
+      * type equals the parent type) receive `Structure.Type.Open(Tag[A])` as a cycle-safe placeholder.
+      */
+    private def buildSealedTraitStructureExpr[A: Type](using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol,
+        typeName: String,
+        children: List[quotes.reflect.Symbol]
+    ): Expr[Structure.Type] =
+        import quotes.reflect.*
+
+        val variantExprs: List[Expr[Structure.Variant]] = children.map { child =>
+            val childName = child.name.stripSuffix("$")
+            val childType =
+                if child.isType then child.typeRef
+                else if child.flags.is(Flags.Module) then child.termRef.widen
+                else child.typeRef
+            val variantStructureExpr = summonFieldStructure[A](childType, tpe, typeName)
+            '{ Structure.Variant(${ Expr(childName) }, $variantStructureExpr) }
+        }
+
+        // Collect enum singleton names
+        val enumValues: List[String] = children.collect {
+            case child if child.flags.is(Flags.Module) || !child.isClassDef =>
+                child.name.stripSuffix("$")
+        }
+
+        val variantsChunkExpr   = '{ kyo.Chunk.from(${ Expr.ofList(variantExprs) }) }
+        val enumValuesChunkExpr = '{ kyo.Chunk.from(${ Expr.ofList(enumValues.map(Expr(_))) }) }
+
+        tpe.asType match
+            case '[a] =>
+                val tagExpr = summonStructureTag[a]
+                '{
+                    Structure.Type.Sum(
+                        ${ Expr(typeName) },
+                        $tagExpr,
+                        kyo.Chunk.empty,
+                        $variantsChunkExpr,
+                        $enumValuesChunkExpr
+                    )
+                }
+        end match
+    end buildSealedTraitStructureExpr
 
 end FocusMacro

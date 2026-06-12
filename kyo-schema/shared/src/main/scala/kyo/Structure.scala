@@ -29,7 +29,7 @@ object Structure:
       * @return
       *   the compile-time structural type descriptor for A
       */
-    inline def of[A]: Structure.Type = ${ kyo.internal.StructureMacro.deriveImpl[A] }
+    inline def of[A](using s: Schema[A]): Structure.Type = s.structure
 
     /** Converts a typed value to its untyped Structure.Value representation.
       *
@@ -68,7 +68,7 @@ object Structure:
       *   a TypedValue carrying the compile-time type descriptor and the runtime value tree
       */
     inline def typedValue[A](value: A)(using schema: Schema[A], frame: Frame): Structure.TypedValue =
-        Structure.TypedValue(Structure.of[A], schema.toStructureValue(value))
+        Structure.TypedValue(schema.structure, schema.toStructureValue(value))
 
     // --- Type hierarchy ---
 
@@ -77,7 +77,7 @@ object Structure:
       * Each variant captures the shape of one category of Scala type. The tree is produced at compile time by `Structure.of[A]` and can be
       * inspected at runtime to drive generic algorithms.
       */
-    sealed abstract class Type derives Schema:
+    sealed abstract class Type:
         def name: String
 
     /** The specific kind of a primitive (scalar) type.
@@ -194,6 +194,20 @@ object Structure:
             innerType: Structure.Type
         ) extends Type
 
+        /** Identity / open-shape projection: the carrying Schema accepts any wire shape and produces
+          * any wire shape. No fixed structural projection exists at compile time. Used by
+          * Schema[Structure.Value], Schema[Json.JsonSchema], and any future shape-dynamic Schema.
+          *
+          * Compatibility with another Open is determined by tag equality, not structural recursion.
+          * An Open type is never compatible with any non-Open type.
+          *
+          * @param tag
+          *   runtime tag for the open-shape type
+          */
+        case class Open(tag: Tag[Any]) extends Type:
+            def name: String = "Open"
+        end Open
+
         // --- Type structural checks ---
 
         /** Structural compatibility check -- true when both types have the same shape. */
@@ -210,6 +224,7 @@ object Structure:
             case (Collection(_, _, ea), Collection(_, _, eb))   => compatible(ea, eb)
             case (Optional(_, _, ia), Optional(_, _, ib))       => compatible(ia, ib)
             case (Mapping(_, _, ka, va), Mapping(_, _, kb, vb)) => compatible(ka, kb) && compatible(va, vb)
+            case (Open(ta), Open(tb))                           => ta =:= tb
             case _                                              => false
 
         /** Walk all nodes depth-first. */
@@ -222,6 +237,7 @@ object Structure:
                 case Optional(_, _, inner)     => fold(inner)(acc)(f)
                 case Mapping(_, _, k, v)       => fold(v)(fold(k)(acc)(f))(f)
                 case _: Primitive              => acc
+                case _: Open                   => acc
             end match
         end fold
 
@@ -234,6 +250,14 @@ object Structure:
                     else nested.map(f.name +: _)
                 }
             case _ => Chunk.empty
+
+        /** Schema instance for `Structure.Type`. Authors update this declaration when a new variant
+          * is added to the sum, ensuring the wire shape changes only with explicit code review.
+          *
+          * `Schema.derived` emits the sum-Schema for `Structure.Type` via the FocusMacro path. The
+          * explicit declaration ensures the wire shape changes only when authors update this given.
+          */
+        given Schema[Structure.Type] = Schema.derived
 
     end Type
 
@@ -285,7 +309,7 @@ object Structure:
       *
       * Values are produced by `Structure.encode` or `Schema.toStructureValue` and consumed by `Structure.decode` or navigation via `Path`.
       */
-    enum Value derives CanEqual, Schema:
+    enum Value derives CanEqual:
         /** Named fields of a product/case class, ordered by declaration. */
         case Record(fields: Chunk[(String, Value)])
 
@@ -318,6 +342,44 @@ object Structure:
     end Value
 
     object Value:
+
+        /** Identity [[Schema]] for [[Value]]: writes shape-aware (Record -> object, Sequence -> array, scalars unwrapped) and reads via
+          * [[kyo.Codec.IntrospectingReader.readStructure]] which materializes the next wire value directly into the Value tree.
+          *
+          * The auto-derived enum-Schema would emit a tagged-union wrapper like `{"Record":{...}}` and refuse a plain JSON object like
+          * `{"path":"."}` (raising [[UnknownVariantException]] because "path" is not a known discriminator). That tagged form is an internal
+          * kyo-schema detail; Value is the universal "any-shape" type, so its Schema is the identity: writes preserve the shape Scala already
+          * has, reads accept whatever shape the wire carries. The override of `fromStructureValue` keeps top-level `Structure.decode[Value]`
+          * a zero-cost passthrough; `serializeRead` covers the case where Value is a field of an outer case class being decoded by the
+          * macro-generated reader.
+          *
+          * Reading requires a [[kyo.Codec.IntrospectingReader]] (JSON or Structure source). Binary codecs without per-value type
+          * tags cannot decode a `Value` and the type-mismatch is reported with a precise diagnostic instead of bubbling up as an
+          * `UnknownVariantException` from the auto-derived shape.
+          */
+        given valueSchema: Schema[Value] =
+            new Schema[Value](Seq.empty):
+                import scala.annotation.publicInBinary
+                @publicInBinary private[kyo] def serializeWrite(value: Value, writer: Codec.Writer): Unit =
+                    Schema.writeStructureValue(writer, value)
+                @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Value =
+                    reader match
+                        case ir: Codec.IntrospectingReader => ir.readStructure()
+                        case other =>
+                            throw SchemaNotSerializableException(
+                                s"Schema[Structure.Value] requires a self-describing reader (JSON or Structure source); got ${other.getClass.getSimpleName}"
+                            )(using reader.frame)
+                @publicInBinary private[kyo] def getter(value: Value): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def setter(value: Value, next: Any): Value =
+                    next match
+                        case sv: Value => sv
+                        case _         => value
+                private lazy val _structure: Structure.Type =
+                    Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
+                override def structure: Structure.Type = _structure
+                override private[kyo] def fromStructureValue(sv: Value)(using Frame): Result[DecodeException, Value] =
+                    Result.Success(sv)
+
         /** Creates a typed Value from a primitive Scala value.
           *
           * Dispatches via `Tag[A]` to select the correct Value variant based on the static type. Runtime pattern matching is unreliable on

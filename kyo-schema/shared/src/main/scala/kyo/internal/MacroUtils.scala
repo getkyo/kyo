@@ -145,6 +145,151 @@ private[internal] object MacroUtils:
         (maybeFields, optionFields)
     end detectMaybeOptionFields
 
+    // ---- Schema-driven field classifier (INV-33) ----
+
+    /** Schema-driven field kind classifier. Replaces the deleted symbol sets
+      * (basePrimitiveSymbols, collectionSymbols, optionalSymbols, mapSymbols).
+      *
+      * INV-33: macro consumers read structure from Schema, not from symbol sets.
+      *
+      * Classification strategy:
+      * 1. For the known built-in kyo-schema primitive types (Int, String, Boolean,
+      *    Double, Float, Long, Short, Byte, Char, Unit, BigDecimal, BigInt and their
+      *    Java equivalents): use TypeRepr symbol comparison. The hand-written Schema
+      *    givens for primitives are non-inline, so AST inspection cannot extract their
+      *    structure at compile time. TypeRepr comparison is the reliable path.
+      * 2. For the known built-in container, optional, and mapping type constructors:
+      *    TypeRepr comparison on the applied tycon symbol (same reason).
+      * 3. For case classes and sealed traits: ProductOrSum (TypeRepr shape).
+      * 4. For other applied types with recognised tycons not in (1)/(2): Generic.
+      * 5. For other types: Generic.
+      *
+      * Note: `fieldKindFor` never calls `Expr.summon[Schema[T]]` because doing so
+      * inside a macro that is itself invoked during Schema derivation causes a
+      * Scala 3 `SuspendException` (circular macro invocation). The classification
+      * is based entirely on TypeRepr shape, which is identical to what the deleted
+      * symbol sets did. `readStructureVariant` is provided for callers that already
+      * hold an Expr[Schema[?]] and want structure AST inspection (e.g. tests).
+      */
+    private[internal] object MacroSchemaClassifier:
+        enum FieldKind derives CanEqual:
+            case Primitive(kind: kyo.Structure.PrimitiveKind)
+            case Collection
+            case Optional
+            case Mapping
+            case ProductOrSum
+            case Open
+            case Generic // unrecognised type
+        end FieldKind
+
+        def fieldKindFor(using Quotes)(tpe: quotes.reflect.TypeRepr): FieldKind =
+            import quotes.reflect.*
+            given CanEqual[Symbol, Symbol] = CanEqual.derived
+            val dealiased                  = tpe.dealias
+
+            // Step 1: Check known primitive types by TypeRepr symbol.
+            primitiveKind(dealiased) match
+                case Some(k) => return FieldKind.Primitive(k)
+                case None    =>
+
+            // Step 2: Check known container / optional / mapping type constructors.
+            dealiased match
+                case AppliedType(tycon, _) =>
+                    val sym = tycon.typeSymbol
+                    if sym == TypeRepr.of[List].typeSymbol ||
+                        sym == TypeRepr.of[Seq].typeSymbol ||
+                        sym == TypeRepr.of[Vector].typeSymbol ||
+                        sym == TypeRepr.of[Set].typeSymbol ||
+                        sym == TypeRepr.of[kyo.Chunk].typeSymbol
+                    then return FieldKind.Collection
+                    else if sym == TypeRepr.of[Option].typeSymbol ||
+                        sym == TypeRepr.of[kyo.Maybe].typeSymbol
+                    then return FieldKind.Optional
+                    else if sym == TypeRepr.of[Map].typeSymbol then return FieldKind.Mapping
+                    end if
+                case _ =>
+            end match
+
+            // Step 3: Case class or sealed trait => ProductOrSum.
+            val sym = dealiased.typeSymbol
+            if sym.isClassDef && (sym.flags.is(Flags.Case) || sym.flags.is(Flags.Sealed))
+            then FieldKind.ProductOrSum
+            // Step 4 and 5: everything else => Generic.
+            else FieldKind.Generic
+            end if
+        end fieldKindFor
+
+        /** Maps a TypeRepr to its `Structure.PrimitiveKind` if it is one of the extended
+          * primitive types; returns None otherwise.
+          */
+        def primitiveKind(using Quotes)(tpe: quotes.reflect.TypeRepr): Option[kyo.Structure.PrimitiveKind] =
+            import quotes.reflect.*
+            given CanEqual[Symbol, Symbol] = CanEqual.derived
+            val sym                        = tpe.dealias.typeSymbol
+            if sym == TypeRepr.of[Int].typeSymbol then Some(kyo.Structure.PrimitiveKind.Int)
+            else if sym == TypeRepr.of[Long].typeSymbol then Some(kyo.Structure.PrimitiveKind.Long)
+            else if sym == TypeRepr.of[Short].typeSymbol then Some(kyo.Structure.PrimitiveKind.Short)
+            else if sym == TypeRepr.of[Byte].typeSymbol then Some(kyo.Structure.PrimitiveKind.Byte)
+            else if sym == TypeRepr.of[Char].typeSymbol then Some(kyo.Structure.PrimitiveKind.Char)
+            else if sym == TypeRepr.of[Float].typeSymbol then Some(kyo.Structure.PrimitiveKind.Float)
+            else if sym == TypeRepr.of[Double].typeSymbol then Some(kyo.Structure.PrimitiveKind.Double)
+            else if sym == TypeRepr.of[String].typeSymbol then Some(kyo.Structure.PrimitiveKind.String)
+            else if sym == TypeRepr.of[Boolean].typeSymbol then Some(kyo.Structure.PrimitiveKind.Boolean)
+            else if sym == TypeRepr.of[Unit].typeSymbol then Some(kyo.Structure.PrimitiveKind.Unit)
+            else if sym == TypeRepr.of[BigInt].typeSymbol ||
+                sym == TypeRepr.of[java.math.BigInteger].typeSymbol
+            then Some(kyo.Structure.PrimitiveKind.BigInt)
+            else if sym == TypeRepr.of[BigDecimal].typeSymbol ||
+                sym == TypeRepr.of[java.math.BigDecimal].typeSymbol
+            then Some(kyo.Structure.PrimitiveKind.BigDecimal)
+            else None
+            end if
+        end primitiveKind
+
+        /** Reads the Structure.Type variant from an Inlined schema expression produced by
+          * `inline given derived`. Only works when the schema is an inline given whose body is
+          * expanded at the call site: the underlying term must be an Apply-of-New for a
+          * Structure.Type case-class constructor.
+          *
+          * For non-inline givens (e.g. intSchema, listSchema) the underlying term is a
+          * method call, not a constructor, so this method returns FieldKind.Generic.
+          * Callers that need to classify those types should use fieldKindFor instead.
+          */
+        def readStructureVariant(using Quotes)(schemaExpr: Expr[kyo.Schema[?]]): FieldKind =
+            import quotes.reflect.*
+            val structureExpr = '{ ${ schemaExpr }.structure }
+            structureExpr.asTerm.underlyingArgument match
+                case Apply(Select(New(t), _), _)
+                    if t.tpe =:= TypeRepr.of[kyo.Structure.Type.Primitive] =>
+                    // Use primitiveKind by examining the schema expression's type argument
+                    // to avoid relying on the non-literal kindArg term.
+                    schemaExpr.asTerm.tpe match
+                        case AppliedType(_, List(underlying)) =>
+                            primitiveKind(underlying) match
+                                case Some(k) => FieldKind.Primitive(k)
+                                case None    => FieldKind.Generic
+                        case _ => FieldKind.Generic
+                case Apply(Select(New(t), _), _)
+                    if t.tpe =:= TypeRepr.of[kyo.Structure.Type.Collection] =>
+                    FieldKind.Collection
+                case Apply(Select(New(t), _), _)
+                    if t.tpe =:= TypeRepr.of[kyo.Structure.Type.Optional] =>
+                    FieldKind.Optional
+                case Apply(Select(New(t), _), _)
+                    if t.tpe =:= TypeRepr.of[kyo.Structure.Type.Mapping] =>
+                    FieldKind.Mapping
+                case Apply(Select(New(t), _), _)
+                    if t.tpe =:= TypeRepr.of[kyo.Structure.Type.Product] ||
+                        t.tpe =:= TypeRepr.of[kyo.Structure.Type.Sum] =>
+                    FieldKind.ProductOrSum
+                case Apply(Select(New(t), _), _)
+                    if t.tpe =:= TypeRepr.of[kyo.Structure.Type.Open] =>
+                    FieldKind.Open
+                case _ => FieldKind.Generic
+            end match
+        end readStructureVariant
+    end MacroSchemaClassifier
+
     // ---- Case class default detection ----
 
     /** Checks if a case class field at the given index has a default value. */
@@ -215,71 +360,6 @@ private[internal] object MacroUtils:
             fType
         end if
     end deriveNominalType
-
-    // ---- Type classifier sets ----
-
-    /** Base primitive type symbols: Int, String, Boolean, Double, Float, Long, Short, Byte, Char, Unit.
-      *
-      * Used by ExpandMacro.isPrimitive.
-      */
-    private[internal] def basePrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Int].typeSymbol,
-            TypeRepr.of[String].typeSymbol,
-            TypeRepr.of[Boolean].typeSymbol,
-            TypeRepr.of[Double].typeSymbol,
-            TypeRepr.of[Float].typeSymbol,
-            TypeRepr.of[Long].typeSymbol,
-            TypeRepr.of[Short].typeSymbol,
-            TypeRepr.of[Byte].typeSymbol,
-            TypeRepr.of[Char].typeSymbol,
-            TypeRepr.of[Unit].typeSymbol
-        )
-    end basePrimitiveSymbols
-
-    /** Extended primitive type symbols: base primitives + BigDecimal, BigInt, java.math.BigDecimal, java.math.BigInteger.
-      *
-      * Used by StructureMacro.isPrimitive.
-      */
-    private[internal] def extendedPrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        basePrimitiveSymbols ++ Set(
-            TypeRepr.of[BigDecimal].typeSymbol,
-            TypeRepr.of[BigInt].typeSymbol,
-            TypeRepr.of[java.math.BigDecimal].typeSymbol,
-            TypeRepr.of[java.math.BigInteger].typeSymbol
-        )
-    end extendedPrimitiveSymbols
-
-    /** Collection type symbols: List, Seq, Vector, Set, Chunk. */
-    private[internal] def collectionSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[List].typeSymbol,
-            TypeRepr.of[Seq].typeSymbol,
-            TypeRepr.of[Vector].typeSymbol,
-            TypeRepr.of[Set].typeSymbol,
-            TypeRepr.of[kyo.Chunk].typeSymbol
-        )
-    end collectionSymbols
-
-    /** Optional type symbols: Option, Maybe. */
-    private[internal] def optionalSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Option].typeSymbol,
-            TypeRepr.of[kyo.Maybe].typeSymbol
-        )
-    end optionalSymbols
-
-    /** Map type symbols: Map. */
-    private[internal] def mapSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Map].typeSymbol
-        )
-    end mapSymbols
 
     // ---- Constructor call generation ----
 

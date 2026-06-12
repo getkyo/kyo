@@ -64,6 +64,7 @@ private[kyo] object SchemaFactory:
             readFn = (r: Reader) => source.serializeRead(r),
             getterFn = (a: A) => source.getter(a).asInstanceOf[Maybe[F2]],
             setterFn = (a: A, v: F2) => source.setter(a, v),
+            structure = source.structure,
             segments = source.segments,
             sourceFields = source.sourceFields,
             examples = source.examples,

@@ -27,7 +27,7 @@ object ExpandMacro:
         else
             // Check containers BEFORE sealed trait/case class (List, Option, etc. are sealed but should be treated as containers)
             dealiased match
-                case AppliedType(tycon, args) if isKnownContainer(tycon) =>
+                case AppliedType(tycon, args) if isKnownContainer(dealiased) =>
                     val expandedArgs = args.map(expandType)
                     tycon.appliedTo(expandedArgs)
                 case _ =>
@@ -86,19 +86,22 @@ object ExpandMacro:
     end expandType
 
     private def isPrimitive(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
-        import quotes.reflect.*
-        MacroUtils.basePrimitiveSymbols.contains(tpe.dealias.typeSymbol)
+        MacroUtils.MacroSchemaClassifier.fieldKindFor(tpe) match
+            case _: MacroUtils.MacroSchemaClassifier.FieldKind.Primitive => true
+            case _                                                       => false
     end isPrimitive
 
     private def isStructural(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
         MacroUtils.isStructuralType(tpe)
 
-    private def isKnownContainer(using Quotes)(tycon: quotes.reflect.TypeRepr): Boolean =
-        import quotes.reflect.*
-        val sym = tycon.typeSymbol
-        MacroUtils.collectionSymbols.contains(sym) ||
-        MacroUtils.optionalSymbols.contains(sym) ||
-        MacroUtils.mapSymbols.contains(sym)
+    // Note: caller passes the full applied type (dealiased), not just the tycon,
+    // so that Expr.summon[Schema[List[Int]]] can materialize (INV-33).
+    private def isKnownContainer(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
+        MacroUtils.MacroSchemaClassifier.fieldKindFor(tpe) match
+            case MacroUtils.MacroSchemaClassifier.FieldKind.Collection => true
+            case MacroUtils.MacroSchemaClassifier.FieldKind.Optional   => true
+            case MacroUtils.MacroSchemaClassifier.FieldKind.Mapping    => true
+            case _                                                     => false
     end isKnownContainer
 
 end ExpandMacro

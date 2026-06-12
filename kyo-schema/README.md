@@ -505,14 +505,14 @@ val errors: Chunk[ValidationFailedException] =
 
 ### JSON Schema
 
-`Json.jsonSchema[A]` derives a JSON Schema at compile time. Without a `Schema[A]` in scope, it produces a bare structural description:
+`Json.jsonSchema[A]` reads the `Schema[A]` in scope and produces a JSON Schema document. When the schema carries no constraints or documentation, the output is a bare structural description:
 
 ```scala
 val spec = Json.jsonSchema[User]
 // JsonSchema.Obj(properties = List(("name", Str()), ("age", Integer())), required = List("name", "age"))
 ```
 
-When a `Schema[A]` with constraints or documentation is in scope, the output is enriched with all registered metadata:
+When the in-scope `Schema[A]` is enriched with constraints or documentation, the output picks up all registered metadata:
 
 ```scala
 case class Product(name: String, price: Double, quantity: Int)
@@ -977,7 +977,7 @@ val tpe: Structure.Type = Structure.of[Person]
 // Structure.Type.Product with fields "name" (Str) and "age" (Integer)
 ```
 
-The type tree has variants for each category of Scala type: `Product` (case classes), `Sum` (sealed traits), `Collection` (lists, sets), `Mapping` (maps), `Optional` (Option/Maybe), and `Primitive` (scalars).
+The type tree has variants for each category of Scala type: `Product` (case classes), `Sum` (sealed traits), `Collection` (lists, sets), `Mapping` (maps), `Optional` (Option/Maybe), and `Primitive` (scalars). A schema whose wire shape is not fixed at compile time (for example `Structure.Value` and `Json.JsonSchema` themselves, where every instance may serialize to a different shape) reports `Type.Open(tag)`; consumers that need a concrete shape can reject `Open` explicitly (the Protobuf generator does, since `.proto` has no open-shape construct).
 
 `Structure.encode` converts a typed value into the untyped `Value` tree. `Structure.decode` converts it back:
 
@@ -1079,7 +1079,7 @@ Schema[User].decode(bytes)(using Lines) // Result[DecodeException, User]
 
 For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract.
 
-When writing a custom schema for an opaque or wrapper type, you can also construct a `Schema` instance directly using the public factories `Schema.init` (for plain schemas) and `Schema.initFocused` (when you need to track the focused type member). Both take inlined `writeFn` and `readFn` lambdas, plus an optional `getterFn`/`setterFn` pair for lens support. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
+When writing a custom schema for an opaque or wrapper type, you can also construct a `Schema` instance directly using the public factories `Schema.init` (for plain schemas) and `Schema.initFocused` (when you need to track the focused type member). Both take inlined `writeFn` and `readFn` lambdas, plus an optional `getterFn`/`setterFn` pair for lens support, and require a `structure: => Structure.Type` argument that names the runtime shape (by-name so container instances can pass `inner.structure` without forcing recursive type graphs at init time). For a wrapper around an existing schema, the typical structure value is `Structure.Type.Open(Tag[A].asInstanceOf[Tag[Any]])` when the wire shape is identity, or the inner schema's `structure` propagated through `transform`. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
 
 ### Safety limits
 
