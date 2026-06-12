@@ -1791,13 +1791,17 @@ class AsyncTest extends kyo.test.Test[Any]:
         "interrupt during acquireRelease body".onlyJvm in {
             for
                 counter <- AtomicInt.init(0)
+                ready   <- Promise.init[Unit, Any]
                 fiber <- Fiber.initUnscoped {
                     Scope.run {
                         Scope.acquireRelease(Sync.defer("resource"))(_ => counter.incrementAndGet.unit)
+                            .andThen(ready.completeUnit)
                             .andThen(Async.sleep(1.day))
                     }
                 }
-                _           <- Async.sleep(10.millis)
+                // The release is registered and the fiber is parked once `ready` completes; this
+                // replaces a racy Async.sleep(10.millis) that could interrupt before setup under load.
+                _           <- ready.get
                 interrupted <- fiber.interrupt
                 _           <- assertEventually(counter.get.map(_ == 1))
                 count       <- counter.get
