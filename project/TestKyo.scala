@@ -179,8 +179,10 @@ object TestKyo {
 
     // --- Helpers ---
 
-    /** Check if a project name matches the given platform. JVM projects use bare names (e.g. "kyo-core") while JS/Native use suffixed
-      * names.
+    /** Check if a project name matches the given platform. JS, Native, and Wasm projects are matched by their
+      * explicit suffix; JVM is the residual: cross-project JVM variants carry a `JVM` suffix, and the
+      * suffix-less plain projects (kyo-compat-plugin, kyo-doctest-plugin, and similar JVM-only definitions)
+      * carry no platform suffix and are JVM-only.
       */
     private def matchesPlatform(name: String, platform: String): Boolean =
         platform match {
@@ -214,11 +216,8 @@ object TestKyo {
                     case _                                               => allPlatforms
                 }
                 affectedPlatforms.flatMap { p =>
-                    // JVM projects may use bare name (e.g. "kyo-core") or suffixed (e.g. "kyo-coreJVM")
                     val suffixed = s"$module$p"
-                    if (allProjectNames.contains(suffixed)) Seq(suffixed)
-                    else if (p == "JVM" && allProjectNames.contains(module)) Seq(module)
-                    else Seq.empty
+                    if (allProjectNames.contains(suffixed)) Seq(suffixed) else Seq.empty
                 }.toSet
             case _ => Set.empty
         }

@@ -11,7 +11,7 @@ import kyo.UI.*
   * matching DOM diffs over SSE. The event handler is a normal Kyo computation, so it can suspend on `Async`, perform the HTTP call, and
   * recover typed errors with `Abort.run`.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Search'` (optional port as the first argument), then type in the box. (No debounce: every
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Search'` (optional port as the first argument), then type in the box. (No debounce: every
   * keystroke issues a request, which keeps the demo simple.)
   *
   * Demonstrates: an `Async` event handler calling `HttpClient.getJson`, typed error recovery with `Abort.run`, two-way `value` binding, a

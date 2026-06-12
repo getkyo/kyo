@@ -17,7 +17,7 @@ import kyo.UI.*
   * re-layout smoothly through the reactive boundary. Hovering dims frames outside the hovered ancestor/descendant chain,
   * the mouse wheel zooms about the cursor, and Reset tweens back to the full domain.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Flamegraph'` (optional port as the first argument).
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Flamegraph'` (optional port as the first argument).
   */
 object FlamegraphDemo extends KyoApp:
 

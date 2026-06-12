@@ -11,7 +11,7 @@ import kyo.UI.Ast.HtmlContent
   * those same signals, so the server pushes fine-grained DOM diffs over SSE and the numbers update live with no client-side code and no
   * polling. This is the `UI.runHandlers` server-driven model end to end: the state lives on the server, the browser is a thin presenter.
   *
-  * Run via `sbt 'kyo-ui/Test/runMain demo.Dashboard'` (optional port as the first argument), then open the URL and watch the cards and the
+  * Run via `sbt 'kyo-uiJVM/Test/runMain demo.Dashboard'` (optional port as the first argument), then open the URL and watch the cards and the
   * activity log update on their own.
   *
   * Demonstrates: shared server-side state, a `Fiber` background updater, fine-grained reactive text via `signal.render`, a reactive list

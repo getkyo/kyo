@@ -1,7 +1,7 @@
 name: build-dispatch
 # Manually-triggered build/test for a single sbt command. Lets a maintainer run CI on a
 # branch on demand (without opening a PR) and scope to one module/platform for fast feedback,
-# e.g. `kyo-ui/test` (JVM), `kyo-uiJS/test`, `kyo-uiNative/test`, `kyo-uiWasm/test`. The full
+# e.g. `kyo-uiJVM/test` (JVM), `kyo-uiJS/test`, `kyo-uiNative/test`, `kyo-uiWasm/test`. The full
 # cross-platform matrix still runs via build-pr.yml on the PR; this is a focused, on-demand
 # complement.
 #
@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'sbt command to run, e.g. "kyo-ui/test", "kyo-uiJS/test", "kyo-uiNative/test", "kyo-uiWasm/test", or "testKyo JVM" (diff vs origin/main).'
+        description: 'sbt command to run, e.g. "kyo-uiJVM/test", "kyo-uiJS/test", "kyo-uiNative/test", "kyo-uiWasm/test", or "testKyo JVM" (diff vs origin/main).'
         type: string
         required: true
         default: 'testKyo JVM'
