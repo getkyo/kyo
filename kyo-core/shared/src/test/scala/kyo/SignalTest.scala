@@ -478,9 +478,14 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 cl = refA.combineLatest(refB)
-                // First emit: refB fires; wait on refA as sync point (no ghosts yet)
+                // First emit: refB fires. cl.next races refA.next and refB.next as two
+                // independent fibers; assert refA has its single waiter (no ghosts yet),
+                // then wait for refB's subscriber too before firing refB. Syncing only on
+                // refA can leave refB's subscriber unregistered when set(1) swaps in a fresh
+                // next-promise, which loses the emit and hangs f1 under contention.
                 f1 <- Fiber.initUnscoped(cl.next)
                 _  <- assertEventually(refA.waiters.map(_ == 1))
+                _  <- assertEventually(refB.waiters.map(_ >= 1))
                 _  <- refB.set(1)
                 v1 <- f1.get
                 // Second emit: refB fires again.
