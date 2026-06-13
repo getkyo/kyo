@@ -249,6 +249,8 @@ lazy val kyoJVM: Project = project
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
+        `kyo-tasty`.jvm,
+        `kyo-tasty-fixtures-internal`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -293,6 +295,8 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-case-app`.js,
         `kyo-actor`.js,
+        `kyo-tasty`.js,
+        `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -333,6 +337,8 @@ lazy val kyoNative = project
         `kyo-case-app`.native,
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
+        `kyo-tasty`.native,
+        `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -391,7 +397,9 @@ lazy val kyoWasm = project
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
-        `kyo-test-snapshot`.wasm
+        `kyo-test-snapshot`.wasm,
+        `kyo-tasty`.wasm,
+        `kyo-tasty-fixtures-internal`.wasm
     )
 
 lazy val `kyo-scheduler` =
@@ -933,6 +941,59 @@ lazy val `kyo-actor` =
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-tasty` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tasty"))
+        .dependsOn(`kyo-core`, `kyo-schema`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*")
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // TypeKey.structuralEquals and computeHash are iterative (work-list) to prevent
+            // StackOverflowError under scoverage instrumentation.
+            coverageMinimumStmtTotal := 75.3,
+            coverageFailOnMinimum    := true,
+            // Differential testing against tasty-query 1.7.0. JVM-only because
+            // tasty-query's ClasspathLoaders requires java.nio.
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
+            // Real-world classpath fidelity targets. Each jar is intransitive to avoid
+            // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
+            // loads only .tasty files in the jar; missing transitive deps produce
+            // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
+            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20"  % Test intransitive (),
+            libraryDependencies += "org.typelevel"     %% "cats-effect"     % "3.7.0"   % Test intransitive (),
+            libraryDependencies += "org.http4s"        %% "http4s-core"     % "0.23.28" % Test intransitive (),
+            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"   % Test intransitive (),
+            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"   % Test intransitive (),
+            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"   % Test intransitive (),
+            libraryDependencies += "org.typelevel"     %% "spire"           % "0.18.0"  % Test intransitive (),
+            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15"  % Test intransitive ()
+        )
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .wasmSettings(`wasm-settings`)
+        .dependsOn(`kyo-tasty-fixtures-internal` % Test)
+
+lazy val `kyo-tasty-fixtures-internal` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tasty/fixtures"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))

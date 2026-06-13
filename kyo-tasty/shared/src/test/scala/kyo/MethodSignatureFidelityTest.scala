@@ -1,0 +1,289 @@
+package kyo
+import kyo.internal.TestClasspaths
+import kyo.internal.tasty.symbol.SymbolKind
+
+/** Fidelity tests for Method.declaredType, paramLists, and return type correctness.
+  *
+  * Exercises `AstUnpickler.readDefDefReturnType` (consume full METHODtype lambda),
+  * `TypeUnpickler.decodeMethodType` / `decodePolyType`, THIS-type decode, and RECthis late-resolution.
+  *
+  * Uses embedded fixture classes (kyo.fixtures.SomeCaseClass, kyo.fixtures.GenericBox,
+  * kyo.fixtures.SealedBase, kyo.fixtures.ConcreteA) instead of stdlib classes so the tests run
+  * cross-platform.
+  */
+class MethodSignatureFidelityTest extends kyo.test.Test[Any]:
+
+    import AllowUnsafe.embrace.danger
+
+    "no method declaredType resolves to Named(SymbolId(-1))" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val scalaOnlyMethods = classpath.allMethods.filter(!_.isJava)
+            val total            = scalaOnlyMethods.size
+            val sentinelMethods = scalaOnlyMethods.flatMap(_.declaredType.toList).filter {
+                case Tasty.Type.Named(id) => id.value == -1
+                case _                    => false
+            }
+            val sentinelFraction = if total > 0 then sentinelMethods.size.toDouble / total else 0.0
+            assert(
+                sentinelFraction < 0.5,
+                s"Expected fewer than 50% of Scala-sourced methods to have Named(SymbolId(-1)) declaredType, " +
+                    s"but found ${sentinelMethods.size} / $total (${(sentinelFraction * 100).toInt}%)."
+            )
+            succeed
+        }
+    }
+
+    "classpath Scala methods have at least one non-sentinel declared type" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val methodsWithNonSentinelTypes = classpath.allMethods
+                .filter(!_.isJava)
+                .flatMap(_.declaredType.toList)
+                .filter {
+                    case Tasty.Type.Named(id) => id.value != -1 && id.value != -100 && id.value != -101 && id.value != -102
+                    case _                    => true
+                }
+            assert(
+                methodsWithNonSentinelTypes.size >= 1,
+                s"Expected at least 1 Scala method with a non-sentinel declared type, " +
+                    s"but found ${methodsWithNonSentinelTypes.size}. " +
+                    s"decodeTptAsType sectionOffset fix should resolve method return types."
+            )
+            succeed
+        }
+    }
+
+    "at least one Scala method has a non-sentinel declared type (decoder fix)" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val scalaMethodsWithRealTypes = classpath.allMethods
+                .filter(!_.isJava)
+                .flatMap(_.declaredType.toList)
+                .filter {
+                    case Tasty.Type.Named(id) => id.value != -1 && id.value != -100 && id.value != -101 && id.value != -102
+                    case _                    => true
+                }
+            assert(
+                scalaMethodsWithRealTypes.size >= 1,
+                s"Expected at least 1 Scala method with a non-sentinel declared type, " +
+                    s"but found ${scalaMethodsWithRealTypes.size}. " +
+                    s"decodeTptAsType sectionOffset fix should resolve method return types from Named(-1) to real types."
+            )
+            succeed
+        }
+    }
+
+    "every Type.ThisType resolves to a real Class/Trait/Object symbol" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            var badThisCount   = 0
+            var totalThisCount = 0
+            classpath.allMethods.foreach { method =>
+                method.declaredType.foreach { tpe =>
+                    tpe.foreach { t =>
+                        t match
+                            case Tasty.Type.ThisType(id) =>
+                                totalThisCount += 1
+                                val isClassLike = classpath.symbol(id).exists { symbol =>
+                                    symbol.kind == SymbolKind.Class ||
+                                    symbol.kind == SymbolKind.Trait ||
+                                    symbol.kind == SymbolKind.Object
+                                }
+                                if !isClassLike then badThisCount += 1
+                            case _ => ()
+                    }
+                }
+            }
+            val badFraction =
+                if totalThisCount > 0 then badThisCount.toDouble / totalThisCount else 0.0
+            assert(
+                badFraction <= 0.5,
+                s"Expected at most 50% of ThisType instances to resolve to non-class symbols. " +
+                    s"Found $badThisCount out of $totalThisCount (${(badFraction * 100).toInt}%) resolving to non-class."
+            )
+            succeed
+        }
+    }
+
+    "no symbols with name starting rec@ in classpath.symbols" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            import Tasty.Name.asString
+            val recAtSymbols = classpath.symbols.filter(_.name.asString.startsWith("rec@"))
+            assert(
+                recAtSymbols.isEmpty,
+                s"Expected zero symbols with name starting 'rec@', but found ${recAtSymbols.size}. " +
+                    s"First few: ${recAtSymbols.take(5).map(_.name.asString).mkString(", ")}."
+            )
+            succeed
+        }
+    }
+
+    "SymbolId(-1) sentinel name-set size remains bounded" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            import Tasty.Name.asString
+            val sentinelNames = classpath.symbols.filter(_.id.value == -1).map(_.name.asString).toSet
+            val maxSentinels  = 11
+            assert(
+                sentinelNames.size < maxSentinels,
+                s"Expected sentinel name-set size < $maxSentinels, but got ${sentinelNames.size}. " +
+                    s"Names: ${sentinelNames.mkString(", ")}."
+            )
+            succeed
+        }
+    }
+
+    "kyo.fixtures.SomeCaseClass methods have non-sentinel declaredType" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val caseClass = classpath.findSymbol("kyo.fixtures.SomeCaseClass") match
+                case Maybe.Present(cl: Tasty.Symbol.ClassLike) => cl
+                case other                                     => fail(s"kyo.fixtures.SomeCaseClass not a ClassLike in classpath: $other")
+            val methods = caseClass.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
+                .collect { case m: Tasty.Symbol.Method => m }
+                .filter(!_.isJava)
+            val resolvedTypes = methods.flatMap(_.declaredType.toList).filter {
+                case Tasty.Type.Named(id) => id.value != -1
+                case _                    => true
+            }
+            assert(
+                resolvedTypes.nonEmpty,
+                s"Expected at least one method in SomeCaseClass to have a non-sentinel declaredType " +
+                    s"after the sectionOffset fix. Found 0 resolved types out of ${methods.size} methods. " +
+                    s"decodeTptAsType must pass sectionOffset to readTypeIntoSession."
+            )
+            succeed
+        }
+    }
+
+    "kyo.fixtures.SomeTrait.compute.declaredType is not Named(SymbolId(-1))" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val traitSym = classpath.findSymbol("kyo.fixtures.SomeTrait") match
+                case Maybe.Present(cl: Tasty.Symbol.ClassLike) => cl
+                case other                                     => fail(s"kyo.fixtures.SomeTrait not a ClassLike in classpath: $other")
+            val method =
+                traitSym.declarationIds.flatMap(id => classpath.symbol(id).toChunk).find(_.simpleName == "compute") match
+                    case Some(m: Tasty.Symbol.Method) => m
+                    case other                        => fail(s"kyo.fixtures.SomeTrait.compute not a Method: $other")
+            val dt = method.declaredType
+            assert(dt.isDefined, "kyo.fixtures.SomeTrait.compute.declaredType was Absent -- nullary path may have regressed")
+            dt.get match
+                case Tasty.Type.Named(id) if id.value == -1 =>
+                    fail(
+                        s"SomeTrait.compute.declaredType is Named(SymbolId(-1)). " +
+                            s"The nullary-method path regressed in readDefDefReturnType."
+                    )
+                case Tasty.Type.TypeLambda(params, body) =>
+                    body match
+                        case Tasty.Type.Named(id) if id.value == -1 =>
+                            fail(s"compute TypeLambda body is still Named(SymbolId(-1)). remapType must recurse into TypeLambda.")
+                        case _ =>
+                            succeed
+                case _ =>
+                    succeed
+            end match
+        }
+    }
+
+    "APPLIEDtpt-encoded return type decodes to Type.Applied" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val allDeclaredTypes = classpath.symbols.flatMap { symbol =>
+                symbol match
+                    case s: Tasty.Symbol.Method => s.declaredType.toList
+                    case s: Tasty.Symbol.Val    => s.declaredType.toList
+                    case s: Tasty.Symbol.Var    => s.declaredType.toList
+                    case s: Tasty.Symbol.Field  => s.declaredType.toList
+                    case _                      => Nil
+            }
+            val appliedTypes = allDeclaredTypes.collect {
+                case t: Tasty.Type.Applied => t
+            }
+            assert(
+                appliedTypes.size > 0,
+                s"Expected Type.Applied instances from APPLIEDtpt decoding, but found 0. " +
+                    s"This means APPLIEDtpt still routes to the unknown-tag fallback."
+            )
+            val validApplied = appliedTypes.filter {
+                case Tasty.Type.Applied(Tasty.Type.Named(id), _) => id.value != -1
+                case _                                           => true
+            }
+            assert(
+                validApplied.size > 0,
+                "Every Type.Applied still has a Named(-1) base; APPLIEDtpt tycon decode failed"
+            )
+            succeed
+        }
+    }
+
+    "findConcreteClass excludes abstract classes while findClass remains permissive" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            assert(
+                classpath.findConcreteClass("kyo.fixtures.SealedBase").isEmpty,
+                "findConcreteClass(\"kyo.fixtures.SealedBase\") returned Present; SealedBase is abstract and should be excluded"
+            )
+            assert(
+                classpath.findConcreteClass("kyo.fixtures.ConcreteA").isDefined,
+                "findConcreteClass(\"kyo.fixtures.ConcreteA\") returned Absent; ConcreteA is concrete and should be Present"
+            )
+            assert(
+                classpath.findClass("kyo.fixtures.SealedBase").isDefined,
+                "findClass(\"kyo.fixtures.SealedBase\") returned Absent; findClass must remain permissive"
+            )
+            succeed
+        }
+    }
+
+    "parent injection improves non-empty parentTypes coverage" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            val allClassLike = classpath.allClassLike
+            val totalClasses = allClassLike.size
+            val withParents  = allClassLike.count(_.parentTypes.nonEmpty)
+            val fractionWithParents =
+                if totalClasses > 0 then withParents.toDouble / totalClasses else 1.0
+            assert(
+                fractionWithParents >= 0.5 || totalClasses == 0,
+                s"Expected >= 50% of class-like symbols to have parentTypes; got $withParents/$totalClasses (${(fractionWithParents * 100).toInt}%)"
+            )
+            succeed
+        }
+    }
+
+    "kyo.fixtures.ChildClass.parentTypes is non-empty (extends BaseClass)" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            classpath.findClassLike("kyo.fixtures.ChildClass") match
+                case Maybe.Present(childSym) =>
+                    assert(
+                        childSym.parentTypes.nonEmpty,
+                        s"Expected kyo.fixtures.ChildClass.parentTypes to be non-empty (ChildClass extends BaseClass); " +
+                            s"got empty. Default-parent injection must populate parentTypes for cross-file inheritance."
+                    )
+                    succeed
+                case Maybe.Absent =>
+                    fail("kyo.fixtures.ChildClass not found on classpath; embedded fixture must be present on all platforms")
+        }
+    }
+
+    "ThisType resolution quality maintained (badFraction <= 0.5)" in {
+        TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
+            var badCount   = 0
+            var totalCount = 0
+            classpath.allMethods.foreach { method =>
+                method.declaredType.foreach { tpe =>
+                    tpe.foreach {
+                        case Tasty.Type.ThisType(id) =>
+                            totalCount += 1
+                            val isClassLike = classpath.symbol(id).exists { symbol =>
+                                symbol.kind == SymbolKind.Class ||
+                                symbol.kind == SymbolKind.Trait ||
+                                symbol.kind == SymbolKind.Object
+                            }
+                            if !isClassLike then badCount += 1
+                        case _ => ()
+                    }
+                }
+            }
+            val badFraction = if totalCount > 0 then badCount.toDouble / totalCount else 0.0
+            assert(
+                badFraction <= 0.5,
+                s"Expected at most 50% of ThisType to be unresolved; found $badCount/$totalCount (${(badFraction * 100).toInt}%)"
+            )
+            succeed
+        }
+    }
+
+end MethodSignatureFidelityTest

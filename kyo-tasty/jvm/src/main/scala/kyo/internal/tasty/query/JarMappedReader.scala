@@ -1,0 +1,173 @@
+package kyo.internal.tasty.query
+
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
+import java.util.zip.Inflater
+
+/** Memory-mapped JAR reader. One MappedByteBuffer and a parsed CEN index per JAR file.
+  *
+  * Concurrency: Multiple fibers/threads can call `readEntry` against the same JarMappedReader concurrently. Each call duplicates the
+  * underlying buffer (~30 bytes, cheap) so each caller has an independent position cursor. Each call creates its own Inflater instance;
+  * Inflater is single-threaded and stateful, so it must NOT be shared or pooled without careful synchronization.
+  *
+  * Lifecycle: Created by `JarMappedReader.init`. The MappedByteBuffer is backed by an OS memory mapping that remains valid after the
+  * RandomAccessFile/FileChannel is closed. The mapping is released when the buffer is GC'd (or when the JVM exits). No explicit unmap is
+  * performed; attempting to unmap a MappedByteBuffer via sun.misc.Cleaner is unsafe on Java 9+ and is deliberately avoided here.
+  */
+final private[kyo] class JarMappedReader(
+    val jarPath: String,
+    private val mbb: MappedByteBuffer,
+    private val entries: java.util.HashMap[String, JarCentralDirectory.JarEntry]
+):
+
+    /** Read and decompress the named entry from the memory-mapped JAR.
+      *
+      * Thread-safe: duplicates the buffer to obtain an independent position. Creates a fresh Inflater per call.
+      *
+      * @throws java.io.FileNotFoundException
+      *   if the entry name is not found in the JAR's central directory
+      * @throws java.io.IOException
+      *   on bad local-file-header signature, unsupported compression method, or truncated deflate stream
+      */
+    def readEntry(entryName: String): Array[Byte] =
+        val entry = entries.get(entryName)
+        if entry == null then
+            // Unsafe: null is Java-interop result from HashMap.get; documented as such
+            throw new java.io.FileNotFoundException(s"$jarPath!/$entryName: entry not found in jar")
+        end if
+        val buffer = mbb.duplicate()
+        buffer.order(ByteOrder.LITTLE_ENDIAN)
+
+        // Local file header (LFH) layout:
+        //   sig(4) + version(2) + gpFlag(2) + method(2) + modTime(2) + modDate(2)
+        //   + crc(4) + compSize(4) + uncompSize(4) + nameLen(2) + extraLen(2)
+        //   = 30 bytes fixed, followed by name(nameLen) + extra(extraLen) + data
+        //
+        // We must read nameLen + extraLen from the LFH to locate the actual data start because
+        // the LFH extra field length can differ from the CEN extra field length.
+        if entry.lfhOffset > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: LFH offset ${entry.lfhOffset} exceeds 2GB mmap range; Zip64 required"
+            )
+        end if
+        buffer.position(entry.lfhOffset.toInt)
+        val sig = buffer.getInt()
+        if sig != 0x04034b50 then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: bad local file header signature 0x${sig.toHexString}"
+            )
+        end if
+
+        // Skip version(2) + gpFlag(2) + method(2) + modTime(2) + modDate(2) + crc(4) + compSize(4) + uncompSize(4) = 22 bytes
+        // We are at offset +4 after reading sig; skip 22 more to reach nameLen at +26.
+        val lfhBase26 = entry.lfhOffset + 26L
+        if lfhBase26 > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: LFH offset + 26 ($lfhBase26) exceeds 2GB mmap range; Zip64 required"
+            )
+        end if
+        buffer.position(lfhBase26.toInt)
+        val nameLen  = buffer.getShort() & 0xffff
+        val extraLen = buffer.getShort() & 0xffff
+
+        val dataOffset: Long = entry.lfhOffset + 30L + nameLen.toLong + extraLen.toLong
+        if dataOffset < 0L || dataOffset > buffer.limit().toLong then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: LFH dataOffset $dataOffset out of range (limit=${buffer.limit()})"
+            )
+        end if
+        if entry.compSize > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: compressed size ${entry.compSize} exceeds Int.MaxValue; cannot allocate array"
+            )
+        end if
+        if entry.uncompSize > Int.MaxValue then
+            throw new java.io.IOException(
+                s"$jarPath!/$entryName: uncompressed size ${entry.uncompSize} exceeds Int.MaxValue; cannot allocate array"
+            )
+        end if
+        val compSize   = entry.compSize.toInt
+        val uncompSize = entry.uncompSize.toInt
+
+        // dataOffset is Long; ByteBuffer.position(int) only accepts Int.
+        // The bounds check above (dataOffset > buffer.limit()) ensures dataOffset fits in Int here.
+        val dataOffsetInt = dataOffset.toInt
+        entry.method match
+            case 0 =>
+                // STORED: data is verbatim; copy directly from the mapped region into a heap array
+                val out = new Array[Byte](uncompSize)
+                buffer.position(dataOffsetInt)
+                buffer.get(out)
+                out
+            case 8 =>
+                // DEFLATED: nowrap=true because ZIP uses raw deflate (no zlib header/trailer).
+                // Use buffer.slice(dataOffset, compSize) to get a ByteBuffer view that shares the
+                // mapped memory -- no heap copy of the compressed bytes.
+                // Inflater.setInput(ByteBuffer) (JDK 11+) feeds the mapped region directly.
+                val compSlice = buffer.slice(dataOffsetInt, compSize)
+                val inflater  = new Inflater(true)
+                try
+                    inflater.setInput(compSlice)
+                    val out   = new Array[Byte](uncompSize)
+                    var total = 0
+                    while total < uncompSize && !inflater.finished() do
+                        val n = inflater.inflate(out, total, uncompSize - total)
+                        if n == 0 then
+                            if inflater.needsInput() || inflater.needsDictionary() then
+                                throw new java.io.IOException(
+                                    s"$jarPath!/$entryName: truncated deflate stream (inflated $total of $uncompSize bytes)"
+                                )
+                        end if
+                        total += n
+                    end while
+                    out
+                finally inflater.end()
+                end try
+            case other =>
+                throw new java.io.IOException(
+                    s"$jarPath!/$entryName: unsupported compression method $other"
+                )
+        end match
+    end readEntry
+
+end JarMappedReader
+
+object JarMappedReader:
+
+    /** Init a JAR, memory-map it, parse its central directory, and return a JarMappedReader.
+      *
+      * The RandomAccessFile and FileChannel are closed after mapping; the MappedByteBuffer remains valid because OS memory mappings outlive
+      * the file descriptor.
+      *
+      * @throws java.io.IOException
+      *   on any I/O error, malformed ZIP/JAR, or multi-disk JAR
+      */
+    def init(jarPath: String): JarMappedReader =
+        val raf = new RandomAccessFile(jarPath, "r")
+        try
+            val channel = raf.getChannel
+            // Unsafe: var + null hold the MappedByteBuffer across the inner try / finally so the
+            // value is still accessible after `channel.close()` runs; Java NIO interop, no shared state.
+            var mbb: MappedByteBuffer = null
+            try
+                val size = channel.size()
+                if size == 0 then throw new java.io.IOException(s"$jarPath: empty file")
+                mbb = channel.map(FileChannel.MapMode.READ_ONLY, 0L, size)
+            catch
+                case ex: java.io.IOException =>
+                    throw new java.io.IOException(s"map failed for $jarPath: ${ex.getMessage}", ex)
+            finally
+                channel.close()
+            end try
+            val entMap = JarCentralDirectory.parseAllEntries(jarPath, mbb)
+            new JarMappedReader(jarPath, mbb, entMap)
+        finally
+            // Closing RAF also closes the channel (if not already closed above); the MappedByteBuffer remains valid.
+            raf.close()
+        end try
+    end init
+
+end JarMappedReader

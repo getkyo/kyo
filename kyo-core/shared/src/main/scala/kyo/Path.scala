@@ -41,8 +41,33 @@ object Path extends PathPlatformSpecific:
 
     given CanEqual[Path, Path] = CanEqual.derived
 
-    /** A path segment — either a literal string or another Path whose parts are spliced in. */
+    /** A path segment, either a literal string or another Path whose parts are spliced in. */
     type Part = String | Path
+
+    /** Combined file-attribute snapshot returned by [[Path.stat]].
+      *
+      * `lastModifiedMs` is the file's last-modified time in milliseconds since the Unix epoch.
+      * `sizeBytes` is the file's size in bytes for regular files; the value for directories
+      * and special files is platform-defined (typically 0 or the directory entry size).
+      *
+      * Returning both fields from a single underlying syscall guarantees the two values
+      * reflect a consistent measurement of the file at one instant.
+      */
+    final case class PathStat(lastModifiedMs: Long, sizeBytes: Long) derives CanEqual
+
+    /** Platform separator between path entries in classpath-style joined strings.
+      *
+      * Returns `":"` on Unix-family systems and `";"` on Windows. On Scala.js, forwards Node's `path.delimiter`.
+      * Runtime-invariant; computed once at companion init.
+      */
+    val pathSeparator: String = platformPathSeparator
+
+    /** Platform separator between segments of a single path.
+      *
+      * Returns `"/"` on Unix-family systems and `"\\"` on Windows. On Scala.js, forwards Node's `path.sep`.
+      * Runtime-invariant; computed once at companion init.
+      */
+    val fileSeparator: String = platformFileSeparator
 
     // --- Construction ---
 
@@ -191,6 +216,23 @@ object Path extends PathPlatformSpecific:
         /** Reads the entire file contents as a `Span[Byte]`. */
         def readBytes(using Frame): Span[Byte] < (Sync & Abort[FileReadException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.readBytes()))
+
+        /** Returns the size in bytes of the regular file at this path.
+          *
+          * Fails with `FileReadException` if the path does not exist, is not a regular file, or the underlying read fails.
+          */
+        def size(using Frame): Long < (Sync & Abort[FileReadException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.size()))
+
+        /** Returns mtime and size atomically from a single underlying syscall.
+          *
+          * Fails with `FileReadException` if the path does not exist, is not readable, or the underlying call fails.
+          *
+          * Prefer this over separate `lastModified` + `size` reads when both are needed:
+          * a single syscall guarantees the two values reflect the same instant.
+          */
+        def stat(using Frame): PathStat < (Sync & Abort[FileReadException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.stat()))
 
         /** Reads all lines from the file as a `Chunk[String]` (UTF-8). */
         def readLines(using Frame): Chunk[String] < (Sync & Abort[FileReadException]) =
@@ -404,6 +446,13 @@ object Path extends PathPlatformSpecific:
         def truncate(size: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
             Sync.Unsafe.defer(Abort.get(self.unsafe.truncate(size)))
 
+        /** Sets the last-modified time of the file to `epochMs` milliseconds since the Unix epoch.
+          *
+          * Fails with `FileWriteException` if the path does not exist or the operation is not permitted.
+          */
+        def setLastModified(epochMs: Long)(using Frame): Unit < (Sync & Abort[FileWriteException]) =
+            Sync.Unsafe.defer(Abort.get(self.unsafe.setLastModified(epochMs)))
+
         // --- Directory / structure ---
 
         /** Creates this path as a directory (including all missing parent directories). */
@@ -607,6 +656,7 @@ object Path extends PathPlatformSpecific:
         def openRead()(using AllowUnsafe, Frame): Result[FileReadException, Path.ReadHandle]
         def openReadLines(charset: Charset)(using AllowUnsafe, Frame): Result[FileReadException, Path.LineReadHandle]
         def size()(using AllowUnsafe, Frame): Result[FileReadException, Long]
+        def stat()(using AllowUnsafe, Frame): Result[FileReadException, PathStat]
 
         // --- Write ---
 
@@ -629,6 +679,7 @@ object Path extends PathPlatformSpecific:
           */
         def appendLines(value: Chunk[String], createFolders: Boolean = true)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
         def truncate(size: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
+        def setLastModified(epochMs: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit]
 
         // --- Directory / structure ---
 
