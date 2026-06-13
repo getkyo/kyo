@@ -107,6 +107,7 @@ class HttpClientTest extends BaseHttpTest:
             assert(config.followRedirects == true)
             assert(config.maxRedirects == 10)
             assert(config.retrySchedule == Absent)
+            assert(config.autoFilters == true)
             assert(config.clientFilter.eq(HttpFilter.noop))
         }
 
@@ -139,6 +140,12 @@ class HttpClientTest extends BaseHttpTest:
             assert(config.clientFilter.eq(HttpFilter.noop))
         }
 
+        "withoutAutoFilters disables auto filters" in {
+            val config = HttpClientConfig()
+                .withoutAutoFilters
+            assert(config.autoFilters == false)
+        }
+
         "current config and filter can be inspected" in {
             HttpClient.withConfig(noTimeout.filter(HttpFilter.client.addHeader("X-Test", "1"))) {
                 HttpClient.useConfig { config =>
@@ -147,6 +154,12 @@ class HttpClientTest extends BaseHttpTest:
                 }.andThen {
                     HttpClient.useFilter { filter =>
                         assert(!filter.eq(HttpFilter.noop))
+                    }
+                }.andThen {
+                    HttpClient.withoutAutoFilters {
+                        HttpClient.useAutoFilter { filter =>
+                            assert(filter.eq(HttpFilter.noop))
+                        }
                     }
                 }
             }
@@ -1940,10 +1953,10 @@ class HttpClientTest extends BaseHttpTest:
 
         def appendHeader(name: String, value: String): HttpFilter.Passthrough[Nothing] =
             new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addHeader(name, value))
 
         // Server endpoint that echoes back the Authorization header value
@@ -2046,6 +2059,47 @@ class HttpClientTest extends BaseHttpTest:
                             c.sendWith(route, request) { resp =>
                                 assert(resp.fields.body == "config,scoped,route")
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        "auto filters apply before configured and route filters" - {
+            val route2 = HttpRoute.getRaw("auto-client")
+                .request(_.headerOpt[String]("x-order"))
+                .response(_.bodyText)
+            val ep = route2.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Order").mkString(","))
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Order", "config"))) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("auto-client").response(_.bodyText)
+                            .filter(appendHeader("X-Order", "route"))
+                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/auto-client", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body == "auto-client,config,route")
+                        }
+                    }
+                }
+            }
+        }
+
+        "withoutAutoFilters disables auto filters and preserves configured filters" - {
+            val route2 = HttpRoute.getRaw("auto-client")
+                .request(_.headerOpt[String]("x-order"))
+                .response(_.bodyText)
+            val ep = route2.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Order").mkString(","))
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Order", "config")).withoutAutoFilters) {
+                    withClient { c =>
+                        val route   = HttpRoute.getRaw("auto-client").response(_.bodyText)
+                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/auto-client", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body == "config")
                         }
                     }
                 }

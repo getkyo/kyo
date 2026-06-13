@@ -1384,6 +1384,26 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             }.andThen(succeed)
         }
 
+        "webSocket preserves user effects through client filters".notNative in {
+            withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
+                HttpClient.withFilter(HttpFilter.client.addHeader("X-Scoped", "scoped")) {
+                    Var.run(0) {
+                        HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/echo") { ws =>
+                            Var.update[Int](_ + 1).andThen {
+                                ws.put(HttpWebSocket.Payload.Text("var")).andThen {
+                                    ws.take().map { payload =>
+                                        discard(assert(payload == HttpWebSocket.Payload.Text("var")))
+                                    }
+                                }.andThen(Var.get[Int])
+                            }
+                        }.map { value =>
+                            assert(value == 1)
+                        }
+                    }
+                }
+            }.unit
+        }
+
         "webSocket preserves query string in handshake path".notNative in {
             val handler = HttpHandler.webSocket("ws/query") { (req, ws) =>
                 val token = req.query("token").getOrElse("missing")

@@ -41,9 +41,11 @@ import kyo.*
   * @param tls
   *   TLS settings applied to HTTPS connections made by this client. See [[HttpTlsConfig]]. Per-request TLS overrides can be set via
   *   `HttpClientConfig` on [[HttpClient.init]].
+  * @param autoFilters
+  *   Whether ServiceLoader-discovered client filters are applied. Defaults to true.
   * @param clientFilter
-  *   Programmatic client filter applied to outgoing HTTP requests and WebSocket upgrade handshakes after ServiceLoader filters and before
-  *   route filters.
+  *   Programmatic client filter applied to outgoing HTTP requests and WebSocket upgrade handshakes after auto filters and before route
+  *   filters.
   *
   * @see
   *   [[kyo.HttpClient.withConfig]] Applies this config to a block of code
@@ -64,6 +66,7 @@ case class HttpClientConfig(
     retryOn: HttpStatus => Boolean = _.isServerError,
     transportConfig: HttpTransportConfig = HttpTransportConfig.default,
     tls: HttpTlsConfig = HttpTlsConfig.default,
+    autoFilters: Boolean = true,
     clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
 ):
     require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
@@ -83,6 +86,8 @@ case class HttpClientConfig(
     def retryOn(f: HttpStatus => Boolean): HttpClientConfig       = copy(retryOn = f)
     def transportConfig(v: HttpTransportConfig): HttpClientConfig = copy(transportConfig = v)
     def tls(config: HttpTlsConfig): HttpClientConfig              = copy(tls = config)
+    def autoFilters(v: Boolean): HttpClientConfig                 = copy(autoFilters = v)
+    def withoutAutoFilters: HttpClientConfig                      = autoFilters(false)
     def filter(f: HttpFilter.Passthrough[Nothing]): HttpClientConfig =
         copy(clientFilter = clientFilter.andThen(f))
     def filters(fs: Seq[HttpFilter.Passthrough[Nothing]]): HttpClientConfig =
