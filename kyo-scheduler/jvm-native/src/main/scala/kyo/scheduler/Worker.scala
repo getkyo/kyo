@@ -275,9 +275,14 @@ abstract private class Worker(
                     task = null
                     executions += 1
                     if (runTask(current) == Task.Preempted) {
-                        // Task was preempted - add it back to queue and get next task
                         preemptions += 1
-                        task = queue.addAndPoll(current)
+                        if (current.needsInterrupt())
+                            // Interrupted during its slice: never requeue (a racy runtime key could starve
+                            // it). Run it again immediately; eval observes the interrupt and finalizes.
+                            task = current
+                        else
+                            // Task was preempted - add it back to queue and get next task
+                            task = queue.addAndPoll(current)
                     } else {
                         // Task completed normally
                         completions += 1

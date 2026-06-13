@@ -93,6 +93,11 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
 
     def preInterrupt(): Boolean = true
 
+    /** Called exactly once when an interrupt completes this promise, after the state CAS, so observers it notifies already see the final
+      * state. Never fires on value completion. No-op by default; IOTask overrides it to notify the scheduler.
+      */
+    protected def onInterrupted(): Unit = {}
+
     final def mask(): IOPromise[E, A] =
         val p = new IOPromise[E, A]:
             override def preInterrupt() = false
@@ -196,6 +201,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     final private def interrupt(p: Pending[E, A], v: Error[E]): Boolean =
         compareAndSet(p, v) && {
             onComplete()
+            onInterrupted()
             p.flushInterrupt(v)
             true
         }

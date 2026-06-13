@@ -155,13 +155,13 @@ import kyo.*
 
 case class Visitor(name: String, language: String)
 
-val toUpper: String => String < Any = (s: String) => s.toUpperCase
+val toUpper: String => String < Any = s => s.toUpperCase
 
 assert(toUpper("ada").eval == "ADA")
 
 // A pure two-arg function lifts the same way:
 val mkVisitor: (String, String) => Visitor < Any =
-    (n: String, l: String) => Visitor(n, l)
+    (n, l) => Visitor(n, l)
 
 assert(mkVisitor("Ada", "en").eval == Visitor("Ada", "en"))
 ```

@@ -46,7 +46,10 @@ private[runner] object CliPlatform:
                                 )
                             )
                         )
-            if report.failed > 0 || report.cancelled > 0 || report.timedOut > 0 then
+            // Cancelled is a deliberate skip (a failed `assume`/`cancel` precondition, e.g. a ">4 cores"
+            // requirement), not a build failure, matching EventBuilder's Status.Canceled. Only reds, a
+            // failed assertion or a timeout, set a non-zero exit code.
+            if report.failed > 0 || report.timedOut > 0 then
                 anyError = true
         end for
 

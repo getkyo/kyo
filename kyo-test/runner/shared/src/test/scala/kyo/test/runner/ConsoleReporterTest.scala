@@ -243,7 +243,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         assert(!out.contains(s"line${ConsoleReporter.MaxDiagramLines + 1}"), s"Expected line beyond cap to be absent:\n$out"): Unit
     }
 
-    "phase10-suite-4: TimedOut and Cancelled leaves in suite FAILURES block; Pending and Ignored do not appear" in {
+    "phase10-suite-4: only TimedOut/Failed are failures; Cancelled, Pending, Ignored are not in the FAILURES block" in {
         val suiteInfo = SuiteInfo("MixSuite", "my.MixSuite", Maybe.empty)
         val report = SuiteReport(
             "MixSuite",
@@ -258,13 +258,15 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         val out = capture(useColors = false) { r =>
             r.onSuiteComplete(suiteInfo, report)
         }
-        assert(out.contains("FAILURES (2)"), s"Expected FAILURES (2) in:\n$out"): Unit
+        // Only the timeout is a real failure. The cancelled, pending, and ignored leaves are
+        // deliberate non-runs: they are reported as counts on the suite line, never in FAILURES.
+        assert(out.contains("FAILURES (1)"), s"Expected FAILURES (1) in:\n$out"): Unit
         assert(out.contains("[TIMEOUT]"), s"Expected [TIMEOUT] in:\n$out"): Unit
-        assert(out.contains("[CANCELLED]"), s"Expected [CANCELLED] in:\n$out"): Unit
         assert(out.contains("MixSuite > tout"), s"Expected TimedOut path in:\n$out"): Unit
-        assert(out.contains("MixSuite > canc"), s"Expected Cancelled path in:\n$out"): Unit
+        assert(!out.contains("MixSuite > canc"), s"Cancelled must not appear in FAILURES block:\n$out"): Unit
         assert(!out.contains("MixSuite > pend"), s"Pending must not appear in FAILURES block:\n$out"): Unit
         assert(!out.contains("MixSuite > ignrd"), s"Ignored must not appear in FAILURES block:\n$out"): Unit
+        assert(out.contains("1 cancelled"), s"Expected '1 cancelled' count on the suite line in:\n$out"): Unit
     }
 
     // ── ConsoleReporter.autoDetect ──────────────────────────────────────────────────────────────────

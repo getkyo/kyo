@@ -141,7 +141,7 @@ abstract class TracedSpec
     final override def run[In](
         v: => In < (Async & Scope & Abort[Throwable] & Var[List[String]])
     )(using Frame): zio.ZIO[Environment, Throwable, In] =
-        ZIOs.run(Scope.run(Var.run(List.empty[String])(v)))
+        ZIOs.run(Scope.run(Var.run(List.empty)(v)))
 end TracedSpec
 ```
 

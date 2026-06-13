@@ -151,12 +151,14 @@ private[internal] object Summary:
         end if
     end boundedUtf8
 
+    // A failure is a real red only: a failed assertion or a timeout. Cancelled, Skipped, Pending,
+    // and Ignored are deliberate non-runs, already reported as their own counts on the summary line.
+    // They never enter TOTAL FAILURES, so the failed count and the failure list cannot disagree.
     private def isFailure(r: TestResult): Boolean =
         r match
-            case _: TestResult.Failed    => true
-            case _: TestResult.TimedOut  => true
-            case _: TestResult.Cancelled => true
-            case _                       => false
+            case _: TestResult.Failed   => true
+            case _: TestResult.TimedOut => true
+            case _                      => false
 
     private def statusTag(r: TestResult): String =
         r match
