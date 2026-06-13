@@ -109,6 +109,12 @@ final class Scheduler(
     @volatile private var allocatedWorkers = 0
     @volatile private var currentWorkers   = coreWorkers
 
+    // Initialized before ensureWorkers(): each worker's rebalance() reads interruptEpoch through
+    // currentInterruptEpoch(), and a worker can begin running before this constructor completes
+    // (observed on Scala Native), so the field must already hold its AtomicLong when the first
+    // worker runs. Declaring it after ensureWorkers() let a worker read a null reference.
+    private val interruptEpoch = new AtomicLong(0L)
+
     ensureWorkers()
 
     private val timer = InternalTimer(timerExecutor)
@@ -122,8 +128,6 @@ final class Scheduler(
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
 
     private[scheduler] val blockingMonitor = new BlockingMonitor(workers, () => currentWorkers, maxWorkers, timerExecutor)
-
-    private val interruptEpoch = new AtomicLong(0L)
 
     /** Records a real interrupt: bumps the interrupt epoch (consumed by each worker's rebalance gate
       * to re-heapify queued tasks) and wakes the blocking monitor for an immediate scan.
