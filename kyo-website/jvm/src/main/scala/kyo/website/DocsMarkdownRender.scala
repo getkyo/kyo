@@ -191,7 +191,10 @@ object DocsMarkdownRender:
                         val raw = new mutable.ArrayBuffer[String]()
                         raw += text
                         var j = i + 1
-                        // isInstanceOf is used here for the loop guard; a match-inversion would be less readable.
+                        // Justified: isInstanceOf is the loop guard "stop at the next Heading"; the body
+                        // already pattern-matches the non-Heading cases, so a match-inversion guard needs a
+                        // break (Scala 3 has none) or a recursive restructure, strictly less readable for an
+                        // identical, byte-pinned result.
                         while j < blocks.length && !blocks(j).isInstanceOf[Block.Heading] do
                             blocks(j) match
                                 case Block.Paragraph(t)  => prose += stripInlineMarkdown(t); raw += t
@@ -229,10 +232,10 @@ object DocsMarkdownRender:
         Chunk.from(syms.toSeq)
     end sectionSymbols
 
-    private def baseIdent(code: String): Option[String] =
+    private def baseIdent(code: String): Maybe[String] =
         val afterLead = code.dropWhile(c => !(c.isLetter || c == '_'))
         val id        = afterLead.takeWhile(c => c.isLetterOrDigit || c == '_')
-        if id.length >= 2 && (id.head.isLetter || id.head == '_') then Some(id) else None
+        if id.length >= 2 && (id.head.isLetter || id.head == '_') then Present(id) else Absent
     end baseIdent
 
     /** Collapse whitespace and truncate `prose` at the last word boundary at or before `maxChars`.

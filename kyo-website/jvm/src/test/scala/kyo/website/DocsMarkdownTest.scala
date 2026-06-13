@@ -924,4 +924,31 @@ class DocsMarkdownTest extends WebsiteTest:
         end for
     }
 
+    // ---- sectionSymbols Maybe path: extracts leading base identifiers ----
+
+    "sectionSymbols extracts the leading base identifiers from inline code (Maybe path)" in {
+        val source = "## Effect section\n`Abort.run` uses `Abort[E]` and `foldAbort`.\n"
+        for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
+        yield
+            assert(snippets.size == 1, s"expected 1 pair: $snippets")
+            val (_, _, symbols) = snippets(0)
+            assert(
+                symbols == Chunk("Abort", "foldAbort"),
+                s"expected Chunk(Abort, foldAbort) in first-seen order but got: $symbols"
+            )
+        end for
+    }
+
+    // ---- sectionSymbols Absent path: drops too-short or non-leading-letter tokens ----
+
+    "sectionSymbols drops a too-short or non-leading-letter inline-code token (Absent path)" in {
+        val source = "## Short section\n`x` and `+` are not identifiers.\n"
+        for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
+        yield
+            assert(snippets.size == 1, s"expected 1 pair: $snippets")
+            val (_, _, symbols) = snippets(0)
+            assert(symbols == Chunk.empty, s"expected Chunk.empty but got: $symbols")
+        end for
+    }
+
 end DocsMarkdownTest
