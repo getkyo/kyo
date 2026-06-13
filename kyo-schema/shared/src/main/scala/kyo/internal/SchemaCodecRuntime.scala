@@ -245,16 +245,16 @@ private[kyo] object SchemaCodecRuntime:
         tag: kyo.Tag[Any],
         enumValuesEncoded: String,
         typeParamStructures: () => Array[kyo.Structure.Type]
-    )(using frame: Frame): Schema[A] =
+    ): Schema[A] =
         lazy val schemas: Array[Schema[Any]] = schemasBuilder()
         val enumValues: Array[String] =
             if enumValuesEncoded.isEmpty then Array.empty else enumValuesEncoded.split(';')
         new Schema[A](Seq.empty, sourceFields = sourceFields):
             import scala.annotation.publicInBinary
             @publicInBinary private[kyo] def serializeWrite(value: A, writer: Writer): Unit =
-                writeSum[A](meta, matchVariant, schemas, value, writer)(using frame)
+                writeSum[A](meta, matchVariant, schemas, value, writer)(using kyo.Frame.internal)
             @publicInBinary private[kyo] def serializeRead(reader: Reader): A =
-                readSum[A](meta, schemas, reader)(using frame)
+                readSum[A](meta, schemas, reader)(using kyo.Frame.internal)
             @publicInBinary private[kyo] def getter(value: A): Maybe[Any] = Maybe(value)
             @publicInBinary private[kyo] def setter(value: A, next: Any): A =
                 next.asInstanceOf[A]

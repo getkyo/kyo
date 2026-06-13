@@ -674,7 +674,7 @@ import scala.quoted.*
                 $tagExpr,
                 ${ Expr(enumValuesEncoded) },
                 $typeParamStructuresExpr
-            )(using kyo.Frame.internal)
+            )
         }
     end emitSealedSchema
 
