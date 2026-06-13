@@ -5,8 +5,9 @@ import kyo.*
 /** An executable endpoint that pairs an [[kyo.HttpRoute]] with a request handler function.
   *
   * `HttpHandler` is what the server dispatches to when an incoming request matches the route's method and path. It wraps the route's filter
-  * chain so that server-side filters (contributed via [[kyo.HttpFilter.Factory]]) and route-level filters are applied automatically on every
-  * request. The handler function receives a typed `HttpRequest[In]` with all declared fields accessible via `req.fields`.
+  * chain so route-level filters are applied automatically on every request. Server-wide auto filters contributed via
+  * [[kyo.HttpFilter.Factory]] are applied by [[kyo.HttpServer]] according to [[kyo.HttpServerConfig]]. The handler function receives a typed
+  * `HttpRequest[In]` with all declared fields accessible via `req.fields`.
   *
   * For common use cases, use the convenience methods on the companion object (`getJson`, `postText`, `getSseJson`, etc.). These create both
   * a route and a handler in one call and automatically wrap the return value in `HttpResponse.ok`. For full control over response status,
@@ -29,7 +30,7 @@ import kyo.*
   * @see
   *   [[kyo.HttpResponse.Halt]] Short-circuit mechanism for early response exits
   * @see
-  *   [[kyo.HttpFilter.Factory]] SPI for contributing server-wide filters
+  *   [[kyo.HttpFilter.Factory]] SPI for contributing server-wide auto filters
   */
 sealed abstract class HttpHandler[In, Out, +E](val route: HttpRoute[In, Out, E]):
 
@@ -107,12 +108,27 @@ object HttpHandler:
     )(
         handler: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
     ): HttpHandler[In, Out, E] =
-        val f = HttpFilter.Factory.composedServer.andThen(route.filter)
+        val f = route.filter
             .asInstanceOf[HttpFilter[Any, Any, Any, Any, E]]
         new HttpHandler[In, Out, E](route):
             def apply(request: HttpRequest[In])(using Frame) =
                 f(request, handler)
     end init
+
+    private[kyo] def withFilter[In, Out, E](
+        handler: HttpHandler[In, Out, E],
+        filter: HttpFilter.Passthrough[Nothing]
+    ): HttpHandler[In, Out, E] =
+        if filter eq HttpFilter.noop then handler
+        else
+            handler match
+                case _: WebSocketHttpHandler => handler
+                case h =>
+                    new HttpHandler[In, Out, E](h.route):
+                        def apply(request: HttpRequest[In])(using Frame) =
+                            filter(request, h.apply)
+                    end new
+    end withFilter
 
     private[kyo] def wrapHeaders[In, Out, E](
         handler: HttpHandler[In, Out, E],

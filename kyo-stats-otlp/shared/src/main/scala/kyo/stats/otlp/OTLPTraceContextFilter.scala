@@ -19,10 +19,10 @@ object OTLPTraceContextFilter:
     /** Client-side filter that adds a `traceparent` header when the current span is propagatable. */
     val client: HttpFilter.Passthrough[Nothing] =
         new HttpFilter.Passthrough[Nothing]:
-            def apply[In, Out, E2](
+            def apply[In, Out, E2, S](
                 request: HttpRequest[In],
-                next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-            )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                 TraceSpan.current.map {
                     case Present(TraceSpan(span: UnsafeTraceSpan.Propagatable)) =>
                         val traceparent = s"00-${span.traceId}-${span.spanId}-01"
@@ -34,10 +34,10 @@ object OTLPTraceContextFilter:
     /** Server-side filter that parses the `traceparent` header and sets the remote span as the current trace context. */
     val server: HttpFilter.Passthrough[Nothing] =
         new HttpFilter.Passthrough[Nothing]:
-            def apply[In, Out, E2](
+            def apply[In, Out, E2, S](
                 request: HttpRequest[In],
-                next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-            )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                 request.headers.get("traceparent") match
                     case Present(traceparent) =>
                         parseTraceparent(traceparent) match

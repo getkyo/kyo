@@ -2580,6 +2580,46 @@ class HttpServerTest extends BaseHttpTest:
 
     "filter runtime behavior" - {
 
+        "server auto filters are enabled by default" in {
+            val config = HttpServerConfig.default
+            assert(config.autoFilters == true)
+        }
+
+        "withoutAutoFilters disables server auto filters in config" in {
+            val config = HttpServerConfig.default.withoutAutoFilters
+            assert(config.autoFilters == false)
+        }
+
+        "applies server auto filters by default".notNative in {
+            val route = HttpRoute.getRaw("auto-server").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
+            HttpClient.init().map { httpClient =>
+                HttpServer.init(0, "localhost")(ep).map { server =>
+                    HttpClient.let(httpClient) {
+                        val url = HttpUrl.parse(s"http://localhost:${server.port}/auto-server").getOrThrow
+                        HttpClient.getTextResponse(url).map { response =>
+                            assert(response.headers.get("X-Auto-Server").contains("enabled"))
+                        }
+                    }
+                }
+            }
+        }
+
+        "withoutAutoFilters disables server auto filters".notNative in {
+            val route = HttpRoute.getRaw("auto-server").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok("ok"))
+            HttpClient.init().map { httpClient =>
+                HttpServer.init(HttpServerConfig.default.port(0).host("localhost").withoutAutoFilters)(ep).map { server =>
+                    HttpClient.let(httpClient) {
+                        val url = HttpUrl.parse(s"http://localhost:${server.port}/auto-server").getOrThrow
+                        HttpClient.getTextResponse(url).map { response =>
+                            assert(response.headers.get("X-Auto-Server") == Absent)
+                        }
+                    }
+                }
+            }
+        }
+
         "bearerAuth filter accept, reject, and missing header" - {
             val route = HttpRoute.getRaw("auth-test")
                 .request(_.headerOpt[String]("authorization"))
@@ -3461,30 +3501,34 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler error after client disconnect does not crash".notNative in {
             val route = HttpRoute.getRaw("slow-fail").response(_.bodyText)
-            Latch.init(1).map { handlerDone =>
-                Promise.init[Unit, Any].map { clientDisconnected =>
-                    val ep = route.handler { _ =>
-                        // Wait for client to disconnect, then throw
-                        clientDisconnected.get.andThen {
-                            handlerDone.release.andThen {
-                                throw new RuntimeException("delayed boom")
-                                HttpResponse.ok("unreachable")
-                            }
-                        }
-                    }
-                    withServer(ep) { url =>
-                        // Send request, then disconnect before handler finishes via timeout
-                        Abort.run[Throwable] {
-                            Abort.catching[Throwable] {
-                                Async.timeout(50.millis) {
-                                    sendRaw(url, HttpMethod.GET, "/slow-fail")
+            Latch.init(1).map { handlerStarted =>
+                Latch.init(1).map { handlerDone =>
+                    Promise.init[Unit, Any].map { clientDisconnected =>
+                        val ep = route.handler { _ =>
+                            handlerStarted.release.andThen {
+                                clientDisconnected.get.andThen {
+                                    handlerDone.release.andThen {
+                                        throw new RuntimeException("delayed boom")
+                                        HttpResponse.ok("unreachable")
+                                    }
                                 }
                             }
-                        }.map { _ =>
-                            // Signal handler that client has disconnected
-                            clientDisconnected.complete(Result.succeed(())).andThen {
-                                // Wait for handler to complete and potentially try to write to closed connection
-                                handlerDone.await.map(_ => succeed("handler completed after client disconnect without crashing"))
+                        }
+                        withServer(ep) { url =>
+                            Fiber.initUnscoped(
+                                Abort.run[Throwable] {
+                                    sendRaw(url, HttpMethod.GET, "/slow-fail")
+                                }
+                            ).map { requestFiber =>
+                                handlerStarted.await.andThen {
+                                    requestFiber.interrupt.andThen {
+                                        clientDisconnected.complete(Result.succeed(())).andThen {
+                                            handlerDone.await.map(_ =>
+                                                succeed("handler completed after client disconnect without crashing")
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

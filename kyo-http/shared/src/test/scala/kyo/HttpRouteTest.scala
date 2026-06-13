@@ -804,10 +804,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "add passthrough filter" in {
             val f = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.setHeader("X-Test", "1"))
             val r = HttpRoute.getRaw("users").filter(f)
             typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
@@ -815,10 +815,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter with request field requirement needs matching route fields" in {
             val f = new HttpFilter.Request["auth" ~ String, Any, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In & "auth" ~ String],
-                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
                 end apply
             // Route must provide the field the filter requires
@@ -828,10 +828,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter with request field requirement rejected when route lacks field" in {
             val f = new HttpFilter.Request["auth" ~ String, Any, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In & "auth" ~ String],
-                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "auth" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
                 end apply
             typeCheckFailure("""HttpRoute.getRaw("users").filter(f)""")(
@@ -841,10 +841,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter that adds request fields widens In" in {
             val f = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
             val r = HttpRoute.getRaw("users").filter(f)
             typeCheck("""val _: HttpRoute["user" ~ String, Any, Any] = r""")
@@ -852,10 +852,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter that adds response fields widens Out" in {
             val f = new HttpFilter.Response[Any, "cached" ~ Boolean, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out & "cached" ~ Boolean] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out & "cached" ~ Boolean] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request).map(_.addField("cached", true))
             val r = HttpRoute.getRaw("users").filter(f)
             typeCheck("""val _: HttpRoute[Any, "cached" ~ Boolean, Any] = r""")
@@ -863,16 +863,16 @@ class HttpRouteTest extends BaseHttpTest:
 
         "composing two filters via route" in {
             val f1 = new HttpFilter.Request[Any, "a" ~ Int, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "a" ~ Int] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "a" ~ Int] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("a", 1))
             val f2 = new HttpFilter.Request[Any, "b" ~ Int, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "b" ~ Int] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "b" ~ Int] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("b", 2))
             val r = HttpRoute.getRaw("users").filter(f1).filter(f2)
             typeCheck("""val _: HttpRoute["a" ~ Int & "b" ~ Int, Any, Any] = r""")
@@ -880,10 +880,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter preserved through pathAppend" in {
             val f = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
             val r = HttpRoute.getRaw("users").filter(f).pathAppend(HttpPath.Capture[Int]("id"))
             typeCheck("""val _: HttpRoute["user" ~ String & "id" ~ Int, Any, Any] = r""")
@@ -891,10 +891,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter preserved through pathPrepend" in {
             val f = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
             val r = HttpRoute.getRaw("users").filter(f).pathPrepend("api")
             typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
@@ -902,10 +902,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter preserved through request builder" in {
             val f = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
             val r = HttpRoute.getRaw("users").filter(f).request(_.query[Int]("limit"))
             typeCheck("""val _: HttpRoute["limit" ~ Int, Any, Any] = r""")
@@ -913,10 +913,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter preserved through response builder" in {
             val f = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
             val r = HttpRoute.getRaw("users").filter(f).response(_.bodyJson[User])
             typeCheck("""val _: HttpRoute[Any, "body" ~ User, Any] = r""")
@@ -924,10 +924,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "filter preserved through metadata" in {
             val f = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
             val r = HttpRoute.getRaw("users").filter(f).metadata(_.tag("Users"))
             typeCheck("""val _: HttpRoute[Any, Any, Any] = r""")
@@ -935,10 +935,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "full route with filter" in {
             val f = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "admin"))
             val r = HttpRoute.getRaw("users" / HttpPath.Capture[Int]("id"))
                 .request(_.query[Int]("limit"))
@@ -1136,19 +1136,21 @@ class HttpRouteTest extends BaseHttpTest:
             // with f2, the first filter's ReqUse=? means the composed filter
             // doesn't actually enforce "auth" ~ String at the filter level.
             val f1 = new HttpFilter.Request["auth" ~ String, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In & "auth" ~ String],
-                    next: HttpRequest[In & "auth" ~ String & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "auth" ~ String & "user" ~ String] => HttpResponse[
+                        Out
+                    ] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     val auth: String = request.fields.auth // must have auth
                     next(request.addField("user", auth))
                 end apply
 
             val f2 = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
 
             // Build route with f1 first
@@ -1175,19 +1177,19 @@ class HttpRouteTest extends BaseHttpTest:
             var f2Called = false
 
             val f1 = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     f1Called = true
                     next(request.setHeader("X-F1", "yes"))
                 end apply
 
             val f2 = new HttpFilter.Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     f2Called = true
                     next(request.setHeader("X-F2", "yes"))
                 end apply
@@ -1235,17 +1237,17 @@ class HttpRouteTest extends BaseHttpTest:
 
         "multiple filters via route.filter preserve all constraints in In/Out" in {
             val f1 = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "admin"))
 
             val f2 = new HttpFilter.Response[Any, "cached" ~ Boolean, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out & "cached" ~ Boolean] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out & "cached" ~ Boolean] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request).map(_.addField("cached", true))
 
             val route = HttpRoute.getRaw("users").filter(f1).filter(f2)
@@ -1255,10 +1257,10 @@ class HttpRouteTest extends BaseHttpTest:
         "filter requiring field can be applied to route without that field if field comes from path" in {
             // A filter requiring "id" ~ Int should work if the path captures "id"
             val f = new HttpFilter.Request["id" ~ Int, Any, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In & "id" ~ Int],
-                    next: HttpRequest[In & "id" ~ Int] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "id" ~ Int] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request)
 
             // Path captures contribute to In, so this should compile
@@ -1271,10 +1273,10 @@ class HttpRouteTest extends BaseHttpTest:
             // calling .request(newDef) replaces the entire request def.
             // Does the route's In still include "user" ~ String?
             val f = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
 
             val route = HttpRoute.getRaw("users")
@@ -1289,10 +1291,10 @@ class HttpRouteTest extends BaseHttpTest:
 
         "lambda overload that ignores input and drops filter fields is rejected" in {
             val f = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "test"))
 
             // Ignoring the input RequestDef and building a fresh one drops filter fields

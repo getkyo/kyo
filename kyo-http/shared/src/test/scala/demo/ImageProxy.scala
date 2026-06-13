@@ -20,10 +20,10 @@ object ImageProxy extends KyoApp:
 
     val timingFilter =
         new HttpFilter.Passthrough[Nothing]:
-            def apply[In, Out, E2](
+            def apply[In, Out, E2, S](
                 request: HttpRequest[In],
-                next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-            )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                 Clock.stopwatch.map { sw =>
                     next(request).map { res =>
                         sw.elapsed.map { dur =>

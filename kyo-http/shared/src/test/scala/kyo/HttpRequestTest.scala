@@ -49,6 +49,18 @@ class HttpRequestTest extends BaseHttpTest:
         }
     }
 
+    "HttpUrl" - {
+        "pathWithQuery includes raw query when present" in {
+            val url = HttpUrl.parse("https://example.com/search?q=hello&page=2").getOrThrow
+            assert(url.pathWithQuery == "/search?q=hello&page=2")
+        }
+
+        "pathWithQuery returns path when query is absent" in {
+            val url = HttpUrl.parse("https://example.com/search").getOrThrow
+            assert(url.pathWithQuery == "/search")
+        }
+    }
+
     "HttpUrl factory methods" - {
         "getRaw" in {
             val url = HttpUrl.parse("https://example.com").getOrThrow

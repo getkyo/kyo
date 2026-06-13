@@ -112,8 +112,14 @@ object HttpServer:
                 }
             case Absent =>
                 handlers
+        val serverFilter =
+            if config.autoFilters then HttpFilter.Factory.composedServer
+            else HttpFilter.noop
+        val filteredHandlers =
+            if serverFilter eq HttpFilter.noop then allHandlers
+            else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
-            val listenFiber = Unsafe.init(HttpPlatformTransport.transport, config, allHandlers)
+            val listenFiber = Unsafe.init(HttpPlatformTransport.transport, config, filteredHandlers)
             Abort.run[Closed](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(closed) =>

@@ -15,6 +15,9 @@ import kyo.internal.client.HttpClientBackend
   *   - `HttpClient.let(client) { ... }` — install a specific client instance for the duration
   *   - `HttpClient.withConfig(_.timeout(10.seconds)) { ... }` — transform the config (stacks with the current config)
   *   - `HttpClient.withConfig(config) { ... }` — replace the config entirely (discards current config)
+  *   - `HttpClient.withFilter(filter) { ... }`: add a scoped client filter for outgoing requests
+  *   - `HttpClient.withoutFilters { ... }`: clear configured client filters for a nested scope
+  *   - `HttpClient.withoutAutoFilters { ... }`: disable ServiceLoader-discovered filters for a nested scope
   *
   * The request lifecycle chains through `retryWith → redirectsWith → timeoutWith → poolWith`, each layer wrapping the next. Retries only
   * activate when a `Schedule` is set in the config. Redirects follow up to `maxRedirects` hops and switch to GET on 303 See Other per RFC
@@ -49,7 +52,8 @@ object HttpClient:
         initUnsafe(HttpPlatformTransport.transport, 100, 60.seconds)
     end defaultClient
 
-    private val local: Local[(HttpClient, HttpClientConfig)] = Local.init((defaultClient, HttpClientConfig()))
+    private val local: Local[(HttpClient, HttpClientConfig)] =
+        Local.init((defaultClient, HttpClientConfig()))
 
     // Cached non-generic routes — avoids per-request allocation for convenience methods.
     private val routeGetText      = HttpRoute.getText("")
@@ -106,6 +110,18 @@ object HttpClient:
     def use[A, S](f: HttpClient => A < S)(using Frame): A < S =
         local.use { (client, _) => f(client) }
 
+    /** Accesses the current client configuration. */
+    def useConfig[A, S](f: HttpClientConfig => A < S)(using Frame): A < S =
+        local.use { (_, config) => f(config) }
+
+    /** Accesses the current composed client filter. */
+    def useFilter[A, S](f: HttpFilter.Passthrough[Nothing] => A < S)(using Frame): A < S =
+        useConfig(config => f(config.clientFilter))
+
+    /** Accesses the current auto-discovered client filter, or `noop` when no auto filter is active. */
+    def useAutoFilter[A, S](f: HttpFilter.Passthrough[Nothing] => A < S)(using Frame): A < S =
+        useConfig(config => f(if config.autoFilters then HttpFilter.Factory.composedClient else HttpFilter.noop))
+
     /** Transforms the current client for the given computation. */
     def update[A, S](f: HttpClient => HttpClient)(v: A < S)(using Frame): A < S =
         local.use { (client, config) => local.let((f(client), config))(v) }
@@ -121,6 +137,22 @@ object HttpClient:
       */
     def withConfig[A, S](config: HttpClientConfig)(v: A < S)(using Frame): A < S =
         local.use { (client, _) => local.let((client, config))(v) }
+
+    /** Applies a client filter for all `HttpClient` calls within the given computation. Stacks with the current scoped filter. */
+    def withFilter[A, S](filter: HttpFilter.Passthrough[Nothing])(v: A < S)(using Frame): A < S =
+        withConfig(_.filter(filter))(v)
+
+    /** Applies multiple client filters for all `HttpClient` calls within the given computation. */
+    def withFilters[A, S](filters: Seq[HttpFilter.Passthrough[Nothing]])(v: A < S)(using Frame): A < S =
+        withConfig(_.filters(filters))(v)
+
+    /** Clears configured client filters for the given computation. Auto-discovered and route filters still apply. */
+    def withoutFilters[A, S](v: A < S)(using Frame): A < S =
+        withConfig(_.clearFilters)(v)
+
+    /** Disables auto-discovered client filters for the given computation. Configured and route filters still apply. */
+    def withoutAutoFilters[A, S](v: A < S)(using Frame): A < S =
+        withConfig(_.withoutAutoFilters)(v)
 
     // --- Factory methods ---
 
@@ -747,7 +779,14 @@ object HttpClient:
                     base.toString.stripSuffix("/") + url
                 case _ => url
             Abort.get(HttpUrl.parse(resolved)).map(parsed =>
-                client.connectWebSocket(parsed, resolveHeaders(headers), config, clientConfig.connectTimeout)(f)
+                client.connectWebSocket(
+                    parsed,
+                    resolveHeaders(headers),
+                    config,
+                    clientConfig.connectTimeout,
+                    clientConfig.clientFilter,
+                    clientConfig.autoFilters
+                )(f)
             )
         }
 
@@ -762,7 +801,14 @@ object HttpClient:
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
         local.use { (client, clientConfig) =>
-            client.connectWebSocket(url, headers, config, clientConfig.connectTimeout)(f)
+            client.connectWebSocket(
+                url,
+                headers,
+                config,
+                clientConfig.connectTimeout,
+                clientConfig.clientFilter,
+                clientConfig.autoFilters
+            )(f)
         }
 
     // ==================== Raw connection methods ====================
