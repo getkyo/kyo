@@ -31,13 +31,13 @@ Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
 
 Everything flows from `Schema[A]`, the central type that captures a type's structure at compile time. It's the single source of truth that powers serialization, validation, navigation, and conversion.
 
-The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)` and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
+The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)`, `Ion.encode(value)`, and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
 
 These are the top-level entry points:
 
 | Entry point | Purpose |
 |-------------|---------|
-| `Json` / `Yaml` / `Protobuf` | Serialize to JSON strings, YAML documents, or Protocol Buffers bytes |
+| `Json` / `Ion` / `Yaml` / `Protobuf` | Serialize to JSON strings, Ion text, YAML documents, or Protocol Buffers bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -170,6 +170,40 @@ Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
 Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+
+### Ion
+
+`Ion.encode` converts a value to Amazon Ion text. Case classes become structs, collections become lists, `Map[String, V]` becomes a struct, and `Span[Byte]` becomes an Ion blob:
+
+```scala
+val ion: String = Ion.encode(alice)
+// {id:1,name:"Alice",email:"alice@example.com",password:"secret",address:{city:"Portland",zip:"97201"}}
+
+Ion.decode[User](ion)
+// Result.Success(alice)
+
+Ion.encode(Span.from("hello".getBytes("UTF-8")))
+// {{aGVsbG8=}}
+```
+
+The reader accepts the Ion text features most useful for schema-shaped data: unquoted or quoted field names, comments, annotations, typed nulls, blobs, long strings, and symbol values decoded as strings:
+
+```scala
+Ion.decode[User](
+    """user::{
+      |  id: 1,
+      |  name: "Alice",
+      |  email: "alice@example.com",
+      |  password: "secret",
+      |  address: {city: Portland, zip: "97201"},
+      |}""".stripMargin
+)
+// Result.Success(alice)
+```
+
+Ion type annotations are accepted as input syntax and ignored as metadata during schema decoding. They are not preserved by `Ion.decode` or emitted by `Ion.encode`.
+
+`Ion.decode` and `Ion.decodeBytes` accept the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
 
 ### YAML
 
@@ -1011,7 +1045,7 @@ The `Structure.Type` tree ships with a small set of operations for runtime inspe
 
 ## Custom Formats
 
-`Json` and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
+`Json`, `Ion`, `Yaml`, and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
 
 ### The Codec trait
 
@@ -1077,7 +1111,7 @@ Schema[User].encode(alice)(using Lines) // Span[Byte] in the Lines format
 Schema[User].decode(bytes)(using Lines) // Result[DecodeException, User]
 ```
 
-For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract.
+For a complete example, read `JsonWriter` and `JsonReader`, `IonWriter` and `IonReader`, or their Protobuf counterparts in the same package: they implement the full contract.
 
 When writing a custom schema for an opaque or wrapper type, you can also construct a `Schema` instance directly using the public factories `Schema.init` (for plain schemas) and `Schema.initFocused` (when you need to track the focused type member). Both take inlined `writeFn` and `readFn` lambdas, plus an optional `getterFn`/`setterFn` pair for lens support. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
 
