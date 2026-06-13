@@ -3626,8 +3626,9 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(decoded.name == user.name)
             assert(decoded.age == user.age)
             assert(decoded.email == user.email)
-            // ssn was dropped from serialization, so it gets its zero value on decode
-            assert(decoded.ssn == "")
+            // ssn was dropped from serialization, so it gets the JVM default for its declared type
+            // (`null` for `String`, `0` for `Int`, `false` for `Boolean`, etc.).
+            assert(decoded.ssn == null)
         }
 
         "schema.encode[Json] produces bytes" in {

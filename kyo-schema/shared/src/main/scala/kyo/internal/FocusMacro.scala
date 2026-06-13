@@ -1652,10 +1652,11 @@ import scala.quoted.*
 
     /** Returns, for each field, whether that field's emitted lambda body will consult `subSchemasExpr(idx).serializeRead/Write` at runtime.
       *
-      * Matches the branch structure in `SerializationMacro.caseClassWriteBody` / `caseClassReadBodyResolved`: the primitive,
-      * primitive-element container, and primitive-arg Result specializations do not consult the per-field sub-schema, so their slots can be
-      * left `null` in the cached array. All other field shapes (Maybe, Option, non-primitive nested, collections of non-primitives, Result
-      * with non-primitive arg, etc.) dispatch through the slot and must hold the resolved schema.
+      * The emitted bodies in `SerializationMacro.caseClassWriteBody` / `caseClassReadBodyResolved` route every field
+      * (Maybe, Option, primitive, container, Result, and any other nested shape) through the resolved per-field
+      * sub-schema cached in the `_subSchemas` array, so every slot must be populated. The return value is therefore
+      * `true` for every field; the helper is kept as a single integration point so a future split between
+      * always-populated and conditionally-populated slots only touches one site.
       */
     private def computeFieldNeedsSubSchema(using
         Quotes
@@ -1665,15 +1666,7 @@ import scala.quoted.*
         maybeFields: Set[Int],
         optionFields: Set[Int]
     ): List[Boolean] =
-        fields.zipWithIndex.map { (field, idx) =>
-            val fieldType = tpe.memberType(field)
-            if maybeFields.contains(idx) || optionFields.contains(idx) then true
-            else if SerializationMacro.isPrimitiveType(fieldType) then false
-            else if SerializationMacro.containerElementSpec(fieldType).isDefined then false
-            else if SerializationMacro.resultFieldSpec(fieldType).isDefined then false
-            else true
-            end if
-        }
+        fields.zipWithIndex.map(_ => true)
 
     /** Builds an `Expr[Array[kyo.Schema[Any]]]` of length `needsSubSchema.size` where slot `i` holds the resolved sub-schema for field `i`,
       * or `null` when the emitted lambda body uses a specialization that does not consult the slot (primitive / primitive-element container
