@@ -1476,6 +1476,50 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
+    // ---- escJson buffer-swap char-class contracts ----
+
+    "escJson escapes control chars below 0x20 to \\u00XX after the buffer swap" in {
+        // Build a module whose title contains control characters in [0x01, 0x1f] plus the
+        // other special-char cases: backslash, double-quote, \n, \r, \t.
+        // These all pass through escJson when the module title is serialized into the
+        // search-index.json "title" field.
+        val ctrl1  = 0x01.toChar.toString // should become 
+        val ctrl1f = 0x1f.toChar.toString // should become
+        val title  = s"x${ctrl1}y${ctrl1f}z"
+        val readme = s"# $title\n"
+        val mod    = WebsiteModule("kyo-ctrl", "Foundation", "kyo-ctrl", readme, WebsiteModule.Platforms(true, true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            json      <- readFile(out / "v1.0.0" / "search-index.json")
+        yield
+            assert(json.contains("\\u0001"), s"0x01 must be escaped as \\u0001 in the JSON: $json")
+            assert(json.contains("\\u001f"), s"0x1f must be escaped as \\u001f in the JSON: $json")
+            assert(!json.contains(ctrl1), s"raw 0x01 must not appear unescaped in the JSON: $json")
+            assert(!json.contains(ctrl1f), s"raw 0x1f must not appear unescaped in the JSON: $json")
+        end for
+    }
+
+    "escJson leaves plain ASCII and unicode above 0x20 unchanged after the buffer swap" in {
+        // A title with plain ASCII text and non-control unicode chars must pass through
+        // escJson unmodified (the default arm of the match just appends the char).
+        val title  = "Aborté日本語" // "Aborté日本語"
+        val readme = s"# $title\n"
+        val mod    = WebsiteModule("kyo-uni", "Foundation", "kyo-uni", readme, WebsiteModule.Platforms(true, true, true, true))
+        val content =
+            WebsiteContent("intro", Chunk(WebsiteContent.Group("Foundation", Chunk(mod))), WebsiteVersion("v1.0.0", "1.0.0", true))
+        for
+            out       <- tmpDir
+            bundleDir <- stubBundleDir
+            _         <- emit(Chunk(content), out, bundleDir)
+            json      <- readFile(out / "v1.0.0" / "search-index.json")
+        yield assert(json.contains(title), s"plain ASCII and unicode-above-0x20 title must appear verbatim in the JSON: $json")
+        end for
+    }
+
     // ---- manifesto: appended as the final docs page of a version with a module menu ----
 
     "the manifesto is appended as the final docs page of versions with a module menu" in {

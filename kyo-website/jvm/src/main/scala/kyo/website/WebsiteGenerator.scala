@@ -77,6 +77,10 @@ object WebsiteGenerator:
         for
             // DECISION-SEO-C: sitemap `<lastmod>` is the build date, computed ONCE here and threaded
             // to the pure builders so the emitted artifacts are deterministic for a given run.
+            // Justified: kyo.Clock.now yields Instant and Instant.show is a full ISO-8601 datetime,
+            // not a bare YYYY-MM-DD; the dependency set has no date-string facility, and a
+            // Clock-derived date would risk a non-identical sitemap <lastmod> byte. JVM-only
+            // build-time SSG date glue.
             lastmod <- Sync.defer(java.time.LocalDate.now().toString)
             // The manifesto renders as an ordinary docs page (full chrome, sidebar, SPA hydration,
             // theme), placed as the final sidebar group of every version so it sits last in the docs
@@ -418,6 +422,8 @@ object WebsiteGenerator:
       * `@graph` with `WebSite` + `SoftwareSourceCode`; docs and intro pages emit a single `TechArticle`
       * that is `isPartOf` the site `WebSite`. All string fields are JSON-escaped via `escJson`.
       */
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def buildJsonLd(kind: String, title: String, url: String): String =
         kind match
             case "landing" =>
@@ -452,6 +458,8 @@ object WebsiteGenerator:
         end for
     end writeManifest
 
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def manifestEntry(
         m: WebsiteModule,
         prev: Maybe[String],
@@ -491,11 +499,15 @@ object WebsiteGenerator:
         end for
     end writeSearchIndex
 
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def searchEntryJson(m: WebsiteModule, sections: Chunk[(DocsMarkdown.Heading, String, Chunk[String])]): String =
         val sectionsJson = sections.toSeq.map { case (h, body, symbols) => sectionJson(h, body, symbols) }.mkString("[", ", ", "]")
         s"""  {"slug": "${escJson(m.slug)}", "title": "${escJson(m.title)}", "group": "${escJson(m.group)}", "sections": $sectionsJson}"""
     end searchEntryJson
 
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def sectionJson(h: DocsMarkdown.Heading, body: String, symbols: Chunk[String]): String =
         // `symbols` is space-joined (simple to parse client-side); `body` carries the ranked prose.
         s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}", "symbols": "${escJson(
@@ -512,6 +524,8 @@ object WebsiteGenerator:
       * client never needs to call the transpiler. The `headings` array carries the
       * level-carrying outline entries.
       */
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def docsIsland(
         c: WebsiteContent,
         versions: Chunk[WebsiteVersion],
@@ -535,6 +549,8 @@ object WebsiteGenerator:
     // Serialize the whole-version section map to a JSON array of `{"route": "...", "headings": [...]}`
     // objects (the shape `DocsClient.parseOutlines` reads). The route key is sorted so the island JSON
     // is deterministic for a given version.
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def outlinesJson(outlines: Map[String, Chunk[DocsMarkdown.Heading]]): String =
         outlines.toSeq.sortBy(_._1).map { case (route, hs) =>
             s"""{"route": "${escJson(route)}", "headings": ${headingsJson(hs)}}"""
@@ -553,6 +569,8 @@ object WebsiteGenerator:
 
     // Serialize a heading outline to a JSON array of `{"level": N, "text": "...", "slug": "..."}`
     // objects. Mirrors the `tocJson` pattern in `manifestEntry` verbatim.
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def headingsJson(headings: Chunk[DocsMarkdown.Heading]): String =
         headings.toSeq.map { h =>
             s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}"}"""
@@ -561,6 +579,8 @@ object WebsiteGenerator:
     // Build the JSON body for the per-route `content.html` navigation endpoint.
     // The `html` field carries the pre-rendered article HTML; `headings` carries the level-carrying
     // outline. The client `fetchArticle` reads `"html"` via `extractString` + `unescapeJson`.
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def articleEndpointJson(articleHtml: String, headings: Chunk[DocsMarkdown.Heading]): String =
         s"""{"html": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}}"""
 
@@ -671,6 +691,8 @@ object WebsiteGenerator:
         writeString("versions.json", outDir / "versions.json", json)
     end writeVersionsJson
 
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
+    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
     private def buildVersionsJson(versions: Chunk[WebsiteVersion]): String =
         if versions.isEmpty then "[]"
         else
@@ -681,8 +703,13 @@ object WebsiteGenerator:
         end if
     end buildVersionsJson
 
+    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set (kyo-ui /
+    // kyo-parse / kyo-core / kyo-data ship none); the island/manifest/endpoint JSON is isolated
+    // behind this single escape funnel. The buffer is scala.collection.mutable.StringBuilder.
+    // The kept JVM primitive Integer.toHexString (used on the \uXXXX code-unit path) has no kyo
+    // equivalent, so it remains as the sole non-stdlib call in this method.
     private def escJson(s: String): String =
-        val sb = new java.lang.StringBuilder(s.length + 8)
+        val sb = new scala.collection.mutable.StringBuilder(s.length + 8)
         var i  = 0
         while i < s.length do
             val c = s.charAt(i)
@@ -694,9 +721,8 @@ object WebsiteGenerator:
                 case '\t' => sb.append("\\t"); ()
                 case _ if c < 0x20 =>
                     val hex = Integer.toHexString(c.toInt)
-                    if hex.length == 1 then sb.append("\\u000").append(hex)
-                    else sb.append("\\u00").append(hex)
-                    ()
+                    if hex.length == 1 then sb.append("\\u000").append(hex): Unit
+                    else sb.append("\\u00").append(hex): Unit
                 case _ => sb.append(c); ()
             end match
             i += 1
@@ -728,6 +754,8 @@ object WebsiteGenerator:
       * `lastmod` is a `YYYY-MM-DD` build date (DECISION-SEO-C). Pure and deterministic so tests can
       * inject a fixed date. Each `<loc>` is `https://getkyo.io` + route.
       */
+    // Justified: sitemap.xml is raw XML; no kyo-ui DSL covers XML (only HTML/SVG/CSS). Sanctioned
+    // non-DSL emit site, isolated in this single named builder.
     private def buildSitemapXml(routes: Chunk[String], lastmod: String): String =
         val urls = routes.toSeq.map { route =>
             s"""  <url>
@@ -745,6 +773,8 @@ object WebsiteGenerator:
       * GPTBot/ClaudeBot/PerplexityBot can read the server-rendered HTML for SEO-1) and declare the
       * sitemap URL. Pure.
       */
+    // Justified: robots.txt is raw plain text; no kyo-ui DSL covers plain text. Sanctioned non-DSL
+    // emit site, isolated in this single named builder.
     private def buildRobotsTxt(): String =
         """User-agent: *
           |Allow: /

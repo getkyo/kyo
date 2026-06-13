@@ -176,7 +176,8 @@ object WebsiteMain extends KyoApp:
       * walking UP from `user.dir`: under `sbt 'kyo-websiteJVM/run …'` the forked cwd is
       * `kyo-website/jvm`, not the repo root, so the bare `user.dir` resolves those paths wrong. The
       * nearest ancestor directory holding a `build.sbt` (the repository's marker file) is the root;
-      * falls back to `user.dir` if none is found. Total and pure: no exceptions, no effects.
+      * falls back to `user.dir` if none is found. The method is effectful (`Sync & Abort[WebsiteException]`)
+      * because it probes the filesystem during the walk; an explicit `--repo-root` flag short-circuits the walk.
       */
     private[website] def parseRepoRoot(theArgs: Chunk[String])(using Frame): String < (Sync & Abort[WebsiteException]) =
         flagValue(theArgs, "--repo-root") match
