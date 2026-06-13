@@ -61,8 +61,8 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
         // `boxSchema[A]` is a polymorphic given def: each summon constructs a fresh
         // `Schema[Box[Int]]`, so reference equality on the materialized `Structure.Type` does not
         // hold across two distinct summons. Structural compatibility per `Structure.Type.compatible`
-        // is the load-bearing check (INV-6 verified at the structural-equivalence level, which is
-        // what the campaign's resolved-Schema contract guarantees through the field summon path).
+        // is the load-bearing check: the resolved `Schema` guarantees structural equivalence
+        // through the field summon path.
         assert(
             Structure.Type.compatible(fieldType, boxInt.structure),
             s"expected structural compat with boxSchema[Int].structure but got $fieldType"

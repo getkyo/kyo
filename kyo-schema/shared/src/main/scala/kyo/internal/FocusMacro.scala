@@ -397,8 +397,8 @@ import scala.quoted.*
                     lazy val self: kyo.Schema[A] { type Focused = F } =
                         val _fieldBytes: Array[Array[Byte]] = ${ CodecMacro.mkFieldBytesPublic(preEncodedExprs) }
                         val _fieldNames: Array[String]      = ${ Expr(fields.map(_.name).toArray) }
-                        // `_subSchemas` is `lazy` because, for recursive schemas, slots may contain `self` — eagerly populating
-                        // the array while `self` is still being initialized would cause infinite recursion / SOE. Lazy allocation
+                        // `_subSchemas` is `lazy` because, for recursive schemas, slots may contain `self`. Eager population
+                        // of the array while `self` is still being initialized would cause infinite recursion / SOE. Lazy allocation
                         // defers array construction to first serializeWrite/Read call, by which time `self` is fully bound.
                         lazy val _subSchemas: Array[kyo.Schema[Any]] =
                             ${ buildSubSchemasArrayExpr[A](needsSubSchema, fieldResolvers, '{ self }) }
@@ -548,7 +548,7 @@ import scala.quoted.*
                 Expr(child.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
             }
 
-            // Build variant infos — unified for both simple and recursive
+            // Build variant infos, unified for both simple and recursive
             val variants: List[SerializationMacro.VariantInfo[A]] =
                 children.map { child =>
                     val childType =
@@ -559,7 +559,7 @@ import scala.quoted.*
                     // Variant check: for class-like children (child.isType) use isInstanceOf[t].
                     // For module children (no-arg enum cases, case objects), `child.termRef.widen`
                     // widens the singleton term-ref to the PARENT enum/sealed type, so
-                    // `isInstanceOf[t]` collapses to `isInstanceOf[ParentEnum]` — a tautology
+                    // `isInstanceOf[t]` collapses to `isInstanceOf[ParentEnum]`, a tautology
                     // that matches every variant. Use reference equality against the singleton
                     // instead.
                     val checkExpr: Expr[A] => Expr[Boolean] =
@@ -594,7 +594,7 @@ import scala.quoted.*
                                         case Some(schema) =>
                                             (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
                                         case None =>
-                                            // Schema not found via summoning — generate inline
+                                            // Schema not found via summoning; generate inline
                                             // (handles case objects, enum values, etc.)
                                             buildVariantSchemaResolver[A, t](childType, tpe, child)
                             SerializationMacro.VariantInfo[A](
@@ -922,7 +922,7 @@ import scala.quoted.*
         val childFields = childSym.caseFields
 
         if childFields.isEmpty then
-            // Case object variant — serialize as empty object
+            // Case object variant: serialize as empty object
             val singletonRef: Expr[T] =
                 if child.flags.is(Flags.Module) then
                     Ref(child.companionModule).asExprOf[T]
@@ -948,7 +948,7 @@ import scala.quoted.*
                     ).asInstanceOf[Schema[Any]]
                 }
         else
-            // Case class variant — build field schema resolvers that reference the parent's self
+            // Case class variant: build field schema resolvers that reference the parent's self
             // for recursive fields, then use SerializationMacro to generate the schema.
             val (maybeFields, optionFields) = MacroUtils.detectMaybeOptionFields(childType, childFields)
 
@@ -961,13 +961,13 @@ import scala.quoted.*
                     val resolver: SerializationMacro.SchemaResolver[A] = fieldType.asType match
                         case '[ft] =>
                             if fieldType.dealias =:= parentType then
-                                // Field is the parent type directly — use self
+                                // Field is the parent type directly: use self
                                 (self: Expr[Schema[A]]) => '{ $self.asInstanceOf[Schema[Any]] }
                             else if containsRecursiveType(fieldType, parentType) then
                                 // Field contains the parent type in containers/tuples
                                 buildRecursiveResolver[A](fieldType, parentType, fieldName)
                             else if maybeFields.contains(idx) then
-                                // Maybe field — extract inner type
+                                // Maybe field: extract inner type
                                 fieldType.dealias match
                                     case AppliedType(_, List(innerType)) =>
                                         innerType.asType match
@@ -1883,7 +1883,7 @@ import scala.quoted.*
 
         def extract(term: Tree): List[String] =
             term match
-                // selectDynamic("name") — this is the key pattern
+                // selectDynamic("name"): this is the key pattern
                 case Apply(TypeApply(Select(receiver, "selectDynamic"), _), List(Literal(StringConstant(name)))) =>
                     extract(receiver) :+ name
                 case Apply(Select(receiver, "selectDynamic"), List(Literal(StringConstant(name)))) =>
@@ -1933,7 +1933,7 @@ import scala.quoted.*
                     // Expand the value type for the next step (it may be a case class/sealed trait)
                     currentType = ExpandMacro.expandType(valueType)
                 case None =>
-                    // Field not found — will be caught by selectDynamic macro
+                    // Field not found; will be caught by selectDynamic macro
                     ()
         end for
 

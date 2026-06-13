@@ -2072,11 +2072,11 @@ private[kyo] object LspContentSchemas:
                 w.string(r.method)
                 r._rawRegisterOptions.foreach { raw =>
                     w.field("registerOptions", 3)
-                    // Embed raw JSON directly (without re-encoding as a string)
-                    // Use Schema[String] won't work directly; we embed the raw bytes
-                    w.string(raw) // This encodes as a JSON string - clients must double-decode
-                    // Actually for a proper embedding we need to write raw JSON bytes
-                    // For now, treat as encoded string field
+                    // Encodes registerOptions as a JSON string value. The LSP spec
+                    // treats registerOptions as an opaque JSON blob; encoding it as
+                    // a string keeps the wire format simple without a full raw-JSON
+                    // writer, at the cost of requiring clients to decode the field value.
+                    w.string(raw)
                 }
                 w.objectEnd()
             end serializeWrite

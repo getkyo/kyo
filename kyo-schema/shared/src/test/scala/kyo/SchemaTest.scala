@@ -345,7 +345,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 .doc(_.ssn)("Social security number")
                 .deprecated(_.ssn)("Use taxId instead")
                 .drop("ssn")
-            // ssn is dropped, metadata removed — verify via field doc on remaining fields
+            // ssn is dropped, metadata removed; verify via field doc on remaining fields
             assert(s.focus(_.name).doc == Maybe.empty)
         }
 
@@ -731,7 +731,7 @@ class SchemaTest extends kyo.test.Test[Any]:
 
         "check snaps back to root type" in {
             val m = Schema[MTPerson].check(_.name)(_.nonEmpty, "name required")
-            // After check, we're back at root Schema — can focus on a different field
+            // After check, we're back at root Schema; can focus on a different field
             val m2     = m.check(_.age)(_ > 0, "age positive")
             val errors = m2.validate(person)
             assert(errors.isEmpty)
@@ -1074,7 +1074,7 @@ class SchemaTest extends kyo.test.Test[Any]:
         "check on Option field with None skips" in {
             val m = Schema[MTOptional]
                 .check(_.nickname)(_.nonEmpty, "nickname must be present")
-            // With None, the Option is empty — check predicate receives None which is !nonEmpty
+            // With None, the Option is empty; check predicate receives None which is !nonEmpty
             val errorsNone = m.validate(MTOptional("Alice", None))
             // With Some, the Option is non-empty
             val errorsSome = m.validate(MTOptional("Alice", Some("Ali")))
@@ -1573,25 +1573,25 @@ class SchemaTest extends kyo.test.Test[Any]:
 
         // --- Cross-platform regex audit ---
 
-        "pattern POSIX regex — email-like" in {
+        "pattern POSIX regex (email-like)" in {
             val schema = Schema[X].checkPattern(_.s)("^[a-z]+@[a-z]+$")
             assert(schema.validate(X("a@b")).isEmpty)
             assert(schema.validate(X("no-at")).nonEmpty)
         }
 
-        "pattern character class — digits with dash" in {
+        "pattern character class (digits with dash)" in {
             val schema = Schema[X].checkPattern(_.s)("""^\d{3}-\d{4}$""")
             assert(schema.validate(X("555-1234")).isEmpty)
             assert(schema.validate(X("abc-1234")).nonEmpty)
         }
 
-        "pattern alternation — animal names" in {
+        "pattern alternation (animal names)" in {
             val schema = Schema[X].checkPattern(_.s)("^(cat|dog|bird)$")
             assert(schema.validate(X("cat")).isEmpty)
             assert(schema.validate(X("fish")).nonEmpty)
         }
 
-        "pattern bounded quantifier — a{2,5}" in {
+        "pattern bounded quantifier (a{2,5})" in {
             val schema = Schema[X].checkPattern(_.s)("^a{2,5}$")
             assert(schema.validate(X("aa")).isEmpty)
             assert(schema.validate(X("aaaaa")).isEmpty)
@@ -1599,19 +1599,19 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(schema.validate(X("aaaaaa")).nonEmpty)
         }
 
-        "pattern anchors — word characters only" in {
+        "pattern anchors (word characters only)" in {
             val schema = Schema[X].checkPattern(_.s)("""^\w+$""")
             assert(schema.validate(X("hello")).isEmpty)
             assert(schema.validate(X("with space")).nonEmpty)
         }
 
-        "pattern escaped metacharacters — literal .+*" in {
+        "pattern escaped metacharacters (literal .+*)" in {
             val schema = Schema[X].checkPattern(_.s)("""^\.\+\*$""")
             assert(schema.validate(X(".+*")).isEmpty)
             assert(schema.validate(X("abc")).nonEmpty)
         }
 
-        "pattern possessive quantifier — documented platform limitation" in {
+        "pattern possessive quantifier (documented platform limitation)" in {
             import kyo.internal.Platform
             if Platform.isJVM then
                 val schema = Schema[X].checkPattern(_.s)("^(a)++$")
@@ -1756,7 +1756,7 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(result("size") == "5")
         }
 
-        // === fold edge cases (after rename/add) ===
+        // === fold with schema transformations (rename/add) ===
 
         "fold after rename" in {
             val m = Schema[MTPerson].rename("name", "fullName")
@@ -1946,7 +1946,7 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(result == Map("name" -> "Alice", "age" -> "30"))
         }
 
-        // === edge cases: empty and large case classes ===
+        // === boundary shapes: empty and large case classes ===
 
         "empty case class fold" in {
             val m = Schema[MTEmpty]
@@ -4440,14 +4440,14 @@ class SchemaTest extends kyo.test.Test[Any]:
 
             def captureFrameElsewhere()(using f: Frame): Frame = f
 
-            "Frame round-trip — implicit Frame" in {
+            "Frame round-trip (implicit Frame)" in {
                 val frame  = captureFrameHere()
                 val schema = summon[Schema[Frame]]
                 val back   = auditRoundTrip(frame)(using schema)
                 assert(frame.toString == back.toString)
             }
 
-            "Frame round-trip — different call site" in {
+            "Frame round-trip (different call site)" in {
                 val frame  = captureFrameElsewhere()
                 val schema = summon[Schema[Frame]]
                 val back   = auditJsonRoundTrip(frame)(using schema)
@@ -4456,7 +4456,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(back.callerName.nonEmpty)
             }
 
-            "Tag[Int] round-trip — static tag" in {
+            "Tag[Int] round-trip (static tag)" in {
                 val tag    = summon[Tag[Int]]
                 val schema = Schema.tagSchema[Int]
                 val back   = auditRoundTrip(tag)(using schema)
@@ -4464,7 +4464,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(tag =:= back)
             }
 
-            "Tag[String] round-trip — static tag" in {
+            "Tag[String] round-trip (static tag)" in {
                 val tag    = summon[Tag[String]]
                 val schema = Schema.tagSchema[String]
                 val back   = auditRoundTrip(tag)(using schema)
@@ -4472,7 +4472,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(tag =:= back)
             }
 
-            "Tag dynamic round-trip — decoding the show-string fails (documented limitation)" in {
+            "Tag dynamic round-trip: decoding the show-string fails (documented limitation)" in {
                 val tag    = dynamicListTagOf[Int]
                 val schema = Schema.tagSchema[List[Int]]
                 val w      = TestWriter()
@@ -4490,14 +4490,14 @@ class SchemaTest extends kyo.test.Test[Any]:
                 )
             }
 
-            "Dict[String, Int] empty round-trip — size 0" in {
+            "Dict[String, Int] empty round-trip (size 0)" in {
                 val v      = Dict.empty[String, Int]
                 val schema = Schema.stringDictSchema[Int]
                 val back   = auditRoundTrip(v)(using schema)
                 assert(back.size == 0)
             }
 
-            "Dict[String, Dict[String, Int]] nested round-trip — all 4 leaf values present" in {
+            "Dict[String, Dict[String, Int]] nested round-trip (all 4 leaf values present)" in {
                 given inner: Schema[Dict[String, Int]]               = Schema.stringDictSchema[Int]
                 given outer: Schema[Dict[String, Dict[String, Int]]] = Schema.stringDictSchema[Dict[String, Int]]
                 val v = Dict(
@@ -4512,28 +4512,28 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(back.get("b").get.get("q") == Maybe(4))
             }
 
-            "Maybe[Maybe[Int]] — Absent round-trips as Absent" in {
+            "Maybe[Maybe[Int]]: Absent round-trips as Absent" in {
                 val v: Maybe[Maybe[Int]] = Maybe.empty[Maybe[Int]]
                 val schema               = summon[Schema[Maybe[Maybe[Int]]]]
                 val back                 = auditRoundTrip(v)(using schema)
                 assert(back == Maybe.empty[Maybe[Int]])
             }
 
-            "Maybe[Maybe[Int]] — standalone Present(Absent) is lossy" in {
+            "Maybe[Maybe[Int]]: standalone Present(Absent) is lossy" in {
                 val v: Maybe[Maybe[Int]] = Present(Maybe.empty[Int])
                 val schema               = summon[Schema[Maybe[Maybe[Int]]]]
                 val back                 = auditRoundTrip(v)(using schema)
                 assert(back == Maybe.empty[Maybe[Int]], s"Expected Absent (lossy) but got $back")
             }
 
-            "Chunk[Int] empty round-trip — size 0" in {
+            "Chunk[Int] empty round-trip (size 0)" in {
                 val v      = Chunk.empty[Int]
                 val schema = summon[Schema[Chunk[Int]]]
                 val back   = auditRoundTrip(v)(using schema)
                 assert(back.size == 0)
             }
 
-            "Chunk[Chunk[Int]] nested round-trip — all 4 elements present in correct positions" in {
+            "Chunk[Chunk[Int]] nested round-trip (all 4 elements present in correct positions)" in {
                 val v      = Chunk(Chunk(1, 2), Chunk(3, 4))
                 val schema = summon[Schema[Chunk[Chunk[Int]]]]
                 val back   = auditRoundTrip(v)(using schema)

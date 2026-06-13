@@ -46,7 +46,7 @@ object FlagAdmin:
       */
     def routes(prefix: String = "flags", readOnly: Boolean = false)(using Frame): Seq[HttpHandler[?, ?, ?]] =
 
-        // GET /{prefix} — list all flags
+        // GET /{prefix}: list all flags
         val listRoute = HttpRoute.getRaw(prefix)
             .request(_.queryOpt[String]("filter"))
             .response(_.bodyText)
@@ -60,7 +60,7 @@ object FlagAdmin:
             jsonOk(Json.encode(infos)(using jsonFlagInfos))
         }
 
-        // GET /{prefix}/:name — single flag detail
+        // GET /{prefix}/:name: single flag detail
         val getRoute = HttpRoute.getRaw(prefix / Capture[String]("name"))
             .response(_.bodyText)
         val getHandler = getRoute.handler { req =>
@@ -73,7 +73,7 @@ object FlagAdmin:
             end match
         }
 
-        // PUT /{prefix}/:name — update dynamic flag expression (plain text body)
+        // PUT /{prefix}/:name: update dynamic flag expression (plain text body)
         val updateRoute = HttpRoute.putRaw(prefix / Capture[String]("name"))
             .request(_.bodyText)
             .response(_.bodyText)
@@ -107,7 +107,7 @@ object FlagAdmin:
                 end match
         }
 
-        // POST /{prefix}/:name/reload — reload dynamic flag from config source
+        // POST /{prefix}/:name/reload: reload dynamic flag from config source
         val reloadRoute = HttpRoute.postRaw(prefix / Capture[String]("name") / "reload")
             .response(_.bodyText)
         val reloadHandler = reloadRoute.handler { req =>

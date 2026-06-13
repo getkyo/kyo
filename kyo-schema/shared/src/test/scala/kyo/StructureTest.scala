@@ -27,7 +27,7 @@ case class AllPrimitives(
 ) derives Schema,
       CanEqual
 
-// Variant dispatch for all-no-arg enums must use reference equality, not isInstanceOf — widening a singleton term-ref to the parent enum type would match every variant.
+// Variant dispatch for all-no-arg enums must use reference equality, not isInstanceOf. Widening a singleton term-ref to the parent enum type would match every variant.
 
 enum AllNoArgEnumA derives Schema, CanEqual:
     case First
