@@ -35,11 +35,11 @@ object WebsiteMain extends KyoApp:
     run(program(using Frame.internal))(using Frame.internal, summon[Render[Unit]])
 
     private def program(using Frame): Unit < (Async & Scope & Abort[Any]) =
-        val theArgs   = args
-        val outDir    = parseOut(theArgs)
-        val repoRoot  = parseRepoRoot(theArgs)
-        val bundleDir = parseBundleDir(theArgs, repoRoot)
+        val theArgs = args
+        val outDir  = parseOut(theArgs)
         for
+            repoRoot  <- parseRepoRoot(theArgs)
+            bundleDir <- parseBundleDir(theArgs, repoRoot)
             _ <- Console.printLine(
                 s"WebsiteMain: out=$outDir bundleDir=$bundleDir repoRoot=$repoRoot"
             )
@@ -135,36 +135,40 @@ object WebsiteMain extends KyoApp:
       * reports a `WebsiteEmitException` if that path holds no `main.js`, so a missing bundle fails
       * loud rather than emitting a site with a broken script reference.
       */
-    private def parseBundleDir(theArgs: Chunk[String], repoRoot: String): String =
-        flagValue(theArgs, "--bundle-dir").getOrElse(discoverBundleDir(repoRoot))
+    private[website] def parseBundleDir(theArgs: Chunk[String], repoRoot: String)(using Frame): String < (Sync & Abort[WebsiteException]) =
+        flagValue(theArgs, "--bundle-dir") match
+            case Present(dir) => dir
+            case Absent =>
+                Abort.run[FileFsException](discoverBundleDir(repoRoot)).map {
+                    case Result.Success(dir) => dir
+                    case Result.Failure(e)   => Abort.fail(WebsiteEmitException("bundle-dir discovery", e))
+                    case p: Result.Panic     => Abort.error(p)
+                }
+        end match
+    end parseBundleDir
 
-    private def discoverBundleDir(repoRoot: String): String =
-        import java.nio.file.Files
-        import java.nio.file.Path as JPath
-        import scala.jdk.CollectionConverters.*
-        import scala.util.Using
-        val fallback  = JPath.of(repoRoot, "kyo-website-bundle", "js", "target", "scala-3.8.3", "kyo-website-bundle-opt")
-        val targetDir = JPath.of(repoRoot, "kyo-website-bundle", "js", "target")
-        if !Files.isDirectory(targetDir) then fallback.toString
-        else
-            // Using closes each directory stream after the iterator is drained to a list. Both levels
-            // are sorted by path string so the `-opt`-with-main.js selection is deterministic: when two
-            // `scala-*` dirs both hold an `-opt/main.js`, `Files.list` order is filesystem-dependent, so
-            // sorting picks the same directory on every run regardless of the platform's listing order.
-            val scalaDirs = Using.resource(Files.list(targetDir))(s =>
-                s.iterator().asScala.toList
-                    .filter(p => Files.isDirectory(p) && p.getFileName.toString.startsWith("scala-"))
-                    .sortBy(_.toString)
-            )
-            val optDirs = scalaDirs.flatMap(scalaDir =>
-                Using.resource(Files.list(scalaDir))(s =>
-                    s.iterator().asScala.toList
-                        .filter(p => Files.isDirectory(p) && p.getFileName.toString.endsWith("-opt"))
-                        .sortBy(_.toString)
-                )
-            )
-            optDirs.find(p => Files.isRegularFile(p.resolve("main.js"))).map(_.toString).getOrElse(fallback.toString)
-        end if
+    private def discoverBundleDir(repoRoot: String)(using Frame): String < (Sync & Abort[FileFsException]) =
+        val fallback  = Path(repoRoot, "kyo-website-bundle", "js", "target", "scala-3.8.3", "kyo-website-bundle-opt")
+        val targetDir = Path(repoRoot, "kyo-website-bundle", "js", "target")
+        targetDir.isDirectory.map {
+            case false => fallback.toString
+            case true  =>
+                // Both levels are sorted by path string so the `-opt`-with-main.js selection is
+                // deterministic: when two `scala-*` dirs both hold an `-opt/main.js`, the listing order
+                // is filesystem-dependent, so sorting picks the same directory on every run regardless
+                // of the platform's listing order.
+                targetDir.list.map { entries =>
+                    val scalaDirs = entries.filter(_.name.exists(_.startsWith("scala-"))).sortBy(_.toString)
+                    Kyo.foreach(scalaDirs)(_.list).map { listed =>
+                        val optDirs = listed.flattenChunk
+                            .filter(_.name.exists(_.endsWith("-opt")))
+                            .sortBy(_.toString)
+                        Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d)).map { flagged =>
+                            flagged.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
+                        }
+                    }
+                }
+        }
     end discoverBundleDir
 
     /** The repo root for locating `kyo.png`, `kyo-website/assets/kyo.ico`, and the discovered bundle
@@ -174,21 +178,32 @@ object WebsiteMain extends KyoApp:
       * nearest ancestor directory holding a `build.sbt` (the repository's marker file) is the root;
       * falls back to `user.dir` if none is found. Total and pure: no exceptions, no effects.
       */
-    private def parseRepoRoot(theArgs: Chunk[String]): String =
-        flagValue(theArgs, "--repo-root").getOrElse(discoverRepoRoot())
+    private[website] def parseRepoRoot(theArgs: Chunk[String])(using Frame): String < (Sync & Abort[WebsiteException]) =
+        flagValue(theArgs, "--repo-root") match
+            case Present(dir) => dir
+            case Absent =>
+                Abort.run[FileFsException](discoverRepoRoot()).map {
+                    case Result.Success(dir) => dir
+                    case Result.Failure(e)   => Abort.fail(WebsiteEmitException("repo-root discovery", e))
+                    case p: Result.Panic     => Abort.error(p)
+                }
+        end match
+    end parseRepoRoot
 
-    private def discoverRepoRoot(): String =
-        import java.nio.file.Files
-        import java.nio.file.Path as JPath
-        val userDir                     = java.lang.System.getProperty("user.dir", ".")
-        val start                       = JPath.of(userDir).toAbsolutePath
-        def isRoot(dir: JPath): Boolean = Files.isRegularFile(dir.resolve("build.sbt"))
-        @scala.annotation.tailrec
-        def walkUp(dir: JPath): Maybe[JPath] =
-            if dir == null then Absent
-            else if isRoot(dir) then Present(dir)
-            else walkUp(dir.getParent)
-        walkUp(start).map(_.toString).getOrElse(userDir)
+    private def discoverRepoRoot()(using Frame): String < (Sync & Abort[FileFsException]) =
+        System.property[String]("user.dir", ".").map { userDir =>
+            val start                             = Path(userDir)
+            def isRoot(dir: Path): Boolean < Sync = (dir / "build.sbt").isRegularFile
+            def walkUp(dir: Path): Maybe[Path] < Sync =
+                isRoot(dir).map {
+                    case true => Present(dir)
+                    case false =>
+                        dir.parent match
+                            case Present(p) => walkUp(p)
+                            case Absent     => Absent
+                }
+            walkUp(start).map(_.map(_.toString).getOrElse(userDir))
+        }
     end discoverRepoRoot
 
     private[website] def flagValue(theArgs: Chunk[String], flag: String): Maybe[String] =

@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 import kyo.*
 
-/** Tests for `WebsiteMain` CLI (Phase 4 scope: arg parsing + smoke emit). */
+/** Tests for `WebsiteMain` CLI: arg parsing and smoke emit. */
 class WebsiteMainTest extends WebsiteTest:
 
     // ---- Helpers ----
@@ -98,8 +98,6 @@ class WebsiteMainTest extends WebsiteTest:
         end for
     }
 
-    // ---- Test 13 (Phase-4 WARN-1): parseOut / flagValue parse directly, no emit ----
-
     "parseOut parses --out flag directly" in {
         assert(WebsiteMain.parseOut(Chunk("--out", "/x")) == "/x")
         assert(WebsiteMain.parseOut(Chunk("--bundle-dir", "/b")) == "/tmp/kyo-site")
@@ -107,8 +105,6 @@ class WebsiteMainTest extends WebsiteTest:
         assert(WebsiteMain.flagValue(Chunk("--out", "/x"), "--missing") == Absent)
         assert(WebsiteMain.flagValue(Chunk("--content", "/c"), "--content") == Present("/c"))
     }
-
-    // ---- Phase-8 audit WARN-1: latest-version selection is SEMANTIC, not lexicographic ----
 
     /** Create a `--content` directory holding one subdirectory per `tag`, each with a minimal
       * `README.md` (no `## Modules`, so `WebsiteContent.fromRepo` degrades to empty groups). The
@@ -128,13 +124,13 @@ class WebsiteMainTest extends WebsiteTest:
     private def latestTagOf(content: Chunk[WebsiteContent]): Maybe[String] =
         Maybe.fromOption(content.find(_.version.latest).map(_.version.tag))
 
-    /** The realistic unsorted kyo tag set from the audit: lexicographically `v0.16.2 < v0.19.0 <
-      * v0.9.3`, so a lexicographic stable-last picks the STALE `v0.9.3` while a semantic sort picks
-      * the newest stable `v0.19.0`. The RC of `v0.19.0` must not win over its stable release.
+    /** Unsorted kyo tag set: lexicographically `v0.16.2 < v0.19.0 < v0.9.3`, so a lexicographic
+      * stable-last picks the stale `v0.9.3` while a semantic sort picks the newest stable `v0.19.0`.
+      * The RC of `v0.19.0` must not win over its stable release.
       */
     private val auditTags = Seq("v0.9.3", "v0.16.2", "v0.19.0", "v0.19.0-RC1")
 
-    "parseContent flags the newest STABLE version as latest, not the lexicographic last (WARN-1)" in {
+    "parseContent flags the newest STABLE version as latest, not the lexicographic last" in {
         for
             dir     <- contentDirWithTags(auditTags)
             content <- WebsiteMain.parseContent(Chunk("--content", dir))
@@ -146,7 +142,7 @@ class WebsiteMainTest extends WebsiteTest:
         end for
     }
 
-    "parseContent latest selection is order-independent (lexicographic / shuffled input) (WARN-1)" in {
+    "parseContent latest selection is order-independent (lexicographic / shuffled input)" in {
         for
             lexDir      <- contentDirWithTags(auditTags.sorted) // v0.16.2, v0.19.0, v0.19.0-RC1, v0.9.3
             lexContent  <- WebsiteMain.parseContent(Chunk("--content", lexDir))
@@ -158,7 +154,7 @@ class WebsiteMainTest extends WebsiteTest:
         end for
     }
 
-    "parseContent orders versions.json semantically, RC before its stable release (WARN-1)" in {
+    "parseContent orders versions.json semantically, RC before its stable release" in {
         for
             dir     <- contentDirWithTags(auditTags)
             content <- WebsiteMain.parseContent(Chunk("--content", dir))
@@ -168,6 +164,30 @@ class WebsiteMainTest extends WebsiteTest:
             val rcIdx     = order.indexOf("v0.19.0-RC1")
             val stableIdx = order.indexOf("v0.19.0")
             assert(rcIdx >= 0 && stableIdx >= 0 && rcIdx < stableIdx, s"RC must precede stable, got $order")
+        end for
+    }
+
+    "parseRepoRoot discovers the build.sbt ancestor when --repo-root absent" in {
+        for
+            result <- WebsiteMain.parseRepoRoot(Chunk.empty[String])
+            exists <- (Path(result) / "build.sbt").exists
+        yield
+            assert(result.nonEmpty, s"discovered repo root must be non-empty")
+            assert(exists, s"parseRepoRoot must return a directory containing build.sbt, got: $result")
+        end for
+    }
+
+    "parseRepoRoot honors an explicit --repo-root flag verbatim" in {
+        for
+            result <- WebsiteMain.parseRepoRoot(Chunk("--repo-root", "/explicit/root"))
+        yield assert(result == "/explicit/root", s"flag value must win verbatim, got: $result")
+        end for
+    }
+
+    "parseBundleDir honors an explicit --bundle-dir flag verbatim, no discovery" in {
+        for
+            result <- WebsiteMain.parseBundleDir(Chunk("--bundle-dir", "/explicit/bundle"), "/any/root")
+        yield assert(result == "/explicit/bundle", s"flag value must win verbatim, got: $result")
         end for
     }
 
