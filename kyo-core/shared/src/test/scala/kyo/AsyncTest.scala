@@ -57,7 +57,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         "timeout".notJs in {
             Async.sleep(1.day).andThen(1)
                 .handle(
-                    Async.timeout(10.millis),
+                    Async.timeout(100.millis),
                     KyoApp.runAndBlock(Duration.Infinity),
                     Abort.run[Timeout]
                 ).map {
@@ -69,7 +69,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         "block timeout".notJs in {
             Async.sleep(1.day).andThen(1)
                 .handle(
-                    KyoApp.runAndBlock(10.millis),
+                    KyoApp.runAndBlock(100.millis),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed("expected block timeout")
@@ -78,9 +78,9 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
 
         "multiple fibers timeout".notJs in {
-            Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
+            Kyo.fill(100)(Async.sleep(10.milli)).andThen(1)
                 .handle(
-                    KyoApp.runAndBlock(10.millis),
+                    KyoApp.runAndBlock(100.millis),
                     Abort.run[Timeout]
                 ).map {
                     case Result.Failure(_: Timeout) => succeed("expected multiple-fiber timeout")
@@ -182,7 +182,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         "waits for the first success" in {
             val ex = new Exception
             Async.race(
-                Async.sleep(10.millis).andThen(42),
+                Async.sleep(100.millis).andThen(42),
                 Abort.panic[Exception](ex)
             ).map { r =>
                 assert(r == 42)
@@ -193,7 +193,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             val ex2 = new Exception
             val race =
                 Async.race(
-                    Async.sleep(10.millis).andThen(Abort.panic[Int](ex1)),
+                    Async.sleep(100.millis).andThen(Abort.panic[Int](ex1)),
                     Abort.panic[Int](ex2)
                 )
             Abort.run(race).map {
@@ -1763,7 +1763,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             for
                 counter <- AtomicInt.init(0)
                 result <- Abort.run[Timeout] {
-                    Async.timeout(10.millis) {
+                    Async.timeout(100.millis) {
                         Scope.run {
                             Scope.ensure(counter.incrementAndGet.unit).andThen(Async.sleep(1.day))
                         }
