@@ -422,8 +422,7 @@ object WebsiteGenerator:
       * `@graph` with `WebSite` + `SoftwareSourceCode`; docs and intro pages emit a single `TechArticle`
       * that is `isPartOf` the site `WebSite`. All string fields are JSON-escaped via `escJson`.
       */
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def buildJsonLd(kind: String, title: String, url: String): String =
         kind match
             case "landing" =>
@@ -458,8 +457,7 @@ object WebsiteGenerator:
         end for
     end writeManifest
 
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def manifestEntry(
         m: WebsiteModule,
         prev: Maybe[String],
@@ -499,15 +497,13 @@ object WebsiteGenerator:
         end for
     end writeSearchIndex
 
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def searchEntryJson(m: WebsiteModule, sections: Chunk[(DocsMarkdown.Heading, String, Chunk[String])]): String =
         val sectionsJson = sections.toSeq.map { case (h, body, symbols) => sectionJson(h, body, symbols) }.mkString("[", ", ", "]")
         s"""  {"slug": "${escJson(m.slug)}", "title": "${escJson(m.title)}", "group": "${escJson(m.group)}", "sections": $sectionsJson}"""
     end searchEntryJson
 
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def sectionJson(h: DocsMarkdown.Heading, body: String, symbols: Chunk[String]): String =
         // `symbols` is space-joined (simple to parse client-side); `body` carries the ranked prose.
         s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}", "symbols": "${escJson(
@@ -524,8 +520,7 @@ object WebsiteGenerator:
       * client never needs to call the transpiler. The `headings` array carries the
       * level-carrying outline entries.
       */
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def docsIsland(
         c: WebsiteContent,
         versions: Chunk[WebsiteVersion],
@@ -549,8 +544,7 @@ object WebsiteGenerator:
     // Serialize the whole-version section map to a JSON array of `{"route": "...", "headings": [...]}`
     // objects (the shape `DocsClient.parseOutlines` reads). The route key is sorted so the island JSON
     // is deterministic for a given version.
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def outlinesJson(outlines: Map[String, Chunk[DocsMarkdown.Heading]]): String =
         outlines.toSeq.sortBy(_._1).map { case (route, hs) =>
             s"""{"route": "${escJson(route)}", "headings": ${headingsJson(hs)}}"""
@@ -569,8 +563,7 @@ object WebsiteGenerator:
 
     // Serialize a heading outline to a JSON array of `{"level": N, "text": "...", "slug": "..."}`
     // objects. Mirrors the `tocJson` pattern in `manifestEntry` verbatim.
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def headingsJson(headings: Chunk[DocsMarkdown.Heading]): String =
         headings.toSeq.map { h =>
             s"""{"level": ${h.level}, "text": "${escJson(h.text)}", "slug": "${escJson(h.slug)}"}"""
@@ -579,8 +572,7 @@ object WebsiteGenerator:
     // Build the JSON body for the per-route `content.html` navigation endpoint.
     // The `html` field carries the pre-rendered article HTML; `headings` carries the level-carrying
     // outline. The client `fetchArticle` reads `"html"` via `extractString` + `unescapeJson`.
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def articleEndpointJson(articleHtml: String, headings: Chunk[DocsMarkdown.Heading]): String =
         s"""{"html": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}}"""
 
@@ -691,8 +683,7 @@ object WebsiteGenerator:
         writeString("versions.json", outDir / "versions.json", json)
     end writeVersionsJson
 
-    // Justified: JSON has no kyo-ui DSL and no JSON encoder is in the dependency set; all
-    // island/manifest/endpoint JSON funnels through escJson. Sanctioned non-DSL emit site.
+    // JSON emit; see escJson justification.
     private def buildVersionsJson(versions: Chunk[WebsiteVersion]): String =
         if versions.isEmpty then "[]"
         else

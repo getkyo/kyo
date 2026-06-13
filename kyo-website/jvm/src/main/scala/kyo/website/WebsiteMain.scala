@@ -147,30 +147,29 @@ object WebsiteMain extends KyoApp:
         end match
     end parseBundleDir
 
+    // List `dir`, flag each entry as a directory, collect those where the name matches `p`, sort by
+    // path string. Both levels of the bundle discovery use this pipeline; the sort makes selection
+    // deterministic regardless of the platform's filesystem listing order. The `isDirectory` guard
+    // runs before any `.list` call so a regular file whose name matches the predicate is silently
+    // skipped rather than causing a `FileNotADirectoryException`.
+    private def childDirsMatching(dir: Path, p: String => Boolean)(using Frame): Chunk[Path] < (Sync & Abort[FileFsException]) =
+        dir.list.map(entries =>
+            Kyo.foreach(entries)(d => d.isDirectory.map(_ -> d)).map(
+                _.collect { case (true, d) if d.name.exists(p) => d }.sortBy(_.toString)
+            )
+        )
+
     private def discoverBundleDir(repoRoot: String)(using Frame): String < (Sync & Abort[FileFsException]) =
         val fallback  = Path(repoRoot, "kyo-website-bundle", "js", "target", "scala-3.8.3", "kyo-website-bundle-opt")
         val targetDir = Path(repoRoot, "kyo-website-bundle", "js", "target")
         targetDir.isDirectory.map {
             case false => fallback.toString
-            case true  =>
-                // Both levels are sorted by path string so the `-opt`-with-main.js selection is
-                // deterministic: when two `scala-*` dirs both hold an `-opt/main.js`, the listing order
-                // is filesystem-dependent, so sorting picks the same directory on every run regardless
-                // of the platform's listing order.
-                targetDir.list.map { entries =>
-                    Kyo.foreach(entries)(d => d.isDirectory.map(_ -> d)).map { flagged =>
-                        val scalaDirs = flagged.collect { case (true, d) if d.name.exists(_.startsWith("scala-")) => d }.sortBy(_.toString)
-                        Kyo.foreach(scalaDirs)(_.list).map { listed =>
-                            Kyo.foreach(listed.flattenChunk)(d => d.isDirectory.map(_ -> d)).map { flaggedOpt =>
-                                val optDirs =
-                                    flaggedOpt.collect { case (true, d) if d.name.exists(_.endsWith("-opt")) => d }.sortBy(_.toString)
-                                Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d)).map { flaggedMain =>
-                                    flaggedMain.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
-                                }
-                            }
-                        }
-                    }
-                }
+            case true =>
+                for
+                    scalaDirs   <- childDirsMatching(targetDir, _.startsWith("scala-"))
+                    optDirs     <- Kyo.foreach(scalaDirs)(childDirsMatching(_, _.endsWith("-opt"))).map(_.flattenChunk)
+                    flaggedMain <- Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d))
+                yield flaggedMain.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
         }
     end discoverBundleDir
 
