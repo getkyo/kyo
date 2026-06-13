@@ -28,7 +28,7 @@ type IO = Sync
 @deprecated("Will be removed in 1.0. Use `Sync` instead", "1.0-RC")
 val IO = Sync
 
-object Sync:
+object Sync extends KyoOps[Sync]:
 
     /** Suspends a potentially side-effecting computation in an Sync effect.
       *

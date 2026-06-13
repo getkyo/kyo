@@ -3,7 +3,7 @@ package kyo.internal
 import java.util.concurrent.CompletionStage
 import kyo.*
 
-private[kyo] class AsyncPlatformSpecific:
+private[kyo] trait AsyncPlatformSpecific:
 
     def fromFuture[A](cs: CompletionStage[A])(using Frame): A < Async =
         fromCompletionStage(cs)
