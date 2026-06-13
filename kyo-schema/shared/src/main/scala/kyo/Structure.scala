@@ -335,7 +335,7 @@ object Structure:
         given structureFieldSchema: Schema[Field] =
             new Schema[Field](Seq.empty):
                 import scala.annotation.publicInBinary
-                // Unsafe: Frame.internal is required here because maybeSchema carries `using Frame`
+                // Frame.internal: required here because maybeSchema carries `using Frame`
                 // but this given is a kyo-internal implementation with no user callsite frame.
                 private given frame: Frame = Frame.internal
                 @publicInBinary private[kyo] def serializeWrite(value: Field, writer: Codec.Writer): Unit =

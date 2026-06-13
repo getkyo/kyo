@@ -8,7 +8,7 @@ import kyo.internal.JsonWriter
 
 // --- Local test types ---
 
-case class CodecTree(value: Int, children: List[CodecTree]) derives CanEqual
+case class CodecTree(value: Int, children: List[CodecTree]) derives CanEqual, Schema
 
 case class CodecWithDefaults(name: String, age: Int = 25, active: Boolean = true) derives CanEqual
 

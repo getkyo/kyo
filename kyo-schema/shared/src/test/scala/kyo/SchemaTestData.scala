@@ -90,7 +90,7 @@ class MTOpaque(val inner: Int)
 trait MTOpenTrait
 
 // Recursive test types
-case class TreeNode(value: Int, children: List[TreeNode]) derives CanEqual
+case class TreeNode(value: Int, children: List[TreeNode]) derives CanEqual, Schema
 
 case class RTDepartment(name: String, manager: RTEmployee) derives CanEqual
 case class RTEmployee(name: String, department: Maybe[RTDepartment]) derives CanEqual
@@ -101,7 +101,7 @@ object RTDepartment:
 object RTEmployee:
     given Schema[RTEmployee] = Schema.derived[RTEmployee]
 
-sealed trait Expr derives CanEqual
+sealed trait Expr derives CanEqual, Schema
 case class Lit(value: Int)              extends Expr derives CanEqual
 case class Add(left: Expr, right: Expr) extends Expr derives CanEqual
 case class Neg(inner: Expr)             extends Expr derives CanEqual
