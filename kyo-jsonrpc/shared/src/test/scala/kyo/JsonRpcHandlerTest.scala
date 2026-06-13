@@ -100,37 +100,95 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "Scope exit closes Exchange and fails in-flight calls" in {
-        val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
-            (req, _) => Async.sleep(2.seconds).andThen(AddResp(req.a + req.b))
-        }
-        JsonRpcTransport.inMemory.map { (ta, tb) =>
-            JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
-                // Outer fiber lives beyond the scope; captures the call result
-                // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
-                val resultRef =
-                    AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
-                Scope.run {
-                    JsonRpcHandler.init(ta, Seq.empty).map { endpointA =>
-                        Fiber.initUnscoped(
-                            Abort.run[JsonRpcError | Closed](
-                                endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
-                            ).map(r => Sync.defer(resultRef.set(Present(r))(using AllowUnsafe.embrace.danger)))
-                        ).unit
+    // Two branches of the finalizer cancellation contract:
+    //   (a) calls registered in callerRegistry by Exchange's encode-callback when step 5
+    //       of the finalizer fires: abortSignal completes with JsonRpcLifecycleError(Close).
+    //   (b) calls not yet registered when step 6 closes Exchange: donePromise -> Closed.
+    // Each branch is pinned with a deterministic latch so the assertion is exact.
+    "Scope exit closes Exchange and fails in-flight calls" - {
+
+        // Branch (a): pin "registered before finalizer". Handler on B completes a gate when
+        // entered; the test waits on that gate before exiting Scope.run, so callerRegistry has
+        // been populated by the encode-callback (which runs before the wire send that wakes B).
+        "registered call sees JsonRpcLifecycleError(Close)" in {
+            // Unsafe: Fiber.Promise used as a gate, completed by the handler on B when entered
+            Fiber.Promise.init[Unit, Abort[Closed]].map { handlerEntered =>
+                val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
+                    (req, _) =>
+                        handlerEntered.completeUnitDiscard.andThen(
+                            // After the handler signals entry, await scope close (the call fiber
+                            // is interrupted; this branch is fired by the finalizer's step 5).
+                            Async.never[AddResp]
+                        )
+                }
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
+                        // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
+                        val resultRef =
+                            AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
+                        Scope.run {
+                            JsonRpcHandler.init(ta, Seq.empty).map { endpointA =>
+                                Fiber.initUnscoped(
+                                    Abort.run[JsonRpcError | Closed](
+                                        endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
+                                    ).map(r => Sync.defer(resultRef.set(Present(r))(using AllowUnsafe.embrace.danger)))
+                                ).andThen(handlerEntered.get)
+                            }
+                        }.andThen {
+                            assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                                Sync.defer {
+                                    resultRef.get()(using AllowUnsafe.embrace.danger) match
+                                        case Present(Result.Failure(e: JsonRpcLifecycleError)) =>
+                                            assert(e.stage == JsonRpcLifecycleError.Stage.Close)
+                                        case other => fail(s"expected JsonRpcLifecycleError(Close), got $other")
+                                }
+                            }
+                        }
                     }
-                }.andThen {
-                    assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
-                        Sync.defer {
-                            resultRef.get()(using AllowUnsafe.embrace.danger) match
-                                case Present(Result.Failure(_: Closed))                => succeed
-                                case Present(Result.Failure(_: JsonRpcLifecycleError)) =>
-                                    // The endpoint maps a Scope-driven Closed signal to JsonRpcLifecycleError on the
-                                    // wire-direction boundary; both shapes signal the same scope-close cancellation semantic.
-                                    succeed
-                                case Present(Result.Success(v)) => fail(s"expected Closed failure after scope close, got $v")
-                                case Present(Result.Failure(e)) => fail(s"expected Closed but got: $e")
-                                case Present(Result.Panic(t))   => fail(s"unexpected panic: $t")
-                                case Absent                     => fail("no result captured")
+                }
+            }
+        }
+
+        // Branch (b): pin "scope close fires before registration". A GatedTransport on A
+        // delays the wire send until after Scope.run has returned; by then Exchange.close has
+        // fired (step 6) and donePromise has been completed with Closed, so the call sees Closed
+        // when it tries to use the Exchange.
+        "unregistered call sees Closed after Exchange.close" in {
+            // Unsafe: Fiber.Promise used as a gate, completed by the test after scope close
+            Fiber.Promise.init[Unit, Abort[Closed]].map { releaseSend =>
+                val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
+                    (req, _) => AddResp(req.a + req.b)
+                }
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val gatedTa = new JsonRpcTransport:
+                        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+                            releaseSend.get.andThen(ta.send(env))
+                        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] = ta.incoming
+                        def close(using Frame): Unit < Async                                      = ta.close
+                    JsonRpcHandler.init(tb, Seq(addOnB)).map { _ =>
+                        // Unsafe: AtomicRef.Unsafe.init for result capture across fibers
+                        val resultRef =
+                            AtomicRef.Unsafe.init[Maybe[Result[JsonRpcError | Closed, AddResp]]](Absent)(using AllowUnsafe.embrace.danger)
+                        Scope.run {
+                            JsonRpcHandler.init(gatedTa, Seq.empty).map { endpointA =>
+                                Fiber.initUnscoped(
+                                    Abort.run[JsonRpcError | Closed](
+                                        endpointA.call[AddReq, AddResp]("add", AddReq(1, 2))
+                                    ).map(r => Sync.defer(resultRef.set(Present(r))(using AllowUnsafe.embrace.danger)))
+                                ).unit
+                            }
+                        }.andThen {
+                            // Scope has closed; Exchange is now closed. Release the wire send so
+                            // the call's encode-callback path observes the closed Exchange.
+                            releaseSend.completeUnitDiscard.andThen {
+                                assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                                    Sync.defer {
+                                        resultRef.get()(using AllowUnsafe.embrace.danger) match
+                                            case Present(Result.Failure(_: Closed)) => succeed
+                                            case other                              => fail(s"expected Closed, got $other")
+                                    }
+                                }
+                            }
                         }
                     }
                 }

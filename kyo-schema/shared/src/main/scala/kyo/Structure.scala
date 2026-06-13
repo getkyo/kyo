@@ -286,6 +286,29 @@ object Structure:
         optional: Boolean
     ):
         def fieldType: Structure.Type = _fieldType()
+
+        // Equality forces `_fieldType` so two Fields built from identical structural data
+        // compare equal even though the by-name `apply` wraps each call's argument in a
+        // fresh `() => fieldType` lambda. The auto-generated case-class equals would
+        // otherwise compare function references and report `false` for structurally
+        // identical Fields. Structure.Type has no CanEqual; reach for `.equals` directly.
+        override def equals(other: Any): Boolean = other match
+            case that: Field =>
+                name == that.name &&
+                doc == that.doc &&
+                default == that.default &&
+                optional == that.optional &&
+                fieldType.equals(that.fieldType)
+            case _ => false
+
+        override def hashCode(): Int =
+            var h = name.hashCode
+            h = h * 31 + fieldType.hashCode
+            h = h * 31 + doc.hashCode
+            h = h * 31 + default.hashCode
+            h = h * 31 + optional.hashCode
+            h
+        end hashCode
     end Field
 
     object Field:

@@ -327,7 +327,7 @@ private[kyo] object LspWireEnumSchemas:
       * If that fails (the token is an object, not a boolean), falls back to reading via Schema[T].
       * The fromStructureValue override handles the Structure.Value path directly.
       */
-    given [T: Schema]: Schema[LspHandler.BooleanOr[T]] =
+    given [T](using Schema[T], Tag[LspHandler.BooleanOr[T]]): Schema[LspHandler.BooleanOr[T]] =
         new Schema[LspHandler.BooleanOr[T]](Seq.empty):
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.BooleanOr[T], w: Codec.Writer): Unit =
                 v match
@@ -346,8 +346,7 @@ private[kyo] object LspWireEnumSchemas:
                     case b: LspHandler.BooleanOr[?] => b.asInstanceOf[LspHandler.BooleanOr[T]]
                     case _                          => value
             private lazy val _structure: Structure.Type =
-                // Non-inline given: no implicit Tag[T] in scope; fall back to Tag[Any].
-                Structure.Type.Open(Tag[Any])
+                Structure.Type.Open(Tag[LspHandler.BooleanOr[T]].asInstanceOf[Tag[Any]])
             override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
@@ -363,7 +362,7 @@ private[kyo] object LspWireEnumSchemas:
       * If that fails (the token is an object, not a string), falls back to reading via Schema[T].
       * The fromStructureValue override handles the Structure.Value path directly.
       */
-    given [T: Schema]: Schema[LspHandler.StringOr[T]] =
+    given [T](using Schema[T], Tag[LspHandler.StringOr[T]]): Schema[LspHandler.StringOr[T]] =
         new Schema[LspHandler.StringOr[T]](Seq.empty):
             @publicInBinary private[kyo] def serializeWrite(v: LspHandler.StringOr[T], w: Codec.Writer): Unit =
                 v match
@@ -382,8 +381,7 @@ private[kyo] object LspWireEnumSchemas:
                     case s: LspHandler.StringOr[?] => s.asInstanceOf[LspHandler.StringOr[T]]
                     case _                         => value
             private lazy val _structure: Structure.Type =
-                // Non-inline given: no implicit Tag[T] in scope; fall back to Tag[Any].
-                Structure.Type.Open(Tag[Any])
+                Structure.Type.Open(Tag[LspHandler.StringOr[T]].asInstanceOf[Tag[Any]])
             override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame

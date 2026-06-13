@@ -385,10 +385,9 @@ import scala.quoted.*
             val fieldResolverPairs: List[(String, SerializationMacro.SchemaResolver[A])] =
                 fieldSchemaBuilders.map { (name, _, builder) => (name, builder) }
 
-            // Per-field flag: does the emitted lambda body read the sub-schema slot for this field?
-            // Primitive / primitive-element container / primitive-arg Result specializations leave slots null.
-            val needsSubSchema: List[Boolean] =
-                computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+            // The emitted lambda bodies route every field through the resolved per-field sub-schema cached in
+            // the `_subSchemas` array, so every slot must be populated.
+            val needsSubSchema: List[Boolean] = List.fill(fields.length)(true)
 
             val structureExpr = buildCaseClassStructureExpr[A](tpe, sym, typeName, maybeFields, optionFields)
 
@@ -683,9 +682,11 @@ import scala.quoted.*
     /** Derives Schema[A] with serialization for case classes and sealed traits.
       *
       * Case classes: fields are walked via `sym.caseFields` and each field's Schema is
-      * resolved by `scala.compiletime.summonInline[Schema[t]]` at the inline-expansion
-      * phase (see `derivedEmitProduct`). Private case-fields are rejected at derivation
-      * time via `derivedRejectPrivateCaseFields` to prevent silent wire-name corruption.
+      * resolved by `Expr.summon[Schema[t]]` at macro-expansion time, with
+      * `buildContainerSchemaOpt` as the fallback for container-field types whose givens
+      * carry a `using Frame` constraint (see `derivedEmitProduct` and
+      * `summonFieldSchemaResolvers`). Private case-fields are rejected at derivation time
+      * via `derivedRejectPrivateCaseFields` to prevent silent wire-name corruption.
       *
       * Sealed traits: delegated to `generateSealedTraitSchema`, which handles variants
       * without explicit Schema instances (via `buildVariantSchemaResolver`), recursive
@@ -711,8 +712,9 @@ import scala.quoted.*
             val nilExpr = '{ Nil: List[Field[?, ?]] }
             '{ ${ generateSealedTraitSchema[A, A](nilExpr, checkSerializability = false) }.asInstanceOf[kyo.Schema[A]] }
         else if sym.isClassDef && sym.flags.is(Flags.Case) then
-            // Case classes use the new summonInline-per-field path, which emits generic derivation
-            // without specialization to specific types.
+            // Case classes resolve each field's Schema via Expr.summon[Schema[t]] at macro-expansion
+            // time, with buildContainerSchemaOpt as the fallback for container-field types (Chunk,
+            // List, Maybe, Option, ...) whose givens carry a using Frame constraint.
             derivedRejectPrivateCaseFields(tpe, sym)
             derivedEmitProduct[A](tpe, sym)
         else
@@ -792,7 +794,7 @@ import scala.quoted.*
         // is the field index, NOT the hash ID. Use CodecMacro.fieldId for the correct hash.
         val derivedFieldIds: List[(String, Int)] = fields.map(f => f.name -> CodecMacro.fieldId(f.name))
 
-        val needsSubSchema: List[Boolean] = computeFieldNeedsSubSchema(fields, tpe, maybeFields, optionFields)
+        val needsSubSchema: List[Boolean] = List.fill(fields.length)(true)
 
         val preEncodedExprs: List[Expr[Array[Byte]]] = fields.map { f =>
             Expr(f.name.getBytes(java.nio.charset.StandardCharsets.UTF_8))
@@ -1007,9 +1009,9 @@ import scala.quoted.*
 
             val childTypeName = childSym.name
 
-            // Per-field flag: does the emitted lambda body read the sub-schema slot for this variant field?
-            val needsSubSchema: List[Boolean] =
-                computeFieldNeedsSubSchema(childFields, childType, maybeFields, optionFields)
+            // The emitted lambda bodies route every variant field through the resolved per-field sub-schema
+            // cached in the `_subSchemas` array, so every slot must be populated.
+            val needsSubSchema: List[Boolean] = List.fill(childFields.length)(true)
 
             (self: Expr[Schema[A]]) =>
                 // Resolve all field schemas eagerly with the parent's self, then create
@@ -1657,24 +1659,6 @@ import scala.quoted.*
         }
     end summonFieldSchemaResolvers
 
-    /** Returns, for each field, whether that field's emitted lambda body will consult `subSchemasExpr(idx).serializeRead/Write` at runtime.
-      *
-      * The emitted bodies in `SerializationMacro.caseClassWriteBody` / `caseClassReadBodyResolved` route every field
-      * (Maybe, Option, primitive, container, Result, and any other nested shape) through the resolved per-field
-      * sub-schema cached in the `_subSchemas` array, so every slot must be populated. The return value is therefore
-      * `true` for every field; the helper is kept as a single integration point so a future split between
-      * always-populated and conditionally-populated slots only touches one site.
-      */
-    private def computeFieldNeedsSubSchema(using
-        Quotes
-    )(
-        fields: List[quotes.reflect.Symbol],
-        tpe: quotes.reflect.TypeRepr,
-        maybeFields: Set[Int],
-        optionFields: Set[Int]
-    ): List[Boolean] =
-        fields.zipWithIndex.map(_ => true)
-
     /** Builds an `Expr[Array[kyo.Schema[Any]]]` of length `needsSubSchema.size` where slot `i` holds the resolved sub-schema for field `i`,
       * or `null` when the emitted lambda body uses a specialization that does not consult the slot (primitive / primitive-element container
       * / Result[primitive, primitive]).
@@ -2072,7 +2056,7 @@ import scala.quoted.*
                             val innerSchemaOpt: Option[Expr[Schema[inner]]] =
                                 Expr.summon[Schema[inner]].orElse(
                                     buildContainerSchemaOpt[A](innerType, fieldName)
-                                        .map(_.asInstanceOf[Expr[Schema[inner]]])
+                                        .map(anyExpr => '{ $anyExpr.asInstanceOf[Schema[inner]] })
                                 )
                             innerSchemaOpt.map { innerSchema =>
                                 if sym == listSym then
@@ -2246,7 +2230,7 @@ import scala.quoted.*
                             val valueSchemaOpt: Option[Expr[Schema[v]]] =
                                 Expr.summon[Schema[v]].orElse(
                                     buildContainerSchemaOpt[A](valueType, fieldName)
-                                        .map(_.asInstanceOf[Expr[Schema[v]]])
+                                        .map(anyExpr => '{ $anyExpr.asInstanceOf[Schema[v]] })
                                 )
                             valueSchemaOpt.map { valueSchema =>
                                 '{

@@ -100,8 +100,9 @@ object Json:
       * @return
       *   a JsonSchema derived from the Schema's structure and enriched with all metadata
       */
-    inline def jsonSchema[A](using schema: Schema[A]): JsonSchema =
-        val base = JsonSchema.fromStructure(schema.structure)
+    def jsonSchema[A](using schema: Schema[A]): JsonSchema =
+        given Frame = Frame.internal
+        val base    = JsonSchema.fromStructure(schema.structure)
         base match
             case obj: JsonSchema.Obj =>
                 Json.enrichJsonSchemaObj(

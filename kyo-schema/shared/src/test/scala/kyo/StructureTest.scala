@@ -369,6 +369,25 @@ class StructureTest extends kyo.test.Test[Any]:
             end match
         }
 
+        "Structure.Field equality compares the forced fieldType" in {
+            val ft = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val a  = Structure.Field("x", ft, Maybe("doc"), Maybe.empty, optional = false)
+            val b  = Structure.Field("x", ft, Maybe("doc"), Maybe.empty, optional = false)
+            // Two Fields built from identical data compare equal despite the by-name `apply`
+            // wrapping each call's argument in a fresh `() => fieldType` lambda.
+            assert(a == b, s"Field equality regressed: a=$a b=$b")
+            assert(a.hashCode == b.hashCode, "hashCode must agree with equals")
+            val ftOther = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val c       = Structure.Field("x", ftOther, Maybe("doc"), Maybe.empty, optional = false)
+            assert(a != c, "Fields with different fieldType must not compare equal")
+            val d = Structure.Field("y", ft, Maybe("doc"), Maybe.empty, optional = false)
+            assert(a != d, "Fields with different name must not compare equal")
+            val e = Structure.Field("x", ft, Maybe.empty, Maybe.empty, optional = false)
+            assert(a != e, "Fields with different doc must not compare equal")
+            val f = Structure.Field("x", ft, Maybe("doc"), Maybe.empty, optional = true)
+            assert(a != f, "Fields with different optional must not compare equal")
+        }
+
         "Structure.Field roundtrips via Json with public field names" in {
             val ft      = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
             val f       = Structure.Field("x", ft, Maybe("hi"), Maybe.empty, optional = true)

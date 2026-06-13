@@ -2072,10 +2072,11 @@ private[kyo] object LspContentSchemas:
                 w.string(r.method)
                 r._rawRegisterOptions.foreach { raw =>
                     w.field("registerOptions", 3)
-                    // Encodes registerOptions as a JSON string value. The LSP spec
-                    // treats registerOptions as an opaque JSON blob; encoding it as
-                    // a string keeps the wire format simple without a full raw-JSON
-                    // writer, at the cost of requiring clients to decode the field value.
+                    // Diverges from LSP §3.17 (which encodes registerOptions as an
+                    // arbitrary JSON value): writes the raw JSON text as a JSON string,
+                    // because Codec.Writer has no raw-JSON write primitive. Clients
+                    // reading this field must JSON-decode the string to recover the
+                    // underlying value.
                     w.string(raw)
                 }
                 w.objectEnd()

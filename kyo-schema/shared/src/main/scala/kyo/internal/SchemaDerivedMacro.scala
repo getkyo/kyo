@@ -7,12 +7,13 @@ import scala.quoted.*
   *
   * Walks the target type's structural shape (case class, sealed trait, or rejects everything
   * else) and emits a `new Schema[A]` literal whose nested field/variant Schemas are resolved
-  * by `scala.compiletime.summonInline[Schema[t]]` at the inline-expansion phase. The macro
-  * itself never calls `Expr.summon[Schema[t]]` and never emits plain `summon[Schema[t]]`:
-  * `summonInline` is the only mechanism that resolves correctly across the in-flight
-  * `derived[A]` given (the compiler runs `summonInline`'s implicit search at the
-  * inline-expansion phase, after the outer macro's quote returns, with full visibility of
-  * forward-references).
+  * at macro-expansion time via `Expr.summon[Schema[t]]`. Container field types (Chunk, List,
+  * Maybe, Option, etc.) whose Schema givens carry a `using Frame` constraint that is not
+  * satisfied at the `derives Schema` call site fall back to `buildContainerSchemaOpt`, which
+  * synthesizes the appropriate container Schema from the resolved element Schema. Sealed
+  * traits route through `generateSealedTraitSchema`, which builds variant resolvers that also
+  * combine `Expr.summon[Schema[v]]` with `buildContainerSchemaOpt` for variants whose givens
+  * cannot be summoned directly.
   *
   * The optional flag on each emitted `Structure.Field` is computed at runtime by inspecting
   * the resolved Schema's structure: a `Structure.Type.Optional(_, _, _)` shape sets

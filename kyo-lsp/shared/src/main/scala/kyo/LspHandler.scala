@@ -2125,7 +2125,7 @@ object LspHandler:
     object BooleanOr:
         final case class Bool[+T](value: Boolean) extends BooleanOr[T]
         final case class Options[+T](value: T)    extends BooleanOr[T]
-        given [T: Schema]: Schema[BooleanOr[T]] = internal.lsp.LspWireEnumSchemas.given_Schema_BooleanOr
+        given [T: Schema](using Tag[BooleanOr[T]]): Schema[BooleanOr[T]] = internal.lsp.LspWireEnumSchemas.given_Schema_BooleanOr
     end BooleanOr
 
     /** A value that is either a string or a typed options record. */
@@ -2134,7 +2134,7 @@ object LspHandler:
     object StringOr:
         final case class Str[+T](value: String) extends StringOr[T]
         final case class Options[+T](value: T)  extends StringOr[T]
-        given [T: Schema]: Schema[StringOr[T]] = internal.lsp.LspWireEnumSchemas.given_Schema_StringOr
+        given [T: Schema](using Tag[StringOr[T]]): Schema[StringOr[T]] = internal.lsp.LspWireEnumSchemas.given_Schema_StringOr
     end StringOr
 
     /** A `textDocumentSync` capability value: either a sync-kind ordinal or a full options record.
