@@ -258,7 +258,7 @@ private[kyo] object SchemaSerializer:
     /** Returns a zero/default value for a dropped field so required-field null checks pass during decode.
       *
       * Uses the field's declared default if available. Otherwise derives a type-appropriate zero value from the field's tag. For reference
-      * types without a known zero, returns null — this is intentional because the macro-generated decoder uses `Array[AnyRef]` with JVM
+      * types without a known zero, returns null: this is intentional because the macro-generated decoder uses `Array[AnyRef]` with JVM
       * null checks (`values(idx) == null`) to detect missing required fields.
       */
     def zeroForField(field: Field[?, ?]): AnyRef =
@@ -275,7 +275,7 @@ private[kyo] object SchemaSerializer:
             else if show == "scala.Char" then java.lang.Character.valueOf('\u0000')
             else if field.tag <:< Tag[Option[Any]] then None.asInstanceOf[AnyRef]
             else if field.tag <:< Tag[Maybe[Any]] then Maybe.empty.asInstanceOf[AnyRef]
-            else null // JVM null for unknown reference types — required by macro null-check protocol
+            else null // JVM null for unknown reference types: required by macro null-check protocol
             end if
         end zeroFromTag
         field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])

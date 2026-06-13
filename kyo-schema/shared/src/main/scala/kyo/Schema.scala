@@ -73,7 +73,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     // --- Abstract codec and focus methods. Each concrete Schema[A] overrides
     // these via `Schema.init` / `Schema.initFocused`, which inline the caller's
-    // lambda expression directly into the method body — no Function closure is
+    // lambda expression directly into the method body: no Function closure is
     // materialized per derivation. See companion object `Schema.init`.
 
     /** Serialize a value of A to the given Writer. */
@@ -554,7 +554,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     /** Adds a format annotation on a String field.
       *
-      * Format is advisory in JSON Schema — no runtime validation check is produced. Only stores a Constraint for JSON Schema enrichment.
+      * Format is advisory in JSON Schema: no runtime validation check is produced. Only stores a Constraint for JSON Schema enrichment.
       */
     inline def checkFormat(inline focus: Focus.Select[A, Focused] => Focus.Select[A, String])(
         fmt: String
@@ -1096,9 +1096,9 @@ end Schema
 
 object Schema:
 
-    /** Core factory — inlines the caller's four lambdas into the abstract method bodies of a fresh `new Schema[A] { ... }` subclass.
+    /** Core factory: inlines the caller's four lambdas into the abstract method bodies of a fresh `new Schema[A] { ... }` subclass.
       * Because `writeFn`, `readFn`, `getterFn`, `setterFn` are `inline` parameters, Scala 3 substitutes the caller's expression directly
-      * into the method body — no `Function` closure is allocated.
+      * into the method body: no `Function` closure is allocated.
       *
       * The `@nowarn("msg=anonymous")` suppresses the anonymous-class-creation warning emitted for every inline expansion (pattern copied
       * from `SchemaOrdering.scala:19`).
@@ -1359,7 +1359,7 @@ object Schema:
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
         )
 
-    /** Frame schema — serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
+    /** Frame schema: serializes as the raw encoded string. Frame is an opaque type backed by String at runtime.
       */
     given frameSchema: Schema[Frame] = Schema.init[Frame](
         writeFn = (v, w) => w.string(v.toString),
@@ -1367,7 +1367,7 @@ object Schema:
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Frame].asInstanceOf[Tag[Any]])
     )
 
-    /** Tag schema — serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
+    /** Tag schema: serializes as the string representation. Tags are opaque types backed by String at runtime for static tags.
       */
     given tagSchema[A]: Schema[Tag[A]] = Schema.init[Tag[A]](
         writeFn = (v, w) =>

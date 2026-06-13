@@ -147,7 +147,7 @@ private[internal] object MacroUtils:
 
     /** Creates an identity getter `A => Maybe[F]` that wraps the input in Maybe.
       *
-      * At the root level, F is the structural expansion of A — same runtime representation,
+      * At the root level, F is the structural expansion of A: same runtime representation,
       * different compile-time type. Uses Any as intermediate to avoid JVM class cast checks against
       * the structural type.
       */

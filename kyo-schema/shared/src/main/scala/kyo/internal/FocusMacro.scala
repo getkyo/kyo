@@ -215,9 +215,15 @@ import scala.quoted.*
 
         val getterExpr = '{ (root: A) =>
             $focus.getter.asInstanceOf[A => Maybe[Any]](root).map { (_: Any) =>
-                val schema = $focus.schema.get.asInstanceOf[Schema[A]]
+                // Cast: Schema and computed-field lambda are stored as Any at the Focus boundary; type is recovered here.
+                // Focus.schema is always present for computed focuses: the macro sets it unconditionally in generateComputedFocus.
+                val schema = $focus.schema.getOrElse(throw new IllegalStateException(
+                    s"Focus.schema is absent: computed-field focus requires a Schema instance"
+                )).asInstanceOf[Schema[A]]
                 val computeFn = schema.computedFields.toSeq.find(_._1 == $fieldNameExpr)
-                    .getOrElse(throw new RuntimeException(s"Computed field '${$fieldNameExpr}' not found in schema"))
+                    .getOrElse(throw new IllegalStateException(
+                        s"focus computed field '${$fieldNameExpr}' not present in Schema[A].computedFields: macro generation invariant violated"
+                    ))
                     ._2
                 computeFn(root).asInstanceOf[V]
             }
@@ -441,7 +447,7 @@ import scala.quoted.*
         end defaultsArrayExpr
 
         // Construct lambda: uses `Mirror.ProductOf[A]` to materialize an A from the field-value
-        // array. One shared lambda body (no per-field casts inlined) — the Mirror provides the
+        // array. One shared lambda body (no per-field casts inlined). The Mirror provides the
         // typed `fromProduct` call.
         val constructExpr: Expr[Array[Any] => A] =
             tpe.asType match
@@ -456,7 +462,7 @@ import scala.quoted.*
                             }
                         case None =>
                             // Fallback: companion.apply. Only reached when Mirror.ProductOf[A] is
-                            // not derivable — generally not for plain case classes.
+                            // not derivable; generally not for plain case classes.
                             '{ (args: Array[Any]) =>
                                 ${
                                     val argTerms: List[Term] = fields.zipWithIndex.map { (field, idx) =>
@@ -586,7 +592,7 @@ import scala.quoted.*
         val childNames = children.map(_.name.stripSuffix("$"))
         val encoded    = childNames.mkString(";")
 
-        // Single `matchVariant: A => Int` lambda — does the runtime dispatch via a chain of
+        // Single `matchVariant: A => Int` lambda: does the runtime dispatch via a chain of
         // isInstanceOf / `eq singleton` checks. One synthetic method per derived sum (vs N).
         val matchVariantExpr: Expr[A => Int] = '{ (a: A) =>
             ${
@@ -675,7 +681,7 @@ import scala.quoted.*
         val childName = child.name.stripSuffix("$")
 
         // True case objects (modules) and no-arg enum cases emit a trivial empty-object Schema with
-        // a singleton ref. Everything else — including a 0-arg case class like `case class Foo()` —
+        // a singleton ref. Everything else, including a 0-arg case class like `case class Foo()`,
         // delegates to `emitProductSchema` so the constructor is called via the companion `apply`.
         val isSingletonCase = !child.isType || child.flags.is(Flags.Module)
 

@@ -101,7 +101,7 @@ object Codec:
           * wrappers (e.g. the internal `SchemaSerializer.TransformAwareReader`) can signal that fields dropped by the schema should not
           * trigger [[MissingFieldException]].
           *
-          * Default returns `0L` — no fields pre-satisfied. Overrides must return a mask with bit `i` set iff field index `i` is
+          * Default returns `0L`: no fields pre-satisfied. Overrides must return a mask with bit `i` set iff field index `i` is
           * pre-satisfied by this reader. Field index `i` corresponds to the case class constructor position (0-based). Only the low-order
           * `n` bits are relevant; bits beyond that are ignored by the caller.
           */

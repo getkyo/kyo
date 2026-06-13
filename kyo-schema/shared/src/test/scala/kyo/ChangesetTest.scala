@@ -121,7 +121,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
         assert(rmOps.head.fieldPath == Chunk("nickname"))
     }
 
-    // 14. Removed field produces RemoveField — test with schema transforms that drop fields
+    // 14. Removed field produces RemoveField: test with schema transforms that drop fields
     "removed field produces RemoveField" in {
         // Simulate by testing the RemoveField op directly via applyTo on a value
         // where we remove a field from the Structure.Value tree
@@ -157,7 +157,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
         val m2 = MTMapHolder(Map("a" -> 1, "c" -> 3))
         val d  = Changeset(m1, m2)
         assert(!d.isEmpty)
-        // Key "b" removed, key "c" added — changeset should have operations reflecting this
+        // Key "b" removed, key "c" added: changeset should have operations reflecting this
         val nestedOps = d.operations.collect { case op: Changeset.Patch.Nested => op }
         assert(nestedOps.size == 1)
         assert(nestedOps.head.fieldPath == Chunk("data"))
@@ -525,7 +525,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     // --- StringPatch prefix/suffix optimization tests ---
 
     "StringPatch: common prefix trimmed" in {
-        // "Hello World" -> "Hello World!" — append
+        // "Hello World" to "Hello World!": append
         val v1 = MTStringField("Hello World")
         val v2 = MTStringField("Hello World!")
         val d  = Changeset(v1, v2)
@@ -537,7 +537,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: common suffix trimmed" in {
-        // "staging.example.com" -> "prod.example.com" — prefix change
+        // "staging.example.com" to "prod.example.com": prefix change
         val v1 = MTStringField("staging.example.com")
         val v2 = MTStringField("prod.example.com")
         val d  = Changeset(v1, v2)
@@ -549,7 +549,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: common prefix and suffix trimmed" in {
-        // "Hello World" -> "Hello Beautiful World" — middle insertion
+        // "Hello World" to "Hello Beautiful World": middle insertion
         val v1 = MTStringField("Hello World")
         val v2 = MTStringField("Hello Beautiful World")
         val d  = Changeset(v1, v2)
@@ -561,7 +561,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: middle replacement" in {
-        // "abcXYZdef" -> "abcPQRdef" — replace middle
+        // "abcXYZdef" to "abcPQRdef": replace middle
         val v1 = MTStringField("abcXYZdef")
         val v2 = MTStringField("abcPQRdef")
         val d  = Changeset(v1, v2)
@@ -573,7 +573,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: no common prefix or suffix" in {
-        // completely different strings — full replacement
+        // completely different strings: full replacement
         val v1 = MTStringField("abc")
         val v2 = MTStringField("xyz")
         val d  = Changeset(v1, v2)
@@ -679,7 +679,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: entirely shared prefix, different suffix lengths" in {
-        // "abcdef" -> "abcdefghij" — old is a prefix of new
+        // "abcdef" to "abcdefghij": old is a prefix of new
         val v1 = MTStringField("abcdef")
         val v2 = MTStringField("abcdefghij")
         val d  = Changeset(v1, v2)
@@ -691,7 +691,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: new is prefix of old" in {
-        // "abcdefghij" -> "abcdef" — truncation
+        // "abcdefghij" to "abcdef": truncation
         val v1 = MTStringField("abcdefghij")
         val v2 = MTStringField("abcdef")
         val d  = Changeset(v1, v2)
@@ -703,7 +703,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: repeated characters" in {
-        // "aaaa" -> "aabaa" — insert in middle of repeated chars
+        // "aaaa" to "aabaa": insert in middle of repeated chars
         val v1 = MTStringField("aaaa")
         val v2 = MTStringField("aabaa")
         val d  = Changeset(v1, v2)
@@ -725,7 +725,7 @@ class ChangesetTest extends kyo.test.Test[Any]:
     }
 
     "StringPatch: disjoint changes merge into one patch" in {
-        // "ABCDEFGH" -> "XBCDEFGX" — changes at both ends
+        // "ABCDEFGH" to "XBCDEFGX": changes at both ends
         val v1  = MTStringField("ABCDEFGH")
         val v2  = MTStringField("XBCDEFGX")
         val d   = Changeset(v1, v2)

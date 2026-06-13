@@ -11,7 +11,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
     override def frame: Frame = _frame
     private var pos           = 0
 
-    // Reusable field values array — avoids per-decode allocation in macro-generated code.
+    // Reusable field values array: avoids per-decode allocation in macro-generated code.
     // Only reused for top-level (depth 0) object. Nested objects allocate fresh arrays.
     private var fieldValues: Array[AnyRef] = new Array[AnyRef](16)
     private var fieldDepth: Int            = 0
@@ -61,7 +61,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
         skipWhitespace()
         expectByte('"')
         lastFieldStart = pos
-        // Fast scan for closing quote — field names are typically ASCII with no escapes
+        // Fast scan for closing quote: field names are typically ASCII with no escapes
         @tailrec def scanClose(): Unit =
             if pos < input.size && input(pos) != '"' then
                 pos += 1
@@ -158,12 +158,12 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                 fastScan()
         fastScan()
         if pos < input.size && input(pos) == '"' then
-            // No escapes — bulk convert from underlying array
+            // No escapes: bulk convert from underlying array
             val s = new String(input.toArrayUnsafe, start, pos - start, StandardCharsets.UTF_8)
             pos += 1
             s
         else if pos < input.size && input(pos) == '\\' then
-            // Has escapes — fall back to StringBuilder path
+            // Has escapes: fall back to StringBuilder path
             pos = start
             readQuotedStringWithEscapes()
         else
@@ -187,7 +187,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else
                 (result, overflow)
         val (result, overflow) = parseDigits(0, false)
-        // If followed by '.', 'e', or 'E' — not a valid JSON integer, fall back
+        // If followed by '.', 'e', or 'E': not a valid JSON integer, fall back
         if pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E') then
             pos = start
             parseNumberStr("Int")(_.toInt)
@@ -215,7 +215,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
             else
                 (result, overflow)
         val (result, overflow) = parseDigits(0L, false)
-        // If followed by '.', 'e', or 'E' — not a valid JSON integer, fall back
+        // If followed by '.', 'e', or 'E': not a valid JSON integer, fall back
         if pos < input.size && (input(pos) == '.' || input(pos) == 'e' || input(pos) == 'E') then
             pos = start
             parseNumberStr("Long")(_.toLong)
@@ -422,7 +422,7 @@ final class JsonReader private (private var input: Span[Byte], private var _fram
                             val cp = parseHex4(pos)
                             pos += 4
                             if cp >= 0xd800 && cp <= 0xdbff then
-                                // High surrogate — must be followed by \uDC00–\uDFFF
+                                // High surrogate: must be followed by \uDC00 through \uDFFF
                                 if pos + 6 > input.size || input(pos) != '\\' || input(pos + 1) != 'u' then
                                     error(s"Lone high surrogate: \\u${Integer.toHexString(cp)}")
                                 pos += 2

@@ -8,9 +8,9 @@ import scala.language.dynamics
   * convenience methods. For field-level validation, use `Schema.check(_.field)(pred, msg)` and `Schema.validate(value)`.
   *
   * Mode[_] forms a lattice that grows as navigation crosses more complex structural boundaries:
-  *   - `Focus.Id` — product (case class) field access; the value is always present
-  *   - `Maybe` — sum-type variant access; the value may be absent when the active variant differs
-  *   - `Chunk` — collection element access; zero or more elements
+  *   - `Focus.Id`: product (case class) field access; the value is always present
+  *   - `Maybe`: sum-type variant access; the value may be absent when the active variant differs
+  *   - `Chunk`: collection element access; zero or more elements
   *
   * Composing foci follows the lattice rules: Id composed with Id stays Id, Id composed with Maybe becomes Maybe, and any composition
   * involving Chunk yields Chunk. This makes the access mode a compile-time indicator of how many values (and how certain) you will get.

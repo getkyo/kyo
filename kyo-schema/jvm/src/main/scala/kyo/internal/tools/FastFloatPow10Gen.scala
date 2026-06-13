@@ -62,7 +62,7 @@ import java.nio.file.Paths
             curDen = curDen.shiftLeft(1) // divide by 2
         end while
 
-        // d = floor(curNum / curDen) — the 128-bit integer in [2^127, 2^128)
+        // d = floor(curNum / curDen): the 128-bit integer in [2^127, 2^128)
         val d = curNum.divide(curDen)
 
         // Split into hi (top 64 bits) and lo (bottom 64 bits)

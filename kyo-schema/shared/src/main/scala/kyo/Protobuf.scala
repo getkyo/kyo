@@ -194,13 +194,13 @@ object Protobuf:
                         )
 
                     case Structure.Type.Collection(_, _, elem) =>
-                        // Collection-as-type-name occurs when used inside another repeated/map — not valid in proto3
+                        // Collection-as-type-name occurs when used inside another repeated/map: not valid in proto3
                         throw new IllegalArgumentException(
                             s"proto3 does not support nested repeated fields (List[List[_]] or map value List[_]): use a wrapper message instead"
                         )
 
                     case Structure.Type.Mapping(_, _, _, _) =>
-                        // Mapping-as-type-name occurs when used as an element inside repeated/map — not valid in proto3
+                        // Mapping-as-type-name occurs when used as an element inside repeated/map: not valid in proto3
                         throw new IllegalArgumentException(
                             s"proto3 does not support nested Mapping as a type name (map value Map[_, _]): use a wrapper message instead"
                         )

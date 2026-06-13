@@ -17,6 +17,8 @@ private[kyo] object SchemaCodecRuntime:
     /** Pre-built default for fields that have no Scala-level default. Shared across all derivations
       * so the macro does not have to emit one `() => null` thunk per non-default field.
       */
+    // Sentinel thunk: never called at runtime. Stored only in slots where hasDefault == false;
+    // readProduct guards every defaults(k)() call with a hasDefault(k) check.
     val nullDefault: () => Any = () => null
 
     // --- Product (case class) ---
@@ -213,7 +215,7 @@ private[kyo] object SchemaCodecRuntime:
 
     /** Compact per-variant metadata for a derived sealed-trait Schema.
       *
-      * `encoded` is `name1;name2;...` — semicolons separate variant names. Inflation produces the
+      * `encoded` is `name1;name2;...`: semicolons separate variant names. Inflation produces the
       * names array, hash-based variant ids, and UTF-8 nameBytes arrays.
       */
     final class SumVariantsMeta(
