@@ -339,16 +339,11 @@ object Structure:
 
         /** Hand-rolled Schema for Structure.Field.
           *
-          * The 5 wire keys are `name, fieldType, doc, default, optional`. The hand-roll is a
-          * chosen byte-for-byte match of those 5 keys against what the pre-campaign
-          * `derives Schema` emitted for the pre-campaign 5-positional case class; the
-          * roundtrip leaf 2 of StructureTest below verifies it. This is not a mechanical
-          * consequence of any compiler property; it is a chosen invariant the hand-roll
-          * preserves.
-          *
-          * The auto-derived Schema would walk the case-class fields and emit the storage
-          * member `_fieldType: Function0[Structure.Type]` as a wire field, which is wrong on
-          * two counts: the wire field name would be the storage name (not the public
+          * The wire shape is a 5-key object: `name, fieldType, doc, default, optional`. The
+          * Field roundtrip in StructureTest verifies the shape. An auto-derived Schema would
+          * walk the case-class fields and emit the storage member
+          * `_fieldType: Function0[Structure.Type]` as a wire field, which is wrong on two
+          * counts: the wire field name would be the storage name (not the public
           * `fieldType`), and the wire field type would be `Function0[Structure.Type]` for
           * which no Schema can be summoned. The hand-roll mirrors the public 5-key face and
           * reads via the public `def fieldType` accessor; constructs via the by-name

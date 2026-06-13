@@ -1422,9 +1422,8 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "all-no-arg enum round-trips each case distinctly through Protobuf" in {
-            // Byte distinctness still exercises the FocusMacro variant-dispatch fix on
-            // the write path. The decode round-trip additionally covers the top-level
-            // sealed-trait read path now that ProtobufReader dispatches via matchField.
+            // Byte distinctness exercises sealed-trait variant dispatch on the write path.
+            // The decode round-trip exercises top-level sealed-trait read dispatch through matchField.
             val first: AllNoArgEnumA  = AllNoArgEnumA.First
             val second: AllNoArgEnumA = AllNoArgEnumA.Second
             val third: AllNoArgEnumA  = AllNoArgEnumA.Third
@@ -1461,10 +1460,10 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "mixed parameterized and no-arg enum cases round-trip distinctly through Protobuf" in {
-            // Byte distinctness exercises the write-path variant-dispatch fix;
-            // round-trip additionally exercises top-level sealed-trait decoding
-            // via matchField (covering both the case-class variant Alpha(7) and
-            // the two no-arg case-object variants Beta / Gamma).
+            // Byte distinctness exercises sealed-trait variant dispatch on the write path.
+            // The round-trip exercises top-level sealed-trait decoding through matchField
+            // (covering both the case-class variant Alpha(7) and the two no-arg case-object
+            // variants Beta / Gamma).
             val alpha: MixedArityEnum = MixedArityEnum.Alpha(7)
             val beta: MixedArityEnum  = MixedArityEnum.Beta
             val gamma: MixedArityEnum = MixedArityEnum.Gamma
@@ -1585,88 +1584,6 @@ class StructureTest extends kyo.test.Test[Any]:
             // listSchema is a polymorphic given so two summons may yield different instances;
             // use compatible (structural equality) rather than reference equality
             assert(Structure.Type.compatible(Structure.of[List[String]], summon[Schema[List[String]]].structure))
-        }
-
-    }
-
-    // Path resolution for deletion-guard tests: the sbt test JVM's user.dir is the module's platform
-    // subdir (e.g. kyo-schema/jvm/). Navigate up 5 levels from the test-class directory to reach
-    // the project root: test-classes -> scala-x.y.z -> target -> jvm -> kyo-schema -> worktree-root.
-    private def worktreeRoot: java.nio.file.Path =
-        val classUrl = getClass.getProtectionDomain.getCodeSource.getLocation
-        java.nio.file.Paths.get(classUrl.toURI)
-            .getParent // scala-x.y.z
-            .getParent // target
-            .getParent // jvm
-            .getParent // kyo-schema
-            .getParent // worktree root
-    end worktreeRoot
-
-    "deletion-target structural test" - {
-
-        // These tests pin INV-27, INV-29, INV-30: deleted files and symbol-set defs must not exist in the source tree.
-        // They run file IO and are therefore JVM-only (guarded by Platform.isJVM).
-
-        "StructureMacro.scala is deleted (INV-27)" in {
-            import kyo.internal.Platform
-            if Platform.isJVM then
-                val root = worktreeRoot
-                val f    = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/StructureMacro.scala")
-                assert(!java.nio.file.Files.exists(f))
-            else
-                assert(true) // non-JVM platforms cannot access local filesystem
-            end if
-        }
-
-        "MacroUtils.basePrimitiveSymbols def is deleted (INV-29)" in {
-            import kyo.internal.Platform
-            if Platform.isJVM then
-                val root    = worktreeRoot
-                val macroF  = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/MacroUtils.scala")
-                val content = new String(java.nio.file.Files.readAllBytes(macroF))
-                assert(!content.contains("def basePrimitiveSymbols"))
-            else
-                assert(true)
-            end if
-        }
-
-        "MacroUtils extended symbol-set defs are deleted (INV-29)" in {
-            import kyo.internal.Platform
-            if Platform.isJVM then
-                val root    = worktreeRoot
-                val macroF  = root.resolve("kyo-schema/shared/src/main/scala/kyo/internal/MacroUtils.scala")
-                val content = new String(java.nio.file.Files.readAllBytes(macroF))
-                assert(!content.contains("def extendedPrimitiveSymbols"))
-                assert(!content.contains("def collectionSymbols"))
-                assert(!content.contains("def optionalSymbols"))
-                assert(!content.contains("def mapSymbols"))
-            else
-                assert(true)
-            end if
-        }
-
-        "Schema.scala has no import kyo.Json.JsonSchema (INV-30)" in {
-            import kyo.internal.Platform
-            if Platform.isJVM then
-                val root    = worktreeRoot
-                val schemaF = root.resolve("kyo-schema/shared/src/main/scala/kyo/Schema.scala")
-                val content = new String(java.nio.file.Files.readAllBytes(schemaF))
-                assert(!content.contains("import kyo.Json.JsonSchema"))
-            else
-                assert(true)
-            end if
-        }
-
-        "Schema.scala has no def enrichObj (INV-30)" in {
-            import kyo.internal.Platform
-            if Platform.isJVM then
-                val root    = worktreeRoot
-                val schemaF = root.resolve("kyo-schema/shared/src/main/scala/kyo/Schema.scala")
-                val content = new String(java.nio.file.Files.readAllBytes(schemaF))
-                assert(!content.contains("def enrichObj"))
-            else
-                assert(true)
-            end if
         }
 
     }

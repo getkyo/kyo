@@ -6,9 +6,9 @@ import kyo.Codec.Writer
 import kyo.Record.*
 import scala.quoted.*
 
-/** Shared serialization helpers extracted from FocusMacro.
+/** Shared serialization helpers used by `Schema.apply` and `Schema.derived`.
   *
-  * Contains the write/read-body generators and type-checking utilities used by both Schema.apply and Schema.derived paths.
+  * Contains the write/read-body generators and type-checking utilities for both code paths.
   *
   * Uses `SchemaResolver[A]` to unify simple and recursive code paths: simple types wrap a constant `Expr[Schema[Any]]` as `_ =>
   * schemaExpr`, while recursive types pass a builder that references the self schema.
@@ -459,8 +459,8 @@ private[internal] object SerializationMacro:
       *
       * Mirrors the case-class field dispatch mechanism: the generated code calls `reader.fieldParse()` to advance past the discriminator
       * and then tries `reader.matchField(variantBytes)` for each known variant. This keeps the read path uniform between wire formats:
-      * protobuf's `matchField` compares `CodecMacro.fieldId(name)` against the integer tag, while JSON's compares raw UTF-8 bytes, so a
-      * top-level `Protobuf.decode[SealedTrait]` now works without needing a field-name map to be installed on the reader.
+      * protobuf's `matchField` compares `CodecMacro.fieldId(name)` against the integer tag, while JSON's compares raw UTF-8 bytes, so
+      * top-level `Protobuf.decode[SealedTrait]` works without a field-name map installed on the reader.
       */
     private[internal] def sealedReadBody[A: Type](using
         Quotes

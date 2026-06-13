@@ -692,12 +692,11 @@ import scala.quoted.*
       * without explicit Schema instances (via `buildVariantSchemaResolver`), recursive
       * parent-type references, case objects, and Scala 3 enum values.
       *
-      * This method lives in FocusMacro (rather than SchemaDerivedMacro) because FocusMacro
-      * is already a compile-time dependency of Schema.scala (for other macro calls such as
-      * defaultsImpl and metaApplyImpl). Moving the implementation here avoids the cyclic
-      * macro dependency that would arise if SchemaDerivedMacro.scala referenced Schema
-      * types directly in its quoted output while Schema.scala held a macro call into
-      * SchemaDerivedMacro.
+      * This method lives in FocusMacro because FocusMacro is already a compile-time
+      * dependency of Schema.scala (for other macro calls such as defaultsImpl and
+      * metaApplyImpl). Placing it here avoids the cyclic macro dependency that would
+      * arise if SchemaDerivedMacro.scala referenced Schema types directly in its quoted
+      * output while Schema.scala held a macro call into SchemaDerivedMacro.
       */
     def derivedImpl[A: Type](using Quotes): Expr[Schema[A]] =
         import quotes.reflect.*
@@ -2331,8 +2330,9 @@ import scala.quoted.*
       *
       * Returns true if `tpe` is `target`, or if `tpe`'s case-class field graph (including via containers/maps/tuples
       * and sealed trait children) transitively contains `target`. Used as a gate before deciding whether to summon
-      * `Schema[ft].structure` (no cycle, preserves INV-6 reference equality) or to inline the structure via
-      * `deriveTypeFallback` (cycle, breaks the runtime loop with an empty Product/Sum placeholder).
+      * `Schema[ft].structure` (no cycle, preserves reference equality between the parent's field structure and the
+      * field type's resolved Schema structure) or to inline the structure via `deriveTypeFallback` (cycle, breaks the
+      * runtime loop with an empty Product/Sum placeholder).
       *
       * `seen` accumulates the fully-qualified names of types already visited on the current walk to prevent
       * an infinite loop in the cycle-detection itself.
@@ -2602,13 +2602,13 @@ import scala.quoted.*
 
     /** Builds a `Structure.Type` expression for a field type.
       *
-      * For non-recursive types: emits `${Schema[ft]}.structure` (the runtime value). This preserves
-      * reference equality (INV-6): `Schema[Parent].structure.fields(i).fieldType eq Schema[FieldType].structure`.
+      * For non-recursive types: emits `${Schema[ft]}.structure` (the runtime value). This preserves reference
+      * equality between `Schema[Parent].structure.fields(i).fieldType` and `Schema[FieldType].structure`.
       *
       * For recursive types (direct or mutual cycles back to `parentType`): emits a compile-time inlined
       * `Structure.Type` via `deriveTypeFallback`. The inline tree contains empty Product/Sum placeholders
-      * at the recursion point, breaking the runtime cycle. INV-6 cannot hold inside a cycle (the inline tree
-      * is a fresh allocation), but the cycle would otherwise infinite-recurse.
+      * at the recursion point, breaking the runtime cycle. Reference equality cannot hold inside a cycle
+      * (the inline tree is a fresh allocation), but the cycle would otherwise infinite-recurse.
       */
     private def summonFieldStructure[A: Type](using
         Quotes
@@ -2624,7 +2624,7 @@ import scala.quoted.*
             // Cycle: walk the type tree inline at compile time with cycle protection.
             deriveTypeFallback(ft, seen)
         else
-            // Non-cyclic: use Schema[ft].structure (preserves reference equality per INV-6).
+            // Non-cyclic: use Schema[ft].structure (preserves reference equality to the field type's Schema structure).
             ft.asType match
                 case '[t] =>
                     Expr.summon[Schema[t]] match

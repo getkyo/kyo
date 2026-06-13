@@ -1,21 +1,19 @@
 package kyo
 
-/** Regression test for user-defined containers at a nested case-class field position.
+/** User-defined containers at a nested case-class field position.
   *
   * Confirms that a `Box[A]` type with a non-inline `given Schema[Box[A]]` composes correctly when nested inside a case class derived via
-  * `derives Schema`, with no modification to any macro-internal symbol table. The derivation macro must be structurally agnostic to
-  * `Box`'s existence: it resolves `Schema[Box[Int]]` through the standard implicit search and routes encode/decode through the resolved
-  * Schema's `serializeWrite` / `serializeRead`.
+  * `derives Schema`. The derivation resolves `Schema[Box[Int]]` through standard implicit search and routes encode/decode through the
+  * resolved Schema's `serializeWrite` / `serializeRead`.
   */
 class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
 
-    // User-defined container type. Mirrors the shape of `kyo.Schema.listSchema` (collection-typed
-    // Structure node + per-element delegation to the inner Schema) without adding `Box` to any
-    // macro symbol table.
+    // User-defined container type. Mirrors the shape of `kyo.Schema.listSchema`: a collection-typed
+    // Structure node with per-element delegation to the inner Schema.
     case class Box[A](item: A) derives CanEqual
 
-    // Non-inline given. The implicit-search resolution must run at the `derives Schema` call
-    // site (and at `summon[Schema[Holder]]`) without the macro reaching for any classifier table.
+    // Non-inline given. Implicit-search resolves it at the `derives Schema` call site and at
+    // `summon[Schema[Holder]]`.
     given boxSchema[A](using inner: Schema[A], frame: Frame): Schema[Box[A]] =
         Schema.init[Box[A]](
             writeFn = (b, w) =>
@@ -77,11 +75,10 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
     }
 
     "Indirect-recursive container field reuses the cached Schema without StackOverflow" in {
-        // The recursive position uses `List` rather than `Box` because the macro's
-        // `buildRecursiveResolver` resolves indirect-recursion through its built-in container
-        // recognizers (List / Vector / Set / Seq / Chunk / Option / Maybe / Map). User-defined
-        // containers in a recursive position remain a documented macro gap; the architectural
-        // cycle-break property tested here lives on the same code path either way.
+        // The recursive position uses `List` rather than `Box` because indirect-recursion is resolved
+        // through the built-in container recognizers (List / Vector / Set / Seq / Chunk / Option /
+        // Maybe / Map); user-defined containers in a recursive position are not supported. The
+        // architectural cycle-break property tested here lives on the same code path either way.
         val s           = summon[Schema[HolderRec]]
         val product     = s.structure.asInstanceOf[Structure.Type.Product]
         val payloadType = product.fields(0).fieldType
@@ -119,15 +116,10 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
     ) derives CanEqual, Schema
 
     "Maybe[Map[String, Chunk[NestedItem]]] derives via the macro container path and roundtrips" in {
-        // Covers the container-resolution path in FocusMacro.buildContainerSchemaOpt where the
-        // recursive `Expr.summon[Schema[inner]].orElse(buildContainerSchemaOpt(...).map(_.asInstanceOf[Schema[inner]]))`
-        // splice-and-recast is exercised at TWO levels: the outer `Maybe[...]` resolves through
-        // the macro's Optional builder, whose inner is `Map[String, Chunk[NestedItem]]`; the
-        // macro descends into the Mapping builder, whose value is `Chunk[NestedItem]`; that in
-        // turn descends into the Collection builder, whose element is a user-defined case class.
-        // Each descent recasts a `Schema[Any]` back to the locally-bound `Schema[inner]` via
-        // `asInstanceOf`, so a failure mode here surfaces as a derivation-time type mismatch on
-        // the spliced cast rather than a wire-shape issue.
+        // Exercises three nested container layers in the derived Schema: the outer Optional
+        // (`Maybe`) wraps a Map whose values are Chunks of a user-defined case class. The
+        // derivation descends Optional -> Mapping -> Collection -> Product without losing the
+        // element-type binding.
         val instance = NestedHolder(
             Present(
                 Map(
@@ -139,46 +131,6 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
         val encoded = Json.encode(instance)
         val decoded = Json.decode[NestedHolder](encoded)
         assert(decoded == Result.succeed(instance))
-    }
-
-    "Box does not appear in any macro source symbol table".onlyJvm in {
-        // Walk up from the test JVM's working directory until we find the worktree root (the
-        // first ancestor containing both `build.sbt` and a `kyo-schema/shared/src/main/scala`
-        // tree); resolve the macro source paths relative to that root. sbt sets the forked test
-        // JVM's `user.dir` to the project's baseDirectory (`kyo-schema/jvm`), not the worktree
-        // root, so a bare relative path would miss the source tree.
-        val workTreeRoot: java.io.File =
-            @scala.annotation.tailrec
-            def loop(dir: java.io.File): java.io.File =
-                val marker = new java.io.File(dir, "kyo-schema/shared/src/main/scala/kyo/internal")
-                if marker.isDirectory then dir
-                else
-                    val parent = dir.getParentFile
-                    if parent == null then fail(s"could not locate worktree root from ${java.lang.System.getProperty("user.dir")}")
-                    else loop(parent)
-                end if
-            end loop
-            loop(new java.io.File(java.lang.System.getProperty("user.dir")))
-        end workTreeRoot
-        val files: List[String] = List(
-            "SerializationMacro.scala",
-            "FocusMacro.scala",
-            "MacroUtils.scala",
-            "ExpandMacro.scala",
-            "SchemaDerivedMacro.scala"
-        )
-        val pattern = "\\bBox\\b".r
-        val matches: List[(String, Int)] = files.flatMap { name =>
-            val path = new java.io.File(workTreeRoot, s"kyo-schema/shared/src/main/scala/kyo/internal/$name").getCanonicalPath
-            val src  = scala.io.Source.fromFile(path)
-            try
-                src.getLines().zipWithIndex.collect {
-                    case (line, idx) if pattern.findFirstIn(line).isDefined => (path, idx + 1)
-                }.toList
-            finally src.close()
-            end try
-        }
-        assert(matches.isEmpty, s"expected zero `Box` matches in macro sources but found: $matches")
     }
 
 end SchemaCustomContainerNestedTest

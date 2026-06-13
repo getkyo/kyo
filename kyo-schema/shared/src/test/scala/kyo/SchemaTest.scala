@@ -6636,7 +6636,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite A: valueSchema identity wire shape (INV-15)
+    // valueSchema identity wire shape
     // =========================================================================
 
     "valueSchema identity wire shape (top-level)" - {
@@ -6746,7 +6746,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite B: jsonSchemaSchema Draft 2020-12 (INV-17)
+    // jsonSchemaSchema Draft 2020-12
     // =========================================================================
 
     "jsonSchemaSchema Draft 2020-12 (top-level)" - {
@@ -6889,7 +6889,7 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite C: structure variant direct check (INV-8, INV-3)
+    // structure variant direct check
     // =========================================================================
 
     "Schema[Structure.Value] and Schema[JsonSchema] structure variant" - {
@@ -6948,18 +6948,18 @@ class SchemaTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite A: transform structure propagation (INV-11, INV-12)
+    // transform structure propagation
     // =========================================================================
 
     "transform structure propagation" - {
 
-        "longSchema.transform[Duration].structure is the same reference as longSchema.structure (INV-11)" in {
+        "longSchema.transform[Duration].structure is the same reference as longSchema.structure" in {
             val source  = Schema.longSchema
             val derived = source.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
             assert(derived.structure.eq(source.structure))
         }
 
-        "longSchema.transform[Duration].structure tag equals Tag[Long], not Tag[Duration] (INV-12)" in {
+        "longSchema.transform[Duration].structure tag equals Tag[Long], not Tag[Duration]" in {
             val source  = Schema.longSchema
             val derived = source.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
             derived.structure match
@@ -6969,13 +6969,13 @@ class SchemaTest extends kyo.test.Test[Any]:
             end match
         }
 
-        "instantSchema.transform[kyo.Instant].structure is the same reference as instantSchema.structure (INV-11)" in {
+        "instantSchema.transform[kyo.Instant].structure is the same reference as instantSchema.structure" in {
             val source  = Schema.instantSchema
             val derived = source.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
             assert(derived.structure.eq(source.structure))
         }
 
-        "instantSchema.transform[kyo.Instant].structure is Type.Primitive (INV-11)" in {
+        "instantSchema.transform[kyo.Instant].structure is Type.Primitive" in {
             val source  = Schema.instantSchema
             val derived = source.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
             derived.structure match
@@ -6984,27 +6984,27 @@ class SchemaTest extends kyo.test.Test[Any]:
             end match
         }
 
-        "kyoInstantSchema.structure is the same reference as instantSchema.structure (INV-11)" in {
+        "kyoInstantSchema.structure is the same reference as instantSchema.structure" in {
             assert(Schema.kyoInstantSchema.structure.eq(Schema.instantSchema.structure))
         }
 
-        "kyoDurationSchema.structure is the same reference as longSchema.structure (INV-11)" in {
+        "kyoDurationSchema.structure is the same reference as longSchema.structure" in {
             assert(Schema.kyoDurationSchema.structure.eq(Schema.longSchema.structure))
         }
 
     }
 
     // =========================================================================
-    // Suite B: transform Structure.compatible (INV-12)
+    // transform Structure.compatible
     // =========================================================================
 
     "transform Structure.compatible" - {
 
-        "Structure.Type.compatible(longSchema.structure, kyoDurationSchema.structure) returns true (INV-12)" in {
+        "Structure.Type.compatible(longSchema.structure, kyoDurationSchema.structure) returns true" in {
             assert(Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
         }
 
-        "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns true (INV-12)" in {
+        "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns true" in {
             assert(Structure.Type.compatible(Schema.instantSchema.structure, Schema.kyoInstantSchema.structure))
         }
 
@@ -7026,30 +7026,30 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     "derived case-class structure" - {
 
-        "variant is Product (T1 INV-6)" in {
+        "variant is Product" in {
             val s = summon[Schema[P08Person]]
             assert(s.structure.isInstanceOf[Structure.Type.Product])
         }
 
-        "name is Person (T1 INV-6)" in {
+        "name is Person" in {
             summon[Schema[P08Person]].structure match
                 case p: Structure.Type.Product => assert(p.name == "P08Person")
                 case other                     => fail(s"Expected Product but got $other")
         }
 
-        "fields.size is 2 (T1 INV-6)" in {
+        "fields.size is 2" in {
             summon[Schema[P08Person]].structure match
                 case p: Structure.Type.Product => assert(p.fields.size == 2)
                 case other                     => fail(s"Expected Product but got $other")
         }
 
-        "fields(0).name is name (T1 INV-6)" in {
+        "fields(0).name is name" in {
             summon[Schema[P08Person]].structure match
                 case p: Structure.Type.Product => assert(p.fields(0).name == "name")
                 case other                     => fail(s"Expected Product but got $other")
         }
 
-        "fields(0).fieldType eq Schema[String].structure (T1 INV-6)" in {
+        "fields(0).fieldType eq Schema[String].structure" in {
             summon[Schema[P08Person]].structure match
                 case p: Structure.Type.Product =>
                     assert(
@@ -7059,13 +7059,13 @@ class SchemaTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected Product but got $other")
         }
 
-        "fields(1).name is age (T1 INV-6)" in {
+        "fields(1).name is age" in {
             summon[Schema[P08Person]].structure match
                 case p: Structure.Type.Product => assert(p.fields(1).name == "age")
                 case other                     => fail(s"Expected Product but got $other")
         }
 
-        "fields(1).fieldType eq Schema[Int].structure (T1 INV-6)" in {
+        "fields(1).fieldType eq Schema[Int].structure" in {
             summon[Schema[P08Person]].structure match
                 case p: Structure.Type.Product =>
                     assert(
@@ -7079,17 +7079,17 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     "derived sealed-trait structure" - {
 
-        "variant is Sum (T2 INV-7)" in {
+        "variant is Sum" in {
             assert(summon[Schema[P08Shape]].structure.isInstanceOf[Structure.Type.Sum])
         }
 
-        "variants.size is 3 (T2 INV-7)" in {
+        "variants.size is 3" in {
             summon[Schema[P08Shape]].structure match
                 case s: Structure.Type.Sum => assert(s.variants.size == 3)
                 case other                 => fail(s"Expected Sum but got $other")
         }
 
-        "variant Circle.variantType compatible with Schema[Circle].structure (T2 INV-14)" in {
+        "variant Circle.variantType compatible with Schema[Circle].structure" in {
             summon[Schema[P08Shape]].structure match
                 case s: Structure.Type.Sum =>
                     val circleVariant = s.variants.find(_.name == "Circle").getOrElse(fail("no Circle variant"))
@@ -7100,7 +7100,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 case other => fail(s"Expected Sum but got $other")
         }
 
-        "variant Square.variantType compatible with Schema[Square].structure (T2 INV-14)" in {
+        "variant Square.variantType compatible with Schema[Square].structure" in {
             summon[Schema[P08Shape]].structure match
                 case s: Structure.Type.Sum =>
                     val sqVariant = s.variants.find(_.name == "Square").getOrElse(fail("no Square variant"))
@@ -7125,7 +7125,7 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     "internal builder preserves structure" - {
 
-        "check clone does not change structure (T4 INV-11)" in {
+        "check clone does not change structure" in {
             // MTPerson is a top-level type where Focus navigation works correctly.
             val base   = Schema[MTPerson]
             val cloned = base.check(_.name)(_.nonEmpty, "required")
@@ -7139,14 +7139,14 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     "structural referential transparency for derived types" - {
 
-        "Schema[P08Person].structure eq Schema[P08Person].structure (T6 INV-1)" in {
+        "Schema[P08Person].structure eq Schema[P08Person].structure" in {
             val s = summon[Schema[P08Person]]
             assert(s.structure eq s.structure)
         }
 
     }
 
-    "Schema.structure abstract gate (T1 INV-9)" - {
+    "Schema.structure abstract gate" - {
 
         "fails to compile when structure is missing from Schema.init" in {
             typeCheckFailure("""
@@ -7159,7 +7159,7 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     }
 
-    "localDateTimeSchema structure tag regression (T5)" - {
+    "localDateTimeSchema structure tag" - {
 
         "localDateTimeSchema has Primitive(String, _) structure" in {
             val s = summon[Schema[java.time.LocalDateTime]]
@@ -7172,8 +7172,9 @@ class SchemaTest extends kyo.test.Test[Any]:
 
     "macro consumers Schema-driven" - {
 
-        // Regression: ExpandMacro now classifies fields via MacroSchemaClassifier (INV-33).
-        // The JSON round-trip must behave identically to the symbol-set era.
+        // Verifies that ExpandMacro classifies primitive, container, and optional fields uniformly
+        // through MacroSchemaClassifier, producing the same JSON round-trip shape as a case class
+        // with only primitive fields.
         case class MacroClassifierRegressionFixture(
             id: Int,
             name: String,

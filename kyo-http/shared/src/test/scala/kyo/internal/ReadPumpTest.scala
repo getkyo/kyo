@@ -191,8 +191,8 @@ class ReadPumpTest extends kyo.BaseHttpTest:
 
             // Drain the channel — this resolves the putFiber → requestNextRead
             discard(channel.poll())
-            // putFiber was registered; now that channel is drained, the put should complete
-            // and the backpressure callback fires → requestNextRead → awaitRead again
+            // putFiber was registered; with the channel drained, the put completes and the
+            // backpressure callback fires → requestNextRead → awaitRead again
 
             // Note: putFiber completes when channel drains — the backpressure fiber
             // automatically completes because channel takes it. The new awaitRead

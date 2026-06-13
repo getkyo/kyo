@@ -95,7 +95,7 @@ object ExpandMacro:
         MacroUtils.isStructuralType(tpe)
 
     // Note: caller passes the full applied type (dealiased), not just the tycon,
-    // so that Expr.summon[Schema[List[Int]]] can materialize (INV-33).
+    // so that Expr.summon[Schema[List[Int]]] can materialize.
     private def isKnownContainer(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
         MacroUtils.MacroSchemaClassifier.fieldKindFor(tpe) match
             case MacroUtils.MacroSchemaClassifier.FieldKind.Collection => true

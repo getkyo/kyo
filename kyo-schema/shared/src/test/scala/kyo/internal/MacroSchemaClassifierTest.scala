@@ -7,8 +7,6 @@ import kyo.*
   * MacroSchemaClassifier.fieldKindFor runs inside a macro context (requires `using Quotes`).
   * The helper inline macro `MacroSchemaClassifierBridge.classifyField[T]` bridges compile-time
   * classification to a runtime string, enabling ordinary assertions in the test suite.
-  *
-  * INV-33: macro consumers read structure from Schema, not from symbol sets.
   */
 class MacroSchemaClassifierTest extends kyo.test.Test[Any]:
 

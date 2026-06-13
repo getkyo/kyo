@@ -1,6 +1,6 @@
 package kyo
 
-// --- Suite C: transform sub-schema at nested position (INV-13) ---
+// --- transform sub-schema at nested position ---
 sealed trait NTSealedT derives CanEqual
 object NTSealedT:
     final case class A(x: Int)    extends NTSealedT derives CanEqual, Schema
@@ -102,12 +102,12 @@ class NestedTransformTest extends kyo.test.Test[Any]:
     }
 
     // =========================================================================
-    // Suite C: transform sub-schema at nested position (INV-13)
+    // transform sub-schema at nested position
     // =========================================================================
 
     "transform sub-schema at nested position" - {
 
-        "NTWrapper(A(1)) field portion equals top-level encoding of A(1) via discriminated Schema[NTSealedT] (INV-13)" in {
+        "NTWrapper(A(1)) field portion equals top-level encoding of A(1) via discriminated Schema[NTSealedT]" in {
             // ntSealedTSchema (with .discriminator("type")) is in scope as a given
             val topLevel = Json.encode[NTSealedT](NTSealedT.A(1))
             val wrapped  = Json.encode(NTWrapper(NTSealedT.A(1)))
@@ -118,7 +118,7 @@ class NestedTransformTest extends kyo.test.Test[Any]:
             assert(fieldPortion == topLevel, s"field portion '$fieldPortion' != top-level '$topLevel'")
         }
 
-        "NTWrapper(B(\"hi\")) field portion equals top-level encoding of B(\"hi\") via discriminated Schema[NTSealedT] (INV-13)" in {
+        "NTWrapper(B(\"hi\")) field portion equals top-level encoding of B(\"hi\") via discriminated Schema[NTSealedT]" in {
             // ntSealedTSchema (with .discriminator("type")) is in scope as a given
             val topLevel = Json.encode[NTSealedT](NTSealedT.B("hi"))
             val wrapped  = Json.encode(NTWrapper(NTSealedT.B("hi")))
@@ -128,16 +128,16 @@ class NestedTransformTest extends kyo.test.Test[Any]:
             assert(fieldPortion == topLevel, s"field portion '$fieldPortion' != top-level '$topLevel'")
         }
 
-        "encoding via ntSealedTSchema round-trips correctly via Json.decode[NTSealedT] (INV-13)" in {
+        "encoding via ntSealedTSchema round-trips correctly via Json.decode[NTSealedT]" in {
             // Round-trip check: the discriminated schema encodes and decodes both variants at the
-            // top level and as a nested field inside NTWrapper (INV-13).
+            // top level and as a nested field inside NTWrapper.
             val a       = NTSealedT.A(42)
             val topJson = Json.encode[NTSealedT](a)
             val decoded = Json.decode[NTSealedT](topJson)
             assert(decoded == Result.succeed(a), s"round-trip failed: $decoded")
         }
 
-        "NTWrapper.structure.fields(0).fieldType eq summon[Schema[NTSealedT]].structure (INV-13 structural)" in {
+        "NTWrapper.structure.fields(0).fieldType eq summon[Schema[NTSealedT]].structure" in {
             // The wrapper's field's fieldType must be structurally compatible with the in-scope
             // discriminated Schema[NTSealedT]'s structure (ntSealedTSchema is the given).
             // ntSealedTSchema is defined as Schema.derived[NTSealedT].discriminator("type"),

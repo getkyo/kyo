@@ -152,9 +152,8 @@ object FlagAdmin:
     ) derives Schema, CanEqual
 
     // Explicit Schemas for Map[String, Long] and List[HistoryInfo] anchored at file scope so the
-    // FlagInfo `derives Schema` macro resolves them via direct Expr.summon rather than walking the
-    // buildContainerSchemaOpt recursion (whose static .asInstanceOf cast on the inner Expr does
-    // not preserve types through a splice expansion that binds the spliced value to a typed val).
+    // FlagInfo `derives Schema` macro resolves them through direct given lookup. Without these
+    // anchors the deeply-nested container fields fail to derive at the macro call site.
     private given _mapStringLongSchema: Schema[Map[String, Long]] =
         given Frame = Frame.internal
         Schema.stringMapSchema[Long]

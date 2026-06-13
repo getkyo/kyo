@@ -694,7 +694,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
     }
 
     // ===== Protobuf rejects Open =====
-    // Pins INV-25: Open raises SchemaNotSerializableException in Protobuf (NOT IllegalArgumentException).
+    // Open raises SchemaNotSerializableException in Protobuf (NOT IllegalArgumentException).
 
     "Protobuf rejects Open" - {
 

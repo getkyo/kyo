@@ -812,8 +812,8 @@ class RouteUtilTest extends kyo.BaseHttpTest:
             end match
         }
 
-        // This test uses the public bodyJson[Unit] DSL (now that PrimitiveKind.Unit and
-        // JsonSchema.Null are in place), verifying the short-circuit for "null" body.
+        // Uses the public bodyJson[Unit] DSL to verify that the "null" body short-circuits
+        // through PrimitiveKind.Unit / JsonSchema.Null without invoking the JSON parser.
         "Unit JSON body - null body short-circuits to success via public DSL" in {
             val route     = HttpRoute.postRaw("unit-action").request(_.bodyJson[Unit])
             val headers   = HttpHeaders.empty.add("Content-Type", "application/json")

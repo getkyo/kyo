@@ -2221,8 +2221,8 @@ class JsonTest extends kyo.test.Test[Any]:
 
     "jsonSchema enrichment via JsonSchemaEnricher" - {
 
-        // Pins INV-28: after Schema.enrichObj is removed from Schema.scala,
-        // Json.jsonSchema must still enrich the result via internal.JsonSchemaEnricher.enrichObj directly.
+        // Json.jsonSchema enriches the result via internal.JsonSchemaEnricher.enrichObj, so the
+        // root and field doc annotations carried by a Schema surface on the produced JsonSchema.
 
         "jsonSchema carries root doc when Schema has doc annotation" in {
             given schema: Schema[MTUser] = Schema[MTUser].doc("a person")

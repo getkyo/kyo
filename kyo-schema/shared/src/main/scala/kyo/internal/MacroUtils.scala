@@ -145,12 +145,11 @@ private[internal] object MacroUtils:
         (maybeFields, optionFields)
     end detectMaybeOptionFields
 
-    // ---- Schema-driven field classifier (INV-33) ----
+    // ---- Schema-driven field classifier ----
 
-    /** Schema-driven field kind classifier. Replaces the deleted symbol sets
-      * (basePrimitiveSymbols, collectionSymbols, optionalSymbols, mapSymbols).
+    /** Schema-driven field kind classifier.
       *
-      * INV-33: macro consumers read structure from Schema, not from symbol sets.
+      * Macro consumers read structure from Schema, not from symbol sets.
       *
       * Classification strategy:
       * 1. For the known built-in kyo-schema primitive types (Int, String, Boolean,

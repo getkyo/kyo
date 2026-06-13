@@ -6,7 +6,9 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
 
     "discriminator + Protobuf round-trip" - {
 
-        // Regression guard for SchemaSerializer.DiscriminatorReader.matchField numeric-tag fallback (kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:469-485). Pins INV-35.
+        // Guards SchemaSerializer.DiscriminatorReader.matchField's numeric-tag fallback
+        // (kyo-schema/shared/src/main/scala/kyo/internal/SchemaSerializer.scala:469-485): a
+        // sealed-trait variant carrying `.discriminator(...)` must round-trip through Protobuf.
         "sealed-trait variant with .discriminator round-trips correctly" in {
             val schema                    = Schema[DiscriminatedShape].discriminator("type")
             val value: DiscriminatedShape = ShapeA(42)
