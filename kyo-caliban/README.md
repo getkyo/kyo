@@ -366,10 +366,10 @@ case class Query(
 ) derives caliban.schema.Schema.SemiAuto
 
 val filter = new HttpFilter.Passthrough[Nothing]:
-    def apply[In, Out, E](
+    def apply[In, Out, E, S](
         request: HttpRequest[In],
-        next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt])
-    )(using Frame): HttpResponse[Out] < (Async & Abort[E | HttpResponse.Halt]) =
+        next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E | HttpResponse.Halt])
+    )(using Frame): HttpResponse[Out] < (S & Async & Abort[E | HttpResponse.Halt]) =
         next(request).map(_.setHeader("X-Custom", "test-value"))
 
 val server: HttpServer < (Async & Scope & Abort[caliban.CalibanError]) =

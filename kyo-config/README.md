@@ -37,10 +37,9 @@ Flags are declared as Scala objects. The fully-qualified object name becomes the
 Note: Flags must be Scala `object`s declared at top level or nested in other objects. The flag name is derived from the JVM class name, so a flag declared inside a class, trait, method, or as an anonymous value gets a mangled name and is rejected at construction with `FlagNameException`.
 
 ```scala doctest:expect=skipped
-package myapp.db
-
 import kyo.*
 
+// In package myapp.db
 object poolSize   extends StaticFlag[Int](10)
 object maxRetries extends StaticFlag[Int](3)
 object jdbcUrl    extends StaticFlag[String]("jdbc:h2:mem:test")
@@ -74,18 +73,19 @@ Note: When a flag resolves to its default, kyo-config scans system properties an
 An optional validation function transforms or constrains the resolved value:
 
 ```scala doctest:expect=skipped
-package myapp.db
-
 import kyo.*
 
+// In package myapp.db
 // Clamp pool size to at least 1 and at most 100
 object poolSize extends StaticFlag[Int](10, n => Right(math.max(1, math.min(n, 100))))
 
 // Ensure the URL is non-empty
-object jdbcUrl extends StaticFlag[String]("jdbc:h2:mem:test", url =>
-  if url.nonEmpty then Right(url)
-  else Left(new IllegalArgumentException("URL must not be empty"))
-)
+object jdbcUrl extends StaticFlag[String](
+        "jdbc:h2:mem:test",
+        url =>
+            if url.nonEmpty then Right(url)
+            else Left(new IllegalArgumentException("URL must not be empty"))
+    )
 ```
 
 The validate parameter has signature `A => Either[Throwable, A]`.
@@ -130,10 +130,9 @@ Parse errors at class load time throw a `FlagValueParseException`, failing fast 
 Dynamic flags follow the same declaration pattern:
 
 ```scala doctest:expect=skipped
-package myapp.features
-
 import kyo.*
 
+// In package myapp.features
 object newCheckout extends DynamicFlag[Boolean](false)
 object rateLimit   extends DynamicFlag[Int](100)
 ```
@@ -353,10 +352,9 @@ However, **decreasing** a percentage can remove entities: going from 75% back to
 StaticFlag evaluates the rollout expression once at class load time. The path comes from `kyo.rollout.path` (or auto-detected cloud metadata), and the bucket is derived from hashing that path:
 
 ```scala doctest:expect=skipped
-package myapp.db
-
 import kyo.*
 
+// In package myapp.db
 // -Dkyo.rollout.path=prod/us-east-1/az1
 // -Dmyapp.db.poolSize="50@prod/us-east-1;30@prod;10"
 object poolSize extends StaticFlag[Int](10)
@@ -416,10 +414,9 @@ Missing segments are skipped. For example, if only `AWS_REGION=us-east-1` is set
 DynamicFlag evaluates the rollout expression on every call. The path comes from the caller's attributes, and the bucket is derived from hashing the caller's key:
 
 ```scala doctest:expect=skipped
-package myapp.features
-
 import kyo.*
 
+// In package myapp.features
 // -Dmyapp.features.newCheckout="true@premium/50%;false"
 object newCheckout extends DynamicFlag[Boolean](false)
 

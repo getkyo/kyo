@@ -475,9 +475,10 @@ The in-memory store (`FlowStore.initMemory`) is for development and testing. For
 
 ```scala doctest:expect=skipped
 class PostgresFlowStore(pool: ConnectionPool) extends FlowStore:
-    def claimReady(...) = // SELECT ... FOR UPDATE SKIP LOCKED
-    def updateStatus(...) = // UPDATE + INSERT in one transaction
+    def claimReady(): Unit   = ??? // SELECT ... FOR UPDATE SKIP LOCKED
+    def updateStatus(): Unit = ??? // UPDATE + INSERT in one transaction
     // ... 15 abstract methods total
+end PostgresFlowStore
 ```
 
 Key invariants:
