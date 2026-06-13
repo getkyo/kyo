@@ -1,0 +1,5 @@
+# Verify plugin settings are configured and default platform is JVM.
+> show ffiLibraryId
+> show ffiTargetPlatform
+> show ffiCFlags
+> show ffiIncludes

@@ -1,0 +1,5 @@
+# Callback end-to-end: qsort with Scala comparator + pure-callback sum.
+> ffiCompile
+> ffiPackage
+> compile
+> run

@@ -1,0 +1,6 @@
+# Auto-discover test: C sources and headers found by convention from src/main/c/
+# without explicit ffiCSources / ffiCHeaders / ffiIncludes settings.
+> ffiCompile
+> ffiPackage
+> compile
+> run

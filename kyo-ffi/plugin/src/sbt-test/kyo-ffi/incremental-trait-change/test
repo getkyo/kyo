@@ -1,0 +1,9 @@
+# #247: an incremental trait edit that ADDS a method must regenerate the impl from the new
+# trait. Before the fix, ffiGenerate (a sourceGenerator) read the stale class-dir TASTy of the
+# first compile and emitted an impl missing the new method, so the second compile failed with
+# "needs to be abstract". The fix reads fresh TASTy on a source change.
+> compile
+$ copy-file changes/TrivialBindings.scala src/main/scala/inc/TrivialBindings.scala
+$ copy-file changes/trivial.c src/main/c/trivial.c
+> compile
+> assertImplHasIncTwo

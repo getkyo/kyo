@@ -1,0 +1,3 @@
+# #35 — with ffiStrictDiscovery := true and no Ffi traits in sources, the
+# first-compile TASTy bootstrap discovers zero traits → ffiGenerate must fail.
+-> ffiGenerate

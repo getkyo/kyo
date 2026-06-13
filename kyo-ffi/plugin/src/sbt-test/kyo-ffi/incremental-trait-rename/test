@@ -1,0 +1,8 @@
+# #247 facet 2: renaming a binding trait must regenerate the impl from fresh TASTy and drop the old
+# trait's stale impl. Before the fix, ffiGenerate read the previous compile's class-dir TASTy, kept
+# discovering the old trait, and left AlphaBindingsImpl.scala behind referencing a deleted trait.
+> compile
+$ delete src/main/scala/inc/AlphaBindings.scala
+$ copy-file changes/BetaBindings.scala src/main/scala/inc/BetaBindings.scala
+> compile
+> assertRenamed
