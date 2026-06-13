@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import kyo.*
 import scala.annotation.tailrec

@@ -1,0 +1,1661 @@
+package kyo
+
+class YamlCstTest extends kyo.test.Test[Any]:
+
+    given CanEqual[Any, Any] = CanEqual.derived
+
+    private def collectEvents(yaml: String): Chunk[Yaml.Events.Event] =
+        val events = new Yaml.Events.EventHandler[Chunk[Yaml.Events.Event], DecodeException]:
+            override def event(
+                context: Chunk[Yaml.Events.Event],
+                event: Yaml.Events.Event
+            ): Result[DecodeException, Chunk[Yaml.Events.Event]] =
+                Result.succeed(context :+ event)
+        end events
+
+        Yaml.Events.visit(yaml, Chunk.empty[Yaml.Events.Event])(events).getOrThrow
+    end collectEvents
+
+    private def scalarSyntaxFromEvents(yaml: String)(using kyo.test.AssertScope): Yaml.Cst.ScalarSyntax =
+        Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow.root match
+            case Present(Yaml.Cst.Node.Scalar(_, syntax, _, _, _)) => syntax
+            case other                                             => fail(s"Expected scalar root, found $other")
+    end scalarSyntaxFromEvents
+
+    private def parseFailure(result: Result[DecodeException, Yaml.Cst.Document])(using kyo.test.AssertScope): String =
+        result match
+            case Result.Failure(e: ParseException) => e.getMessage
+            case other                             => fail(s"Expected ParseException failure, got $other")
+    end parseFailure
+
+    private def assertSourceRoundTrip[A](yaml: String, expected: A)(using Schema[A], kyo.test.AssertScope) =
+        val rendered = Yaml.cst(yaml).getOrThrow.render(using Yaml.WriterConfig.Default)
+
+        assert(rendered == yaml)
+        assert(Yaml.decode[A](rendered) == Result.succeed(expected))
+    end assertSourceRoundTrip
+
+    private def scalar(value: String): Yaml.Cst.Node =
+        val mark = Yaml.Mark(0, 1, 1)
+        val span = Yaml.Cst.SourceSpan(mark, mark)
+        Yaml.Cst.Node.Scalar(
+            value,
+            Yaml.Cst.ScalarSyntax.Canonical,
+            Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+            span,
+            Absent
+        )
+    end scalar
+
+    "Yaml.Cst public model" - {
+
+        "builds structural paths with mapping keys and sequence indexes" in {
+            val path =
+                Yaml.Cst.Path.root / "services" / "api" / "environment" / 0
+
+            assert(path.segments.size == 4)
+            assert(path.segments(0) == Yaml.Cst.Path.Segment.Key("services"))
+            assert(path.segments(3) == Yaml.Cst.Path.Segment.Index(0))
+            assert(path.show == "services.api.environment[0]")
+        }
+
+        "constructs canonical scalar documents" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val scalar =
+                Yaml.Cst.Node.Scalar(
+                    "Alice",
+                    Yaml.Cst.ScalarSyntax.Canonical,
+                    Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                    span,
+                    Absent
+                )
+            val doc =
+                Yaml.Cst.Document(Maybe(scalar), Chunk.empty, Chunk.empty, span, Absent)
+
+            assert(doc.render(using Yaml.WriterConfig.Default) == "Alice\n")
+        }
+
+        "builds canonical mapping CST from parser events" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            val doc =
+                Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow
+
+            val rendered = doc.render(using Yaml.WriterConfig.Default)
+            val mapping =
+                doc.root match
+                    case Present(Yaml.Cst.Node.Mapping(entries, syntax, _, _, source)) =>
+                        (
+                            syntax = syntax,
+                            source = source,
+                            entries = entries.map {
+                                case Yaml.Cst.MappingEntry(
+                                        Yaml.Cst.Node.Scalar(key, _, _, _, _),
+                                        Yaml.Cst.Node.Scalar(value, _, _, _, _),
+                                        _,
+                                        _,
+                                        _
+                                    ) =>
+                                    (key = key, value = value)
+                                case other =>
+                                    fail(s"Expected scalar mapping entry, found $other")
+                            }
+                        )
+                    case other =>
+                        fail(s"Expected canonical mapping root, found $other")
+                end match
+            end mapping
+            assert(rendered == "name: Alice\nage: 30\n")
+            assert(mapping.syntax == Yaml.Cst.MappingSyntax.Canonical)
+            assert(mapping.source == Absent)
+            assert(mapping.entries == Chunk(
+                (key = "name", value = "Alice"),
+                (key = "age", value = "30")
+            ))
+            assert(Yaml.decode[MTPerson](rendered) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "parses CST through the public helper" in {
+            val yaml =
+                """name: Alice
+                  |age: 30
+                  |""".stripMargin
+
+            assert(Yaml.cst(yaml).map(_.render(using Yaml.WriterConfig.Default)) == Result.succeed(yaml))
+        }
+
+        "preserves GitHub workflow source and decodes rendered YAML" in {
+            val yaml =
+                """name: CI
+                  |on:
+                  |  push:
+                  |    branches: [main, release]
+                  |  pull_request:
+                  |jobs:
+                  |  build:
+                  |    runs-on: ubuntu-latest
+                  |    steps:
+                  |      - name: Checkout
+                  |        uses: actions/checkout@v4
+                  |      - name: Test
+                  |        run: |-
+                  |          sbt 'kyo-schema/test'
+                  |          echo done
+                  |        with:
+                  |          cache: sbt
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlGithubWorkflow(
+                    "CI",
+                    YamlGithubOn(YamlGithubPush(List("main", "release")), None),
+                    Map(
+                        "build" -> YamlGithubJob(
+                            "ubuntu-latest",
+                            List(
+                                YamlGithubStep(Some("Checkout"), Some("actions/checkout@v4"), None, None),
+                                YamlGithubStep(
+                                    Some("Test"),
+                                    None,
+                                    Some("sbt 'kyo-schema/test'\necho done"),
+                                    Some(Map("cache" -> "sbt"))
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        }
+
+        "preserves OpenAPI source and decodes rendered YAML" in {
+            val yaml =
+                """openapi: 3.1.0
+                  |info:
+                  |  title: Users API
+                  |  version: 1.0.0
+                  |  description: >-
+                  |    Users API for
+                  |    client apps.
+                  |paths:
+                  |  /users/{id}:
+                  |    get:
+                  |      summary: Get a user
+                  |      operationId: getUser
+                  |      parameters:
+                  |        - name: id
+                  |          in: path
+                  |          required: true
+                  |          schema: {type: string, format: uuid}
+                  |      responses:
+                  |        "200":
+                  |          description: ok
+                  |components:
+                  |  schemas:
+                  |    UserId: {type: string, format: uuid}
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlOpenApiSpec(
+                    "3.1.0",
+                    YamlOpenApiInfo("Users API", "1.0.0", "Users API for client apps."),
+                    Map(
+                        "/users/{id}" -> YamlOpenApiPathItem(
+                            YamlOpenApiOperation(
+                                "Get a user",
+                                "getUser",
+                                List(YamlOpenApiParameter("id", "path", true, YamlOpenApiSchema("string", Some("uuid")))),
+                                Map("200" -> YamlOpenApiResponse("ok"))
+                            )
+                        )
+                    ),
+                    YamlOpenApiComponents(Map("UserId" -> YamlOpenApiSchema("string", Some("uuid"))))
+                )
+            )
+        }
+
+        "preserves Docker Compose source and decodes rendered YAML" in {
+            val yaml =
+                """version: "3.9"
+                  |x-logging: &default-logging
+                  |  driver: json-file
+                  |  options:
+                  |    max-size: 10m
+                  |    max-file: "3"
+                  |services:
+                  |  api:
+                  |    image: ghcr.io/acme/api:1.2.3
+                  |    ports:
+                  |      - "8080:80"
+                  |    environment:
+                  |      APP_ENV: production
+                  |      FEATURE_FLAG: "true"
+                  |      REGION: NO
+                  |    depends_on: [db, redis]
+                  |    volumes:
+                  |      - "app-data:/var/lib/app"
+                  |      - "./config:/app/config:ro"
+                  |    networks:
+                  |      - backend
+                  |    healthcheck:
+                  |      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+                  |      interval: 30s
+                  |      timeout: 10s
+                  |      retries: 3
+                  |    logging: *default-logging
+                  |    restart: unless-stopped
+                  |  db:
+                  |    image: postgres:16
+                  |    environment:
+                  |      POSTGRES_DB: app
+                  |      POSTGRES_PASSWORD: secret
+                  |    volumes:
+                  |      - "db-data:/var/lib/postgresql/data"
+                  |    networks: [backend]
+                  |volumes:
+                  |  app-data:
+                  |    driver: local
+                  |  db-data:
+                  |    driver: local
+                  |networks:
+                  |  backend:
+                  |    driver: bridge
+                  |""".stripMargin
+
+            val logging = YamlComposeLogging("json-file", Map("max-size" -> "10m", "max-file" -> "3"))
+            assertSourceRoundTrip(
+                yaml,
+                YamlDockerCompose(
+                    "3.9",
+                    logging,
+                    Map(
+                        "api" -> YamlComposeService(
+                            "ghcr.io/acme/api:1.2.3",
+                            Some(List("8080:80")),
+                            Some(Map("APP_ENV" -> "production", "FEATURE_FLAG" -> "true", "REGION" -> "NO")),
+                            Some(List("db", "redis")),
+                            Some(List("app-data:/var/lib/app", "./config:/app/config:ro")),
+                            Some(List("backend")),
+                            Some(YamlComposeHealthcheck(
+                                List("CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"),
+                                "30s",
+                                "10s",
+                                3
+                            )),
+                            Some(logging),
+                            Some("unless-stopped")
+                        ),
+                        "db" -> YamlComposeService(
+                            "postgres:16",
+                            None,
+                            Some(Map("POSTGRES_DB" -> "app", "POSTGRES_PASSWORD" -> "secret")),
+                            None,
+                            Some(List("db-data:/var/lib/postgresql/data")),
+                            Some(List("backend")),
+                            None,
+                            None,
+                            None
+                        )
+                    ),
+                    Map("app-data" -> YamlComposeVolume(Some("local")), "db-data" -> YamlComposeVolume(Some("local"))),
+                    Map("backend"  -> YamlComposeNetwork(Some("bridge")))
+                )
+            )
+        }
+
+        "preserves multiline scalar source forms and decodes rendered YAML" in {
+            val yaml =
+                """literalStrip: |-
+                  |  line one
+                  |  line two
+                  |
+                  |literalClip: |
+                  |  line one
+                  |  line two
+                  |
+                  |literalKeep: |+
+                  |  line one
+                  |  line two
+                  |
+                  |
+                  |literalIndent: |4
+                  |    indented
+                  |      deeper
+                  |
+                  |foldedStrip: >2-
+                  |  line one
+                  |  line two
+                  |
+                  |  line three
+                  |foldedKeep: >+2
+                  |  line one
+                  |  line two
+                  |
+                  |
+                  |singleQuoted: 'line one
+                  |  line two
+                  |
+                  |  line three'
+                  |doubleQuoted: "line one
+                  |  line two\nline three"
+                  |plain: line one
+                  |  line two
+                  |
+                  |  line three
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlMultilineScalars(
+                    literalStrip = "line one\nline two",
+                    literalClip = "line one\nline two\n",
+                    literalKeep = "line one\nline two\n\n\n",
+                    literalIndent = "indented\n  deeper\n",
+                    foldedStrip = "line one line two\nline three",
+                    foldedKeep = "line one line two\n\n\n",
+                    singleQuoted = "line one line two\nline three",
+                    doubleQuoted = "line one line two\nline three",
+                    plain = "line one line two\nline three"
+                )
+            )
+        }
+
+        "preserves yaml document from hell gotcha source and decodes rendered YAML" in {
+            val yaml =
+                """server_config:
+                  |  port_mapping:
+                  |    - 22:22
+                  |    - 80:80
+                  |    - 443:443
+                  |  serve:
+                  |    - /robots.txt
+                  |    - /favicon.ico
+                  |    - "*.html"
+                  |    - "*.png"
+                  |    - "!.git"
+                  |  geoblock_regions:
+                  |    - dk
+                  |    - fi
+                  |    - is
+                  |    - no
+                  |    - se
+                  |  flush_cache:
+                  |    on: [push, memory_pressure]
+                  |    priority: background
+                  |  allow_postgres_versions:
+                  |    - 9.5.25
+                  |    - 9.6.24
+                  |    - 10.23
+                  |    - 12.13
+                  |""".stripMargin
+
+            assertSourceRoundTrip(
+                yaml,
+                YamlHellConfig(
+                    YamlHellServerConfig(
+                        List("22:22", "80:80", "443:443"),
+                        List("/robots.txt", "/favicon.ico", "*.html", "*.png", "!.git"),
+                        List("dk", "fi", "is", "no", "se"),
+                        YamlHellFlushCache(List("push", "memory_pressure"), "background")
+                    )
+                )
+            )
+        }
+
+        "preserves YAML 1.1 Norway problem text exactly in CST source" in {
+            val yaml =
+                """norway: NO
+                  |on: on
+                  |off: off
+                  |yes: yes
+                  |no: no
+                  |trueValue: true
+                  |falseValue: FALSE
+                  |nullValue: ~
+                  |""".stripMargin
+            val doc      = Yaml.cst(yaml).getOrThrow
+            val rendered = doc.render(using Yaml.WriterConfig.Default)
+
+            val scalarText =
+                doc.root match
+                    case Present(Yaml.Cst.Node.Mapping(entries, _, _, _, _)) =>
+                        entries.map {
+                            case Yaml.Cst.MappingEntry(
+                                    Yaml.Cst.Node.Scalar(key, _, _, _, _),
+                                    Yaml.Cst.Node.Scalar(value, _, _, _, _),
+                                    _,
+                                    _,
+                                    _
+                                ) =>
+                                key -> value
+                            case other =>
+                                fail(s"Expected scalar mapping entry, found $other")
+                        }.toMap
+                    case other =>
+                        fail(s"Expected mapping root, found $other")
+                end match
+            end scalarText
+
+            assert(rendered == yaml)
+            assert(scalarText("norway") == "NO")
+            assert(scalarText("on") == "on")
+            assert(scalarText("off") == "off")
+            assert(scalarText("yes") == "yes")
+            assert(scalarText("no") == "no")
+            assert(Yaml.decode[YamlCoreScalars](rendered) == Result.succeed(
+                YamlCoreScalars("NO", "on", "off", "yes", "no", true, false, None)
+            ))
+        }
+
+        "builds canonical CST from schema values" in {
+            val doc =
+                Yaml.Cst.from(MTPerson("Alice", 30)).getOrThrow
+
+            val mapping =
+                doc.root match
+                    case Present(Yaml.Cst.Node.Mapping(entries, syntax, _, _, source)) =>
+                        (
+                            syntax = syntax,
+                            source = source,
+                            entries = entries.map {
+                                case Yaml.Cst.MappingEntry(
+                                        Yaml.Cst.Node.Scalar(key, keySyntax, _, _, keySource),
+                                        Yaml.Cst.Node.Scalar(value, valueSyntax, _, _, valueSource),
+                                        _,
+                                        _,
+                                        _
+                                    ) =>
+                                    (
+                                        key = key,
+                                        keySyntax = keySyntax,
+                                        keySource = keySource,
+                                        value = value,
+                                        valueSyntax = valueSyntax,
+                                        valueSource = valueSource
+                                    )
+                                case other =>
+                                    fail(s"Expected scalar mapping entry, found $other")
+                            }
+                        )
+                    case other =>
+                        fail(s"Expected canonical mapping root, found $other")
+                end match
+            end mapping
+            assert(doc.originalSource == Absent)
+            assert(mapping.syntax == Yaml.Cst.MappingSyntax.Canonical)
+            assert(mapping.source == Absent)
+            assert(mapping.entries == Chunk(
+                (
+                    key = "name",
+                    keySyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                    keySource = Absent,
+                    value = "Alice",
+                    valueSyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                    valueSource = Absent
+                ),
+                (
+                    key = "age",
+                    keySyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                    keySource = Absent,
+                    value = "30",
+                    valueSyntax = Yaml.Cst.ScalarSyntax.Canonical,
+                    valueSource = Absent
+                )
+            ))
+            assert(Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default)) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "preserves scalar syntax from parser events" in {
+            assert(
+                Chunk(
+                    scalarSyntaxFromEvents("'Alice'\n"),
+                    scalarSyntaxFromEvents("\"Alice\"\n"),
+                    scalarSyntaxFromEvents("|\n  Alice\n"),
+                    scalarSyntaxFromEvents(">\n  Alice\n")
+                ) == Chunk(
+                    Yaml.Cst.ScalarSyntax.SingleQuoted,
+                    Yaml.Cst.ScalarSyntax.DoubleQuoted,
+                    Yaml.Cst.ScalarSyntax.Literal,
+                    Yaml.Cst.ScalarSyntax.Folded
+                )
+            )
+        }
+
+        "builds canonical CST from schema scalar values" in {
+            val doc =
+                Yaml.Cst.from("Alice").getOrThrow
+
+            val obtained =
+                doc.root match
+                    case Present(Yaml.Cst.Node.Scalar(value, syntax, _, _, source)) =>
+                        (
+                            documentSource = doc.originalSource,
+                            value = value,
+                            syntax = syntax,
+                            source = source,
+                            decoded = Yaml.decode[String](doc.render(using Yaml.WriterConfig.Default))
+                        )
+                    case other =>
+                        fail(s"Expected scalar root, found $other")
+                end match
+            end obtained
+            assert(obtained.documentSource == Absent)
+            assert(obtained.value == "Alice")
+            assert(obtained.syntax == Yaml.Cst.ScalarSyntax.Canonical)
+            assert(obtained.source == Absent)
+            assert(obtained.decoded == Result.succeed("Alice"))
+        }
+
+        "fails to build CST from a second document in an event stream" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val events = Chunk(
+                Yaml.Events.Event.StreamStart(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.Scalar("Alice", Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.StreamEnd(mark)
+            )
+
+            assert(parseFailure(Yaml.Cst.fromEvents(events)).contains("Unexpected YAML document start"))
+        }
+
+        "fails to build CST when a document ends before a collection is closed" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val events = Chunk(
+                Yaml.Events.Event.StreamStart(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.MappingStart(Yaml.Meta(Absent, Absent, mark)),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.CollectionEnd(Yaml.Events.CollectionKind.Mapping, mark),
+                Yaml.Events.Event.StreamEnd(mark)
+            )
+
+            assert(parseFailure(Yaml.Cst.fromEvents(events)).contains("Unclosed YAML collection"))
+        }
+
+        "fails to build CST when a node appears after document end" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val events = Chunk(
+                Yaml.Events.Event.StreamStart(mark),
+                Yaml.Events.Event.DocumentStart(mark),
+                Yaml.Events.Event.DocumentEnd(mark),
+                Yaml.Events.Event.Scalar("Alice", Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)),
+                Yaml.Events.Event.StreamEnd(mark)
+            )
+
+            assert(parseFailure(Yaml.Cst.fromEvents(events)).contains("Unexpected YAML node after document end"))
+        }
+
+        "builds canonical nested sequence and mapping CST from parser events" in {
+            val yaml =
+                """- name: Alice
+                  |  age: 30
+                  |- name: Bob
+                  |  age: 25
+                  |""".stripMargin
+
+            val doc =
+                Yaml.Cst.fromEvents(collectEvents(yaml)).getOrThrow
+
+            doc.root match
+                case Present(Yaml.Cst.Node.Sequence(entries, Yaml.Cst.SequenceSyntax.Canonical, _, _, Absent)) =>
+                    assert(entries.size == 2)
+                    entries(0).value match
+                        case Yaml.Cst.Node.Mapping(_, Yaml.Cst.MappingSyntax.Canonical, _, _, Absent) =>
+                        case other =>
+                            fail(s"Expected canonical mapping entry, found $other")
+                    end match
+                case other =>
+                    fail(s"Expected canonical sequence root, found $other")
+            end match
+
+            assert(
+                Yaml.decode[List[MTPerson]](doc.render(using Yaml.WriterConfig.Default)) ==
+                    Result.succeed(List(MTPerson("Alice", 30), MTPerson("Bob", 25)))
+            )
+        }
+
+        "renders canonical streams with document separators" in {
+            val mark       = Yaml.Mark(0, 1, 1)
+            val span       = Yaml.Cst.SourceSpan(mark, mark)
+            val scalarMeta = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
+            val meta       = Yaml.Meta(Absent, Absent, mark)
+
+            val alice =
+                Yaml.Cst.Node.Scalar("Alice", Yaml.Cst.ScalarSyntax.Canonical, scalarMeta, span, Absent)
+            val name =
+                Yaml.Cst.Node.Scalar("name", Yaml.Cst.ScalarSyntax.Canonical, scalarMeta, span, Absent)
+            val bob =
+                Yaml.Cst.Node.Scalar("Bob", Yaml.Cst.ScalarSyntax.Canonical, scalarMeta, span, Absent)
+            val mapping =
+                Yaml.Cst.Node.Mapping(
+                    Chunk(Yaml.Cst.MappingEntry(name, bob, span)),
+                    Yaml.Cst.MappingSyntax.Block,
+                    meta,
+                    span,
+                    Absent
+                )
+
+            val stream =
+                Yaml.Cst.Stream(
+                    Chunk(
+                        Yaml.Cst.Document(Maybe(alice), Chunk.empty, Chunk.empty, span, Absent),
+                        Yaml.Cst.Document(Maybe(mapping), Chunk.empty, Chunk.empty, span, Absent)
+                    ),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\nAlice\n---\nname: Bob\n")
+            Yaml.parseAll(rendered) match
+                case Result.Success(parsed) =>
+                    assert(parsed.size == 2)
+                    parsed(0) match
+                        case Yaml.Node.Scalar(value, _) =>
+                            assert(value == "Alice")
+                        case other =>
+                            fail(s"Expected scalar document, found $other")
+                    end match
+                    parsed(1) match
+                        case Yaml.Node.Mapping(entries, _) =>
+                            assert(entries.size == 1)
+                            entries(0) match
+                                case (Yaml.Node.Scalar(key, _), Yaml.Node.Scalar(value, _)) =>
+                                    assert(key == "name")
+                                    assert(value == "Bob")
+                                case other =>
+                                    fail(s"Expected scalar mapping entry, found $other")
+                            end match
+                        case other =>
+                            fail(s"Expected mapping document, found $other")
+                    end match
+                case Result.Failure(e) =>
+                    fail(e.getMessage())
+                case Result.Panic(e) =>
+                    fail(e.getMessage())
+            end match
+        }
+
+        "renders canonical streams with leading empty documents" in {
+            val mark     = Yaml.Mark(0, 1, 1)
+            val span     = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\n---\nAlice\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+        }
+
+        "renders canonical streams once with start document markers" in {
+            val mark     = Yaml.Mark(0, 1, 1)
+            val span     = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start)
+            val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using config)
+
+            assert(rendered == "---\n---\nAlice\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+        }
+
+        "renders canonical streams once with start and end document markers" in {
+            val mark     = Yaml.Mark(0, 1, 1)
+            val span     = Yaml.Cst.SourceSpan(mark, mark)
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val stream   = Yaml.Cst.Stream(Chunk(emptyDoc, scalarDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using config)
+
+            assert(rendered == "---\n---\nAlice\n...\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(None, Some("Alice"))))
+        }
+
+        "renders canonical streams with consecutive empty documents" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val meta = Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark)
+            def scalarDoc(value: String): Yaml.Cst.Document =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(value, Yaml.Cst.ScalarSyntax.Canonical, meta, span, Absent)),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            end scalarDoc
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val stream = Yaml.Cst.Stream(
+                Chunk(scalarDoc("Alice"), emptyDoc, emptyDoc, scalarDoc("Bob")),
+                Chunk.empty,
+                Chunk.empty,
+                span,
+                Absent
+            )
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\nAlice\n---\n---\n---\nBob\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None, None, Some("Bob"))))
+        }
+
+        "renders canonical streams with trailing empty documents" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val scalarDoc =
+                Yaml.Cst.Document(
+                    Maybe(Yaml.Cst.Node.Scalar(
+                        "Alice",
+                        Yaml.Cst.ScalarSyntax.Canonical,
+                        Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                        span,
+                        Absent
+                    )),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+            val emptyDoc = Yaml.Cst.Document(Absent, Chunk.empty, Chunk.empty, span, Absent)
+            val stream   = Yaml.Cst.Stream(Chunk(scalarDoc, emptyDoc), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = stream.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered == "---\nAlice\n---\n")
+            assert(Yaml.decodeAll[Option[String]](rendered) == Result.succeed(Chunk(Some("Alice"), None)))
+        }
+    }
+
+    "Yaml.Cst event interop" - {
+
+        "emits scalar and structural events equivalent to CST document" in {
+            val doc = Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            def shape(
+                event: String,
+                size: Maybe[Int] = Absent,
+                value: Maybe[String] = Absent,
+                collection: Maybe[String] = Absent
+            ) =
+                (
+                    event = event,
+                    size = size,
+                    value = value,
+                    collection = collection
+                )
+            end shape
+
+            assert(
+                doc.events.map {
+                    case Yaml.Events.Event.StreamStart(_) =>
+                        shape("StreamStart")
+                    case Yaml.Events.Event.DocumentStart(_) =>
+                        shape("DocumentStart")
+                    case Yaml.Events.Event.MappingStart(_, size) =>
+                        shape("MappingStart", size = size)
+                    case Yaml.Events.Event.SequenceStart(_, size) =>
+                        shape("SequenceStart", size = size)
+                    case Yaml.Events.Event.Scalar(value, _) =>
+                        shape("Scalar", value = Maybe(value))
+                    case Yaml.Events.Event.Alias(name, _) =>
+                        shape("Alias", value = Maybe(name.value))
+                    case Yaml.Events.Event.CollectionEnd(kind, _) =>
+                        shape("CollectionEnd", collection = Maybe(kind.toString))
+                    case Yaml.Events.Event.DocumentEnd(_) =>
+                        shape("DocumentEnd")
+                    case Yaml.Events.Event.StreamEnd(_) =>
+                        shape("StreamEnd")
+                } == Chunk(
+                    shape("StreamStart"),
+                    shape("DocumentStart"),
+                    shape("MappingStart", size = Maybe(2)),
+                    shape("Scalar", value = Maybe("name")),
+                    shape("Scalar", value = Maybe("Alice")),
+                    shape("Scalar", value = Maybe("age")),
+                    shape("Scalar", value = Maybe("30")),
+                    shape("CollectionEnd", collection = Maybe("Mapping")),
+                    shape("DocumentEnd"),
+                    shape("StreamEnd")
+                )
+            )
+        }
+
+        "decodes a transformed CST through events without rendering" in {
+            val doc = Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+                .replace(Yaml.Cst.Path.root / "name", scalar("Bob"))
+                .getOrThrow
+            val reader = kyo.internal.yaml.YamlEventReader(doc.events, Yaml.SpecVersion.Yaml12)
+            reader.resetLimits(Yaml.DefaultMaxDepth, Yaml.DefaultMaxCollectionSize)
+
+            assert(summon[Schema[MTPerson]].readFrom(reader) == MTPerson("Bob", 30))
+        }
+
+        "emits anchors and aliases from CST events" in {
+            val doc = Yaml.cst("value: &name Alice\ncopy: *name\n").getOrThrow
+
+            val anchors = doc.events.collect {
+                case Yaml.Events.Event.Scalar(_, Yaml.ScalarMeta(Present(anchor), _, _, _)) => anchor.value
+            }
+            val aliases = doc.events.collect {
+                case Yaml.Events.Event.Alias(name, _) => name.value
+            }
+
+            assert(anchors == Chunk("name"))
+            assert(aliases == Chunk("name"))
+        }
+
+        "emits collection metadata tags and anchors from CST events" in {
+            val doc = Yaml.cst("items: &items !!seq\n  - one\n").getOrThrow
+
+            val metadata = doc.events.collect {
+                case Yaml.Events.Event.SequenceStart(Yaml.Meta(anchor, tag, _), size) =>
+                    (
+                        anchor = anchor.map(_.value),
+                        tag = tag.map(_.value),
+                        size = size
+                    )
+            }
+
+            assert(metadata == Chunk((anchor = Maybe("items"), tag = Maybe("!!seq"), size = Maybe(1))))
+        }
+
+        "emits mapping metadata tags and anchors from CST events" in {
+            val doc = Yaml.cst("value: !local &map\n  a: 1\ncopy: *map\n").getOrThrow
+
+            val metadata = doc.events.collect {
+                case Yaml.Events.Event.MappingStart(Yaml.Meta(Present(anchor), tag, _), size) =>
+                    (
+                        anchor = Maybe(anchor),
+                        tag = tag,
+                        size = size
+                    )
+            }
+            val aliases = doc.events.collect {
+                case Yaml.Events.Event.Alias(name, _) => name
+            }
+
+            assert(metadata == Chunk((
+                anchor = Maybe(Yaml.Anchor("map")),
+                tag = Maybe(Yaml.YamlTag("!local")),
+                size = Maybe(1)
+            )))
+            assert(aliases == Chunk(Yaml.Anchor("map")))
+        }
+
+        "emits only stream and document boundaries for empty documents" in {
+            val doc = Yaml.cst("").getOrThrow
+
+            assert(
+                doc.events.map {
+                    case Yaml.Events.Event.StreamStart(_)      => "StreamStart"
+                    case Yaml.Events.Event.DocumentStart(_)    => "DocumentStart"
+                    case Yaml.Events.Event.MappingStart(_, _)  => "MappingStart"
+                    case Yaml.Events.Event.SequenceStart(_, _) => "SequenceStart"
+                    case Yaml.Events.Event.Scalar(_, _)        => "Scalar"
+                    case Yaml.Events.Event.Alias(_, _)         => "Alias"
+                    case Yaml.Events.Event.CollectionEnd(_, _) => "CollectionEnd"
+                    case Yaml.Events.Event.DocumentEnd(_)      => "DocumentEnd"
+                    case Yaml.Events.Event.StreamEnd(_)        => "StreamEnd"
+                } == Chunk(
+                    "StreamStart",
+                    "DocumentStart",
+                    "DocumentEnd",
+                    "StreamEnd"
+                )
+            )
+        }
+    }
+
+    "Yaml.Cst edits" - {
+
+        def scalar(value: String): Yaml.Cst.Node =
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            Yaml.Cst.Node.Scalar(
+                value,
+                Yaml.Cst.ScalarSyntax.Canonical,
+                Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                span,
+                Absent
+            )
+        end scalar
+
+        def mapping(entries: (String, Yaml.Cst.Node)*): Yaml.Cst.Node =
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            Yaml.Cst.Node.Mapping(
+                Chunk.from(entries).map { case (key, value) =>
+                    Yaml.Cst.MappingEntry(scalar(key), value, span)
+                },
+                Yaml.Cst.MappingSyntax.Canonical,
+                Yaml.Meta(Absent, Absent, mark),
+                span,
+                Absent
+            )
+        end mapping
+
+        "replaces scalar by structural path while preserving leading comment in rendered output" in {
+            val yaml = """# app
+                         |services:
+                         |  api:
+                         |    # image comment
+                         |    image: app:v1
+                         |    ports: [8080]
+                         |""".stripMargin
+            val replacement = scalar("app:v2")
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "services" / "api" / "image", replacement).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """# app
+                             |services:
+                             |  api:
+                             |    # image comment
+                             |    image: app:v2
+                             |    ports:
+                             |      - 8080
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered == expected)
+            Yaml.parse(rendered) match
+                case Result.Success(Yaml.Node.Mapping(servicesRoot, _)) =>
+                    servicesRoot(0) match
+                        case (Yaml.Node.Scalar("services", _), Yaml.Node.Mapping(serviceEntries, _)) =>
+                            serviceEntries(0) match
+                                case (Yaml.Node.Scalar("api", _), Yaml.Node.Mapping(apiEntries, _)) =>
+                                    assert(apiEntries(0) match
+                                        case (Yaml.Node.Scalar("image", _), Yaml.Node.Scalar("app:v2", _)) => true
+                                        case _                                                             => false)
+                                    assert(apiEntries(1) match
+                                        case (Yaml.Node.Scalar("ports", _), Yaml.Node.Sequence(ports, _)) =>
+                                            ports.size == 1 && (ports(0) match
+                                                case Yaml.Node.Scalar("8080", _) => true
+                                                case _                           => false)
+                                        case _ =>
+                                            false)
+                                case other =>
+                                    fail(s"Expected api mapping, got $other")
+                            end match
+                        case other =>
+                            fail(s"Expected services mapping, got $other")
+                    end match
+                case other =>
+                    fail(s"Expected rendered YAML to parse, got $other")
+            end match
+        }
+
+        "replaces sequence element while preserving leading item comment" in {
+            val yaml = """items:
+                         |  # keep
+                         |  - old
+                         |  - next
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """items:
+                             |  # keep
+                             |  - new
+                             |  - next
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered == expected)
+            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
+        }
+
+        "replaces mapping value while preserving trailing field comment" in {
+            val yaml = """services:
+                         |  api:
+                         |    image: app:v1 # image trailing
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "services" / "api" / "image", scalar("app:v2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """services:
+                             |  api:
+                             |    image: app:v2 # image trailing
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered == expected)
+            assert(Yaml.decode[Map[
+                String,
+                Map[String, Map[String, String]]
+            ]](rendered) == Result.succeed(Map("services" -> Map("api" -> Map("image" -> "app:v2")))))
+        }
+
+        "replaces sequence element while preserving trailing item comment" in {
+            val yaml = """items:
+                         |  - old # item trailing
+                         |  - next
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+            val expected = """items:
+                             |  - new # item trailing
+                             |  - next
+                             |""".stripMargin
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered == expected)
+            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new", "next"))))
+        }
+
+        "preserves scalar anchors and aliases when rendering changed documents with comments" in {
+            val yaml = """value: &name Alice # keep
+                         |other: old
+                         |copy: *name
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "other", scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: &name Alice # keep") == true)
+            assert(rendered.contains("copy: *name") == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map(
+                "value" -> "Alice",
+                "other" -> "new",
+                "copy"  -> "Alice"
+            )))
+        }
+
+        "preserves scalar tags when rendering changed documents with comments" in {
+            val yaml = """value: !!str true # keep
+                         |other: old
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "other", scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: !!str true # keep") == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("value" -> "true", "other" -> "new")))
+        }
+
+        "escapes control characters when rendering changed documents with comments" in {
+            val yaml        = "value: old # keep\n"
+            val replacement = scalar("a" + 1.toChar + "b")
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", replacement).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("\\u0001") == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("value" -> ("a" + 1.toChar + "b"))))
+        }
+
+        "respects disabled trailing newline when rendering changed documents with comments" in {
+            val yaml = "# keep\nvalue: old\n"
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value", scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default.copy(trailingNewline = false))
+
+            assert(!rendered.endsWith("\n") == true)
+            assert(rendered == "# keep\nvalue: new")
+        }
+
+        "preserves mapping anchors and aliases when rendering changed documents with comments" in {
+            val yaml = """value: &map
+                         |  a: 1 # keep
+                         |copy: *map
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value" / "a", scalar("2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: &map") == true)
+            assert(rendered.contains("a: 2 # keep") == true)
+            assert(rendered.contains("copy: *map") == true)
+            assert(Yaml.decode[Map[String, Map[String, String]]](rendered) == Result.succeed(Map(
+                "value" -> Map("a" -> "2"),
+                "copy"  -> Map("a" -> "2")
+            )))
+        }
+
+        "preserves sequence anchors and aliases when rendering changed documents with comments" in {
+            val yaml = """items: &items
+                         |  - old # keep
+                         |copy: *items
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "items" / 0, scalar("new")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("items: &items") == true)
+            assert(rendered.contains("- new # keep") == true)
+            assert(rendered.contains("copy: *items") == true)
+            assert(Yaml.decode[Map[String, List[String]]](rendered) == Result.succeed(Map("items" -> List("new"), "copy" -> List("new"))))
+        }
+
+        "preserves collection tags when rendering changed documents with comments" in {
+            val yaml = """value: !!map
+                         |  a: 1 # keep
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "value" / "a", scalar("2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("value: !!map") == true)
+            assert(rendered.contains("a: 2 # keep") == true)
+        }
+
+        "inserts, removes, and renames mapping entries at root" in {
+            val base =
+                Yaml.cst("name: Alice\nactive: true\n").getOrThrow
+            val edited =
+                base
+                    .insert(Yaml.Cst.Path.root / "age", scalar("30"))
+                    .getOrThrow
+                    .insert(Yaml.Cst.Path.root / "displayName", scalar("Alice"))
+                    .getOrThrow
+                    .remove(Yaml.Cst.Path.root / "name")
+                    .getOrThrow
+                    .remove(Yaml.Cst.Path.root / "active")
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("age" -> "30", "displayName" -> "Alice")))
+        }
+
+        "inserts and removes sequence elements under a mapping key" in {
+            val base =
+                Yaml.cst("ports:\n- 8080\n- 8082\n").getOrThrow
+            val edited =
+                base
+                    .insert(Yaml.Cst.Path.root / "ports" / 1, scalar("8081"))
+                    .getOrThrow
+                    .remove(Yaml.Cst.Path.root / "ports" / 0)
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty == true)
+            assert(Yaml.decode[Map[String, List[Int]]](rendered) == Result.succeed(Map("ports" -> List(8081, 8082))))
+        }
+
+        "renders complex collection keys as valid flow in the trivia path" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val seqKey =
+                Yaml.Cst.Node.Sequence(
+                    Chunk(
+                        Yaml.Cst.SequenceEntry(scalar("a"), span),
+                        Yaml.Cst.SequenceEntry(scalar("b"), span)
+                    ),
+                    Yaml.Cst.SequenceSyntax.Canonical,
+                    Yaml.Meta(Absent, Absent, mark),
+                    span,
+                    Absent
+                )
+            val entry =
+                Yaml.Cst.MappingEntry(seqKey, scalar("value"), span, Chunk(Yaml.Cst.Trivia("# keep", span)))
+            val root =
+                Yaml.Cst.Node.Mapping(Chunk(entry), Yaml.Cst.MappingSyntax.Canonical, Yaml.Meta(Absent, Absent, mark), span, Absent)
+            val doc      = Yaml.Cst.Document(Maybe(root), Chunk.empty, Chunk.empty, span, Absent)
+            val rendered = doc.render(using Yaml.WriterConfig.Default)
+
+            assert(!rendered.contains("Sequence(") == true)
+            assert(rendered.contains("[a, b]: value") == true)
+            assert(Yaml.cst(rendered).isSuccess == true)
+        }
+
+        "fails editing through an ambiguous duplicate mapping key" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val duplicate =
+                Yaml.Cst.Document(
+                    Maybe(mapping("name" -> scalar("a"), "name" -> scalar("b"))),
+                    Chunk.empty,
+                    Chunk.empty,
+                    span,
+                    Absent
+                )
+
+            duplicate.replace(Yaml.Cst.Path.root / "name", scalar("c")) match
+                case Result.Failure(e: Yaml.Cst.EditException) =>
+                    assert(e.getMessage.contains("Ambiguous mapping key 'name'") == true)
+                    assert(e.path.show == "name")
+                case other =>
+                    fail(s"Expected ambiguity failure, got $other")
+            end match
+        }
+
+        "fails inserting a mapping key that already exists" in {
+            Yaml.cst("name: Alice\n").getOrThrow.insert(Yaml.Cst.Path.root / "name", scalar("Bob")) match
+                case Result.Failure(e: Yaml.Cst.EditException) =>
+                    assert(e.getMessage.contains("already exists") == true)
+                    assert(e.path.show == "name")
+                case other =>
+                    fail(s"Expected collision failure, got $other")
+            end match
+        }
+
+        "fails removing a missing path with the concrete path" in {
+            val result =
+                Yaml.cst("name: Alice\n").getOrThrow.remove(Yaml.Cst.Path.root / "missing")
+
+            result match
+                case Result.Failure(e: Yaml.Cst.EditException) =>
+                    assert(e.path.show == "missing")
+                case other =>
+                    fail(s"Expected EditException failure, got $other")
+            end match
+        }
+
+        "replaces root and renders the new node" in {
+            val base = Yaml.cst("name: Alice\n").getOrThrow
+            val edited =
+                base.replace(Yaml.Cst.Path.root, mapping("name" -> scalar("Bob"))).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered == "name: Bob\n")
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("name" -> "Bob")))
+        }
+
+        "preserves literal block scalars when rendering changed documents with comments" in {
+            val yaml = """# config
+                         |name: app
+                         |message: |-
+                         |  hello
+                         |  world
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "name", scalar("app2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered.contains("# config") == true)
+            assert(rendered.contains("message: |-") == true)
+            assert(rendered.contains("\n  hello\n  world") == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("name" -> "app2", "message" -> "hello\nworld")))
+        }
+
+        "preserves folded block scalars when rendering changed documents with comments" in {
+            val yaml = """# config
+                         |name: app
+                         |message: >-
+                         |  hello
+                         |  world
+                         |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow.replace(Yaml.Cst.Path.root / "name", scalar("app2")).getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered.contains("message: >-") == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map("name" -> "app2", "message" -> "hello world")))
+        }
+
+        def editMessage(result: Result[Yaml.Cst.Error, Yaml.Cst.Document])(using kyo.test.AssertScope): String =
+            result match
+                case Result.Failure(e: Yaml.Cst.EditException) => e.getMessage
+                case other                                     => fail(s"Expected an edit failure, got $other")
+
+        "fails every structural edit on an empty document with a clear message" in {
+            val empty = Yaml.cst("").getOrThrow
+
+            assert(empty.node.isEmpty == true)
+            assert(editMessage(empty.replace(
+                Yaml.Cst.Path.root / "name",
+                scalar("x")
+            )) == "Cannot replace a path in an empty YAML document")
+            assert(editMessage(empty.insert(Yaml.Cst.Path.root / "name", scalar("x"))) == "Cannot insert into an empty YAML document")
+            assert(editMessage(empty.remove(Yaml.Cst.Path.root / "name")) == "Cannot remove a path from an empty YAML document")
+        }
+
+        "fails inserting at the document root and removes the root via the empty path" in {
+            val doc     = Yaml.cst("name: Alice\n").getOrThrow
+            val emptied = doc.remove(Yaml.Cst.Path.root).getOrThrow
+
+            assert(editMessage(doc.insert(Yaml.Cst.Path.root, scalar("x"))) == "Cannot insert at the YAML document root")
+            assert(emptied.node.isEmpty == true)
+            assert(emptied.source.isEmpty == true)
+        }
+
+        "fails edits whose path does not match the document shape" in {
+            val doc = Yaml.cst("name: Alice\nitems:\n  - a\n  - b\n").getOrThrow
+
+            assert(editMessage(doc.replace(Yaml.Cst.Path.root / "items" / "x", scalar("v"))).contains("Expected mapping") == true)
+            assert(editMessage(doc.replace(Yaml.Cst.Path.root / 0, scalar("v"))).contains("Expected sequence") == true)
+            assert(editMessage(doc.replace(Yaml.Cst.Path.root / "name" / "deep", scalar("v"))).contains("Expected mapping") == true)
+            assert(editMessage(doc.replace(Yaml.Cst.Path.root / "items" / 5, scalar("v"))).contains("out of range") == true)
+        }
+
+        "fails insert and remove with bad sequence indices and mismatched shapes" in {
+            val doc = Yaml.cst("items:\n  - a\n  - b\nname: Alice\n").getOrThrow
+
+            assert(editMessage(doc.insert(Yaml.Cst.Path.root / "items" / 9, scalar("z"))).contains("out of range") == true)
+            assert(editMessage(doc.insert(Yaml.Cst.Path.root / "items" / 9 / "k", scalar("z"))).contains("out of range") == true)
+            assert(editMessage(doc.remove(Yaml.Cst.Path.root / "items" / 9)).contains("out of range") == true)
+            assert(editMessage(doc.insert(Yaml.Cst.Path.root / "items" / "k", scalar("z"))).contains("Expected mapping") == true)
+            assert(editMessage(doc.remove(Yaml.Cst.Path.root / "items" / "k")).contains("Expected mapping") == true)
+            assert(editMessage(doc.insert(Yaml.Cst.Path.root / 0, scalar("z"))).contains("Expected sequence") == true)
+            assert(editMessage(doc.remove(Yaml.Cst.Path.root / 0)).contains("Expected sequence") == true)
+        }
+
+        "edits values nested under a sequence index" in {
+            val yaml =
+                """services:
+                  |  - name: api
+                  |    port: 8080
+                  |  - name: web
+                  |    port: 9090
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "services" / 0 / "port", scalar("8081"))
+                    .flatMap(_.insert(Yaml.Cst.Path.root / "services" / 1 / "tls", scalar("true")))
+                    .flatMap(_.remove(Yaml.Cst.Path.root / "services" / 0 / "name"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("port: 8081") == true)
+            assert(rendered.contains("tls: true") == true)
+            assert(!rendered.contains("name: api") == true)
+            assert(Yaml.decode[Map[String, List[Map[String, String]]]](rendered).isSuccess == true)
+        }
+
+        "inserts a source-backed mapping subtree copied from another document" in {
+            val template =
+                Yaml.cst("api:\n  image: app:v1\n  ports: [8080, 8081]\n").getOrThrow
+            val subtree =
+                template.node match
+                    case Present(Yaml.Cst.Node.Mapping(entries, _, _, _, _)) => entries(0).value
+                    case other                                               => fail(s"Expected mapping root, got $other")
+            val edited =
+                Yaml.cst("services:\n  web:\n    image: web:v1\n").getOrThrow
+                    .insert(Yaml.Cst.Path.root / "services" / "api", subtree)
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(edited.source.isEmpty == true)
+            assert(rendered.contains("image: app:v1") == true)
+            assert(rendered.contains("8080") == true)
+            assert(Yaml.cst(rendered).isSuccess == true)
+        }
+
+        "inserts a source-backed alias copied from another document" in {
+            val template =
+                Yaml.cst("base: &b 1\nref: *b\n").getOrThrow
+            val aliasNode =
+                template.node match
+                    case Present(Yaml.Cst.Node.Mapping(entries, _, _, _, _)) => entries(1).value
+                    case other                                               => fail(s"Expected mapping root, got $other")
+            val edited =
+                Yaml.cst("anchor: &a 1\n").getOrThrow
+                    .insert(Yaml.Cst.Path.root / "copy", aliasNode)
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(aliasNode.isInstanceOf[Yaml.Cst.Node.Alias] == true)
+            assert(rendered.contains("copy: *b") == true)
+        }
+    }
+
+    "Yaml.Cst rendering" - {
+
+        "renders an edited commented document preserving anchors aliases and empty collections" in {
+            val yaml =
+                """# config
+                  |anchored: &base
+                  |  image: app:v1
+                  |refs:
+                  |  - *base
+                  |  - name: web
+                  |empty: {}
+                  |list: []
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "anchored" / "image", scalar("app:v2"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("# config") == true)
+            assert(rendered.contains("&base") == true)
+            assert(rendered.contains("*base") == true)
+            assert(rendered.contains("{}") == true)
+            assert(rendered.contains("[]") == true)
+            assert(rendered.contains("image: app:v2") == true)
+            assert(Yaml.cst(rendered).isSuccess == true)
+        }
+
+        "renders an edited commented document with Start markers and no trailing newline" in {
+            val yaml =
+                """# top
+                  |name: Alice
+                  |age: 30
+                  |""".stripMargin
+            val config =
+                Yaml.WriterConfig.Default.copy(
+                    documentMarkers = Yaml.WriterConfig.DocumentMarkers.Start,
+                    trailingNewline = false
+                )
+            val rendered =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "age", scalar("31"))
+                    .getOrThrow
+                    .render(using config)
+
+            assert(rendered.startsWith("---\n") == true)
+            assert(rendered.contains("# top") == true)
+            assert(!rendered.endsWith("\n") == true)
+            assert(rendered.contains("age: 31") == true)
+        }
+
+        "renders a canonical stream built from events with start and end markers" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+            val rebuilt =
+                Yaml.Cst.Stream(
+                    stream.documents.map(doc => Yaml.Cst.fromEvents(doc.events).getOrThrow),
+                    Chunk.empty,
+                    Chunk.empty,
+                    stream.span,
+                    Absent
+                )
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val rendered = rebuilt.render(using config)
+
+            assert(rendered.startsWith("---\n") == true)
+            assert(rendered.contains("...\n") == true)
+            assert(Yaml.decodeAll[Map[String, String]](rebuilt).map(_.map(_("name"))) == Result.succeed(Chunk("Alice", "Bob")))
+        }
+
+        "renders an edited document whose root is a scalar an alias or a block scalar" in {
+            val mark = Yaml.Mark(0, 1, 1)
+            val span = Yaml.Cst.SourceSpan(mark, mark)
+            val scalarRoot =
+                Yaml.cst("# c\nhello\n").getOrThrow
+                    .replace(Yaml.Cst.Path.root, scalar("world"))
+                    .getOrThrow
+            val aliasRoot =
+                Yaml.cst("# c\nx: 1\n").getOrThrow
+                    .replace(
+                        Yaml.Cst.Path.root,
+                        Yaml.Cst.Node.Alias(Yaml.Anchor("a"), Yaml.Cst.AliasSyntax.Canonical, span, Absent)
+                    )
+                    .getOrThrow
+            val blockRoot =
+                Yaml.cst("# c\nx: 1\n").getOrThrow
+                    .replace(
+                        Yaml.Cst.Path.root,
+                        Yaml.Cst.Node.Scalar(
+                            "one\ntwo",
+                            Yaml.Cst.ScalarSyntax.Canonical,
+                            Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Literal, mark),
+                            span,
+                            Absent
+                        )
+                    )
+                    .getOrThrow
+
+            assert(scalarRoot.render(using Yaml.WriterConfig.Default).contains("# c") == true)
+            assert(scalarRoot.render(using Yaml.WriterConfig.Default).contains("world") == true)
+            assert(aliasRoot.render(using Yaml.WriterConfig.Default).contains("*a") == true)
+            assert(blockRoot.render(using Yaml.WriterConfig.Default).contains("|") == true)
+        }
+
+        "renders an edited commented document with quoted and escaped scalar values" in {
+            val yaml =
+                """# cfg
+                  |single: 'a''b'
+                  |double: "x\ty"
+                  |plain: ok
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "plain", scalar("done"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("# cfg") == true)
+            assert(rendered.contains("'a''b'") == true)
+            assert(rendered.contains("\\t") == true)
+            assert(Yaml.cst(rendered).isSuccess == true)
+            assert(Yaml.decode[Map[String, String]](rendered) == Result.succeed(Map(
+                "single" -> "a'b",
+                "double" -> "x\ty",
+                "plain"  -> "done"
+            )))
+        }
+
+        "renders an edited commented document with start and end markers" in {
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+            val rendered =
+                Yaml.cst("# c\nname: Alice\n").getOrThrow
+                    .replace(Yaml.Cst.Path.root / "name", scalar("Bob"))
+                    .getOrThrow
+                    .render(using config)
+
+            assert(rendered.startsWith("---\n") == true)
+            assert(rendered.contains("...") == true)
+            assert(rendered.contains("# c") == true)
+            assert(rendered.contains("name: Bob") == true)
+        }
+
+        "renders a tagged block scalar inside an edited commented document" in {
+            val yaml =
+                """# c
+                  |name: Alice
+                  |block: !!str |-
+                  |  one
+                  |  two
+                  |""".stripMargin
+            val edited =
+                Yaml.cst(yaml).getOrThrow
+                    .replace(Yaml.Cst.Path.root / "name", scalar("Bob"))
+                    .getOrThrow
+            val rendered = edited.render(using Yaml.WriterConfig.Default)
+
+            assert(rendered.contains("|-") == true)
+            assert(rendered.contains("!!str") == true)
+            assert(rendered.contains("\n  one\n  two") == true)
+            assert(Yaml.cst(rendered).isSuccess == true)
+        }
+    }
+
+    "Yaml.Cst as a source" - {
+
+        "decodes a CST document and stream through the top-level API" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n").getOrThrow
+
+            assert(Yaml.decode[MTPerson](document) == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.decodeAll[MTPerson](stream) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25))))
+        }
+
+        "renders and parses a CST document and stream through the top-level API" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+
+            val parsedKeys =
+                Yaml.parse(document).getOrThrow match
+                    case Yaml.Node.Mapping(entries, _) =>
+                        entries.map {
+                            case (Yaml.Node.Scalar(key, _), _) => key
+                            case (other, _)                    => fail(s"Expected scalar key, found $other")
+                        }
+                    case other =>
+                        fail(s"Expected mapping root, found $other")
+
+            assert(Yaml.render(document) == Result.succeed("name: Alice\nage: 30\n"))
+            assert(Yaml.render(stream) == Result.succeed("---\nname: Alice\n---\nname: Bob\n"))
+            assert(parsedKeys == Chunk("name", "age"))
+            assert(Yaml.parseAll(stream).map(_.size) == Result.succeed(2))
+        }
+
+        "builds a structural path from explicit segments" in {
+            val path =
+                Yaml.Cst.Path(Chunk(Yaml.Cst.Path.Segment.Key("services"), Yaml.Cst.Path.Segment.Index(0)))
+
+            assert(path.segments.size == 2)
+            assert(path.show == "services[0]")
+        }
+
+        "fails decoding an empty single-document CST stream into a mapping" in {
+            val stream = Yaml.cstAll("").getOrThrow
+
+            assert(Yaml.pipeline.decode[Map[String, String]](stream).isFailure)
+        }
+    }
+end YamlCstTest

@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import kyo.*
 import scala.annotation.tailrec
@@ -147,9 +147,11 @@ final private[kyo] class YamlParser private (private val input: String)(using fr
         if valueText.startsWith("*") && !valueText.exists(_.isWhitespace) then
             visitor.alias(context, Anchor(valueText.drop(1)), valueMark)
         else if valueText.startsWith("[") && valueText.endsWith("]") then
-            withPending(anchor, tag)(parseFlowSequence(valueText, context, visitor))
+            if anchor.nonEmpty || tag.nonEmpty then withPending(anchor, tag)(parseFlowSequence(valueText, context, visitor))
+            else parseFlowSequence(valueText, context, visitor)
         else if valueText.startsWith("{") && valueText.endsWith("}") then
-            withPending(anchor, tag)(parseFlowMapping(valueText, context, visitor))
+            if anchor.nonEmpty || tag.nonEmpty then withPending(anchor, tag)(parseFlowMapping(valueText, context, visitor))
+            else parseFlowMapping(valueText, context, visitor)
         else if valueText.startsWith("'") && valueText.endsWith("'") && valueText.length >= 2 then
             visitor.scalar(
                 context,

@@ -57,6 +57,16 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
             assert(Yaml.pipeline.encode(value) == Result.succeed(Yaml.encode(value)))
         }
 
+        "builds source-backed CST without processors" in {
+            val yaml = """# app
+name: Alice
+age: 30
+"""
+
+            val obtained = Yaml.pipeline.cst(yaml).map(doc => (source = doc.source, rendered = doc.render(using Yaml.WriterConfig.Default)))
+            assert(obtained == Result.succeed((source = Maybe(yaml), rendered = yaml)))
+        }
+
         "decodes transformed scalar values directly from processor events" in {
             val yaml =
                 """name: placeholder
@@ -134,6 +144,19 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
             )
         }
 
+        "builds canonical CST from processor events" in {
+            val yaml =
+                """name: placeholder
+                  |age: 30
+                  |""".stripMargin
+
+            val doc =
+                Yaml.pipeline.through(scalarRewrite("placeholder", "Alice")).cst(yaml).getOrThrow
+
+            assert(doc.source.isEmpty)
+            assert(Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default)) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
         "selects document index before processor decode" in {
             val yaml =
                 """---
@@ -151,6 +174,145 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
                 Yaml.pipeline.reader(config).through(scalarRewrite("Robert", "Bob")).decode[MTPerson](yaml) ==
                     Result.succeed(MTPerson("Bob", 25))
             )
+        }
+
+        "selects document index before processor CST" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Robert
+                  |age: 25
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            val doc =
+                Yaml.pipeline.reader(config).through(scalarRewrite("Robert", "Bob")).cst(yaml).getOrThrow
+
+            assert(doc.source.isEmpty)
+            assert(Yaml.decode[MTPerson](doc.render(using Yaml.WriterConfig.Default)) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "does not merge document streams for single-document CST" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |---
+                  |age: 30
+                  |""".stripMargin
+
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+            val expected =
+                cstFailure(Yaml.cst(yaml))
+            val processed =
+                cstFailure(Yaml.pipeline.reader(config).through(identityProcessor).cst(yaml))
+
+            assert(expected.contains("Unexpected content after YAML document end"))
+            assert(cstFailure(Yaml.pipeline.reader(config).cst(yaml)).contains("Unexpected content after YAML document end"))
+            assert(processed.contains("Expected a single YAML document"))
+        }
+
+        "builds source-backed CST stream without processors" in {
+            val yaml =
+                """# first
+                  |---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Bob
+                  |age: 25
+                  |""".stripMargin
+
+            val obtained = Yaml.pipeline.cstAll(yaml).map(stream =>
+                (
+                    source = stream.source,
+                    count = stream.documents.size,
+                    rendered = stream.render(using Yaml.WriterConfig.Default)
+                )
+            )
+            assert(obtained == Result.succeed((source = Maybe(yaml), count = 2, rendered = yaml)))
+        }
+
+        "builds canonical CST stream from processor events" in {
+            val yaml =
+                """---
+                  |name: placeholder
+                  |age: 30
+                  |---
+                  |name: placeholder
+                  |age: 25
+                  |""".stripMargin
+
+            val stream =
+                Yaml.pipeline.through(scalarRewrite("placeholder", "Alice")).cstAll(yaml).getOrThrow
+            val rendered =
+                stream.render(using Yaml.WriterConfig.Default)
+
+            assert(stream.source.isEmpty)
+            assert(stream.documents.size == 2)
+            assert(stream.documents.forall(_.source.isEmpty))
+            assert(Yaml.decodeAll[MTPerson](rendered) == Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Alice", 25))))
+        }
+
+        "builds a processor CST stream with the same document count as the source-backed stream" in {
+            val yaml =
+                """# first
+                  |---
+                  |name: Alice
+                  |---
+                  |name: Bob
+                  |""".stripMargin
+
+            val processed    = Yaml.pipeline.through(scalarRewrite("Alice", "Alicia")).cstAll(yaml).getOrThrow
+            val sourceBacked = Yaml.pipeline.cstAll(yaml).getOrThrow
+
+            assert(processed.documents.size == sourceBacked.documents.size)
+            assert(processed.render(using Yaml.WriterConfig.Default).contains("Alicia"))
+        }
+
+        "returns every document from cstAll ignoring the reader document index" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |---
+                  |name: Bob
+                  |""".stripMargin
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assert(Yaml.pipeline.reader(config).through(scalarRewrite(
+                "Alice",
+                "Alicia"
+            )).cstAll(yaml).map(_.documents.size) == Result.succeed(2))
+            assert(Yaml.pipeline.reader(config).cstAll(yaml).map(_.documents.size) == Result.succeed(2))
+        }
+
+        "builds CST from UTF-8 bytes after source selection" in {
+            val yaml =
+                """---
+                  |name: Alice
+                  |age: 30
+                  |---
+                  |name: Café
+                  |age: 25
+                  |""".stripMargin
+            val selected =
+                """name: Café
+                  |age: 25
+                  |""".stripMargin
+            val bytes =
+                Span.from(yaml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            val obtained = Yaml.pipeline.reader(config).cstBytes(bytes).map(doc =>
+                (source = doc.source, rendered = doc.render(using Yaml.WriterConfig.Default))
+            )
+            assert(obtained == Result.succeed((source = Maybe(selected), rendered = selected)))
         }
 
         "merges document stream fragments for case-class processor decode" in {
@@ -205,6 +367,24 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
             )
         }
 
+        "returns processor failures from CST without building a document" in {
+            val yaml =
+                """name: reject
+                  |age: 30
+                  |""".stripMargin
+
+            val reject =
+                Yaml.Events.Processor.mapScalars[PipelineError] { (value, meta) =>
+                    if value == "reject" then Result.fail(PipelineError.Rejected)
+                    else Result.succeed((value, meta))
+                }
+
+            assert(
+                Yaml.pipeline.through(reject).cst(yaml) ==
+                    Result.fail(PipelineError.Rejected)
+            )
+        }
+
         "enforces max depth during processor decode" in {
             val yaml =
                 """lead:
@@ -236,6 +416,271 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
                     Result.fail(LimitExceededException("Collection size", 2, 1))
             )
         }
+
+        "visits a CST document through the event API" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            val scalars = new Yaml.Events.Handler[Chunk[String], Nothing]:
+                override def scalar(
+                    context: Chunk[String],
+                    value: String,
+                    meta: Yaml.ScalarMeta
+                ): Result[Nothing, Chunk[String]] =
+                    Result.succeed(context :+ value)
+            end scalars
+
+            assert(
+                Yaml.pipeline.visit(document, Chunk.empty[String])(scalars) ==
+                    Result.succeed(Chunk("name", "Alice", "age", "30"))
+            )
+        }
+
+        "renders and parses a CST document" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            assert(Yaml.pipeline.render(document).getOrThrow == "name: Alice\nage: 30\n")
+            assert(Yaml.pipeline.parse(document).getOrThrow.isInstanceOf[Yaml.Node.Mapping])
+        }
+
+        "renders a CST stream and parses all its documents" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+            val nodes =
+                Yaml.pipeline.parseAll(stream).getOrThrow
+
+            assert(Yaml.pipeline.render(stream).getOrThrow == "---\nname: Alice\n---\nname: Bob\n")
+            assert(nodes.size == 2)
+            assert(nodes(0).isInstanceOf[Yaml.Node.Mapping])
+            assert(nodes(1).isInstanceOf[Yaml.Node.Mapping])
+        }
+
+        "decodes a CST document into a schema value" in {
+            val document =
+                Yaml.cst("name: Alice\nage: 30\n").getOrThrow
+
+            assert(Yaml.pipeline.decode[MTPerson](document) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "decodes every document of a CST stream" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n").getOrThrow
+
+            assert(
+                Yaml.pipeline.decodeAll[MTPerson](stream) ==
+                    Result.succeed(Chunk(MTPerson("Alice", 30), MTPerson("Bob", 25)))
+            )
+        }
+
+        "selects a CST stream document by reader document index" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+
+            assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "fails decoding a CST stream when the document index is out of range" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(5)))
+
+            Yaml.pipeline.reader(config).decode[MTPerson](stream) match
+                case Result.Failure(e: DecodeException) =>
+                    assert(e.getMessage.contains("out of range"))
+                case other =>
+                    fail(s"Expected out-of-range failure, got $other")
+            end match
+        }
+
+        "merges CST stream top-level mappings when configured" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\n---\nage: 30\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "merges CST stream mappings while skipping a non-mapping document" in {
+            val stream =
+                Yaml.cstAll("---\n- 1\n- 2\n---\nname: Alice\n---\nage: 30\n").getOrThrow
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentMode = Yaml.ReaderConfig.DocumentMode.MergeTopLevelMappings)
+
+            assert(Yaml.pipeline.reader(config).decode[MTPerson](stream) == Result.succeed(MTPerson("Alice", 30)))
+        }
+
+        "decodes an empty CST stream to no values" in {
+            val stream =
+                Yaml.cstAll("").getOrThrow
+
+            assert(Yaml.pipeline.decodeAll[MTPerson](stream) == Result.succeed(Chunk.empty))
+        }
+
+        "renders a source-less CST stream with StartAndEnd markers" in {
+            // A processor-backed cstAll produces source-less documents, exercising the marker path.
+            val stream =
+                Yaml.pipeline.through(identityProcessor).cstAll("---\nname: Alice\n---\nname: Bob\n").getOrThrow
+            val config =
+                Yaml.WriterConfig.Default.copy(documentMarkers = Yaml.WriterConfig.DocumentMarkers.StartAndEnd)
+
+            val rendered = Yaml.pipeline.writer(config).render(stream).getOrThrow
+
+            assert(rendered.startsWith("---\n") && rendered.endsWith("...\n"))
+        }
+
+        def cstScalar(value: String): Yaml.Cst.Node =
+            val mark = Yaml.Mark(0, 1, 1)
+            Yaml.Cst.Node.Scalar(
+                value,
+                Yaml.Cst.ScalarSyntax.Canonical,
+                Yaml.ScalarMeta(Absent, Absent, Yaml.ScalarStyle.Plain, mark),
+                Yaml.Cst.SourceSpan(mark, mark),
+                Absent
+            )
+        end cstScalar
+
+        "decodes through a per-document CST transform stage" in {
+            val yaml = "name: Alice\nage: 30\n"
+            val rename =
+                Yaml.pipeline.throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Alicia")))
+
+            assert(rename.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alicia", 30)))
+        }
+
+        "preserves comments for the CST transform while feeding edited values to decode" in {
+            val yaml = "# owner\nname: Alice\nage: 30\n"
+            val edit =
+                Yaml.pipeline.throughCst(_.replace(Yaml.Cst.Path.root / "age", cstScalar("31")))
+
+            assert(edit.render(yaml).getOrThrow.contains("# owner"))
+            assert(edit.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice", 31)))
+        }
+
+        "runs the CST transform before event processors" in {
+            val yaml = "name: placeholder\nage: 30\n"
+            val pipeline =
+                Yaml.pipeline
+                    .throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Alice")))
+                    .through(scalarRewrite("Alice", "Alicia"))
+
+            assert(pipeline.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alicia", 30)))
+        }
+
+        "applies a stream transform before per-document handling" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val dropFirst =
+                Yaml.pipeline.throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
+
+            val rendered = dropFirst.render(yaml).getOrThrow
+            assert(rendered.contains("Bob"))
+            assert(!rendered.contains("Alice"))
+        }
+
+        "applies stream transform first then per-document transform on survivors" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val pipeline =
+                Yaml.pipeline
+                    .throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
+                    .throughCst(_.replace(Yaml.Cst.Path.root / "name", cstScalar("Robert")))
+
+            val rendered = pipeline.render(yaml).getOrThrow
+            assert(rendered.contains("Robert"))
+            assert(rendered.contains("age: 25"))
+            assert(!rendered.contains("Alice"))
+        }
+
+        "preserves a surviving document's comment when a stream transform drops another" in {
+            val yaml = "---\nname: Alice\n---\n# keep\nname: Bob\nage: 25\n"
+            val dropFirst =
+                Yaml.pipeline.throughCstStream(stream => Result.succeed(stream.copy(documents = stream.documents.drop(1))))
+            val rendered = dropFirst.render(yaml).getOrThrow
+
+            assert(rendered.contains("# keep"))
+            assert(rendered.contains("name: Bob"))
+            assert(rendered.contains("age: 25"))
+            assert(!rendered.contains("Alice"))
+        }
+
+        "leaves String decode and render unchanged when no CST transform is set" in {
+            val yaml = "name: Alice\nage: 30\n"
+
+            assert(Yaml.pipeline.decode[MTPerson](yaml) == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.pipeline.render(yaml) == Result.succeed(yaml))
+            assert(Yaml.pipeline.decode[MTPerson](yaml) == Yaml.decode[MTPerson](yaml))
+        }
+
+        "encodes through processors and writes events to a handler" in {
+            val value   = MTPerson("Alice", 30)
+            val encoded = Yaml.pipeline.through(scalarRewrite("Alice", "Alicia")).encode(value).getOrThrow
+
+            val scalars = new Yaml.Events.Handler[Chunk[String], Nothing]:
+                override def scalar(
+                    context: Chunk[String],
+                    scalarValue: String,
+                    meta: Yaml.ScalarMeta
+                ): Result[Nothing, Chunk[String]] =
+                    Result.succeed(context :+ scalarValue)
+            end scalars
+            val written = Yaml.pipeline.through(identityProcessor).write(value, Chunk.empty[String])(scalars)
+
+            assert(Yaml.decode[MTPerson](encoded) == Result.succeed(MTPerson("Alicia", 30)))
+            assert(written == Result.succeed(Chunk("name", "Alice", "age", "30")))
+        }
+
+        "decodes and builds a CST from UTF-8 bytes" in {
+            val bytes =
+                Span.from("name: Alice\nage: 30\n".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+            assert(Yaml.pipeline.decodeBytes[MTPerson](bytes) == Result.succeed(MTPerson("Alice", 30)))
+            assert(Yaml.pipeline.cstBytes(bytes).map(_.render(using Yaml.WriterConfig.Default)) == Result.succeed("name: Alice\nage: 30\n"))
+        }
+
+        "decodes a single value selected from a stream transform" in {
+            val yaml = "---\nname: Alice\nage: 30\n---\nname: Bob\nage: 25\n"
+            val config =
+                Yaml.ReaderConfig.Default.copy(documentIndex = Maybe(Yaml.DocumentIndex(1)))
+            val pipeline =
+                Yaml.pipeline.reader(config).throughCstStream(stream => Result.succeed(stream))
+
+            assert(pipeline.decode[MTPerson](yaml) == Result.succeed(MTPerson("Bob", 25)))
+        }
+
+        "propagates a failing CST transform across a stream render" in {
+            val yaml = "---\nname: Alice\n---\nname: Bob\n"
+            val pipeline =
+                Yaml.pipeline
+                    .throughCstStream(stream => Result.succeed(stream))
+                    .throughCst(_ => Result.fail(PipelineError.Rejected))
+
+            assert(pipeline.render(yaml) == Result.fail(PipelineError.Rejected))
+        }
+
+        "fails decodeAll when a CST stream document cannot decode" in {
+            val stream =
+                Yaml.cstAll("---\nname: Alice\nage: 30\n---\nname: Bob\n").getOrThrow
+
+            assert(Yaml.pipeline.decodeAll[MTPerson](stream).isFailure)
+        }
+
+        "chains two event processors and rewrites scalars inside a sequence" in {
+            val yaml =
+                """tags:
+                  |  - one
+                  |  - two
+                  |""".stripMargin
+            val pipeline =
+                Yaml.pipeline.through(scalarRewrite("one", "1")).through(scalarRewrite("two", "2"))
+
+            assert(
+                pipeline.decode[Map[String, List[String]]](yaml) ==
+                    Result.succeed(Map("tags" -> List("1", "2")))
+            )
+        }
     }
 
     private val identityProcessor: Yaml.Events.Processor[Nothing] =
@@ -247,4 +692,10 @@ class YamlPipelineTest extends kyo.test.Test[Any]:
             else Result.succeed((value, meta))
         }
     end scalarRewrite
+
+    private def cstFailure[Err](result: Result[Err | DecodeException, Yaml.Cst.Document])(using kyo.test.AssertScope): String =
+        result match
+            case Result.Failure(e: ParseException) => e.getMessage
+            case other                             => fail(s"Expected ParseException failure, got $other")
+    end cstFailure
 end YamlPipelineTest
