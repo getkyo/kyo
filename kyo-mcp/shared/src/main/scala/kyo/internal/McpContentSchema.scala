@@ -159,7 +159,9 @@ private[kyo] object McpContentSchema:
             next match
                 case c: McpContent => c
                 case _             => value
-
+        private lazy val _structure: Structure.Type =
+            Structure.Type.Open(Tag[McpContent].asInstanceOf[Tag[Any]])
+        override def structure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )
@@ -319,7 +321,9 @@ private[kyo] object McpContentSchema:
             next match
                 case rc: McpHandler.ResourceContents => rc
                 case _                               => value
-
+        private lazy val _structure: Structure.Type =
+            Structure.Type.Open(Tag[McpHandler.ResourceContents].asInstanceOf[Tag[Any]])
+        override def structure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )

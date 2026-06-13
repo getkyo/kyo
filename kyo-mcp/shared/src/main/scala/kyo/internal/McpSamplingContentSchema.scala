@@ -96,7 +96,9 @@ private[kyo] object McpSamplingContentSchema:
             next match
                 case c: McpServer.SamplingContent => c
                 case _                            => value
-
+        private lazy val _structure: Structure.Type =
+            Structure.Type.Open(Tag[McpServer.SamplingContent].asInstanceOf[Tag[Any]])
+        override def structure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         )

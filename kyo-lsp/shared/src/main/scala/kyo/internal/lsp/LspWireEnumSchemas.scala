@@ -345,7 +345,10 @@ private[kyo] object LspWireEnumSchemas:
                 next match
                     case b: LspHandler.BooleanOr[?] => b.asInstanceOf[LspHandler.BooleanOr[T]]
                     case _                          => value
-
+            private lazy val _structure: Structure.Type =
+                // Non-inline given: no implicit Tag[T] in scope; fall back to Tag[Any].
+                Structure.Type.Open(Tag[Any])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.BooleanOr[T]] =
@@ -378,7 +381,10 @@ private[kyo] object LspWireEnumSchemas:
                 next match
                     case s: LspHandler.StringOr[?] => s.asInstanceOf[LspHandler.StringOr[T]]
                     case _                         => value
-
+            private lazy val _structure: Structure.Type =
+                // Non-inline given: no implicit Tag[T] in scope; fall back to Tag[Any].
+                Structure.Type.Open(Tag[Any])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.StringOr[T]] =

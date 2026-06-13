@@ -1621,15 +1621,22 @@ import scala.quoted.*
                                         .getOrElse(report.errorAndAbort(noSchemaFieldMessage(fieldName, fieldType)))
                                 (_: Expr[Schema[A]]) => schemaExpr
                     else if maybeFields.contains(idx) then
-                        // Non-recursive Maybe field - extract inner type and summon Schema for it
+                        // Non-recursive Maybe field - extract inner type and summon Schema for it.
+                        // The implicit search falls back to `buildContainerSchemaOpt` for inner types
+                        // whose givens require `using Frame` (e.g. nested Chunk[X], Map[String, V]),
+                        // matching the non-Maybe fallback below.
                         fieldType.dealias match
                             case AppliedType(_, List(innerType)) =>
                                 innerType.asType match
                                     case '[inner] =>
-                                        val schema = Expr.summon[Schema[inner]].getOrElse(
-                                            report.errorAndAbort(noSchemaMessage(fieldName, innerType.show, fieldType.show))
-                                        )
-                                        (_: Expr[Schema[A]]) => '{ $schema.asInstanceOf[Schema[Any]] }
+                                        val schemaExpr: Expr[Schema[Any]] =
+                                            Expr.summon[Schema[inner]]
+                                                .map(s => '{ $s.asInstanceOf[Schema[Any]] })
+                                                .orElse(buildContainerSchemaOpt[A](innerType, fieldName))
+                                                .getOrElse(
+                                                    report.errorAndAbort(noSchemaMessage(fieldName, innerType.show, fieldType.show))
+                                                )
+                                        (_: Expr[Schema[A]]) => schemaExpr
                             case _ =>
                                 report.errorAndAbort(
                                     s"Cannot resolve inner type for Maybe field '$fieldName'. " +
@@ -2225,6 +2232,60 @@ import scala.quoted.*
                                         ).asInstanceOf[Schema[Any]]
                                     }
                                 end if
+                            }
+                else None
+                end if
+            case AppliedType(tycon, List(keyType, valueType)) if tycon.typeSymbol == TypeRepr.of[Map].typeSymbol =>
+                // Map[K, V] shape. The non-inline mapSchema given in Schema.scala requires `using Frame`,
+                // which the macro-time Expr.summon cannot satisfy at user `derives Schema` call sites
+                // inside the kyo package. Build the Schema explicitly for Map[String, V] (the wire shape
+                // is an object whose keys are the Map keys). Non-String key types fall through to None.
+                if keyType =:= TypeRepr.of[String] then
+                    valueType.asType match
+                        case '[v] =>
+                            val valueSchemaOpt: Option[Expr[Schema[v]]] =
+                                Expr.summon[Schema[v]].orElse(
+                                    buildContainerSchemaOpt[A](valueType, fieldName)
+                                        .map(_.asInstanceOf[Expr[Schema[v]]])
+                                )
+                            valueSchemaOpt.map { valueSchema =>
+                                '{
+                                    val vs = $valueSchema
+                                    import scala.annotation.tailrec
+                                    kyo.Schema.init[Map[String, v]](
+                                        writeFn = (value, writer) =>
+                                            writer.mapStart(value.size)
+                                            value.iterator.zipWithIndex.foreach { case ((k, vv), idx) =>
+                                                writer.field(k, idx)
+                                                vs.serializeWrite(vv, writer)
+                                            }
+                                            writer.mapEnd()
+                                        ,
+                                        readFn = reader =>
+                                            discard(reader.mapStart())
+                                            val builder = Map.newBuilder[String, v]
+                                            @tailrec def loop(count: Int): Unit =
+                                                if reader.hasNextEntry() then
+                                                    reader.checkCollectionSize(count)
+                                                    val k  = reader.field()
+                                                    val vv = vs.serializeRead(reader)
+                                                    builder += (k -> vv)
+                                                    loop(count + 1)
+                                            loop(1)
+                                            reader.mapEnd()
+                                            builder.result()
+                                        ,
+                                        structure = kyo.Structure.Type.Mapping(
+                                            "Map",
+                                            kyo.Tag[Any],
+                                            kyo.Structure.Type.Primitive(
+                                                kyo.Structure.PrimitiveKind.String,
+                                                kyo.Tag[String].asInstanceOf[kyo.Tag[Any]]
+                                            ),
+                                            vs.structure
+                                        )
+                                    ).asInstanceOf[Schema[Any]]
+                                }
                             }
                 else None
                 end if

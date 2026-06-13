@@ -981,7 +981,64 @@ object LspHandler:
         changes: Maybe[Map[String, Chunk[TextEdit]]] = Absent,
         documentChanges: Chunk[WorkspaceEditDocumentChange] = Chunk.empty,
         changeAnnotations: Maybe[Map[String, ChangeAnnotation]] = Absent
-    ) derives Schema, CanEqual
+    ) derives CanEqual
+
+    object WorkspaceEdit:
+        // The derived-Schema path for nested-container shapes (Maybe[Map[String, Chunk[X]]])
+        // hits a Scala 3.8.3 type-erasure interaction with buildContainerSchemaOpt's static
+        // Expr-level casts: the inner Chunk emission produces Schema[Any] (intentionally,
+        // to satisfy the SchemaResolver lambda's return type), and the outer Map emission
+        // requires Schema[Chunk[X]] at the spliced-in binding site, surfacing a type
+        // mismatch the macro typer cannot fold under the .asInstanceOf cast. The manual
+        // Schema preserves wire-format compatibility (object-of-string-keys for each Map)
+        // by routing through the existing stringMapSchema + chunkSchema givens at user-source
+        // scope where Frame is locally derivable.
+        given Schema[WorkspaceEdit] =
+            // Frame.internal at the binding site avoids requiring users (or internal kyo callers,
+            // where Frame.derive is banned) to provide a Frame just to summon this Schema; the
+            // resolved sub-schemas are eagerly constructed once with the internal Frame and reused.
+            given Frame                                  = Frame.internal
+            val chunkOfTextEdit: Schema[Chunk[TextEdit]] = Schema.chunkSchema[TextEdit]
+            val mapOfChunkTextEdit: Schema[Map[String, Chunk[TextEdit]]] =
+                Schema.stringMapSchema[Chunk[TextEdit]](using chunkOfTextEdit, summon[Frame])
+            val maybeMapOfChunkTextEdit: Schema[Maybe[Map[String, Chunk[TextEdit]]]] =
+                Schema.maybeSchema[Map[String, Chunk[TextEdit]]](using mapOfChunkTextEdit, summon[Frame])
+            val chunkOfChange: Schema[Chunk[WorkspaceEditDocumentChange]]    = Schema.chunkSchema[WorkspaceEditDocumentChange]
+            val mapOfChangeAnnotation: Schema[Map[String, ChangeAnnotation]] = Schema.stringMapSchema[ChangeAnnotation]
+            val maybeMapOfChangeAnnotation: Schema[Maybe[Map[String, ChangeAnnotation]]] =
+                Schema.maybeSchema[Map[String, ChangeAnnotation]](using mapOfChangeAnnotation, summon[Frame])
+            Schema.init[WorkspaceEdit](
+                writeFn = (w, writer) =>
+                    writer.objectStart("WorkspaceEdit", 3)
+                    writer.field("changes", 0)
+                    maybeMapOfChunkTextEdit.serializeWrite(w.changes, writer)
+                    writer.field("documentChanges", 1)
+                    chunkOfChange.serializeWrite(w.documentChanges, writer)
+                    writer.field("changeAnnotations", 2)
+                    maybeMapOfChangeAnnotation.serializeWrite(w.changeAnnotations, writer)
+                    writer.objectEnd()
+                ,
+                readFn = reader =>
+                    var changes           = Maybe.empty[Map[String, Chunk[TextEdit]]]
+                    var documentChanges   = Chunk.empty[WorkspaceEditDocumentChange]
+                    var changeAnnotations = Maybe.empty[Map[String, ChangeAnnotation]]
+                    discard(reader.objectStart())
+                    while reader.hasNextField() do
+                        reader.fieldParse()
+                        reader.lastFieldName() match
+                            case "changes"           => changes = maybeMapOfChunkTextEdit.serializeRead(reader)
+                            case "documentChanges"   => documentChanges = chunkOfChange.serializeRead(reader)
+                            case "changeAnnotations" => changeAnnotations = maybeMapOfChangeAnnotation.serializeRead(reader)
+                            case _                   => reader.skip()
+                        end match
+                    end while
+                    reader.objectEnd()
+                    WorkspaceEdit(changes, documentChanges, changeAnnotations)
+                ,
+                structure = Structure.Type.Open(Tag[WorkspaceEdit].asInstanceOf[Tag[Any]])
+            )
+        end given
+    end WorkspaceEdit
 
     /** Value-object describing what options formatting should use. */
     final case class FormattingOptions(
@@ -2104,7 +2161,8 @@ object LspHandler:
             readFn = reader =>
                 val captured = reader.captureValue()
                 try Kind(summon[Schema[TextDocumentSyncKind]].serializeRead(captured))
-                catch case _: Exception => Options(summon[Schema[TextDocumentSyncOptions]].serializeRead(captured))
+                catch case _: Exception => Options(summon[Schema[TextDocumentSyncOptions]].serializeRead(captured)),
+            structure = Structure.Type.Open(Tag[TextDocumentSyncValue].asInstanceOf[Tag[Any]])
         )
     end TextDocumentSyncValue
 

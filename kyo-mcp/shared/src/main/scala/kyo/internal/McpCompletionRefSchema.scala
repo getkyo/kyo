@@ -69,7 +69,9 @@ private[kyo] object McpCompletionRefSchema:
             next match
                 case r: McpHandler.CompletionRef => r
                 case _                           => value
-
+        private lazy val _structure: Structure.Type =
+            Structure.Type.Open(Tag[McpHandler.CompletionRef].asInstanceOf[Tag[Any]])
+        override def structure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using
             Frame
         ): Result[DecodeException, McpHandler.CompletionRef] =

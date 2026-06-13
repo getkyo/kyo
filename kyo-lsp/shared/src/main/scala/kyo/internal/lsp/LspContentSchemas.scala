@@ -86,7 +86,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case c: LspHandler.TextDocumentContentChangeEvent => c
                     case _                                            => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.TextDocumentContentChangeEvent].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.TextDocumentContentChangeEvent] =
@@ -130,7 +132,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case t: LspHandler.ProgressToken => t
                     case _                           => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.ProgressToken].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.ProgressToken] =
@@ -226,7 +230,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case v: LspHandler.WorkDoneProgressValue => v
                     case _                                   => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.WorkDoneProgressValue].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.WorkDoneProgressValue] =
@@ -305,7 +311,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case m: LspHandler.MarkedString => m
                     case _                          => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.MarkedString].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.MarkedString] =
@@ -355,7 +363,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case h: LspHandler.HoverContents => h
                     case _                           => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.HoverContents].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.HoverContents] =
@@ -450,7 +460,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.DocumentDiagnosticReport => r
                     case _                                      => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.DocumentDiagnosticReport].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.DocumentDiagnosticReport] =
@@ -561,7 +573,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.WorkspaceDocumentDiagnosticReport => r
                     case _                                               => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.WorkspaceDocumentDiagnosticReport].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.WorkspaceDocumentDiagnosticReport] =
@@ -730,7 +744,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.DocumentSymbolResult => r
                     case _                                  => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.DocumentSymbolResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.DocumentSymbolResult] =
@@ -809,7 +825,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case l: LspHandler.WorkspaceSymbolLocation => l
                     case _                                     => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.WorkspaceSymbolLocation].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.WorkspaceSymbolLocation] =
@@ -864,7 +882,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.CompletionResult => r
                     case _                              => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.CompletionResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.CompletionResult] =
@@ -915,7 +935,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case l: LspHandler.ParameterLabel => l
                     case _                            => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.ParameterLabel].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.ParameterLabel] =
@@ -1050,7 +1072,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case c: LspHandler.CommandOrCodeAction => c
                     case _                                 => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.CommandOrCodeAction].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.CommandOrCodeAction] =
@@ -1193,7 +1217,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case c: LspHandler.WorkspaceEditDocumentChange => c
                     case _                                         => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.WorkspaceEditDocumentChange].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.WorkspaceEditDocumentChange] =
@@ -1298,7 +1324,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.PrepareRenameResult => r
                     case _                                 => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.PrepareRenameResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.PrepareRenameResult] =
@@ -1492,6 +1520,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.DefinitionResult => r;
                     case _                              => value
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.DefinitionResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.DefinitionResult] =
@@ -1525,6 +1556,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.DeclarationResult => r;
                     case _                               => value
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.DeclarationResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.DeclarationResult] =
@@ -1558,6 +1592,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.TypeDefinitionResult => r;
                     case _                                  => value
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.TypeDefinitionResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.TypeDefinitionResult] =
@@ -1591,6 +1628,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.ImplementationResult => r;
                     case _                                  => value
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.ImplementationResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.ImplementationResult] =
@@ -1667,7 +1707,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.SemanticTokensResult => r
                     case _                                  => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.SemanticTokensResult].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.SemanticTokensResult] =
@@ -1743,7 +1785,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case l: LspHandler.InlayHintLabelPart => l
                     case _                                => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.InlayHintLabelPart].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.InlayHintLabelPart] =
@@ -1796,7 +1840,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case l: LspHandler.InlayHintLabel => l
                     case _                            => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.InlayHintLabel].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.InlayHintLabel] =
@@ -1881,7 +1927,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case v: LspHandler.InlineValue => v
                     case _                         => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.InlineValue].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.InlineValue] =
@@ -1983,7 +2031,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case f: LspHandler.NotebookDocumentFilter => f
                     case _                                    => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.NotebookDocumentFilter].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.NotebookDocumentFilter] =
@@ -2055,7 +2105,9 @@ private[kyo] object LspContentSchemas:
                 next match
                     case r: LspHandler.Registration => r
                     case _                          => value
-
+            private lazy val _structure: Structure.Type =
+                Structure.Type.Open(Tag[LspHandler.Registration].asInstanceOf[Tag[Any]])
+            override def structure: Structure.Type = _structure
             override private[kyo] def fromStructureValue(sv: Structure.Value)(using
                 Frame
             ): Result[DecodeException, LspHandler.Registration] =

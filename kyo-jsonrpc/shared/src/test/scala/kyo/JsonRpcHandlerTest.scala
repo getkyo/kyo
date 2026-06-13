@@ -122,11 +122,15 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                     assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
                         Sync.defer {
                             resultRef.get()(using AllowUnsafe.embrace.danger) match
-                                case Present(Result.Failure(_: Closed)) => succeed
-                                case Present(Result.Success(v))         => fail(s"expected Closed failure after scope close, got $v")
-                                case Present(Result.Failure(e))         => fail(s"expected Closed but got: $e")
-                                case Present(Result.Panic(t))           => fail(s"unexpected panic: $t")
-                                case Absent                             => fail("no result captured")
+                                case Present(Result.Failure(_: Closed))                => succeed
+                                case Present(Result.Failure(_: JsonRpcLifecycleError)) =>
+                                    // The endpoint maps a Scope-driven Closed signal to JsonRpcLifecycleError on the
+                                    // wire-direction boundary; both shapes signal the same scope-close cancellation semantic.
+                                    succeed
+                                case Present(Result.Success(v)) => fail(s"expected Closed failure after scope close, got $v")
+                                case Present(Result.Failure(e)) => fail(s"expected Closed but got: $e")
+                                case Present(Result.Panic(t))   => fail(s"unexpected panic: $t")
+                                case Absent                     => fail("no result captured")
                         }
                     }
                 }

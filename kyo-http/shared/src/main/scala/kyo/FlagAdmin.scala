@@ -144,6 +144,25 @@ object FlagAdmin:
 
     // --- Response types ---
 
+    /** A single entry in a dynamic flag's update history. */
+    case class HistoryInfo(
+        timestamp: Long,
+        from: String,
+        to: String
+    ) derives Schema, CanEqual
+
+    // Explicit Schemas for Map[String, Long] and List[HistoryInfo] anchored at file scope so the
+    // FlagInfo `derives Schema` macro resolves them via direct Expr.summon rather than walking the
+    // buildContainerSchemaOpt recursion (whose static .asInstanceOf cast on the inner Expr does
+    // not preserve types through a splice expansion that binds the spliced value to a typed val).
+    private given _mapStringLongSchema: Schema[Map[String, Long]] =
+        given Frame = Frame.internal
+        Schema.stringMapSchema[Long]
+
+    private given _listHistoryInfoSchema: Schema[List[HistoryInfo]] =
+        given Frame = Frame.internal
+        Schema.listSchema[HistoryInfo]
+
     /** Flag details returned by the list and get endpoints. */
     case class FlagInfo(
         name: String,
@@ -154,13 +173,6 @@ object FlagAdmin:
         source: String,
         evaluations: Option[Map[String, Long]],
         history: Option[List[HistoryInfo]]
-    ) derives Schema, CanEqual
-
-    /** A single entry in a dynamic flag's update history. */
-    case class HistoryInfo(
-        timestamp: Long,
-        from: String,
-        to: String
     ) derives Schema, CanEqual
 
     /** Error response body for failed admin operations. */
@@ -187,10 +199,12 @@ object FlagAdmin:
                 case Absent     => false
         }
 
-    private val jsonFlagInfo: Schema[FlagInfo]        = summon[Schema[FlagInfo]]
-    private val jsonFlagInfos: Schema[List[FlagInfo]] = summon[Schema[List[FlagInfo]]]
-    private val jsonError: Schema[ErrorResponse]      = summon[Schema[ErrorResponse]]
-    private val jsonReload: Schema[ReloadResponse]    = summon[Schema[ReloadResponse]]
+    private val jsonFlagInfo: Schema[FlagInfo] = summon[Schema[FlagInfo]]
+    private val jsonFlagInfos: Schema[List[FlagInfo]] =
+        given Frame = Frame.internal
+        Schema.listSchema[FlagInfo]
+    private val jsonError: Schema[ErrorResponse]   = summon[Schema[ErrorResponse]]
+    private val jsonReload: Schema[ReloadResponse] = summon[Schema[ReloadResponse]]
 
     private def jsonOk(body: String): HttpResponse["body" ~ String] =
         HttpResponse(HttpStatus.OK, HttpHeaders.empty, Record.empty)

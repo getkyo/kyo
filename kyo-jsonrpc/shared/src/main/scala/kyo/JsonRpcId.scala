@@ -74,7 +74,8 @@ object JsonRpcId:
                 throw TypeMismatchException(Seq.empty, "number or string", "null")(using reader.frame)
             else
                 try JsonRpcId(reader.long())
-                catch case _: TypeMismatchException => JsonRpcId(reader.string())
+                catch case _: TypeMismatchException => JsonRpcId(reader.string()),
+        structure = Structure.Type.Open(Tag[JsonRpcId].asInstanceOf[Tag[Any]])
     )
 
     given CanEqual[JsonRpcId, JsonRpcId] = CanEqual.derived

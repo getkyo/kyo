@@ -101,6 +101,9 @@ object JsonRpcError:
             next match
                 case e: JsonRpcError => e
                 case _               => value
+        private lazy val _structure: Structure.Type =
+            Structure.Type.Open(Tag[JsonRpcError].asInstanceOf[Tag[Any]])
+        override def structure: Structure.Type = _structure
         override private[kyo] def fromStructureValue(sv: Structure.Value)(using Frame): Result[DecodeException, JsonRpcError] =
             sv match
                 case Structure.Value.Record(fields) =>
