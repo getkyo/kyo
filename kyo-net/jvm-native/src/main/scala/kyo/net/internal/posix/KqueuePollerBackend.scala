@@ -3,15 +3,13 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.ffi.StructLayout
-import kyo.internal.UnsafeLayout
 
 /** macOS/BSD kqueue arm of [[PollerBackend]], routed through the kyo-ffi [[KqueueBindings]].
   *
   * Unlike epoll there is no separate `epoll_ctl`: registration, deregistration, and polling all go through `kevent`. Interest is registered
   * one-shot (`EV_ADD | EV_ONESHOT`) so each registration fires at most once, matching the re-arm-on-every-await model the driver assumes.
-  * Readiness is decoded from the returned [[KEvent]]'s `filter` (`EVFILT_READ` / `EVFILT_WRITE`), never a bitmask, so each event carries
-  * exactly one direction; the watched fd is the event's `ident`.
+  * Readiness is decoded from the returned event's `filter` (`EVFILT_READ` / `EVFILT_WRITE`), never a bitmask, so each event carries exactly
+  * one direction; the watched fd is the event's `ident`.
   *
   * `kqueue` is a plain (non-blocking) downcall. Interest changes ([[registerRead]] / [[registerWrite]] / [[deregister]]) are register-only
   * `kevent` calls with a zero timeout that never block, so they use the non-blocking synchronous `keventNow` binding (one inline syscall, no
@@ -19,9 +17,12 @@ import kyo.internal.UnsafeLayout
   * `@blocking` register, serialized one await at a time, collapses registration throughput and stalls large transfers). [[poll]] uses the
   * `@Ffi.blocking` `kevent` (a non-zero timeout that genuinely waits for events); the poll loop suspends across that bounded wait.
   *
-  * All arm/register/deregister methods use the typed `Buffer[KEvent]` buffers in `scratch.kqueueData.get` (the per-driver [[KqueuePollData]]
-  * allocated by [[newPollScratch]]). No per-call off-heap allocation occurs on the hot path. [[rearm]] is a no-op: kqueue registers independent
-  * one-shot filters, so a fired filter never disturbs the other and no re-arm of the survivor is needed.
+  * Each `struct kevent` is encoded into and decoded out of a raw `Buffer[Byte]` through the manual [[KEvent$]] codec (the changelist and
+  * eventlist buffers in `scratch.kqueueData.get`, the per-driver [[KqueuePollData]] allocated by [[newPollScratch]]), exactly as the epoll arm
+  * marshals `struct epoll_event`. The poll loop reads only the `ident`, `filter`, and `flags` fields it needs via the codec's primitive
+  * readers, so no `KEvent` object is allocated and no `Long` field is boxed per event. No per-call off-heap allocation occurs on the hot path.
+  * [[rearm]] is a no-op: kqueue registers independent one-shot filters, so a fired filter never disturbs the other and no re-arm of the
+  * survivor is needed.
   *
   * The poll path uses a 1-element memo keyed on `timeoutMs`. The memo lives in the per-driver [[KqueuePollData]] inside the passed-in
   * [[PollScratch]] (field `kqueueData`), which is allocated once per driver via [[newPollScratch]] and owned exclusively by that driver's
@@ -30,9 +31,6 @@ import kyo.internal.UnsafeLayout
   * one driver's poll-loop carrier never touches another driver's [[KqueuePollData]].
   */
 private[net] object KqueuePollerBackend extends PollerBackend:
-
-    private given UnsafeLayout[KEvent]   = StructLayout.derived[KEvent]
-    private given UnsafeLayout[Timespec] = StructLayout.derived[Timespec]
 
     private def kq(using AllowUnsafe): KqueueBindings = Ffi.load[KqueueBindings]
 
@@ -76,16 +74,16 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     private def change(pollerFd: Int, fd: Int, filter: Short, flags: Short, kqData: Maybe[KqueuePollData])(using AllowUnsafe): Int =
         kqData match
             case Present(data) =>
-                data.armBuf.set(0, KEvent(ident = fd.toLong, filter = filter, flags = flags, fflags = 0, data = 0L, udata = fd.toLong))
+                KEvent.encodeChange(data.armBuf, fd, filter, flags)
                 // ZeroTimeout is a shared immutable constant (the change path always uses a zero timeout). The FFI marshals it by value,
                 // so sharing across callers is safe.
                 kq.keventNow(pollerFd, data.armBuf, 1, data.emptyChangelist, 0, ZeroTimeout).value
                 // armBuf and emptyChangelist are NOT closed here: they are the per-driver reused buffers, freed via PollScratch.close.
             case Absent =>
-                val changelist  = Buffer.alloc[KEvent](1)
-                val emptyEvents = Buffer.alloc[KEvent](0)
+                val changelist  = Buffer.alloc[Byte](KEvent.size)
+                val emptyEvents = Buffer.alloc[Byte](0)
                 try
-                    changelist.set(0, KEvent(ident = fd.toLong, filter = filter, flags = flags, fflags = 0, data = 0L, udata = fd.toLong))
+                    KEvent.encodeChange(changelist, fd, filter, flags)
                     kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value
                 finally
                     changelist.close()
@@ -124,12 +122,15 @@ private[net] object KqueuePollerBackend extends PollerBackend:
             else
                 var i = 0
                 while i < n do
-                    val ev = data.eventsBuffer.get(i)
-                    fds(i) = ev.ident.toInt
-                    var f = 0
-                    if ev.filter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
-                    if ev.filter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
-                    if (ev.flags & PosixConstants.EV_ERROR) != 0 || (ev.flags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Error
+                    // Read the three needed fields directly from the byte buffer via the KEvent codec; no per-event KEvent is allocated
+                    // and no Long field is boxed.
+                    fds(i) = KEvent.ident(data.eventsBuffer, i).toInt
+                    val evFilter = KEvent.filter(data.eventsBuffer, i)
+                    val evFlags  = KEvent.flags(data.eventsBuffer, i)
+                    var f        = 0
+                    if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
+                    if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
+                    if (evFlags & PosixConstants.EV_ERROR) != 0 || (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Error
                     flags(i) = f
                     i += 1
                 end while
@@ -147,8 +148,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         AllowUnsafe,
         Frame
     ): Fiber.Unsafe[Int, Any] =
-        val emptyChange = Buffer.alloc[KEvent](0)
-        val events      = Buffer.alloc[KEvent](MaxEvents)
+        val emptyChange = Buffer.alloc[Byte](0)
+        val events      = Buffer.alloc[Byte](MaxEvents * KEvent.size)
         val timeout     = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
         kq.kevent(pollerFd, emptyChange, 0, events, MaxEvents, timeout).map { ready =>
             try
@@ -157,12 +158,13 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 else
                     var i = 0
                     while i < n do
-                        val ev = events.get(i)
-                        fds(i) = ev.ident.toInt
-                        var f = 0
-                        if ev.filter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
-                        if ev.filter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
-                        if (ev.flags & PosixConstants.EV_ERROR) != 0 || (ev.flags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Error
+                        fds(i) = KEvent.ident(events, i).toInt
+                        val evFilter = KEvent.filter(events, i)
+                        val evFlags  = KEvent.flags(events, i)
+                        var f        = 0
+                        if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
+                        if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
+                        if (evFlags & PosixConstants.EV_ERROR) != 0 || (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Error
                         flags(i) = f
                         i += 1
                     end while
@@ -177,12 +179,13 @@ private[net] object KqueuePollerBackend extends PollerBackend:
 
     def newPollScratch()(using AllowUnsafe): PollScratch =
         // Unsafe: off-heap allocations at driver init (called once; closed in driver.close via PollScratch.close).
-        // kqueueData holds the typed Buffer[KEvent] buffers required by keventNow/kevent.
-        // The byte-level fields (eventsBuffer, armBuf) are zero-element sentinels (not used by kqueue code paths).
+        // kqueueData holds the raw Buffer[Byte] changelist/eventlist buffers passed to keventNow/kevent, sized in KEvent.size-byte slots and
+        // accessed through the KEvent codec (no Buffer[KEvent] struct round-trip, so no per-event Long boxing).
+        // The byte-level fields (eventsBuffer, armBuf) on PollScratch are zero-element sentinels (not used by kqueue code paths).
         val kqData = new KqueuePollData(
-            armBuf = Buffer.alloc[KEvent](1),
-            eventsBuffer = Buffer.alloc[KEvent](MaxEvents),
-            emptyChangelist = Buffer.alloc[KEvent](0) // zero-element: nchanges=0 in kevent poll calls
+            armBuf = Buffer.alloc[Byte](KEvent.size),
+            eventsBuffer = Buffer.alloc[Byte](MaxEvents * KEvent.size),
+            emptyChangelist = Buffer.alloc[Byte](0) // zero-element: nchanges=0 in kevent poll calls
         )
         val sentinelEvents = Buffer.alloc[Byte](0) // unused on kqueue; closed via PollScratch.close
         val sentinelArm    = Buffer.alloc[Byte](0) // unused on kqueue; closed via PollScratch.close

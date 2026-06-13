@@ -112,8 +112,109 @@ end EpollEvent
   *   - `fflags` (`uint32_t`) at offset 12
   *   - `data` (`intptr_t`, bytes available) at offset 16
   *   - `udata` (`void*`, user pointer) at offset 24
+  *
+  * Value type with a MANUAL `Buffer[Byte]` codec in the [[KEvent$]] companion, mirroring [[EpollEvent]]. The kqueue poller marshals a
+  * `Buffer[Byte]` (not a `Buffer[KEvent]`) through the `kevent` binding (the binding only reads the buffer as a raw pointer, never field by
+  * field), so the changelist is encoded and the eventlist decoded with the companion's primitive accessors. This is allocation-free on the
+  * poll hot path: a generic `Buffer[KEvent]` round-trip via `StructLayout` boxes every `Long` field (`ident`/`data`/`udata`) on both the
+  * `productElement`-based write and the `Any`-returning read, which a JFR alloc profile of the poller pinpointed; the manual codec reads and
+  * writes the primitives directly with no boxing. The case class is retained for value equality in tests and the ABI size check; production
+  * code uses [[KEvent.encodeChange]] and the field readers, never `Buffer[KEvent]`.
   */
 private[net] case class KEvent(ident: Long, filter: Short, flags: Short, fflags: Int, data: Long, udata: Long) derives CanEqual
+
+/** Manual `Buffer[Byte]` codec for `struct kevent`, shared identically across JVM and Native (the only kqueue targets).
+  *
+  * The C `struct kevent` is flat and naturally aligned at 32 bytes on every macOS/BSD target this codebase supports, all of which are
+  * little-endian, so the fields are read and written little-endian at their fixed offsets (`ident` 0, `filter` 8, `flags` 10, `fflags` 12,
+  * `data` 16, `udata` 24). The poll hot path never needs a whole `KEvent`: it reads only `ident` (the fd), `filter` (the direction), and
+  * `flags` (the error/EOF bits), so it calls the per-field readers and allocates nothing. [[encodeChange]] writes a one-element register /
+  * deregister changelist in place. [[decode]] (whole-struct) exists for the binding integration test's round-trip assertion.
+  */
+private[net] object KEvent:
+
+    /** Total byte size of `struct kevent` on the supported (64-bit, naturally aligned) kqueue ABIs. */
+    val size: Int = 32
+
+    /** Write the changelist entry for `fd` at element 0 of `buf`: `ident`/`udata` = fd, the given `filter`/`flags`, and `fflags`/`data` = 0.
+      * Used by the kqueue arm path (register / deregister) in place of `Buffer[KEvent].set(0, KEvent(...))`, which would box the Long fields.
+      */
+    def encodeChange(buf: Buffer[Byte], fd: Int, filter: Short, flags: Short): Unit =
+        putLongLe(buf, 0, fd.toLong)  // ident
+        putShortLe(buf, 8, filter)    // filter
+        putShortLe(buf, 10, flags)    // flags
+        putIntLe(buf, 12, 0)          // fflags
+        putLongLe(buf, 16, 0L)        // data
+        putLongLe(buf, 24, fd.toLong) // udata
+    end encodeChange
+
+    /** Read the `ident` (watched fd as `uintptr_t`) of the event at element `i`. */
+    def ident(buf: Buffer[Byte], i: Int): Long = getLongLe(buf, i * size + 0)
+
+    /** Read the `filter` (e.g. `EVFILT_READ` / `EVFILT_WRITE`) of the event at element `i`. */
+    def filter(buf: Buffer[Byte], i: Int): Short = getShortLe(buf, i * size + 8)
+
+    /** Read the `flags` (e.g. `EV_ERROR` / `EV_EOF`) of the event at element `i`. */
+    def flags(buf: Buffer[Byte], i: Int): Short = getShortLe(buf, i * size + 10)
+
+    /** Read the `data` (bytes available / errno) of the event at element `i`. */
+    def data(buf: Buffer[Byte], i: Int): Long = getLongLe(buf, i * size + 16)
+
+    /** Decode the whole `struct kevent` at element `i`. Used by the binding integration test's round-trip assertion; the poll hot path uses
+      * the per-field readers instead so it never allocates a `KEvent`.
+      */
+    def decode(buf: Buffer[Byte], i: Int): KEvent =
+        val base = i * size
+        KEvent(
+            ident = getLongLe(buf, base + 0),
+            filter = getShortLe(buf, base + 8),
+            flags = getShortLe(buf, base + 10),
+            fflags = getIntLe(buf, base + 12),
+            data = getLongLe(buf, base + 16),
+            udata = getLongLe(buf, base + 24)
+        )
+    end decode
+
+    private def putShortLe(buf: Buffer[Byte], offset: Int, value: Short): Unit =
+        buf.set(offset, (value & 0xff).toByte)
+        buf.set(offset + 1, ((value >> 8) & 0xff).toByte)
+
+    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int): Unit =
+        var i = 0
+        while i < 4 do
+            buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
+            i += 1
+    end putIntLe
+
+    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long): Unit =
+        var i = 0
+        while i < 8 do
+            buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
+            i += 1
+    end putLongLe
+
+    private def getShortLe(buf: Buffer[Byte], offset: Int): Short =
+        ((buf.get(offset) & 0xff) | ((buf.get(offset + 1) & 0xff) << 8)).toShort
+
+    private def getIntLe(buf: Buffer[Byte], offset: Int): Int =
+        var v = 0
+        var i = 0
+        while i < 4 do
+            v |= (buf.get(offset + i) & 0xff) << (i * 8)
+            i += 1
+        v
+    end getIntLe
+
+    private def getLongLe(buf: Buffer[Byte], offset: Int): Long =
+        var v = 0L
+        var i = 0
+        while i < 8 do
+            v |= (buf.get(offset + i).toLong & 0xff) << (i * 8)
+            i += 1
+        v
+    end getLongLe
+
+end KEvent
 
 /** `struct timespec` / `__kernel_timespec`. Two 8-byte fields on 64-bit ABIs: `tv_sec` then `tv_nsec`, 16 bytes total. Used as the kqueue
   * poll timeout and (later) the io_uring bounded-wait timeout.

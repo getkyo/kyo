@@ -383,9 +383,9 @@ class PollerIoDriverTest extends Test:
                     driver.close()
 
                     import scala.jdk.CollectionConverters.*
-                    // The change FIFO is statically typed as ConcurrentLinkedQueue[java.lang.Long]: this assignment compiles only if the queue
-                    // holds Long primitives (the packed change commands), not Function0 closures.
-                    val typedQueue: java.util.concurrent.ConcurrentLinkedQueue[java.lang.Long] = driver.changeQueue
+                    // The change FIFO is statically typed as the unboxed MpscLongQueue: this assignment compiles only if the queue stores
+                    // primitive long change commands (no Function0 closure, no boxed java.lang.Long per offer).
+                    val typedQueue: kyo.net.internal.util.MpscLongQueue = driver.changeQueue
                     assert(typedQueue != null, "changeQueue must be non-null")
 
                     val armBufs = spy.registerReadArmBufs.iterator().asScala.toList

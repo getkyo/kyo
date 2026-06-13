@@ -13,9 +13,12 @@ import kyo.ffi.Ffi
   * result is wrapped in an already-completed fiber; on JS it is dispatched on a libuv worker and the fiber is genuinely pending. Callers must
   * AWAIT the fiber rather than assume completion.
   *
-  * `struct kevent` and `struct timespec` are now codegen case classes ([[KEvent]], [[Timespec]]) instead of hand-laid `Buffer[Byte]`: the
-  * codegen derives the flat 32-byte / 16-byte layouts and self-checks them at impl class init. `kevent` takes a `Buffer[KEvent]` changelist
-  * and a `Buffer[KEvent]` eventlist (the standard register-and-poll pattern) plus a single [[Timespec]] timeout passed by reference.
+  * `struct timespec` is a codegen case class ([[Timespec]]), marshalled by value (the 16-byte flat layout is derived and self-checked at impl
+  * class init). `struct kevent` is passed as a raw `Buffer[Byte]` changelist / eventlist (the kernel reads it through a `struct kevent*` cast,
+  * so the binding only marshals the buffer as a pointer and never reads fields), encoded and decoded by the manual [[KEvent$]] codec. This
+  * mirrors how the epoll arm marshals `struct epoll_event` as a `Buffer[Byte]`, and avoids the per-event `Long`-field boxing that a generic
+  * `Buffer[KEvent]` round-trip through `StructLayout` incurs on the poll hot path (a JFR alloc profile pinpointed it). `kevent` takes the
+  * changelist and eventlist `Buffer[Byte]`s (the standard register-and-poll pattern) plus a single [[Timespec]] timeout passed by reference.
   *
   * Header-gated on `sys/event.h`: on a non-macOS/BSD build host the generator emits stubs.
   */
@@ -27,14 +30,15 @@ private[net] trait KqueueBindings extends Ffi:
     /** `int kevent(int kq, const struct kevent* changelist, int nchanges, struct kevent* eventlist, int nevents, const struct timespec*
       * timeout)`. Submits `nchanges` interest changes and collects up to `nevents` ready events into `eventlist`, blocking up to `timeout`.
       * Returns the number of events placed in `eventlist`, 0 on timeout, -1 with `errno`. Blocking-annotated: the result is a `Fiber.Unsafe`
-      * the caller must await.
+      * the caller must await. The changelist / eventlist are raw `Buffer[Byte]` regions of `KEvent.size`-byte elements, encoded and decoded by
+      * the [[KEvent$]] codec; the kernel reads them through a `struct kevent*` cast so the binding marshals each as a pointer.
       */
     @Ffi.blocking
     def kevent(
         kq: Int,
-        changelist: Buffer[KEvent],
+        changelist: Buffer[Byte],
         nchanges: Int,
-        eventlist: Buffer[KEvent],
+        eventlist: Buffer[Byte],
         nevents: Int,
         timeout: Timespec
     )(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any]
@@ -48,9 +52,9 @@ private[net] trait KqueueBindings extends Ffi:
       */
     def keventNow(
         kq: Int,
-        changelist: Buffer[KEvent],
+        changelist: Buffer[Byte],
         nchanges: Int,
-        eventlist: Buffer[KEvent],
+        eventlist: Buffer[Byte],
         nevents: Int,
         timeout: Timespec
     )(using AllowUnsafe): Ffi.WithError[Int]

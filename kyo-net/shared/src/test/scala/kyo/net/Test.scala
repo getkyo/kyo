@@ -5,7 +5,11 @@ import kyo.net.internal.tls.TlsProviderPlatform
 
 abstract class Test extends kyo.test.Test[Any]:
 
-    override def timeout = Duration.fromJava(java.time.Duration.ofSeconds(15))
+    // 60s per-leaf budget for the whole module. CI runners are far slower than a local box, and the heaviest leaves here
+    // drive software TLS over BoringSSL/OpenSSL with dozens of concurrent connections (a few seconds idle on the JVM,
+    // several times that on Scala Native and under load). The generous ceiling absorbs that variance while a true
+    // deadlock still fails loudly rather than hanging.
+    override def timeout = Duration.fromJava(java.time.Duration.ofSeconds(60))
 
     /** Register one leaf test per registered I/O backend, each running `scenario` against a freshly built [[Transport]] over that backend.
       *

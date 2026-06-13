@@ -9,6 +9,7 @@ import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.net.internal.util.MpscLongQueue
 
 /** Readiness-to-completion I/O driver over epoll (Linux) / kqueue (macOS/BSD), unified onto [[PosixHandle]] and the kyo-ffi bindings.
   *
@@ -33,18 +34,18 @@ import kyo.net.internal.util.GrowableByteBuffer
   * in submission order. The bounded poll wait keeps running on its own fiber (a concurrent `epoll_wait` / `kevent` against a changelist is safe
   * in the kernel); only the mutations are serialized.
   *
-  * The change FIFO carries packed `java.lang.Long` commands rather than closures: each command encodes an opcode (RegisterRead /
-  * RegisterWrite / Rearm / Deregister) plus fd and direction bits into one `Long`. This eliminates the per-change closure allocation.
-  * Note that `ConcurrentLinkedQueue[java.lang.Long]` boxes each `Long` (the JVM element type is a reference), so a residual boxing
-  * allocation remains per enqueue; a zero-allocation unboxed MPSC queue would remove it but is a larger separate change. The previous
-  * `Function0` closure allocation per change is replaced by a smaller boxed-`Long` allocation.
+  * The change FIFO carries packed primitive `long` commands rather than closures: each command encodes an opcode (RegisterRead /
+  * RegisterWrite / Rearm / Deregister) plus fd and direction bits into one `long`. This eliminates the per-change closure allocation. The
+  * FIFO is an unboxed [[kyo.net.internal.util.MpscLongQueue]] (multi-producer, single change-worker consumer) that stores the raw `long` and
+  * recycles drained nodes, so enqueueing a change allocates nothing in steady state; a `ConcurrentLinkedQueue[java.lang.Long]` would box each
+  * command on every offer (a `java.lang.Long` per enqueue a JFR alloc profile flagged on the poller hot path).
   *
   * The pending read and accept promises are stored directly on the [[PosixHandle]] (`pendingReadPromise`, `pendingAcceptPromise`) rather than
   * as `(promise, handle)` tuple pairs in the pending maps. This removes the per-await `Tuple2` allocation; the maps now hold `PosixHandle`
   * directly.
   *
-  * The per-driver [[PollScratch]] holds the reused events buffer (epoll: `MaxEvents * EpollEvent.size` bytes; kqueue: `MaxEvents` KEvent
-  * slots via `KqueuePollData`), the decoded fds/flags parallel arrays, and the arm buffer (epoll: one EpollEvent; kqueue: one KEvent slot via
+  * The per-driver [[PollScratch]] holds the reused events buffer (epoll: `MaxEvents * EpollEvent.size` bytes; kqueue: `MaxEvents * KEvent.size`
+  * bytes via `KqueuePollData`), the decoded fds/flags parallel arrays, and the arm buffer (epoll: one EpollEvent; kqueue: one KEvent's bytes via
   * `KqueuePollData`). All are allocated once at driver init and closed when the driver closes.
   *
   * Stale-event guard: each handle carries a unique `id`; `activeFds` maps fd to the current id so an event for a fd that was closed and
@@ -85,12 +86,13 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     // runs each change to completion before the next, so on any given fd a deregister issued before a re-arm cannot land after it. The poll wait
     // itself runs on its own fiber (concurrent kevent/epoll_wait against a changelist is safe in the kernel); only the mutations are serialized.
     //
-    // Element type: java.lang.Long. Each entry packs an opcode + fd + direction bits into one Long (see packCmd / OpXxx constants). This
-    // eliminates the per-change Function0 closure allocation of the previous design. Note: ConcurrentLinkedQueue[java.lang.Long] boxes each
-    // Long (the JVM reference-type element constraint), so a residual boxing allocation remains; an unboxed MPSC queue would eliminate it
-    // but is a larger separate change.
-    // Exposed for allocation-seam tests: the element type (java.lang.Long) proves no closure is allocated per change.
-    private[posix] val changeQueue = new ConcurrentLinkedQueue[java.lang.Long]()
+    // Element type: primitive long, in an unboxed MpscLongQueue (many producers, the single change worker as consumer). Each entry packs an
+    // opcode + fd + direction bits into one long (see packCmd / OpXxx constants). This eliminates BOTH the per-change Function0 closure
+    // allocation of the original design AND the java.lang.Long boxing a ConcurrentLinkedQueue[java.lang.Long] would incur per offer (the queue
+    // recycles drained nodes, so a steady-state enqueue allocates nothing). The MpscLongQueue.offer is the happens-before barrier the awaitRead
+    // promise-store relies on, exactly as the prior ConcurrentLinkedQueue.offer was.
+    // Exposed for allocation-seam tests: the unboxed long element type proves neither a closure nor a boxed Long is allocated per change.
+    private[posix] val changeQueue = new MpscLongQueue()
     private val changeWorkerActive = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // Engine-op serialization: all TLS engine ops (handshakeStep, feedCiphertext, readPlain, writePlain, drainCiphertext,
@@ -214,7 +216,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         handle.pendingReadPromise = Present(promise)
         discard(pendingReads.put(handle.readFd, handle))
         // rc<0 failure is handled inside dispatchCmd, which reads pendingReads and fails the stored promise.
-        // The pendingReadPromise write happens-before the changeQueue.offer (the ConcurrentLinkedQueue offer is the
+        // The pendingReadPromise write happens-before the changeQueue.offer (the MpscLongQueue offer's tail swap is the
         // happens-before barrier): the change worker sees the stored promise when it processes rc<0.
         submitChange(packCmd(OpRegisterRead, handle.readFd, firedRead = false, firedWrite = false))
     end awaitRead
@@ -1031,11 +1033,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         loop(0)
     end sendBlockingWithRetry
 
-    /** Submit an interest change command to the serial worker. The packed Long command is appended to the FIFO and a single worker fiber is
-      * started if none is running; changes therefore run strictly in submission order, never reordered against one another.
+    /** Submit an interest change command to the serial worker. The packed `long` command is appended to the unboxed FIFO (no boxing, no
+      * closure) and a single worker fiber is started if none is running; changes therefore run strictly in submission order, never reordered
+      * against one another.
       */
     private def submitChange(cmd: Long)(using AllowUnsafe, Frame): Unit =
-        discard(changeQueue.offer(java.lang.Long.valueOf(cmd)))
+        changeQueue.offer(cmd)
         if changeWorkerActive.compareAndSet(false, true) then
             discard(Fiber.Unsafe.init(drainChanges()))
     end submitChange
@@ -1061,7 +1064,10 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         val fd         = (cmd & 0xffffffffL).toInt
         val firedRead  = (cmd & (1L << 32)) != 0
         val firedWrite = (cmd & (1L << 33)) != 0
-        val closed     = Closed(label, summon[Frame], s"register failed fd=$fd")
+        // Built lazily: only the rare rc<0 register-failure branches below consume it, but dispatchCmd runs once per
+        // readiness command (register/rearm/deregister) on the hot path, so an eager val allocated a Closed plus its
+        // interpolated message on every successful command and on every rearm/deregister, which never use it.
+        def closed = Closed(label, summon[Frame], s"register failed fd=$fd")
         if op == OpRegisterRead then
             // awaitAccept and awaitRead both use OpRegisterRead. Check pendingAccepts first (accept takes priority, matching drainReady).
             if pendingAccepts.containsKey(fd) then
@@ -1100,13 +1106,14 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       */
     @scala.annotation.tailrec
     private def drainChanges()(using AllowUnsafe, Frame): Unit =
-        changeQueue.poll() match
-            case null =>
-                changeWorkerActive.set(false)
-                if changeQueue.peek() != null && changeWorkerActive.compareAndSet(false, true) then drainChanges()
-            case cmd: java.lang.Long =>
-                dispatchCmd(cmd.longValue)
-                drainChanges()
+        val cmd = changeQueue.poll()
+        if cmd == MpscLongQueue.Empty then
+            changeWorkerActive.set(false)
+            if changeQueue.peekNonEmpty() && changeWorkerActive.compareAndSet(false, true) then drainChanges()
+        else
+            dispatchCmd(cmd)
+            drainChanges()
+        end if
     end drainChanges
 
     /** Re-arm one-shot read interest on `fd` through the serial worker (the poll loop's EAGAIN / partial-record re-register). Routing it through

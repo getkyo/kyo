@@ -3,12 +3,11 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
-import kyo.ffi.StructLayout
-import kyo.internal.UnsafeLayout
 import kyo.net.Test
 
-/** Integration test for [[KqueueBindings]] on macOS/BSD, productionized from kyo-ffi-it's `KqueueTest` but driving the codegen `KEvent` /
-  * `Timespec` structs (via [[StructLayout]]) instead of hand-laid `Buffer[Byte]`.
+/** Integration test for [[KqueueBindings]] on macOS/BSD, productionized from kyo-ffi-it's `KqueueTest`. The `struct kevent` changelist and
+  * eventlist are raw `Buffer[Byte]` regions encoded and decoded by the production [[KEvent$]] codec (the same codec the kqueue poller uses),
+  * exercising it against the real kernel; `struct timespec` is the codegen [[Timespec]] passed by value.
   *
   * Registers a connected loopback socket for `EVFILT_READ`, writes a byte to its peer, and confirms `kevent` reports the fd readable with the
   * `EVFILT_READ` filter and the data byte count. Skips on non-macOS/BSD hosts (`sys/event.h` absent / stubbed).
@@ -19,9 +18,6 @@ import kyo.net.Test
 class KqueueBindingsTest extends Test:
 
     import AllowUnsafe.embrace.danger
-
-    private given UnsafeLayout[KEvent]   = StructLayout.derived[KEvent]
-    private given UnsafeLayout[Timespec] = StructLayout.derived[Timespec]
 
     private def assumeKqueue(): Unit =
         if !PosixConstants.isMacOrBsd then cancel("kqueue is macOS/BSD-only")
@@ -73,19 +69,14 @@ class KqueueBindingsTest extends Test:
             for
                 pair <- loopbackPair()
                 (client, accepted) = pair
-                change             = Buffer.alloc[KEvent](1)
-                _ = change.set(
-                    0,
-                    KEvent(
-                        ident = accepted.toLong,
-                        filter = PosixConstants.EVFILT_READ,
-                        flags = (PosixConstants.EV_ADD | PosixConstants.EV_ENABLE).toShort,
-                        fflags = 0,
-                        data = 0L,
-                        udata = 0L
-                    )
+                change             = Buffer.alloc[Byte](KEvent.size)
+                _ = KEvent.encodeChange(
+                    change,
+                    accepted,
+                    PosixConstants.EVFILT_READ,
+                    (PosixConstants.EV_ADD | PosixConstants.EV_ENABLE).toShort
                 )
-                emptyEvents = Buffer.alloc[KEvent](1)
+                emptyEvents = Buffer.alloc[Byte](KEvent.size)
                 // Register the accepted fd for EVFILT_READ.
                 reg <- kq.kevent(kqfd.value, change, 1, emptyEvents, 0, Timespec(0L, 0L)).safe.get
                 _ = assert(reg.value >= 0, s"kevent register failed errno=${reg.errorCode}")
@@ -96,11 +87,11 @@ class KqueueBindingsTest extends Test:
                 _ <- Sync.ensure(Sync.defer(wb.close())) {
                     sock.send(client, wb, 5L, PosixConstants.MSG_NOSIGNAL).safe.get.map(r => assert(r.value == 5L))
                 }
-                events    = Buffer.alloc[KEvent](1)
-                emptyPoll = Buffer.alloc[KEvent](1)
+                events    = Buffer.alloc[Byte](KEvent.size)
+                emptyPoll = Buffer.alloc[Byte](KEvent.size)
                 pollResult <- Sync.ensure(Sync.defer { events.close(); emptyPoll.close() }) {
                     kq.kevent(kqfd.value, emptyPoll, 0, events, 1, Timespec(1L, 0L)).safe.get.map { n =>
-                        (n, events.get(0))
+                        (n, KEvent.decode(events, 0))
                     }
                 }
                 _ <- sock.close(client).safe.get

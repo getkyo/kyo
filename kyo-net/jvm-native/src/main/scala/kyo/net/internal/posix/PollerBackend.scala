@@ -79,20 +79,22 @@ private[net] trait PollerBackend:
 
 end PollerBackend
 
-/** Kqueue-specific typed buffers held inside [[PollScratch]], allocated once at driver init and closed when the driver closes.
+/** Kqueue-specific buffers held inside [[PollScratch]], allocated once at driver init and closed when the driver closes.
   *
-  * `keventNow` and `kevent` require `Buffer[KEvent]`, which differs from the `Buffer[Byte]` used by the epoll arm. These are allocated once
-  * per driver (via `KqueuePollerBackend.newPollScratch`) and closed via `PollScratch.close`. Owned by the same carriers as the
-  * corresponding `PollScratch` fields: `armBuf` by the change worker, `eventsBuffer` and `emptyChangelist` by the poll loop.
+  * `keventNow` and `kevent` take raw `Buffer[Byte]` changelists / eventlists (the same `Buffer[Byte]` the epoll arm uses), sized as a whole
+  * number of `KEvent.size`-byte slots and accessed field-by-field through the manual [[KEvent$]] codec; a generic `Buffer[KEvent]` would box
+  * every `Long` field on each poll-hot-path read/write. These are allocated once per driver (via `KqueuePollerBackend.newPollScratch`) and
+  * closed via `PollScratch.close`. Owned by the same carriers as the corresponding `PollScratch` fields: `armBuf` by the change worker,
+  * `eventsBuffer` and `emptyChangelist` by the poll loop.
   *
   * `pollMemoMs` and `pollMemoTs` form a 1-element poll-timeout memo keyed on `timeoutMs`. They are written and read exclusively by the
   * single poll-loop carrier that owns this scratch (one per driver). No concurrent access is possible: the poll loop runs on one carrier,
   * and no other fiber touches these fields. A sentinel of -1 on `pollMemoMs` means no entry is cached yet.
   */
 final private[net] class KqueuePollData(
-    val armBuf: kyo.ffi.Buffer[KEvent],
-    val eventsBuffer: kyo.ffi.Buffer[KEvent],
-    val emptyChangelist: kyo.ffi.Buffer[KEvent]
+    val armBuf: kyo.ffi.Buffer[Byte],
+    val eventsBuffer: kyo.ffi.Buffer[Byte],
+    val emptyChangelist: kyo.ffi.Buffer[Byte]
 ):
     // Poll-loop-carrier-owned memo: one entry per driver. Single owner: the poll-loop carrier for this driver's scratch.
     var pollMemoMs: Int      = -1
@@ -115,8 +117,8 @@ end KqueuePollData
   * (via [[close]]); `fds` and `flags` are heap arrays, collected by GC.
   *
   * On epoll: `eventsBuffer` holds `MaxEvents * EpollEvent.size` bytes; `armBuf` holds `EpollEvent.size` bytes; `kqueueData` is `Absent`.
-  * On kqueue: `eventsBuffer` and `armBuf` are zero-element `Buffer[Byte]` sentinels (not used by kqueue code); the actual typed buffers
-  * live in `kqueueData` (Present).
+  * On kqueue: `eventsBuffer` and `armBuf` are zero-element `Buffer[Byte]` sentinels (not used by kqueue code); the actual `Buffer[Byte]`
+  * changelist / eventlist buffers (sized in `KEvent.size`-byte slots) live in `kqueueData` (Present).
   */
 final private[net] class PollScratch(
     val eventsBuffer: kyo.ffi.Buffer[Byte],

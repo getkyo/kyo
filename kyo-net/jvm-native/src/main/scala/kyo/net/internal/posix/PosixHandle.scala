@@ -221,8 +221,8 @@ final private[net] class PosixHandle private (
     /** The pending read promise for this fd, stored directly on the handle rather than as a `(promise, handle)` pair in the `pendingReads`
       * map. Written by the driver carrier under `awaitRead`/`rearmOwned`; read and cleared by the driver on `dispatchRead`. The `@volatile`
       * ensures the store is visible to the change worker that may fail the promise on `rc < 0` (the happens-before barrier is the
-      * `changeQueue.offer` that follows the store: an offer to `ConcurrentLinkedQueue` happens-before any subsequent poll from another
-      * thread). Single owner for the write side: only the call path through `awaitRead` or `rearmOwned` writes this field, and those two
+      * `changeQueue.offer` that follows the store: the `MpscLongQueue.offer` tail swap happens-before any subsequent poll by the change
+      * worker). Single owner for the write side: only the call path through `awaitRead` or `rearmOwned` writes this field, and those two
       * paths never run concurrently on the same handle (at most one read dispatch is in flight per handle at a time, enforced by
       * `beginDispatch`/`endDispatch`).
       */

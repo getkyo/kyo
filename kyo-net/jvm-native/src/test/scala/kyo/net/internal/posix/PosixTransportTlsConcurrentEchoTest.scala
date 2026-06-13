@@ -27,14 +27,6 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    // Per-platform budget for this one suite. The load below is IDENTICAL on JVM and Native, so the read-vs-write engine overlap this guard
-    // exercises is identical on both; only the wall-clock budget differs. On the JVM the whole run is ~2.5s. On Scala Native the SAME work
-    // is ~5x slower (~12s on an idle host: software TLS through the system-OpenSSL floor, plus the per-syscall FFI and fiber overhead the
-    // JIT amortizes on the JVM). The 60s budget gives Native ~5x headroom over the observed run while still failing a true deadlock loudly.
-    override def timeout =
-        if kyo.internal.Platform.isNative then Duration.fromJava(java.time.Duration.ofSeconds(60))
-        else super.timeout
-
     private val serverTls = NetTlsConfig(
         certChainPath = Present(TlsTestCert.certPath),
         privateKeyPath = Present(TlsTestCert.keyPath)
