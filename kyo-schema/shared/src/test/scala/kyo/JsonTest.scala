@@ -2193,7 +2193,7 @@ class JsonTest extends kyo.test.Test[Any]:
     case class EdgeRectangle(width: Double, height: Double) extends EdgeShape derives CanEqual
     case class EdgePoint()                                  extends EdgeShape derives CanEqual
 
-    case class EdgeTreeNode(value: Int, children: List[EdgeTreeNode]) derives CanEqual
+    case class EdgeTreeNode(value: Int, children: List[EdgeTreeNode]) derives CanEqual, Schema
 
     // From BigNumberCodecTest
     case class BigDecimalBox(value: BigDecimal) derives CanEqual

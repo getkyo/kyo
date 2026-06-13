@@ -74,20 +74,49 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "Indirect-recursive container field reuses the cached Schema without StackOverflow" in {
-        // The recursive position uses `List` rather than `Box` because indirect-recursion is resolved
-        // through the built-in container recognizers (List / Vector / Set / Seq / Chunk / Option /
-        // Maybe / Map); user-defined containers in a recursive position are not supported. The
-        // architectural cycle-break property tested here lives on the same code path either way.
-        val s           = summon[Schema[HolderRec]]
+    "Indirect-recursive user container at recursive position resolves through the user's given" in {
+        // After the generic-macro rewrite, ZERO specialization for container types means a
+        // user-defined `Box[A]` and the built-in `List[A]` follow the same resolution path. The
+        // macro emits `summonInline[Schema[Box[Holder]]]`; the user's `boxSchema[A]` given is
+        // picked up; the cycle break is the by-name `Structure.Field._fieldType` thunk plus the
+        // outer Schema's `lazy val structure` -- exactly the same mechanism that broke `List`'s
+        // cycle in the prior design.
+        case class BoxedHolder(payload: Box[BoxedHolder]) derives CanEqual, Schema
+
+        val s           = summon[Schema[BoxedHolder]]
         val product     = s.structure.asInstanceOf[Structure.Type.Product]
         val payloadType = product.fields(0).fieldType
         val collection  = payloadType.asInstanceOf[Structure.Type.Collection]
+        assert(collection.name == "Box", s"expected Box wrapper but got ${collection.name}")
         val elementType = collection.elementType
         elementType match
             case _: Structure.Type.Product => succeed
             case other                     => fail(s"expected recursive cycle break to a Product but got $other")
         end match
+    }
+
+    "Box[Holder] recursive Schema construction breaks the cycle (binding regression guard)" in {
+        // Reproduces the regression guard from the binding design.
+        //
+        // `BoxedHolderRT` has a required recursive field, so a concrete instance has no natural
+        // "leaf" value. The cycle-break property the binding design guarantees is structural: the
+        // outer `Schema`'s `lazy val structure` builds the Product literal without forcing the
+        // field-type thunk, the `Structure.Field._fieldType` is by-name, and the recursive
+        // `summonInline[Schema[Box[BoxedHolderRT]]]` resolves through the synthesised
+        // `derived$Schema` for `BoxedHolderRT` (Magnolia contract). Touching the structure tree
+        // end-to-end exercises the cycle-break path: any failure would surface as
+        // StackOverflowError. (Encode/decode is exercised by the round-trip tests on `Holder`
+        // above, which use the non-recursive `Box[Int]` shape.)
+        case class BoxedHolderRT(payload: Box[BoxedHolderRT]) derives CanEqual, Schema
+
+        val s = summon[Schema[BoxedHolderRT]]
+        val p = s.structure.asInstanceOf[Structure.Type.Product]
+        assert(p.name == "BoxedHolderRT")
+        val payload = p.fields(0).fieldType.asInstanceOf[Structure.Type.Collection]
+        assert(payload.name == "Box")
+        val inner = payload.elementType.asInstanceOf[Structure.Type.Product]
+        assert(inner.name == "BoxedHolderRT")
+        succeed
     }
 
     "Holder structures for Box and List variants are wire-shape similar at the resolved Schema level" in {

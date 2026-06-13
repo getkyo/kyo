@@ -8,7 +8,7 @@ import kyo.internal.ProtobufWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
 
-case class RTTree(value: Int, children: List[RTTree]) derives CanEqual
+case class RTTree(value: Int, children: List[RTTree]) derives CanEqual, Schema
 case class RTPersonDTO(name: String, age: Int) derives CanEqual
 case class RTPersonDiff(name: String, age: String) derives CanEqual
 
