@@ -78,7 +78,7 @@ class AsyncTest extends kyo.test.Test[Any]:
         }
 
         "multiple fibers timeout".notJs in {
-            Kyo.fill(100)(Async.sleep(10.milli)).andThen(1)
+            Kyo.fill(100)(Async.sleep(10.millis)).andThen(1)
                 .handle(
                     KyoApp.runAndBlock(100.millis),
                     Abort.run[Timeout]
