@@ -1424,14 +1424,14 @@ object Schema:
       *
       * Unit serializes as an empty JSON object `{}`, not as `null`. The reasoning: Scala's `Unit` carries no
       * information, which in JSON wire vocabulary is the "empty object" rather than the "literal null value".
-      * Using `null` would conflate Unit with absent-Maybe / None-Option (both of which DO mean null on the wire)
-      * and would break JSON Schema describers like [[Json.JsonSchema]] that need a `type: "object"` shape for
-      * downstream consumers (MCP tool `inputSchema`, OpenAPI request bodies, JSON Schema validators).
+      * Using `null` for the canonical write form would conflate Unit with absent-Maybe / None-Option (both of
+      * which DO mean null on the wire) and would break JSON Schema describers like [[Json.JsonSchema]] that
+      * need a `type: "object"` shape for downstream consumers (MCP tool `inputSchema`, OpenAPI request bodies,
+      * JSON Schema validators).
       *
-      * On read the schema consumes one object value, ignoring any contents, so legacy producers that emit
-      * literal `null` for Unit would fail to decode against this schema. Callers that need to accept `null`
-      * bodies for Unit-typed endpoints (e.g. HTTP) should short-circuit at the boundary, not rely on
-      * `Schema[Unit]` to tolerate the wire-incorrect shape.
+      * On read the schema is tolerant of both wire shapes: a literal `null` (the legacy form, still emitted by
+      * many JSON producers for void/Unit endpoints) is accepted as Unit, and the canonical empty object `{}` is
+      * accepted as well. Only the empty-object form is ever written.
       */
     given unitSchema: Schema[Unit] = Schema.init[Unit](
         writeFn = (_, w) =>
@@ -1439,9 +1439,11 @@ object Schema:
             w.objectEnd()
         ,
         readFn = r =>
-            discard(r.objectStart())
-            r.objectEnd()
-            ()
+            if r.isNil() then ()
+            else
+                discard(r.objectStart())
+                r.objectEnd()
+                ()
         ,
         structure = Structure.Type.Primitive(Structure.PrimitiveKind.Unit, Tag[Unit].asInstanceOf[Tag[Any]])
     )
