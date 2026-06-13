@@ -62,6 +62,9 @@ object WebsiteBundleMain:
       */
     private def readDocsIsland(): DocsClient.DocsIsland =
         val el = dom.document.querySelector("#docs-island")
+        // Justified: the absent branch returns a fully-built fallback DocsIsland and the present
+        // branch is an Unsafe synchronous parse; a Maybe(el).fold here adds ceremony and changes
+        // nothing observable. Typed DOM lookup at the JS entry boundary, kept with this guard.
         if el == null then
             DocsClient.DocsIsland(
                 content = WebsiteContent(
@@ -265,6 +268,8 @@ object WebsiteBundleMain:
             _ <- UIWindow.storageSet(themeKey, next)
         yield ()
 
+    // Justified: a typed facade narrowing (Element -> HTMLElement) over the typed
+    // CSSStyleDeclaration.setProperty, not an untyped dynamic; confined to this one helper.
     // The color-scheme write needs `HTMLElement.style`, which `Element` does not expose. This is a
     // typed facade narrowing (Element -> HTMLElement) over the typed `CSSStyleDeclaration.setProperty`,
     // not an untyped dynamic. The narrowing is confined to this one helper so the theme handlers hold
@@ -318,6 +323,8 @@ object WebsiteBundleMain:
     private def wireGapChartReveal(ssrGapChart: dom.Element)(using Frame): Unit < (Async & Scope) =
         Loop[Int, Unit, Async & Scope](0) { attempt =>
             Sync.defer(dom.document.getElementById("gap-chart")).map { live =>
+                // Justified: a compound guard (non-null AND distinct from the SSR node); Maybe(live)
+                // cannot express the second clause without ceremony, so the explicit null check stays.
                 if live != null && !live.eq(ssrGapChart) then
                     UIWindow.onIntersectById("gap-chart")(addChartDrawn).andThen(Loop.done)
                 else if attempt >= GapMaxAttempts - 1 then Loop.done
@@ -328,10 +335,12 @@ object WebsiteBundleMain:
     /** Add the `.chart-drawn` class to the live `#gap-chart`, which (motion allowed) runs the line-draw
       * keyframe. A no-op if the node has since gone.
       */
-    private def addChartDrawn(using Frame): Unit < Sync =
+    private[website] def addChartDrawn(using Frame): Unit < Sync =
         Sync.defer {
             val el = dom.document.getElementById("gap-chart")
-            if el != null then el.classList.add("chart-drawn")
+            // Maybe(el) is Absent on a null lookup, so the class is added exactly when the node is
+            // present, identical to the prior null guard.
+            Maybe(el).foreach(_.classList.add("chart-drawn"))
         }
 
     /** One delegated document click listener that closes the header search dropdown. It closes on a
@@ -580,7 +589,9 @@ object WebsiteBundleMain:
             // guard the null case so a harness without it does not throw.
             _ <- Sync.defer {
                 val link = dom.document.querySelector("link[rel=canonical]")
-                if link != null then link.setAttribute("href", canonical)
+                // Maybe(link) is Absent on a null lookup, so the href is set exactly when the
+                // canonical link is present, identical to the prior null guard.
+                Maybe(link).foreach(_.setAttribute("href", canonical))
             }
         yield ()
         end for
@@ -675,6 +686,9 @@ object WebsiteBundleMain:
       */
     private def readVersions(): Chunk[WebsiteVersion] =
         val el = dom.document.querySelector("#versions-island")
+        // Justified: the absent branch returns Chunk.empty and the present branch is an Unsafe
+        // synchronous parse; a Maybe(el).fold here adds ceremony and changes nothing observable.
+        // Typed DOM lookup at the JS entry boundary, kept with this guard.
         if el == null then Chunk.empty
         else
             // Unsafe: synchronous parse at JS entry; the event loop is single-threaded and

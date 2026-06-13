@@ -174,7 +174,10 @@ object DocsClient:
                 }(using scala.concurrent.ExecutionContext.global)
             )
         else
-            // Test path: synchronous stub wrapped in a Promise so throws become Future failures.
+            // Justified: a boundary adapter that bridges a synchronous stub throw into the Promise
+            // failure (the Async error channel) at the JS Future boundary, not control-flow-by-
+            // exception. Test path: the synchronous stub is wrapped in a Promise so throws become
+            // Future failures.
             Async.fromFuture {
                 val p = Promise[String]()
                 try p.success(fetchFn(url))
@@ -502,8 +505,9 @@ object DocsClient:
                         case 'f'  => sb.append('\f'); i += 2
                         case 'u' if i + 5 < s.length =>
                             val hex = s.substring(i + 2, i + 6)
-                            // Degrade gracefully on a malformed \uXXXX escape: emit the literal
-                            // backslash + 'u' rather than throwing NumberFormatException.
+                            // Justified: a confined char-decode degrade in the hand-rolled JSON
+                            // scanner; on a malformed \uXXXX escape, emit the literal backslash + 'u'
+                            // rather than throwing NumberFormatException.
                             try
                                 sb.append(Integer.parseInt(hex, 16).toChar)
                                 i += 6

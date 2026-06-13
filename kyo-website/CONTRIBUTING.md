@@ -458,6 +458,13 @@ No raw CSS, HTML, or SVG strings anywhere in the site. Elements opt into
 `WebsiteStyles.sheet` rules via `UI.cssClass(...)` (`LandingApp.scala:17-18`); no
 raw CSS string is used anywhere in the site (`WebsiteStyles.scala:11-12`).
 
+That rule is about CSS, HTML, and SVG specifically. `sitemap.xml` (raw XML,
+`WebsiteGenerator.buildSitemapXml`), `robots.txt` (raw plain text, `buildRobotsTxt`),
+and the island and manifest JSON (no JSON encoder is in the dependency set) are
+sanctioned non-DSL emit sites: no kyo-ui DSL covers XML, plain text, or JSON, so each
+is isolated behind a named builder function carrying an in-source `// Justified:`
+comment. They are the carve-out the no-raw-markup rule implies, not an exception to it.
+
 - **The single global stylesheet is one `Stylesheet` value.** `lazy val sheet:
   Stylesheet = buildSheet` (`WebsiteStyles.scala:33`); new styling extends
   `buildSheet`, never a CSS file (`WebsiteStyles.scala:144-174`).
