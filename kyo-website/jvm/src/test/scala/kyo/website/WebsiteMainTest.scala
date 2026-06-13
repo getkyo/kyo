@@ -191,4 +191,29 @@ class WebsiteMainTest extends WebsiteTest:
         end for
     }
 
+    /** Build a synthetic target/ tree containing:
+      *   - a regular FILE named `scala-3.x` (must be silently skipped, not passed to `.list`)
+      *   - a real directory `scala-3.8.3/kyo-website-bundle-opt/` holding `main.js`
+      * `discoverBundleDir` must skip the file and select the `-opt/main.js` directory.
+      */
+    "discoverBundleDir skips a non-directory scala-* entry and selects the -opt/main.js dir" in {
+        Sync.defer {
+            val repoRoot  = Files.createTempDirectory("kyo-main-discover")
+            val targetDir = repoRoot.resolve("kyo-website-bundle/js/target")
+            java.nio.file.Files.createDirectories(targetDir)
+            // A regular file named scala-3.x: must be skipped, not passed to .list
+            java.nio.file.Files.writeString(targetDir.resolve("scala-3.x"), "not a directory")
+            // A real scala-3.8.3/kyo-website-bundle-opt/ directory holding main.js
+            val optDir = targetDir.resolve("scala-3.8.3/kyo-website-bundle-opt")
+            java.nio.file.Files.createDirectories(optDir)
+            java.nio.file.Files.writeString(optDir.resolve("main.js"), "// bundle")
+            repoRoot.toString
+        }.flatMap { repoRoot =>
+            WebsiteMain.parseBundleDir(Chunk.empty[String], repoRoot)
+        }.map { result =>
+            assert(result.endsWith("kyo-website-bundle-opt"), s"must select the -opt dir, got: $result")
+            assert(!result.contains("scala-3.x"), s"must not select the non-directory scala-3.x file, got: $result")
+        }
+    }
+
 end WebsiteMainTest

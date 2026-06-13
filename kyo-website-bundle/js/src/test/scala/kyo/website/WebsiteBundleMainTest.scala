@@ -16,6 +16,7 @@ class WebsiteBundleMainTest extends kyo.test.Test[Any]:
       * when the global does not pre-exist).
       */
     private val globalThis: scala.scalajs.js.Dynamic =
+        // Justified: js.eval returns js.Any; the cast sets dynamic properties on globalThis at the JS test-harness boundary, confined to this helper.
         scala.scalajs.js.eval("globalThis").asInstanceOf[scala.scalajs.js.Dynamic]
 
     /** Run a block with a fake `document` set on `globalThis`, then remove it afterwards.

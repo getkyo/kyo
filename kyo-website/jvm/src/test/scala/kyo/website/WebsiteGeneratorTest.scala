@@ -1476,9 +1476,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
-    // ---- escJson buffer-swap char-class contracts ----
+    // ---- escJson char-class contracts ----
 
-    "escJson escapes control chars below 0x20 to \\u00XX after the buffer swap" in {
+    "escJson escapes control chars below 0x20 to \\u00XX" in {
         // Build a module whose title contains control characters in [0x01, 0x1f] plus the
         // other special-char cases: backslash, double-quote, \n, \r, \t.
         // These all pass through escJson when the module title is serialized into the
@@ -1503,7 +1503,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
-    "escJson leaves plain ASCII and unicode above 0x20 unchanged after the buffer swap" in {
+    "escJson leaves plain ASCII and unicode above 0x20 unchanged" in {
         // A title with plain ASCII text and non-control unicode chars must pass through
         // escJson unmodified (the default arm of the match just appends the char).
         val title  = "Aborté日本語" // "Aborté日本語"

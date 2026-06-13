@@ -42,7 +42,7 @@ object WebsiteBundleMain:
     private val LatestPrefix: String = "latest"
 
     // Article cache: pre-rendered Article per route (island seed + fetched on nav).
-    // Unsafe: mutable module-level var in a JS bundle; single-threaded JS event loop is safe.
+    // Unsafe: mutable module-level Map in a JS bundle; single-threaded JS event loop is safe.
     private val articleCache: scala.collection.mutable.Map[String, DocsClient.Article] =
         scala.collection.mutable.Map.empty
 
@@ -268,13 +268,8 @@ object WebsiteBundleMain:
             _ <- UIWindow.storageSet(themeKey, next)
         yield ()
 
-    // Justified: a typed facade narrowing (Element -> HTMLElement) over the typed
-    // CSSStyleDeclaration.setProperty, not an untyped dynamic; confined to this one helper.
-    // The color-scheme write needs `HTMLElement.style`, which `Element` does not expose. This is a
-    // typed facade narrowing (Element -> HTMLElement) over the typed `CSSStyleDeclaration.setProperty`,
-    // not an untyped dynamic. The narrowing is confined to this one helper so the theme handlers hold
-    // no cast.
     private def setColorScheme(root: dom.Element, theme: String): Unit =
+        // Justified: Element does not expose .style; HTMLElement facade narrowing required.
         root.asInstanceOf[dom.html.Element].style.setProperty("color-scheme", theme)
 
     /** Wire the code-block Copy buttons with ONE delegated `document` click listener, so a single
@@ -338,8 +333,7 @@ object WebsiteBundleMain:
     private[website] def addChartDrawn(using Frame): Unit < Sync =
         Sync.defer {
             val el = dom.document.getElementById("gap-chart")
-            // Maybe(el) is Absent on a null lookup, so the class is added exactly when the node is
-            // present, identical to the prior null guard.
+            // Maybe(el) is Absent when getElementById returns null; foreach is a no-op when Absent.
             Maybe(el).foreach(_.classList.add("chart-drawn"))
         }
 
@@ -589,8 +583,7 @@ object WebsiteBundleMain:
             // guard the null case so a harness without it does not throw.
             _ <- Sync.defer {
                 val link = dom.document.querySelector("link[rel=canonical]")
-                // Maybe(link) is Absent on a null lookup, so the href is set exactly when the
-                // canonical link is present, identical to the prior null guard.
+                // Maybe(link) is Absent when querySelector returns null; foreach is a no-op when Absent.
                 Maybe(link).foreach(_.setAttribute("href", canonical))
             }
         yield ()

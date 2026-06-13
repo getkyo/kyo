@@ -924,9 +924,9 @@ class DocsMarkdownTest extends WebsiteTest:
         end for
     }
 
-    // ---- sectionSymbols Maybe path: extracts leading base identifiers ----
+    // ---- sectionSymbols: extracts leading base identifiers ----
 
-    "sectionSymbols extracts the leading base identifiers from inline code (Maybe path)" in {
+    "sectionSymbols extracts the leading base identifiers from inline code" in {
         val source = "## Effect section\n`Abort.run` uses `Abort[E]` and `foldAbort`.\n"
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield
@@ -939,9 +939,9 @@ class DocsMarkdownTest extends WebsiteTest:
         end for
     }
 
-    // ---- sectionSymbols Absent path: drops too-short or non-leading-letter tokens ----
+    // ---- sectionSymbols: drops too-short or non-leading-letter tokens ----
 
-    "sectionSymbols drops a too-short or non-leading-letter inline-code token (Absent path)" in {
+    "sectionSymbols drops a too-short or non-leading-letter inline-code token" in {
         val source = "## Short section\n`x` and `+` are not identifiers.\n"
         for snippets <- DocsMarkdownRender.sectionSnippets(source, 160)
         yield

@@ -158,13 +158,16 @@ object WebsiteMain extends KyoApp:
                 // is filesystem-dependent, so sorting picks the same directory on every run regardless
                 // of the platform's listing order.
                 targetDir.list.map { entries =>
-                    val scalaDirs = entries.filter(_.name.exists(_.startsWith("scala-"))).sortBy(_.toString)
-                    Kyo.foreach(scalaDirs)(_.list).map { listed =>
-                        val optDirs = listed.flattenChunk
-                            .filter(_.name.exists(_.endsWith("-opt")))
-                            .sortBy(_.toString)
-                        Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d)).map { flagged =>
-                            flagged.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
+                    Kyo.foreach(entries)(d => d.isDirectory.map(_ -> d)).map { flagged =>
+                        val scalaDirs = flagged.collect { case (true, d) if d.name.exists(_.startsWith("scala-")) => d }.sortBy(_.toString)
+                        Kyo.foreach(scalaDirs)(_.list).map { listed =>
+                            Kyo.foreach(listed.flattenChunk)(d => d.isDirectory.map(_ -> d)).map { flaggedOpt =>
+                                val optDirs =
+                                    flaggedOpt.collect { case (true, d) if d.name.exists(_.endsWith("-opt")) => d }.sortBy(_.toString)
+                                Kyo.foreach(optDirs)(d => (d / "main.js").isRegularFile.map(_ -> d)).map { flaggedMain =>
+                                    flaggedMain.collect { case (true, d) => d.toString }.headMaybe.getOrElse(fallback.toString)
+                                }
+                            }
                         }
                     }
                 }
