@@ -458,7 +458,11 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "enforceMonotonic=true concurrent: two concurrent progress calls emit only the one with the larger value" in {
+    "enforceMonotonic=true concurrent: the larger value is always emitted; a smaller value never follows it" in {
+        // Contract: monotonically-increasing emissions pass; a value <= the highest already-emitted is
+        // dropped. With concurrent calls, the LARGER value always reaches the wire; the smaller may or
+        // may not, depending on which fiber wins the initial CAS. What the contract forbids is the
+        // smaller value appearing AFTER the larger one (that would break monotonicity).
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
                 Async.zip[JsonRpcError, Unit, Unit, Any](
@@ -473,11 +477,28 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
                 JsonRpcHandler.init(capB, Seq(taskMethod), metaTokenConfig).map { _ =>
                     endpointA.callWithProgress[TaskReq, TaskResp]("task", TaskReq("t")).map { pending =>
                         pending.result.map { _ =>
-                            val notifCount = capB.sentList.count {
-                                case n: JsonRpcNotification if n.method == "notifications/progress" => true
-                                case _                                                              => false
-                            }
-                            assert(notifCount == 1, s"enforceMonotonic=true: expected 1 notification, got $notifCount")
+                            // encodeProgressParams in metaTokenConfig merges {"progressToken": t} with the
+                            // raw progress value {"progress": n}, so the top-level params Record carries
+                            // a "progress" field directly.
+                            val progressValues: List[BigDecimal] = capB.sentList.collect {
+                                case JsonRpcNotification(m, Present(params), _) if m == "notifications/progress" =>
+                                    params match
+                                        case Structure.Value.Record(fields) =>
+                                            fields.iterator.collectFirst {
+                                                case ("progress", Structure.Value.Decimal(n)) => BigDecimal(n)
+                                                case ("progress", Structure.Value.BigNum(n))  => n
+                                                case ("progress", Structure.Value.Integer(n)) => BigDecimal(n)
+                                            }
+                                        case _ => None
+                            }.flatten.toList
+                            // The largest emission must appear (10.0 must be on the wire).
+                            assert(progressValues.contains(BigDecimal(10.0)), s"larger value 10.0 missing; saw $progressValues")
+                            // Monotonicity: each emission is strictly greater than its predecessor.
+                            val pairs = progressValues.zip(progressValues.drop(1))
+                            assert(
+                                pairs.forall((prev, next) => next > prev),
+                                s"emissions are not strictly monotonic: $progressValues"
+                            )
                         }
                     }
                 }
