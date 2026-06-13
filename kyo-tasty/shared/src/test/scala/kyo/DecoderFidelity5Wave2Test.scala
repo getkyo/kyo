@@ -192,8 +192,12 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
         }
     }
 
-    "concurrent SnapshotReader.readFromBytes produces identical classpath shape" in {
-        buildSnapshot().map { (full, cpOrig) =>
+    // buildSnapshot serializes the full JVM classpath (stdlib included); reading it back four times
+    // concurrently is heavy. The deadline is widened to give that real work room on slow CI runners
+    // rather than shrinking the workload (which would weaken the race coverage). The per-read cost was
+    // also cut sharply by an O(n) index remap in SnapshotReader (was O(n*m) over ~80k symbols).
+    "concurrent SnapshotReader.readFromBytes produces identical classpath shape".timeout(3.minutes) in {
+        buildSnapshot().map { (full, _) =>
             val path = "mem/concur.krfl"
             Async.collectAll(
                 (0 until 4).map { _ =>

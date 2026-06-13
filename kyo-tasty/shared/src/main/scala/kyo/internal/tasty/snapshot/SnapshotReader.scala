@@ -479,22 +479,29 @@ object SnapshotReader:
             si += 1
         end while
 
-        // Rebuild index maps to point to final Symbols.
+        // Rebuild index maps to point to final Symbols. Index every symbol object by identity in one
+        // pass so each remap is an O(1) lookup: the linear `symsArray.indexWhere(_ eq v)` per entry made
+        // these four passes O(n*m) over ~80k symbols, which dominated readFromBytes.
+        val idxByObj = new java.util.IdentityHashMap[Tasty.Symbol, Integer](symsArray.length * 2)
+        var ix       = 0
+        while ix < symsArray.length do
+            idxByObj.put(symsArray(ix), ix)
+            ix += 1
         val finalFullNameIndex = fullNameIndex.map { case (k, v) =>
-            val idx = symsArray.indexWhere(_ eq v)
-            if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+            val boxed = idxByObj.get(v)
+            if boxed != null then (k, finalSymbols(boxed.intValue)) else (k, v)
         }
         val finalPackageIndex = packageIndex.map { case (k, v) =>
-            val idx = symsArray.indexWhere(_ eq v)
-            if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+            val boxed = idxByObj.get(v)
+            if boxed != null then (k, finalSymbols(boxed.intValue)) else (k, v)
         }
         val finalTopLevelCls = topLevelCls.map { v =>
-            val idx = symsArray.indexWhere(_ eq v)
-            if idx >= 0 then finalSymbols(idx) else v
+            val boxed = idxByObj.get(v)
+            if boxed != null then finalSymbols(boxed.intValue) else v
         }
         val finalPackages = packages.map { v =>
-            val idx = symsArray.indexWhere(_ eq v)
-            if idx >= 0 then finalSymbols(idx) else v
+            val boxed = idxByObj.get(v)
+            if boxed != null then finalSymbols(boxed.intValue) else v
         }
 
         // FQNIDX__ section : if present, reconstruct the full fullNameIndex
@@ -974,17 +981,24 @@ object SnapshotReader:
             j += 1
         end while
 
+        // Index every symbol object by identity in one pass so each remap is an O(1) lookup, not the
+        // O(n) linear `symsArray.indexWhere(_ eq v)` per entry (O(n*m) over ~80k symbols).
+        val idxByObj = new java.util.IdentityHashMap[Tasty.Symbol, Integer](symsArray.length * 2)
+        var ix       = 0
+        while ix < symsArray.length do
+            idxByObj.put(symsArray(ix), ix)
+            ix += 1
         val newFullNameIndex = fullNameIndex.map { case (k, v) =>
-            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+            val boxed = idxByObj.get(v); if boxed != null then (k, finalSymbols(boxed.intValue)) else (k, v)
         }
         val newPackageIndex = packageIndex.map { case (k, v) =>
-            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then (k, finalSymbols(idx)) else (k, v)
+            val boxed = idxByObj.get(v); if boxed != null then (k, finalSymbols(boxed.intValue)) else (k, v)
         }
         val newTopLevelCls = topLevelCls.map { v =>
-            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then finalSymbols(idx) else v
+            val boxed = idxByObj.get(v); if boxed != null then finalSymbols(boxed.intValue) else v
         }
         val newPackages = packages.map { v =>
-            val idx = symsArray.indexWhere(_ eq v); if idx >= 0 then finalSymbols(idx) else v
+            val boxed = idxByObj.get(v); if boxed != null then finalSymbols(boxed.intValue) else v
         }
 
         // FQNIDX__ section : reconstruct the full fullNameIndex verbatim.
