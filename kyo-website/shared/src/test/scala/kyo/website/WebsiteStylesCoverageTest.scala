@@ -138,13 +138,13 @@ class WebsiteStylesCoverageTest extends WebsiteTest:
             UI.pre(UI.code(UI.span.cssClass("tok-keyword")(UI.Ast.Text("val"))))
         )
         for
-            route <- Signal.initRef[String]("/v0.9.0/kyo-core/")
+            route    <- Signal.initRef[String]("/v0.9.0/kyo-core/")
+            routeStr <- route.current
             body <- DocsApp.body(
                 content,
                 "v0.9.0",
                 route,
-                Signal.initConst(toc),
-                route,
+                Map(routeStr -> toc),
                 article2,
                 Signal.initConst(false)
             )

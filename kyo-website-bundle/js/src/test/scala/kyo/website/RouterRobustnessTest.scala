@@ -29,7 +29,7 @@ class RouterRobustnessTest extends kyo.test.Test[Any]:
         Chunk(WebsiteContent.Group("Foundation", islandModules)),
         islandVersion
     )
-    private val island = DocsClient.DocsIsland(islandContent, Chunk.empty, "", Chunk.empty)
+    private val island = DocsClient.DocsIsland(islandContent, Chunk.empty, "", Chunk.empty, Map.empty)
 
     // A versions list containing the island's own tag (the normal case when the versions island is
     // present in the DOM).

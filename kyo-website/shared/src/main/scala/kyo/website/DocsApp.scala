@@ -60,20 +60,14 @@ object DocsApp:
       *   version is also emitted under its own `v<X>/` tree where its links must stay `/v<X>/...`.
       * @param route
       *   Signal tracking the current pathname, used to compute active sidebar state and prev/next.
-      * @param tocSignal
-      *   The current page's heading outline (from `DocsMarkdownRender.Rendered.headings`), as a `Signal`
-      *   so the active module's nested section list re-renders on client navigation. Pass
-      *   `Signal.initConst(headings)` for a static page (the SSG generator), or a `SignalRef` updated
-      *   per route for the client bundle. The sidebar combines this with the active-route signal so
-      *   the new module's sections expand and the previous module's collapse on a navigation.
-      * @param tocRoute
-      *   The route the current `tocSignal` outline belongs to. The rail renders the active module's
-      *   section list only when `tocRoute` resolves to that same module, so a synchronous active-flip
-      *   on a click cannot paint the previous module's headings under the new module while its
-      *   `content.md` fetch is still in flight. Pass the page's own `route` for a static page (the SSG,
-      *   or a test): the outline is always the current route's, so the gate is always satisfied. The
-      *   bundle passes a dedicated signal it stamps with the fetched route AFTER the outline lands, so
-      *   the gate stays closed for the new module until its real outline is in hand.
+      * @param outlines
+      *   The section outline of EVERY route in this version, keyed by route (`/<prefix>/<slug>/` for a
+      *   module, `/<prefix>/` for the overview). These are static build-time data, so the rail reads the
+      *   active module's section list synchronously from this map on a navigation: clicking a module
+      *   shows its real sections immediately, with no per-navigation fetch, no stale-previous-module
+      *   flash, and no load delay. The SSG and the bundle pass the same full map (the SSG emits it into
+      *   the page's `#docs-island`; the bundle reads it back). A route absent from the map (or a module
+      *   with no headings) renders the bare link with no sections.
       * @param article
       *   The transpiled article subtree to embed in the content area. May be a `Reactive` node.
       * @param contentLoading
@@ -90,8 +84,7 @@ object DocsApp:
         content: WebsiteContent,
         prefix: String,
         route: Signal[String],
-        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
-        tocRoute: Signal[String],
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]],
         article: UI,
         contentLoading: Signal[Boolean],
         navOpenRef: SignalRef[Boolean]
@@ -106,7 +99,7 @@ object DocsApp:
         // close, so a module tap can load + expand its sections while leaving the drawer open.
         UI.div.cssClass("docs-shell")(
             drawerBackdrop(navOpenRef),
-            sidebar(content, route, prefix, navOpenRef, tocSignal, tocRoute),
+            sidebar(content, route, prefix, navOpenRef, outlines),
             contentArea(article, allModules, route, prefix, contentLoading),
             mobileMenuFab(navOpenRef)
         )
@@ -120,12 +113,11 @@ object DocsApp:
         content: WebsiteContent,
         prefix: String,
         route: Signal[String],
-        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
-        tocRoute: Signal[String],
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]],
         article: UI,
         contentLoading: Signal[Boolean]
     )(using Frame): UI < Sync =
-        Signal.initRef(false).map(body(content, prefix, route, tocSignal, tocRoute, article, contentLoading, _))
+        Signal.initRef(false).map(body(content, prefix, route, outlines, article, contentLoading, _))
 
     // ---- Private helpers ----
 
@@ -143,8 +135,7 @@ object DocsApp:
         route: Signal[String],
         prefix: String,
         navOpenRef: SignalRef[Boolean],
-        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
-        tocRoute: Signal[String]
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
     )(using Frame): UI =
         // The drawer is a two-level menu: tapping a module navigates AND expands its sections in place,
         // keeping the drawer open so the reader can then drill into a section; tapping a section closes
@@ -152,38 +143,30 @@ object DocsApp:
         // on a section-link tap, where the same-document `#section` scroll must stay native).
         val nav =
             UI.nav.cssClass("sidebar-nav")(
-                html(overviewItem(route, prefix, tocSignal, tocRoute) +: content.groups.toSeq.map { group =>
+                html(overviewItem(route, prefix, outlines) +: content.groups.toSeq.map { group =>
                     UI.div.cssClass("sidebar-group")(
                         UI.div.cssClass("sidebar-group-name")(UI.span(groupLabel(group.name))),
                         UI.ul(
                             html(group.modules.toSeq.map { mod =>
-                                val href = s"/$prefix/${mod.slug}/"
-                                def matchesModule(r: String): Boolean =
-                                    r.endsWith(s"/${mod.slug}/") || r == href
-                                val activeSignal = route.map(matchesModule)
-                                // Key each module node on the active flag, the page outline, AND the route
-                                // that outline belongs to. combineLatest re-emits when ANY changes, so the
-                                // active module's nested sections appear and update with the current page
-                                // (`tocSignal`), and a navigation away (the active flag flips to false)
-                                // collapses them. The active module renders its sections ONLY when
-                                // `tocRoute` resolves to this same module: the active flag flips the instant
-                                // a module link is clicked, but its outline arrives a beat later (after the
-                                // `content.md` fetch), so without this gate the box would briefly paint the
-                                // PREVIOUS module's headings under the new module. zip would stall (it waits
-                                // for both inputs to tick), so combineLatest is required, mirroring SiteApp's
-                                // search dropdown.
+                                val href    = s"/$prefix/${mod.slug}/"
+                                val outline = outlines.getOrElse(href, Chunk.empty)
+                                // The module node keys on `route` alone: the outline is static build-time
+                                // data (`outlines`, looked up by this module's canonical href), so when the
+                                // route flips to this module the node re-renders ACTIVE with its real
+                                // sections in the same paint. No per-navigation fetch, no stale-previous
+                                // flash, no load delay. A navigation away flips the match to false and the
+                                // node collapses to the bare link.
                                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
-                                UI.Ast.Reactive(activeSignal.combineLatest(tocSignal).combineLatest(tocRoute).map {
-                                    case ((isActive, toc), tocR) =>
-                                        if isActive then
-                                            UI.li.cssClass("nav-item").cssClass("nav-item-active")(
-                                                UI.a(mod.displayName).href(Href.Path(href)),
-                                                if matchesModule(tocR) then sidebarSections(toc) else UI.empty
-                                            )
-                                        else
-                                            UI.li.cssClass("nav-item")(
-                                                UI.a(mod.displayName).href(Href.Path(href))
-                                            )
+                                UI.Ast.Reactive(route.map { r =>
+                                    if r.endsWith(s"/${mod.slug}/") || r == href then
+                                        UI.li.cssClass("nav-item").cssClass("nav-item-active")(
+                                            UI.a(mod.displayName).href(Href.Path(href)),
+                                            sidebarSections(outline)
+                                        )
+                                    else
+                                        UI.li.cssClass("nav-item")(
+                                            UI.a(mod.displayName).href(Href.Path(href))
+                                        )
                                 })
                             })*
                         )
@@ -235,27 +218,25 @@ object DocsApp:
     private def overviewItem(
         route: Signal[String],
         prefix: String,
-        tocSignal: Signal[Chunk[DocsMarkdown.Heading]],
-        tocRoute: Signal[String]
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
     )(using Frame): UI =
-        val href         = s"/$prefix/"
-        val activeSignal = route.map(r => r == href)
+        val href    = s"/$prefix/"
+        val outline = outlines.getOrElse(href, Chunk.empty)
         UI.ul(
+            // Mirrors the module items: the intro's section outline is static (`outlines` keyed by the
+            // intro route), so arriving on the intro renders the Overview active with its sections in one
+            // paint, with no fetch and no stale flash.
             // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
-            // The outline gate (`tocR == href`) mirrors the module items: the intro's sections render only
-            // once the loaded outline is the intro's own, so a click onto the overview never flashes the
-            // previous page's headings under it.
-            UI.Ast.Reactive(activeSignal.combineLatest(tocSignal).combineLatest(tocRoute).map {
-                case ((isActive, toc), tocR) =>
-                    if isActive then
-                        UI.li.cssClass("nav-item").cssClass("nav-item-active")(
-                            UI.a("Overview").href(Href.Path(href)),
-                            if tocR == href then sidebarSections(toc) else UI.empty
-                        )
-                    else
-                        UI.li.cssClass("nav-item")(
-                            UI.a("Overview").href(Href.Path(href))
-                        )
+            UI.Ast.Reactive(route.map { r =>
+                if r == href then
+                    UI.li.cssClass("nav-item").cssClass("nav-item-active")(
+                        UI.a("Overview").href(Href.Path(href)),
+                        sidebarSections(outline)
+                    )
+                else
+                    UI.li.cssClass("nav-item")(
+                        UI.a("Overview").href(Href.Path(href))
+                    )
             })
         )
     end overviewItem

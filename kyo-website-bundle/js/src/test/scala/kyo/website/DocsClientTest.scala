@@ -149,7 +149,8 @@ class DocsClientTest extends kyo.test.Test[Any]:
                 """"groups": [{"name": "Foundation", "modules": [{"slug": "kyo-data", "group": "Foundation", "title": "kyo-data"}, {"slug": "kyo-kernel", "group": "Foundation", "title": "kyo-kernel"}]}], """ +
                 """"versions": [{"tag": "v1.0.0-RC2", "label": "1.0.0-RC2", "latest": true}, {"tag": "v0.9.3", "label": "0.9.3", "latest": false}], """ +
                 """"article": "<h1 id=\"kyo-data\">kyo-data</h1>", """ +
-                """"headings": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}]}"""
+                """"headings": [{"level": 1, "text": "kyo-data", "slug": "kyo-data"}, {"level": 2, "text": "Overview", "slug": "overview"}], """ +
+                """"outlines": [{"route": "/latest/kyo-data/", "headings": [{"level": 2, "text": "Overview", "slug": "overview"}]}, {"route": "/latest/kyo-kernel/", "headings": [{"level": 2, "text": "Effects", "slug": "effects"}]}]}"""
         for
             island <- DocsClient.parseDocsIsland(islandJson)
         yield
@@ -174,6 +175,15 @@ class DocsClientTest extends kyo.test.Test[Any]:
                     DocsMarkdown.Heading(2, "Overview", "overview")
                 ),
                 s"headings must round-trip with level, got: ${island.headings}"
+            )
+            // The whole-version outline map round-trips: each route maps to its own section headings, so
+            // the rail can read any module's sections synchronously from the boot island (no fetch).
+            assert(
+                island.outlines == Map(
+                    "/latest/kyo-data/"   -> Chunk(DocsMarkdown.Heading(2, "Overview", "overview")),
+                    "/latest/kyo-kernel/" -> Chunk(DocsMarkdown.Heading(2, "Effects", "effects"))
+                ),
+                s"outlines must round-trip the per-route section map, got: ${island.outlines}"
             )
         end for
     }

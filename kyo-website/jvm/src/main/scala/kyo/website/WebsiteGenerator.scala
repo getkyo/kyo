@@ -151,13 +151,32 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val modules = c.groups.flatMap(_.modules)
         for
-            _ <- emitIntroPage(c, versions, prefix, outDir, isCurrentLatest)
-            _ <- Kyo.foreachDiscard(modules)(m => emitModulePage(c, versions, prefix, m, outDir, isCurrentLatest))
-            _ <- writeManifest(c, prefix, outDir)
-            _ <- writeSearchIndex(c, prefix, outDir)
+            // The section outline of every route in this version, rendered once and inlined into each
+            // page's `#docs-island` so the SPA rail reads any module's sections synchronously (no
+            // per-navigation fetch). The SSG render of each page uses the SAME map, so the static rail and
+            // the bundle's first paint are byte-identical (INV-003 hydration parity).
+            outlines <- outlinesByRoute(c, prefix)
+            _        <- emitIntroPage(c, versions, prefix, outDir, isCurrentLatest, outlines)
+            _        <- Kyo.foreachDiscard(modules)(m => emitModulePage(c, versions, prefix, m, outDir, isCurrentLatest, outlines))
+            _        <- writeManifest(c, prefix, outDir)
+            _        <- writeSearchIndex(c, prefix, outDir)
         yield ()
         end for
     end emitDocs
+
+    /** Render the section outline of every route in a version, keyed by route (`/<prefix>/` for the
+      * overview, `/<prefix>/<slug>/` per module). Static build-time data the SPA rail reads to show a
+      * module's sections instantly on navigation, with no per-route `content.html` fetch. Uses the
+      * `Sync` `transpile` (headings only), which yields the same outline the page's `renderArticle` does.
+      */
+    private def outlinesByRoute(c: WebsiteContent, prefix: String)(using Frame): Map[String, Chunk[DocsMarkdown.Heading]] < Sync =
+        val modules = c.groups.flatMap(_.modules)
+        for
+            intro <- DocsMarkdownRender.transpile(c.intro)
+            mods  <- Kyo.foreach(modules)(m => DocsMarkdownRender.transpile(m.readme).map(r => s"/$prefix/${m.slug}/" -> r.headings))
+        yield Map(s"/$prefix/" -> intro.headings) ++ mods.toSeq
+        end for
+    end outlinesByRoute
 
     private def emitVersion(
         c: WebsiteContent,
@@ -214,7 +233,8 @@ object WebsiteGenerator:
         versions: Chunk[WebsiteVersion],
         prefix: String,
         outDir: Path,
-        isCurrentLatest: Boolean
+        isCurrentLatest: Boolean,
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/"
         for
@@ -227,17 +247,17 @@ object WebsiteGenerator:
             // The SSG emits one fully-loaded static page per route, so content is never mid-load:
             // `contentLoading` is constant false and the prev/next pager renders exactly as the bundle's
             // first paint does (loadingRef initialised false), keeping SSG and bundle output identical.
+            // The rail reads `outlines` (the whole-version section map) the same way the bundle does.
             body <- DocsApp.body(
                 c,
                 prefix,
                 fixedRoute,
-                Signal.initConst(rendered.headings),
-                fixedRoute,
+                outlines,
                 rendered.article,
                 Signal.initConst(false)
             )
             view <- siteShell(versions, docsHome(c, prefix), body)
-            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
+            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings, outlines)
             html <- wrapFirst(
                 introOpts(c, prefix, route, rendered.headings, isCurrentLatest).copy(dataIslands = islands(island, versions)),
                 view
@@ -259,24 +279,25 @@ object WebsiteGenerator:
         prefix: String,
         module: WebsiteModule,
         outDir: Path,
-        isCurrentLatest: Boolean
+        isCurrentLatest: Boolean,
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/${module.slug}/"
         for
             rendered   <- DocsMarkdownRender.renderArticle(module.readme)
             fixedRoute <- Signal.initRef(route)
             // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
+            // The rail reads `outlines` (the whole-version section map) the same way the bundle does.
             body <- DocsApp.body(
                 c,
                 prefix,
                 fixedRoute,
-                Signal.initConst(rendered.headings),
-                fixedRoute,
+                outlines,
                 rendered.article,
                 Signal.initConst(false)
             )
             view <- siteShell(versions, docsHome(c, prefix), body)
-            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings)
+            island = docsIsland(c, versions, rendered.articleHtml, rendered.headings, outlines)
             html <- wrapFirst(
                 docOpts(c, prefix, module.slug, route, isCurrentLatest).copy(dataIslands = islands(island, versions)),
                 view
@@ -495,7 +516,8 @@ object WebsiteGenerator:
         c: WebsiteContent,
         versions: Chunk[WebsiteVersion],
         articleHtml: String,
-        headings: Chunk[DocsMarkdown.Heading]
+        headings: Chunk[DocsMarkdown.Heading],
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
     ): String =
         val v          = c.version
         val versionObj = s"""{"tag": "${escJson(v.tag)}", "label": "${escJson(v.label)}", "latest": ${v.latest}}"""
@@ -507,8 +529,16 @@ object WebsiteGenerator:
         }.mkString("[", ", ", "]")
         s"""{"version": $versionObj, "intro": "${escJson(c.intro)}", "groups": $groupsJson, "versions": ${buildVersionsJson(
                 versions
-            )}, "article": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}}"""
+            )}, "article": "${escJson(articleHtml)}", "headings": ${headingsJson(headings)}, "outlines": ${outlinesJson(outlines)}}"""
     end docsIsland
+
+    // Serialize the whole-version section map to a JSON array of `{"route": "...", "headings": [...]}`
+    // objects (the shape `DocsClient.parseOutlines` reads). The route key is sorted so the island JSON
+    // is deterministic for a given version.
+    private def outlinesJson(outlines: Map[String, Chunk[DocsMarkdown.Heading]]): String =
+        outlines.toSeq.sortBy(_._1).map { case (route, hs) =>
+            s"""{"route": "${escJson(route)}", "headings": ${headingsJson(hs)}}"""
+        }.mkString("[", ", ", "]")
 
     /** Build the two body-end data islands (`#docs-island`, `#versions-island`) carried on the page
       * head and rendered before `</body>` by kyo-ui. The docs-island JSON is the route's island
@@ -557,7 +587,7 @@ object WebsiteGenerator:
         for
             body <- LandingApp.body(landingHome)
             view <- siteShell(versions, landingHome, body)
-            island = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, "", Chunk.empty))
+            island = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, "", Chunk.empty, Map.empty))
             html <- wrapFirst(
                 if island.isEmpty then opts else opts.copy(dataIslands = islands(island, versions)),
                 view

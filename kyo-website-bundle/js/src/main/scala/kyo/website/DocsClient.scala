@@ -200,12 +200,17 @@ object DocsClient:
       *   `UI.rawHtml` for first render; never re-transpiled).
       * @param headings
       *   The heading outline for the TOC: level, text, and anchor slug for each heading.
+      * @param outlines
+      *   The section outline of EVERY route in this version, keyed by route. Static build-time data the
+      *   SSG inlines into the island so the rail can show any module's sections synchronously on a
+      *   navigation, with no per-route `content.html` fetch. Empty when the island carries no `outlines`.
       */
     final case class DocsIsland(
         content: WebsiteContent,
         versions: Chunk[WebsiteVersion],
         articleHtml: String,
-        headings: Chunk[DocsMarkdown.Heading]
+        headings: Chunk[DocsMarkdown.Heading],
+        outlines: Map[String, Chunk[DocsMarkdown.Heading]]
     ) derives CanEqual
 
     /** Parse a JSON array of version objects from an SSG-seeded DOM island.
@@ -248,22 +253,38 @@ object DocsClient:
                 val groupsArray = extractArray(trimmed, "groups").getOrElse("[]")
                 val groups      = Chunk.from(splitJsonArray(groupsArray).flatMap(parseGroup))
                 val versions    = extractArray(trimmed, "versions").map(splitJsonArray).getOrElse(Seq.empty).flatMap(parseVersion)
+                val outlines    = parseOutlines(trimmed)
                 DocsIsland(
                     WebsiteContent(intro, groups, version),
                     Chunk.from(versions),
                     articleHtml,
-                    headings
+                    headings,
+                    outlines
                 )
             end if
         }
     end parseDocsIsland
+
+    // Parse the island's `"outlines"` array (`[{"route": "...", "headings": [...]}, ...]`) into a
+    // route -> outline map. Mirrors `parseHeadings` (the manifest's per-slug parse): degrade-not-fail,
+    // an element missing `route` is dropped, a missing `headings` array yields an empty outline.
+    private def parseOutlines(json: String): Map[String, Chunk[DocsMarkdown.Heading]] =
+        val arr = extractArray(json, "outlines").getOrElse("[]")
+        splitJsonArray(arr).flatMap { obj =>
+            extractString(obj, "route").map { route =>
+                val hs = extractArray(obj, "headings").getOrElse("[]")
+                route -> Chunk.from(splitJsonArray(hs).flatMap(parseOutlineHeading))
+            }
+        }.toMap
+    end parseOutlines
 
     private def emptyIsland: DocsIsland =
         DocsIsland(
             WebsiteContent("", Chunk.empty, WebsiteVersion("latest", "latest", true)),
             Chunk.empty,
             "",
-            Chunk.empty
+            Chunk.empty,
+            Map.empty
         )
 
     private def parseGroup(obj: String): Maybe[WebsiteContent.Group] =

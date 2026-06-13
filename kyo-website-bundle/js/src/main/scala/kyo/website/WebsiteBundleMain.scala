@@ -71,7 +71,8 @@ object WebsiteBundleMain:
                 ),
                 versions = Chunk.empty,
                 articleHtml = "",
-                headings = Chunk.empty
+                headings = Chunk.empty,
+                outlines = Map.empty
             )
         else
             // Unsafe: synchronous parse at JS entry; the event loop is single-threaded and this is
@@ -92,7 +93,7 @@ object WebsiteBundleMain:
       * nav fiber routing `/ <-> docs` client-side, and the single `SiteApp.view` mount.
       *
       * The header is rendered once by `SiteApp.view`; the nav fiber only ever rewrites the content
-      * signal (and, for docs pages, the shared `articleRef`/`tocRef`), so the header never remounts on
+      * signal (and, for docs pages, the shared `articleRef`), so the header never remounts on
       * navigation.
       */
     private def build()(using Frame): UI < (Sync & Async & Scope) =
@@ -143,14 +144,6 @@ object WebsiteBundleMain:
             // post-mount node and so cannot complete until after this build returns the view to mount.
             _          <- Fiber.init(wireGapChartReveal(ssrGapChart))
             articleRef <- Signal.initRef[UI](UI.rawHtml(island.articleHtml))
-            tocRef     <- Signal.initRef[Chunk[DocsMarkdown.Heading]](island.headings)
-            // The route the outline in `tocRef` belongs to, seeded with the boot route (whose island
-            // outline `tocRef` carries). The rail gates the active module's section list on this matching
-            // the module: `route` flips synchronously the instant a module link is clicked, but the new
-            // module's outline only lands after its `content.md` fetch, so `showContentRoute` stamps this
-            // with the fetched route AT THE SAME TIME it sets `tocRef`. Until then the gate stays closed and
-            // the active box shows just the link, never the previous module's headings.
-            tocRouteRef <- Signal.initRef[String](initialRoute)
             // The mobile docs drawer's open state. The bundle owns it so it can close the drawer on a
             // section-link tap (a same-document `#section` scroll that must stay native, so a per-link
             // handler would suppress it): a delegated document click listener closes the drawer when the
@@ -163,20 +156,21 @@ object WebsiteBundleMain:
                     case Absent     => Kyo.unit
             }
             // Content-loading flag, false at first paint (the boot island is already injected into
-            // articleRef/tocRef above). `showContentRoute` sets it true the instant a navigation clears
-            // those refs for an async content.html fetch, and false once the fetched article/TOC are set
-            // (or the fetch fails), so the prev/next pager (gated on this in DocsApp.contentArea) only
-            // appears together with the article and never flashes at the top of the empty content area.
+            // `articleRef` above). `showContentRoute` sets it true the instant a navigation starts an async
+            // content.html fetch, and false once the fetched article is set (or the fetch fails), so the
+            // prev/next pager (gated on this in DocsApp.contentArea) only appears together with the article
+            // and never flashes at the top of the empty content area.
             loadingRef <- Signal.initRef(false)
-            // ONE docs body instance, reused on every docs navigation. Its sidebar/article/TOC react
-            // to `route`/`articleRef`/`tocRef`, so swapping module-to-module only updates those refs;
-            // `content` is set to this body once (when arriving from the landing) and then left alone.
+            // ONE docs body instance, reused on every docs navigation. The rail reads the active module's
+            // section outline synchronously from `island.outlines` (static build-time data, keyed by
+            // route), so a navigation only updates `articleRef` (the prose); the rail re-renders off
+            // `route` alone with the new module's sections already in hand. `content` is set to this body
+            // once (when arriving from the landing) and then left alone.
             docsBody <- DocsApp.body(
                 island.content,
                 prefix,
                 route,
-                tocRef,
-                tocRouteRef,
+                island.outlines,
                 // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
                 UI.Ast.Reactive(articleRef.map(a => a)),
                 loadingRef,
@@ -201,8 +195,6 @@ object WebsiteBundleMain:
                 island,
                 content,
                 articleRef,
-                tocRef,
-                tocRouteRef,
                 loadingRef,
                 landingBody,
                 docsBody
@@ -441,8 +433,8 @@ object WebsiteBundleMain:
       * branches:
       *   - [[RouteKind.Landing]] (root `/`): swap `content` to the landing body, no reload.
       *   - [[RouteKind.Module]] (`/<prefix>/<slug>/` whose last segment is a known module slug): fetch
-      *     pre-rendered article from `content.html` (cache), update `articleRef`/`tocRef`, and swap
-      *     `content` to the docs body.
+      *     the pre-rendered article from `content.html` (cache), update `articleRef`, and swap
+      *     `content` to the docs body. The rail's sections come from `island.outlines`, not this fetch.
       *   - [[RouteKind.Intro]] (`/<knownPrefix>/`, exactly one segment naming a real tree, `latest` or a
       *     known version tag): the overview, fetched and injected exactly like a module from the route's
       *     `content.html` (the root-README intro rendered at build time), so the rail's Overview item is
@@ -463,8 +455,6 @@ object WebsiteBundleMain:
         island: DocsClient.DocsIsland,
         content: SignalRef[UI],
         articleRef: SignalRef[UI],
-        tocRef: SignalRef[Chunk[DocsMarkdown.Heading]],
-        tocRouteRef: SignalRef[String],
         loadingRef: SignalRef[Boolean],
         landingBody: UI,
         docsBody: UI
@@ -481,7 +471,7 @@ object WebsiteBundleMain:
                                 content.set(landingBody).andThen(updateHead(nextRoute, island))
                             case RouteKind.Module =>
                                 // Module route: fetch pre-rendered article from content.html, update article + TOC, show docs.
-                                showContentRoute(nextRoute, island, content, articleRef, tocRef, tocRouteRef, loadingRef, docsBody)
+                                showContentRoute(nextRoute, island, content, articleRef, loadingRef, docsBody)
                             case RouteKind.Intro =>
                                 // Intro/overview `/<knownPrefix>/`: the root-README overview is served at
                                 // `/<prefix>/content.html` (pre-rendered at build time), so the intro is a
@@ -489,7 +479,7 @@ object WebsiteBundleMain:
                                 // article + TOC, show docs. The Overview is the active rail item (DocsApp
                                 // keys it on the single-segment intro route), and its `## ` sections come
                                 // from the TOC set here.
-                                showContentRoute(nextRoute, island, content, articleRef, tocRef, tocRouteRef, loadingRef, docsBody)
+                                showContentRoute(nextRoute, island, content, articleRef, loadingRef, docsBody)
                             case RouteKind.OffTree =>
                                 // Off-tree route: a single segment that is not a known prefix, OR a multi-
                                 // segment route whose last segment is not a known module slug. Hand off to a
@@ -503,19 +493,19 @@ object WebsiteBundleMain:
 
     /** Show a content route (a module page OR the intro/overview): fetch the route's pre-rendered
       * article from `content.html` (from the cache when seeded, else over the network, caching the
-      * result), inject via `UI.rawHtml`, update the shared `articleRef`/`tocRef`/`tocRouteRef`, swap `content` to
+      * result), inject via `UI.rawHtml`, update the shared `articleRef`, swap `content` to
       * the one docs body, update the head, and scroll to the URL hash or the top. Both
       * the [[RouteKind.Module]] and [[RouteKind.Intro]] branches share this: the overview is fetched
-      * and injected exactly like a module, so the rail's Overview item expands to the intro's `## `
-      * sections and the overview prose is byte-identical to the SSG first paint.
+      * and injected exactly like a module, and the overview prose is byte-identical to the SSG first paint.
+      * The rail's section outline is NOT fetched here: it is static build-time data the rail reads from
+      * `island.outlines` keyed by `route`, so the new module's sections are already on screen the instant
+      * the route flips. This fetch is only for the article PROSE.
       */
     private def showContentRoute(
         nextRoute: String,
         island: DocsClient.DocsIsland,
         content: SignalRef[UI],
         articleRef: SignalRef[UI],
-        tocRef: SignalRef[Chunk[DocsMarkdown.Heading]],
-        tocRouteRef: SignalRef[String],
         loadingRef: SignalRef[Boolean],
         docsBody: UI
     )(using Frame): Unit < Async =
@@ -525,17 +515,8 @@ object WebsiteBundleMain:
             // column to empty for the whole fetch window (~tens of ms on a cold module): a white flash, and
             // the short empty page dropped the scrollbar and shifted the layout sideways (the rail visibly
             // jumped). So the article is not cleared up front; the previous one lingers and swaps in one
-            // paint when the fetch resolves.
-            //
-            // The rail's active module does NOT linger the previous outline: it is gated on `tocRouteRef`
-            // (passed to `DocsApp.body`), which still names the OLD route until the stamp below. The new
-            // module is highlighted the instant `route` flips (responsive), but its section list stays empty
-            // until its real outline lands, so the box never paints the previous module's `## ` headings
-            // under the new module (the "different text appears, then changes" flicker). `tocRef` is set
-            // FIRST and `tocRouteRef` SECOND, so the gate opens only once the matching outline is already in
-            // hand, never the reverse (which would briefly show the new route's gate over the old outline).
-            // For an already-cached route the whole block resolves in-fiber, so the swap is a single paint
-            // with nothing stale on screen.
+            // paint when the fetch resolves. The rail itself does not wait on this fetch: its sections come
+            // from `island.outlines` (static), so they update with the route flip independently of the prose.
             //
             // `loadingRef` gates the prev/next pager hidden for the same window: it is keyed on the `route`
             // signal (which flipped synchronously), so without the gate it would paint the NEW module's
@@ -553,11 +534,6 @@ object WebsiteBundleMain:
                             }
                     }
                     _ <- articleRef.set(UI.rawHtml(article.html))
-                    _ <- tocRef.set(article.headings)
-                    // Stamp the outline's route AFTER setting the outline itself, so the rail's gate
-                    // (active module shows sections only when `tocRouteRef` names it) opens exactly once the
-                    // matching headings are in hand, in the same fetch resolution.
-                    _ <- tocRouteRef.set(nextRoute)
                 yield ()
             }
             _ <- content.set(docsBody)

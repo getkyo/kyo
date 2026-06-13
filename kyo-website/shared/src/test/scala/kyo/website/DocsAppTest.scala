@@ -23,8 +23,11 @@ class DocsAppTest extends WebsiteTest:
         else if content.version.latest then "latest"
         else content.version.tag
         for
-            view <- DocsApp.body(content, resolvedPrefix, route, Signal.initConst(toc), route, article, Signal.initConst(contentLoading))
-            html <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
+            // The rail reads outlines from a static route -> outline map; the test page's outline is keyed
+            // by its own route (the active module's href), mirroring what the SSG inlines into the island.
+            routeStr <- route.current
+            view     <- DocsApp.body(content, resolvedPrefix, route, Map(routeStr -> toc), article, Signal.initConst(contentLoading))
+            html     <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield html
         end for
     end rendered
@@ -169,27 +172,24 @@ class DocsAppTest extends WebsiteTest:
         end for
     }
 
-    // Leaf 3c (the rail-flicker gate): the active module renders its sections ONLY when the loaded
-    // outline belongs to that same module. On a client navigation the active flag flips the instant a
-    // module link is clicked, but the new module's outline arrives a beat later (after the content.md
-    // fetch). During that window `tocRoute` still names the PREVIOUS module, so the active box must show
-    // just its link, never the previous module's `## ` headings under the new module.
-    "active module renders no sections when the outline route names a different module (gate)" in {
-        val toc = Chunk(
-            DocsMarkdown.Heading(1, "kyo-core", "kyo-core"),
-            DocsMarkdown.Heading(2, "Scope", "scope")
+    // Leaf 3c (static outline source): the active module renders the sections from the `outlines` map
+    // entry for ITS OWN route (keyed by href), not another route's, proving the rail reads the per-route
+    // static map. kyo-core is active with a #scope section; a kyo-data entry carries #other, which must
+    // not leak into the active module.
+    "active module renders the outline mapped to its own route, not another route's (leaf 3c)" in {
+        val outlines = Map(
+            "/latest/kyo-core/" -> Chunk(DocsMarkdown.Heading(2, "Scope", "scope")),
+            "/latest/kyo-data/" -> Chunk(DocsMarkdown.Heading(2, "Other", "other"))
         )
         for
-            route    <- fixedRoute("/latest/kyo-core/") // kyo-core is the active module
-            tocRoute <- fixedRoute("/latest/kyo-data/") // but the loaded outline belongs to kyo-data
-            view     <- DocsApp.body(coreContent(), "latest", route, Signal.initConst(toc), tocRoute, UI.empty, Signal.initConst(false))
-            html     <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
+            route <- fixedRoute("/latest/kyo-core/")
+            view  <- DocsApp.body(coreContent(), "latest", route, outlines, UI.empty, Signal.initConst(false))
+            html  <- UI.runRenderPage(testHead)(view).take(1).run.map(_.headMaybe.getOrElse(""))
         yield
-            // kyo-core is the active rail item ...
             assert(html.contains("nav-item-active"), s"kyo-core should be the active rail item: $html")
-            // ... but the outline is gated off because it is kyo-data's, not kyo-core's.
-            assert(!html.contains("sidebar-sections"), s"gate must hide the outline when the outline route mismatches: $html")
-            assert(!html.contains("#scope"), s"no section anchor must render when the gate is closed: $html")
+            // kyo-core's own outline (#scope) renders; the kyo-data entry (#other) must not leak in.
+            assert(html.contains("#scope"), s"the active module's own mapped outline must render: $html")
+            assert(!html.contains("#other"), s"another route's outline must not leak into the active module: $html")
         end for
     }
 
