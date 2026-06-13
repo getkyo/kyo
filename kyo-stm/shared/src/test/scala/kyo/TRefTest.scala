@@ -2,6 +2,9 @@ package kyo
 
 class TRefTest extends kyo.test.Test[Any]:
 
+    // Run this suite's leaves one at a time: the id-counter assertions read a process-global counter.
+    override def config = super.config.sequential
+
     "init and get" in {
         for
             ref   <- TRef.init(42)
@@ -728,8 +731,16 @@ class TRefTest extends kyo.test.Test[Any]:
                 val b      = TRef.Unsafe.init(STM.Tick.next(), 2)
                 val c      = TRef.Unsafe.init(STM.Tick.next(), 3)
                 val after  = TRef.Unsafe.init(0).id
-                assert(a.id < b.id && b.id < c.id, s"Unsafe.init must produce strictly-increasing ids; got ${a.id} ${b.id} ${c.id}")
-                assert((after - before) == 4, s"counter must advance by exactly 4 (a, b, c, after); diff=${after - before}")
+                // The id counter is process-global; under parallel test execution other leaves allocate
+                // TRefs concurrently, so the delta across these five allocations is >= 4, not exactly 4.
+                // Per-call advancement and no-rollback are proven by the strictly-increasing chain of ids
+                // read sequentially from this fiber (the global counter is monotonic), independent of any
+                // concurrent consumption.
+                assert(
+                    before < a.id && a.id < b.id && b.id < c.id && c.id < after,
+                    s"Unsafe.init ids must strictly increase per call; got before=$before a=${a.id} b=${b.id} c=${c.id} after=$after"
+                )
+                assert((after - before) >= 4, s"counter must advance by at least 4 (a, b, c, after); diff=${after - before}")
             }
         }
 

@@ -4,7 +4,6 @@ import kyo.Browser.*
 import kyo.Length.*
 import kyo.UI.Ast.HtmlContent
 import kyo.UI.foreach
-import scala.language.implicitConversions
 
 /** Port of FormDemoRenderTest. Original tests targeted TUI buffer rendering (cursor characters, scroll-induced viewport shifts, line-break
   * inspection). Browser equivalents check DOM properties (value/placeholder attributes, document.activeElement, body innerText ordering,

@@ -157,11 +157,13 @@ class NioTransportTest extends kyo.BaseHttpTest:
             val port = listener.port
             // Connect a plain Java socket to trigger the accept handler
             val clientSock = new java.net.Socket("127.0.0.1", port)
-            Async.sleep(300.millis).map { _ =>
+            // Wait for the accept handler to actually run rather than guessing a fixed delay: the accept
+            // is async on the NIO loop, so under CI load it can take longer than a fixed sleep, which
+            // made this test flaky. assertEventually polls until the handler sets the flag.
+            assertEventually(accepted.get()).map { _ =>
                 clientSock.close()
                 listener.close()
                 transport.close()
-                assert(accepted.get())
             }
         }
     }

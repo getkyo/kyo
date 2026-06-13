@@ -159,6 +159,26 @@ class RTDetachedAfterSuite extends TestBase[Any]:
     }.andThen(succeed)
 end RTDetachedAfterSuite
 
+/** A single leaf slower than a short heartbeat interval, used to prove `onLeafHeartbeat` fires while a leaf is still running. */
+class RTHeartbeatSuite extends TestBase[Any]:
+    "slow-leaf" in Async.sleep(1.second).andThen(succeed)
+end RTHeartbeatSuite
+
+/** A `TestReporter` that records every `onLeafHeartbeat` call (thread-safe) and ignores all other lifecycle events. */
+final class RecordingHeartbeatReporter extends kyo.test.TestReporter:
+    private val beats =
+        new java.util.concurrent.atomic.AtomicReference[Vector[(Chunk[String], Duration)]](Vector.empty)
+    def onRunStart(info: kyo.test.RunInfo): Unit                                      = ()
+    def onSuiteStart(info: kyo.test.SuiteInfo): Unit                                  = ()
+    def onLeafStart(info: kyo.test.LeafInfo): Unit                                    = ()
+    def onLeafComplete(info: kyo.test.LeafInfo, result: TestResult): Unit             = ()
+    def onSuiteComplete(info: kyo.test.SuiteInfo, report: kyo.test.SuiteReport): Unit = ()
+    def onRunComplete(report: TestReport): Unit                                       = ()
+    override def onLeafHeartbeat(info: kyo.test.LeafInfo, elapsed: Duration): Unit =
+        beats.updateAndGet(_ :+ (info.path -> elapsed)): Unit
+    def recorded: Vector[(Chunk[String], Duration)] = beats.get()
+end RecordingHeartbeatReporter
+
 class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override val executionContext: ExecutionContext = TestExecutionContext.executionContext
@@ -392,6 +412,31 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
                 },
                 s"expected the no-leak leaf to be Passed but got $report"
             )
+        }
+    }
+
+    "Heartbeat: a leaf slower than the heartbeat interval is reported as still running while it runs" in {
+        val rec    = new RecordingHeartbeatReporter
+        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 50.millis)
+        TestRunner.runToFuture(classOf[RTHeartbeatSuite], config).map { report =>
+            // Assert on the slow leaf itself, not the total count: a detached-fiber leak from another fixture can land in the
+            // process-global collector during this suite's 1s window and be drained as a synthetic leaf (the GOAL B mechanism),
+            // which is unrelated to the heartbeat under test.
+            assert(leafByPath(report, Chunk("slow-leaf")).exists { case _: TestResult.Passed => true; case _ => false })
+            val beats = rec.recorded
+            assert(beats.nonEmpty, "expected at least one heartbeat for a leaf that ran far longer than the interval")
+            assert(beats.forall(_._1 == Chunk("slow-leaf")), s"every heartbeat must name the running leaf, got $beats")
+            assert(beats.forall(_._2.toMillis > 0), s"every heartbeat must carry a positive elapsed, got $beats")
+        }
+    }
+
+    "Heartbeat: a fast leaf fires no heartbeat (negative control)" in {
+        val rec = new RecordingHeartbeatReporter
+        // Interval far larger than any leaf's runtime: the forked heartbeat is always interrupted before it can fire.
+        val config = RunConfig.default.copy(reporter = Maybe(rec), heartbeatInterval = 30.seconds)
+        TestRunner.runToFuture(classOf[RTThreeLeafSuite], config).map { report =>
+            assert(countResults(report) == 3)
+            assert(rec.recorded.isEmpty, s"a fast leaf must not trigger any heartbeat, got ${rec.recorded}")
         }
     }
 

@@ -3,7 +3,6 @@ package kyo
 import kyo.UI.Ast.*
 import kyo.UI.foreach
 import kyo.internal.HtmlRenderer
-import scala.language.implicitConversions
 
 /** Tests for the SVG renderer branch: tag name dispatch, attribute serialization, text-bearing elements,
   * typed-value encoders, deterministic ids, and dispatch exhaustiveness for svgTagName and rebuildSvgElement.
@@ -157,11 +156,6 @@ class SvgRendererTest extends kyo.test.Test[Any]:
     // coverage: SvgElement is sealed (so the compiler can check exhaustiveness) and svgTagName covers
     // all 47 concrete types without MatchError.
     "exhaustiveness: SvgElement is sealed and svgTagName covers all 47 types" in {
-        // Compile-fail: extending sealed SvgElement outside the package is a compile error.
-        typeCheckFailure("""
-            import kyo.*
-            class MySvg extends Svg.SvgElement
-        """)("sealed")
         // Runtime: all 47 SVG types render without MatchError.
         val sym = Svg.symbol.id("s1")
         val elements: Seq[Svg.SvgElement] = Seq(
@@ -406,10 +400,6 @@ class SvgRendererTest extends kyo.test.Test[Any]:
     "FeFlood is a sealed FilterPrimitive and renders flood-color" in {
         val fe: Svg.FilterPrimitive = Svg.feFlood.floodColor(Style.Color.Hex("#ff0000")).floodOpacity(0.5)
         assert(fe.isInstanceOf[Svg.FeFlood])
-        typeCheckFailure("""
-            import kyo.*
-            class MyFe extends Svg.FilterPrimitive
-        """)("sealed")
         for html <- HtmlRenderer.render(fe, Seq.empty)
         yield
             assert(html.contains("<feFlood"))

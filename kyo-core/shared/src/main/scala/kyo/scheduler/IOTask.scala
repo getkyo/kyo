@@ -23,6 +23,11 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     final override def onComplete() =
         doPreempt()
+        // The promise just completed (value or interrupt): drop accumulated runtime so a
+        // still-queued task runs promptly to observe completion and run finalizers. Benign on
+        // value-completion; a priority boost on interrupt.
+        resetRuntime()
+    end onComplete
 
     final override def addFinalizer(f: Maybe[Error[Any]] => Unit) =
         finalizers = finalizers.add(f)
@@ -31,18 +36,17 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
         finalizers = finalizers.remove(f)
 
     // Fiber interruption is recorded by IOPromise.interrupt's CAS of the promise state to
-    // Error — the single source of truth. needsInterrupt and eval's stop check both read
+    // Error, the single source of truth. needsInterrupt and eval's stop check both read
     // it, so an interrupt can never be lost to a racing scheduler-level state update.
     final override def needsInterrupt(): Boolean =
         !isPending()
 
-    // Wakes the BlockingMonitor for an immediate scan. If the worker thread is blocked
-    // (flat CPU time), Thread.interrupt() is dispatched once the monitor observes the
-    // interrupted promise.
-    final override def preInterrupt(): Boolean =
+    // Bumps the interrupt epoch and wakes the BlockingMonitor AFTER the promise CAS, so the
+    // worker rebuild and monitor scan it triggers already see needsInterrupt() and the runtime
+    // reset. The pre-CAS preInterrupt hook would let a worker spend its one gated rebuild
+    // before the reset exists, stranding the task at its stale key.
+    final override def onInterrupted(): Unit =
         Scheduler.get.notifyInterrupt()
-        true
-    end preInterrupt
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
@@ -54,7 +58,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                 Isolate.internal.restoring(trace, this) {
                     ArrowEffect.handlePartial(erasedAbortTag, Tag[Async.Join], curr, context)(
                         stop =
-                            // !isPending() is the authoritative interrupt signal — IOPromise.interrupt
+                            // !isPending() is the authoritative interrupt signal: IOPromise.interrupt
                             // CAS-completes the promise, so checking it here stops an interrupted fiber even if
                             // the racing scheduler preemption flag was lost. Ordered after shouldPreempt() and
                             // the deadline check so a step that stops for either of those skips the read.
@@ -69,13 +73,13 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                             (joinInput, cont) =>
                                 locally {
                                     // Invoking joinInput registers the interrupt cascade link on THIS IOTask
-                                    // before we read the promise's state — see Async.useResult.
+                                    // before we read the promise's state (see Async.useResult).
                                     val input = joinInput(this)
                                     input.poll() match
                                         case null =>
                                             cont(null)
                                         case Present(r) =>
-                                            // Promise was already complete when the thunk ran — drop the
+                                            // Promise was already complete when the thunk ran, so drop the
                                             // cascade link the thunk pre-registered so it doesn't accumulate.
                                             this.removeInterrupt(input)
                                             cont(r.asInstanceOf[Result[Nothing, C]])

@@ -63,7 +63,15 @@ private[kyo] object NavigationWatcher:
                             Browser.configLocal.use { cfg =>
                                 Clock.nowMonotonic.map { now =>
                                     val settleDeadline = now + loadScheduleTimeout(cfg.loadSchedule)
-                                    awaitSettle(Absent, settle, settleDeadline, throwOnFailure).andThen(result)
+                                    // The reload is still committing when we start waiting for it to settle: a settle-poll
+                                    // Runtime.evaluate can race the navigation and come back with CDP -32000 "Inspected
+                                    // target navigated or closed" (old execution context gone, new one not yet up). That
+                                    // surfaces as a BrowserProtocolErrorException and is transient, so retry the settle
+                                    // wait until the reloaded page is reachable. A genuine navigation failure is a
+                                    // BrowserNavigationFailedException (a different type) and is not retried here.
+                                    Retry[BrowserProtocolErrorException](navTransientRetrySchedule)(
+                                        awaitSettle(Absent, settle, settleDeadline, throwOnFailure)
+                                    ).andThen(result)
                                 }
                             }
                         }
@@ -547,6 +555,14 @@ private[kyo] object NavigationWatcher:
       * `Schedule.never` shape). Named so the magic 5-second window is auditable in one place rather than scattered.
       */
     private[kyo] val defaultLoadScheduleTimeout: Duration = 5.seconds
+
+    /** A `Runtime.evaluate` issued by a settle/navigation poll can race the in-flight navigation and come back with CDP
+      * `-32000 "Inspected target navigated or closed"`: the target's execution context is being torn down and recreated.
+      * It surfaces as a [[BrowserProtocolErrorException]] and is transient (the new context is up within a few polls), so
+      * the navigation settle wait retries on it. A genuine navigation failure is a [[BrowserNavigationFailedException]] (a
+      * different type) and is not retried here, it propagates as before.
+      */
+    private[internal] val navTransientRetrySchedule: Schedule = Schedule.fixed(50.millis).take(20)
 
     /** Snapshot of the watcher state just before the trigger runs. */
     final private[internal] case class NavSnapshot(url: String, pushStateCount: Int, beforeUnload: Boolean)

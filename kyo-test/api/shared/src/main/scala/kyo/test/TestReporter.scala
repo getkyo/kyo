@@ -1,5 +1,7 @@
 package kyo.test
 
+import kyo.Duration
+
 /** Receives lifecycle events from the test runner and turns them into output or side effects.
   *
   * The runner calls these methods in a well-defined order: `onRunStart`, then for each suite `onSuiteStart` / (per leaf: `onLeafStart` /
@@ -31,6 +33,14 @@ trait TestReporter:
 
     /** Called after each leaf completes (or is skipped/ignored); carries the final result. */
     def onLeafComplete(info: LeafInfo, result: TestResult): Unit
+
+    /** Called while a leaf is still running, once it has been running longer than `RunConfig.heartbeatInterval`, and again every interval
+      * thereafter, carrying the leaf and its elapsed run time. This surfaces a slow or hung leaf while it runs rather than only at
+      * completion, since `onLeafComplete` never fires for a leaf that never finishes. The runner drives it from a forked heartbeat fiber, so
+      * an implementation must be thread-safe under parallelism, like the other callbacks. Defaults to a no-op so reporters that do not surface
+      * in-progress state need not implement it.
+      */
+    def onLeafHeartbeat(info: LeafInfo, elapsed: Duration): Unit = ()
 
     /** Called after all leaves in a suite have finished; carries the aggregated suite report. */
     def onSuiteComplete(info: SuiteInfo, report: SuiteReport): Unit

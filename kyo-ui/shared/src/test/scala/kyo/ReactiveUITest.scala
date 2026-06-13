@@ -5,7 +5,6 @@ import kyo.internal.HtmlOp
 import kyo.internal.KeyboardEventData
 import kyo.internal.MouseEventData
 import kyo.internal.UIEvent
-import scala.language.implicitConversions
 
 class ReactiveUITest extends UITest:
 

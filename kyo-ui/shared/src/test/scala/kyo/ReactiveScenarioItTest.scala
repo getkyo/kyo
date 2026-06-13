@@ -3,7 +3,6 @@ package kyo
 import kyo.Browser.*
 import kyo.UI.foreach
 import kyo.UI.foreachKeyed
-import scala.language.implicitConversions
 
 class ReactiveScenarioItTest extends UITest:
 

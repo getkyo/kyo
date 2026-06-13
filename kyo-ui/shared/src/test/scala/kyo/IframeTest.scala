@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Browser.*
 import kyo.UI.*
-import scala.language.implicitConversions
 
 class IframeTest extends UITest:
 

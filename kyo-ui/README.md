@@ -14,6 +14,7 @@ Event handlers are typed `Any < Async` and can call anything in the kyo ecosyste
 
 <!-- doctest:setup
 ```scala
+import Chart.*
 import UI.*
 import kyo.*
 case class Todo(id: String, text: String, done: Boolean)
@@ -74,7 +75,7 @@ val labeled: UI =
 
 ### Event handlers
 
-Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a communication channel; reach the rest of the app via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
+Every element that mixes in `Interactive` (which is every non-`Void` factory plus the input elements) exposes `.onClick`, `.onClickSelf`, `.onKeyDown`, `.onKeyUp`, `.onFocus`, `.onBlur`. Handler bodies are typed `Any < Async`: the framework discards the return value, so you can pass any effectful expression directly without an explicit `.unit` or `Unit` ascription. Handlers can suspend, perform `Sync`, raise via `Abort`, sleep, call kyo-http, anything. The return value is not a way to communicate with the rest of the app; reach it via a `SignalRef` (a writable, observable cell, introduced in [Reactivity](#reactivity) below) or other shared state.
 
 ```scala
 import UI.*
@@ -193,7 +194,7 @@ val example: UI < Async =
     yield div(
         button("Toggle").onClick(loggedIn.updateAndGet(!_)),
         when(loggedIn)(
-            p("Welcome, ", username: Signal[String]).style(themed)
+            p("Welcome, ", username).style(themed)
         ),
         input.placeholder("Your name").value(username).hidden(loggedIn)
     )
@@ -245,7 +246,7 @@ val explicit: UI < Async =
 
 val implicitForm: UI < Async =
     for ref <- Signal.initRef("")
-    yield span(ref: Signal[String])
+    yield span(ref)
 ```
 
 > **Note:** Only `Signal[A <: UI]` and `Signal[String]` auto-coerce. A `Signal[Style]` does NOT (it has its own `.style(Signal[Style])` overload). A `Signal[Boolean]` does NOT. Reading any other signal type in a `UI*` position produces a type error.
@@ -364,7 +365,7 @@ val nameField: UI < Async =
     for name <- Signal.initRef("")
     yield div(
         input.id("name").placeholder("Your name").value(name),
-        p("Hi, ", name: Signal[String])
+        p("Hi, ", name)
     )
 ```
 
@@ -713,8 +714,8 @@ val sameButton: Style =
 `Color` is a sealed ADT with private constructors. Use the factories or the named constants:
 
 - `Color.hex(s: String): Maybe[Color]`. Validates: accepts 3, 4, 6, or 8 hex digits with or without a leading `#`. Returns `Absent` on any other length or any non-hex character. No exception is thrown.
-- `Color.rgb(r, g, b)`: channels clamped to `[0, 255]`.
-- `Color.rgba(r, g, b, a)`: channels clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
+- `Color.rgb(r, g, b)`: components clamped to `[0, 255]`.
+- `Color.rgba(r, g, b, a)`: components clamped to `[0, 255]`, alpha clamped to `[0, 1]`.
 - Named constants: `Color.white`, `black`, `transparent`, `red`, `orange`, `yellow`, `green`, `blue`, `indigo`, `purple`, `pink`, `gray`, `slate`.
 
 ```scala
@@ -809,10 +810,6 @@ The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`
 
 The primary element hook is `UI.cssClass(name)`: it emits `class="name"` on the element, giving a `Stylesheet` rule something stable to target. Call it multiple times to space-join classes. `style(...)` and `cssClass(...)` coexist on one element.
 
-## SVG
-
-SVG is not a separate document model bolted on the side. Every SVG node is a `UI` element built by a `Svg.*` factory, reusing the same path/event/reactive engine as `div` and `button`. The one boundary that matters is HTML embedding: only `Svg.svg` (the `Root`) is also `HtmlContent`, so it embeds in an HTML container, while bare SVG primitives extend `SvgElement`/`SvgNode` but NOT `HtmlContent`. Reach for the `<svg>` root as the single embed point, then build shapes inside it.
-
 ```scala
 import UI.*
 import kyo.*
@@ -836,234 +833,331 @@ Selectors: `Selector.cls("btn")` (`.btn`), `Selector.id("hero")` (`#hero`), `Sel
 
 Reference a `:root` variable in a declaration with `Color.variable("accent")`, which renders as `var(--accent)`.
 
-```scala
-import UI.*
-import kyo.*
+## Charts
 
-val drawing: UI =
-    div(
-        Svg.svg.width(120).height(120).viewBox(Svg.ViewBox(0, 0, 120, 120))(
-            Svg.circle.cx(60).cy(60).r(40)
-        )
+A `Chart` is a pure immutable spec, not a `UI` node. You describe what to plot from your data and a list of marks, and nothing renders until you call `.lower`, which yields an `Svg.Root`. `Svg.Root` is the one SVG type that is also `HtmlContent` (the typed [SVG](#svg) layer, covered later), so a lowered chart drops into any `UI` container exactly where an `<svg>` root fits. Lowering suspends in `Sync` because it allocates the chart's reactive state and samples live data once, so you thread it like any other effect.
+
+The examples below all chart the same small dataset. Each row is a monthly sale with a `region`, a `revenue`, and a `lo`/`hi` band used later:
+
+```scala doctest:setup
+enum Region derives CanEqual, Plottable:
+    case NA, EU, APAC
+
+case class Sale(month: String, revenue: Double, region: Region, lo: Double, hi: Double)
+
+val sales: Seq[Sale] = Seq(
+    Sale("Jan", 49800.0, Region.EU, 46000.0, 53000.0),
+    Sale("Feb", 61200.0, Region.NA, 58000.0, 64000.0)
+)
+```
+
+`Region` derives its `Plottable` instance and `revenue`/`lo`/`hi` are plain `Double`s, so each scale is chosen from the field's type with no annotation at the call site.
+
+### One chart, end to end
+
+The smallest chart is `Chart(data)(mark)`. The first application fixes the row type `A` from `data`; the second names the visual layers. This two-group shape is load-bearing: binding `A` before the mark lambdas are read is what lets `x = _.month` infer with no annotation. Lowering turns the spec into an `Svg.Root < Sync`, and you embed it by threading that effect into a `UI.div`:
+
+```scala
+val firstChart: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+
+val view: UI < Sync =
+    for chart <- firstChart
+    yield UI.div(UI.h2("Revenue by region"), chart)
+```
+
+That is the whole pipeline: `Chart(data)(marks*)`, optional configuration, `.lower`, embed. Everything below refines one of those steps.
+
+### Marks are the visual vocabulary
+
+There is one `Chart` type and a list of marks. The mark you choose, and the encodings you map onto it, decide the chart kind. The seven factories are `bar`, `line`, `area`, `point`, `text`, `errorBar`, and `rule`:
+
+```scala
+val barChart: Svg.Root < Sync  = Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+val lineChart: Svg.Root < Sync = Chart(sales)(Chart.line(x = _.month, y = _.revenue)).lower
+val scatter: Svg.Root < Sync   = Chart(sales)(Chart.point(x = _.lo, y = _.hi)).lower
+val areaChart: Svg.Root < Sync = Chart(sales)(Chart.area(x = _.month, y = _.revenue)).lower
+```
+
+Many marks can layer over the same rows. A combo chart is just two marks in one list; they share the chart's x-scale automatically:
+
+```scala
+val combo: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.line(x = _.month, y = _.hi)
+    ).lower
+```
+
+Every mark maps its data through named parameters, never chained method calls. The named form is what keeps the accessor lambdas inferring: a hypothetical chained `.color(_.region)` would collapse the row type to `Any`. Beyond `x` and `y`, encodings are optional named parameters. `color` groups rows and derives a legend; `stack` (built with `Chart.by`) stacks grouped series:
+
+```scala
+val grouped: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region)).lower
+
+val stacked: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region))).lower
+
+val normalized: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, stack = Chart.by(_.region, normalize = true))).lower
+```
+
+Each factory exposes only the encodings that make sense for it, and the rest do not compile. A `bar`'s magnitude is its `y`, so `bar` has no `size`. A `point` carries `size` (a magnitude scaled by square-root area, so the eye reads area, not radius) and `sizePx` (a raw-pixel-radius escape hatch); if you pass both, `size` wins. The `symbol` parameter picks the glyph from `Chart.Symbol` (`circle`, `square`, `triangle`, `diamond`, `cross`):
+
+```scala
+val bubbles: Svg.Root < Sync =
+    Chart(sales)(Chart.point(x = _.month, y = _.revenue, size = _.hi)).lower
+
+val diamonds: Svg.Root < Sync =
+    Chart(sales)(Chart.point(x = _.lo, y = _.hi, symbol = _ => Chart.Symbol.diamond)).lower
+```
+
+`line` and `area` take a `curve` parameter that selects the interpolation between vertices, drawn from `Curve` (`linear`, `monotone`, `stepBefore`, `stepAfter`, `basis`, `catmullRom`):
+
+```scala
+val smooth: Svg.Root < Sync =
+    Chart(sales)(Chart.line(x = _.month, y = _.revenue, curve = Curve.monotone)).lower
+```
+
+### Reference lines with `rule`
+
+A `rule` is the one mark that reads no row. It draws a reference line at a fixed position, such as a target or threshold, so it has no `color` or `size` encoding. Its `y` (or `x`) takes a plain constant, and an implicit conversion lets you pass the bare value with no wrapper:
+
+```scala
+val withTarget: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.line(x = _.month, y = _.revenue),
+        Chart.rule(y = 55000.0)
+    ).lower
+```
+
+The same `y` also accepts a `Signal[Double]` for a threshold that tracks live state, again with no wrapper. That reactive form is shown later under [Reactivity](#reactivity).
+
+### Typed values pick the scale
+
+Each encoding's scale is chosen from the static type of its accessor, so you rarely declare a scale at all. `Int`/`Double` select a linear scale, `String` and enums select a band (categorical) scale, and `Instant` selects a time scale. In the running domain, `month: String` gives a band x-scale and `revenue: Double` a linear y-scale, with nothing to annotate:
+
+```scala
+val typedChart: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lower
+```
+
+A `Maybe[Y]` accessor type-checks too and means gaps: a line breaks and a point or bar drops at the `Absent` rows.
+
+The rule that makes this work is that an accessor's value type must have a `Plottable` instance, the evidence that also selects the scale family. An encoding over a type with no instance, such as a `Boolean` or an arbitrary class, does not compile. You rarely name `Plottable` directly: instances exist for `Int`, `Long`, `Double`, `String`, and `Instant`, enums derive one automatically, and an opaque numeric type can supply one with `Plottable.numeric`:
+
+<!-- doctest:setup
+```scala
+opaque type Usd <: Double = Double
+object Usd:
+    given Plottable[Usd] = Plottable.numeric
+```
+-->
+
+```scala
+val opaqueY: Svg.Root < Sync =
+    Chart(sales)(Chart.point(x = _.month, y = (s: Sale) => (s.revenue: Usd))).lower
+```
+
+### Axes, scales, legends, and theme
+
+The spec is a record, and each configuration method is a focused copy returning a new `Chart`. Defaults are sensible (640x480, light theme, scales inferred from the data), so all of this is opt-in. Axes and a legend appear automatically; their lambdas refine them. Scale overrides replace the inferred scale only when you want a different one:
+
+```scala
+val configured: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .xScale(_.band)
+        .yScale(_.linear(0.0, 80000.0))
+        .xAxis(_.label("Month"))
+        .yAxis(_.grid.ticks(5).format(v => f"$$$v%,.0f"))
+        .legend(_.top)
+        .theme(_.light)
+        .size(640, 360)
+        .lower
+```
+
+A `.yScale(_.log)` swaps in a log scale; the same builder carries `.withNice` (round the fitted domain to tidy values, stretching `[0, 78432]` to `[0, 80000]`), `.withClamp`, and `.withPad`. A time x-axis needs only an `Instant` accessor:
+
+```scala
+case class Hit(at: Instant, count: Double)
+val hits: Seq[Hit] = Seq(Hit(Instant.Epoch, 10.0), Hit(Instant.Epoch + 1.minute, 100.0))
+
+val logOverTime: Svg.Root < Sync =
+    Chart(hits)(Chart.line(x = _.at, y = _.count)).yScale(_.log).lower
+```
+
+#### Color scales
+
+The legend's color scale decides how the `color` encoding maps to swatch and mark fills, and it applies to every mark that carries `color`. A categorical scale takes value-equality pairs over a typed key; a category with no pair falls back to `Style.Color.blue`. A `colorScale` overload instead takes a function from each category's label to a color:
+
+```scala
+val categorical: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(Region.NA -> Style.Color.blue, Region.EU -> Style.Color.green))
+        .lower
+
+val byLabel: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .legend(_.colorScale(label => if label == "NA" then Style.Color.blue else Style.Color.green))
+        .lower
+```
+
+A sequential scale maps a numeric `color` onto a gradient: each row's value is normalized across the data range and drawn as the interpolated color between two endpoints:
+
+```scala
+val sequential: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.hi))
+        .legend(_.colorScaleSequential(Style.Color.blue, Style.Color.red))
+        .lower
+```
+
+#### Theme
+
+`.theme` switches between light and dark and selects a named palette from `Chart.Palette` (`Default`, `Okabe`, `Viridis`, `Tableau10`; `Okabe` is the color-vision-accessible Okabe-Ito set). The same builder sets `.font(family)`, `.fontSize(px)`, `.background`, `.axisColor`, and `.gridColor`:
+
+```scala
+val themed: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+        .theme(_.dark.palette(Chart.Palette.Okabe).font("monospace"))
+        .lower
+```
+
+### A second axis
+
+A mark opts onto the right y-axis with `axis = Axis.Right`. That axis gets its own scale, configured independently through `.yAxisRight` and `.yScaleRight`; on a single-axis chart `.yScaleRight` is a no-op:
+
+```scala
+val twoAxis: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.bar(x = _.month, y = _.revenue),
+        Chart.line(x = _.month, y = _.hi, axis = Axis.Right)
+    )
+        .yAxis(_.label("Revenue"))
+        .yAxisRight(_.label("Upper bound"))
+        .yScaleRight(_.linear(40000.0, 70000.0))
+        .lower
+```
+
+If both axes enable `.grid`, only the left axis draws gridlines, so they are never doubled.
+
+### Annotations and intervals
+
+A `text` mark stamps a label at each `(x, y)`, with `anchor` controlling horizontal alignment. An `errorBar` draws a `low`-to-`high` whisker with caps (`capWidth` defaults to 6 pixels) and a center marker at `y`:
+
+```scala
+val annotated: Svg.Root < Sync =
+    Chart(sales)(
+        Chart.point(x = _.month, y = _.revenue),
+        Chart.text(x = _.month, y = _.revenue, label = _.region.toString, anchor = Chart.TextAnchor.Middle),
+        Chart.errorBar(x = _.month, y = _.revenue, low = _.lo, high = _.hi)
+    ).lower
+```
+
+An `area` mark fills a band when given `y0` and `y1` instead of `y`. Supply exactly one of `{y}` or `{y0, y1}`; a misconfiguration renders an empty frame rather than crashing:
+
+```scala
+val band: Svg.Root < Sync =
+    Chart(sales)(Chart.area(x = _.month, y0 = _.lo, y1 = _.hi)).lower
+```
+
+### Sizing and accessibility
+
+`.size(w, h)` fixes pixel dimensions; `.responsive(ratio)` instead scales the root to its container at a fixed aspect ratio. The two are last-write-wins, so pick one. `.margins(_.left(80))` widens one plot margin, tick chrome adjusts through `rotateTicks`/`pad`/`anchor`, and `.title`/`.desc`/`.ariaLabel` add accessibility markup (`.title` also sets `role="img"` so assistive tech announces the chart as one image). The accessibility fields default to absent:
+
+```scala
+val a11yChart: Svg.Root < Sync =
+    Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
+        .responsive(16.0 / 9)
+        .margins(_.left(80))
+        .xAxis(_.rotateTicks(45).pad(8))
+        .yAxis(_.rotateTicks(30).anchor(Chart.TextAnchor.End))
+        .title("Revenue by region")
+        .desc("Quarterly revenue, EU vs NA")
+        .ariaLabel("Revenue by region bar chart")
+        .lower
+```
+
+### Reactivity
+
+A chart goes live by swapping its data source: pass a `Signal[Seq[A]]` instead of a `Seq[A]`. The marks region redraws on each emission while the frame, axes, and legend stay put. The marks and encodings are identical to the static form. `.animate(_.ease(300.millis))` tweens same-structure path morphs on a fixed ease-in-out-cubic curve (only the duration is configurable) and snaps on a structural change, such as a category added or removed:
+
+```scala
+val livePage: UI < Async =
+    for
+        data <- Signal.initRef(sales)
+        liveChart <- Chart(data)(Chart.bar(x = _.month, y = _.revenue))
+            .animate(_.ease(300.millis))
+            .lower
+    yield UI.div(liveChart)
+```
+
+The data source is not the only reactive surface, and none of these are chart-specific machinery: they are ordinary signals in the same reactive model. A `rule` threshold can be a `Signal`, so a reference line tracks live state:
+
+```scala
+val liveThreshold: UI < Async =
+    for
+        target <- Signal.initRef(50000.0)
+        chart <- Chart(sales)(
+            Chart.bar(x = _.month, y = _.revenue),
+            Chart.rule(y = target)
+        ).lower
+    yield UI.div(chart)
+```
+
+### Interaction
+
+A chart does not own interaction state. It writes the hovered or selected datum into a `SignalRef` you own, and you read that ref elsewhere in your reactive UI. `.onHover(ref)` and `.onSelect(ref)` publish a `Maybe[A]` on pointer enter/leave and click; `.tooltip(f)` formats the hovered datum:
+
+```scala
+val interactivePage: UI < Async =
+    for
+        hovered <- Signal.initRef(Maybe.empty[Sale])
+        hoverChart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue))
+            .onHover(hovered)
+            .tooltip(s => s"${s.month}: ${s.revenue}")
+            .lower
+    yield UI.div(
+        hoverChart,
+        hovered.render(s => UI.div(s.map(i => s"${i.month}: ${i.revenue}").getOrElse("hover a bar")))
     )
 ```
 
-> **Caution:** `div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does NOT. Bare SVG primitives extend `SvgElement`/`SvgNode` but not `HtmlContent`, so the only HTML embed point is the `<svg>` root. Build shapes inside it.
-
-### Structure and grouping
-
-`Svg.g` groups elements (and carries shared `fill`/`stroke`/`transform`); `Svg.defs` holds reusable definitions; `Svg.symbol` defines a template instantiated by `Svg.use`; `Svg.switch` and `Svg.a` (an `SvgAnchor`) round out the structural set. `Svg.use(target)` resolves the target's id automatically, so a symbol with no explicit `.id` still wires up:
+`.interaction(_.highlightSelect)` (or `.highlightHover`) opts into a built-in opacity boost on the selected or hovered datum. It does nothing unless the matching `onSelect`/`onHover` ref is wired, select wins when both apply, and `.hoverStyle`/`.selectStyle` customize the look:
 
 ```scala
-import UI.*
-import kyo.*
-
-val reused: UI =
-    Svg.svg.width(200).height(100).viewBox(Svg.ViewBox(0, 0, 200, 100))(
-        Svg.defs(
-            Svg.symbol.id("dot")(Svg.circle.cx(5).cy(5).r(5))
-        ),
-        Svg.g(
-            Svg.use(Svg.symbol.id("dot")),
-            Svg.use(Svg.symbol.id("dot")).x(20).y(0)
-        )
-    )
+val highlightPage: UI < Async =
+    for
+        selected <- Signal.initRef(Maybe.empty[Sale])
+        chart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+            .onSelect(selected)
+            .interaction(_.highlightSelect)
+            .lower
+    yield UI.div(chart)
 ```
 
-### Shapes and text
-
-The shape factories are `Svg.rect`, `Svg.circle`, `Svg.ellipse`, `Svg.line`, `Svg.polyline`, `Svg.polygon`, and `Svg.path`. The text factories are `Svg.text`, `Svg.tspan`, and `Svg.textPath`; each accepts a plain `String` child. Which setters exist on a given element is gated by SVG capability traits (`HasFill`, `HasStroke`, `HasTransform`, `HasOpacity`, `Positioned`, `Sized`, `HasFilter`, ...): `Svg.line` has no `fill` (it mixes in `HasStroke` but not `HasFill`), and `Svg.rect` carries `x`/`y`/`width`/`height` from `Positioned` and `Sized`.
+An interactive legend follows the same model. `.legend(_.interactive(ref))` makes swatches clickable; `ref` is a `SignalRef[Set[Int]]` holding the indices of the hidden series. Clicking a swatch toggles its series index, and the dropped rows make the remaining series re-lay out to fill the plot. Keying by index, not by label, keeps two categories that share a `toString` independently toggleable, and the hidden set is readable anywhere else (for a count or a reset button):
 
 ```scala
-import UI.*
-import kyo.*
-
-val labeled: UI =
-    Svg.svg.width(200).height(60).viewBox(Svg.ViewBox(0, 0, 200, 60))(
-        Svg.rect.x(0).y(0).width(200).height(60).fill(Svg.Paint.Color(Style.Color.slate)),
-        Svg.text.x(100).y(34)
-            .textAnchor(Svg.TextAnchor.Middle)
-            .fill(Svg.Paint.Color(Style.Color.white))
-            .fontSize(Svg.SvgLength.px(18.0))("centered")
-    )
+val legendTogglePage: UI < Async =
+    for
+        hidden <- Signal.initRef(Set.empty[Int])
+        chart <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue, color = _.region))
+            .legend(_.top.interactive(hidden))
+            .lower
+    yield UI.div(chart)
 ```
 
-### Typed value DSLs, no raw attribute strings
+### Reading back scales
 
-SVG attribute values are typed, never raw strings. A path's `d` is built from a `Svg.PathData` value: start at `PathData.from(x, y)`, then chain `moveTo`, `lineTo`, `cubicTo`, `arcTo`, and `close` (each appends a command). There is no raw `d` string overload. The same applies to `Svg.Points` (point sequences), `Svg.Transform` (translate/rotate/scale/skew/matrix), `Svg.ViewBox`, `Svg.PreserveAspectRatio`, and `Svg.SvgLength` (`px`/`pct`/`em`/`user`).
+`.lower` produces only the SVG. When you need to place an overlay (a brush, a callout, a custom annotation) at exact chart pixels, `.lowerWithScales` returns the lowered SVG together with the resolved `Scales`, so you do not re-derive the scale math. `Scales` exposes `x`, `y`, an optional `yRight`, and the inner `plot` rect; each axis offers `toPixel`, `toPixelCategory`, `invert`, and `kind` (a `ScaleKind`):
 
 ```scala
-import UI.*
-import kyo.*
-
-val triangle: UI =
-    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
-        Svg.path
-            .d(Svg.PathData.from(10, 90).lineTo(50, 10).lineTo(90, 90).close)
-            .fill(Svg.Paint.Color(Style.Color.blue))
-            .transform(Svg.Transform.Translate(0, 0))
-    )
+val pixelForRevenue: Double < Sync =
+    for (overlaySvg, scales) <- Chart(sales)(Chart.bar(x = _.month, y = _.revenue)).lowerWithScales
+    yield scales.y.toPixel(60000.0)
 ```
 
-### Constrained enums
-
-Where SVG would otherwise take a magic token, kyo-ui takes a typed enum: `Svg.FillRule`, `Svg.StrokeLinecap`, `Svg.StrokeLinejoin`, `Svg.TextAnchor`, `Svg.DominantBaseline`, `Svg.SpreadMethod`, `Svg.Units`, `Svg.BlendMode`, and more (each renders to its exact SVG token). A misspelled `"middel"` is impossible because `textAnchor` takes `Svg.TextAnchor`, not a `String`:
-
-```scala
-import UI.*
-import kyo.*
-
-val capped: UI =
-    Svg.svg.width(100).height(40).viewBox(Svg.ViewBox(0, 0, 100, 40))(
-        Svg.line.x1(10).y1(20).x2(90).y2(20)
-            .stroke(Svg.Paint.Color(Style.Color.black))
-            .strokeWidth(6.0)
-            .strokeLinecap(Svg.StrokeLinecap.Round)
-    )
-```
-
-### Paint and typed references
-
-A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `Paint.Color(c)`, or `Paint.Ref(server)`. An ambient `Style.Color => Paint` conversion lets you pass a plain `Style.Color` wherever a `Paint` is expected (with `scala.language.implicitConversions` in scope):
-
-```scala
-import UI.*
-import kyo.*
-import scala.language.implicitConversions
-
-val viaConversion: UI =
-    Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
-        Svg.circle.cx(30).cy(30).r(25).fill(Style.Color.green)
-    )
-```
-
-References are typed handles, never raw `url(#id)` strings. A paint server (`Svg.linearGradient`, `Svg.radialGradient`, `Svg.pattern`, holding `Svg.stop` children) yields a `Paint.Ref` through `.paint`; `Svg.clipPath`, `Svg.mask`, `Svg.marker`, and `Svg.filter` yield `ClipPath.Ref`/`Mask.Ref`/`Marker.Ref`/`Filter.Ref` through `.clipRef`/`.maskRef`/`.markerRef`/`.filterRef`. Define the server once, take its handle, and apply it:
-
-```scala
-import UI.*
-import kyo.*
-
-val gradientFill: UI =
-    val grad = Svg.linearGradient(
-        Svg.stop.offset(0.0).stopColor(Style.Color.blue),
-        Svg.stop.offset(1.0).stopColor(Style.Color.purple)
-    )
-    Svg.svg.width(120).height(80).viewBox(Svg.ViewBox(0, 0, 120, 80))(
-        Svg.defs(grad),
-        Svg.rect.x(0).y(0).width(120).height(80).fill(grad.paint)
-    )
-end gradientFill
-```
-
-> **Note:** SVG definition ids are derived deterministically from the construction-site `Frame` (`kyo-<hex(frame.hashCode)>`), not a global counter or randomness, so the id is stable across all three render targets. The `.paint`/`*Ref` handle and the emitted `id` attribute always agree, so a gradient referenced through `.paint` without an explicit `.id` still emits a matching `id` and never a dangling reference.
-
-### Filters
-
-`Svg.filter` defines a filter region and holds a pipeline of `fe*` primitives: `Svg.feGaussianBlur`, `Svg.feOffset`, `Svg.feBlend`, `Svg.feColorMatrix`, `Svg.feFlood`, `Svg.feComposite`, `Svg.feMerge` / `Svg.feMergeNode`, and more. Each primitive's `in`/`result` names wire the stages together; the consumer references the filter through the typed `Filter.Ref` from `.filterRef`:
-
-```scala
-import UI.*
-import kyo.*
-
-val blurred: UI =
-    val blur = Svg.filter(
-        Svg.feGaussianBlur.stdDeviation(2.0)
-    )
-    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
-        Svg.defs(blur),
-        Svg.circle.cx(40).cy(40).r(30).fill(Svg.Paint.Color(Style.Color.red)).filter(blur.filterRef)
-    )
-end blurred
-```
-
-### SMIL animation
-
-`Svg.animate`, `Svg.animateTransform`, `Svg.animateMotion`, and `Svg.set` are animation leaves placed INSIDE a shape (the `ShapeChild` content model), so the browser drives the tween with no server round-trip:
-
-```scala
-import UI.*
-import kyo.*
-
-val pulsing: UI =
-    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
-        Svg.circle.cx(40).cy(40).r(20).fill(Svg.Paint.Color(Style.Color.blue))(
-            Svg.animate.attributeName("r").from(20.0).to(35.0).dur("1s").repeatCount("indefinite")
-        )
-    )
-```
-
-### Embedding and metadata
-
-`Svg.image(href: UI.ImgSrc)` embeds a raster or vector image into the SVG canvas. The `href` is typed as `UI.ImgSrc` (the same union used by `UI.img`): `ImgSrc.Path` for a relative path, `ImgSrc.Absolute` for a full URL, or `ImgSrc.Data` for an inline base64 data URI.
-
-`Svg.foreignObject` re-enters the HTML content model inside SVG coordinate space. Its children are `HtmlContent` nodes (any `div`, `span`, or other HTML element), letting you position styled HTML fragments at an exact SVG coordinate. It is the only SVG surface that crosses back into `HtmlContent`.
-
-`Svg.title(text)` and `Svg.desc(text)` attach an accessible name and description to the containing SVG element; screen readers surface these as the element's label. `Svg.metadata` holds arbitrary structured metadata (RDF, custom XML) for the SVG document and carries no visual output.
-
-```scala
-import UI.*
-import kyo.*
-
-val annotated: UI =
-    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
-        Svg.title("Red circle"),
-        Svg.desc("A filled red circle centered in the viewport"),
-        Svg.circle.cx(50).cy(50).r(40).fill(Svg.Paint.Color(Style.Color.red))
-    )
-```
-
-### Events on SVG
-
-Because `Svg.Root` and the interactive SVG nodes mix in `Interactive`, the same typed event setters work as on HTML: `.onClick`, `.onHover((e: UI.MouseEvent) => ...)`, and `.onScroll((w: UI.WheelEvent) => ...)`, with the same payloads. Handlers usually live on the enclosing `Svg.g` (SVG hit-tests the topmost element, and dispatch delegates to ancestors), as the Flamegraph demo does:
-
-```scala
-import UI.*
-import kyo.*
-
-val interactiveCell: UI < Async =
-    for hovered <- Signal.initRef(false)
-    yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
-        Svg.g
-            .onClick(Console.printLine("clicked"))
-            .onHover((e: UI.MouseEvent) => hovered.set(true))
-            .onUnhover(hovered.set(false))(
-                Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
-            )
-    )
-```
-
-### A worked example: a small bar chart
-
-Putting the pieces together, a bar chart is one `Svg.rect` per value (positioned via typed lengths), an axis baseline via `Svg.line`, and centered labels via `Svg.text`. This mirrors the in-repo `demo/BarChart.scala`:
-
-```scala
-import UI.*
-import kyo.*
-
-val barChart: UI =
-    val values = Chunk(("kyo", 61.0), ("cats", 49.0), ("zio", 52.0))
-    val maxV   = 64.0
-    val baseY  = 110.0
-    val bars = values.zipWithIndex.flatMap { case ((label, v), i) =>
-        val x = 20.0 + i * 60.0
-        val h = (v / maxV) * 90.0
-        Chunk(
-            Svg.rect.x(x).y(baseY - h).width(40).height(h)
-                .fill(Svg.Paint.Color(Style.Color.blue)),
-            Svg.text.x(x + 20).y(baseY + 14)
-                .textAnchor(Svg.TextAnchor.Middle)
-                .fontSize(Svg.SvgLength.px(10.0))(label)
-        )
-    }
-    val axis = Svg.line.x1(15).y1(baseY).x2(205).y2(baseY)
-        .stroke(Svg.Paint.Color(Style.Color.gray)).strokeWidth(1.0)
-    div(
-        Svg.svg.width(220).height(130).viewBox(Svg.ViewBox(0, 0, 220, 130))(
-            (axis +: bars)*
-        )
-    )
-end barChart
-```
+For a live chart these scales reflect the signal value at call time and do not update on later emissions; call `.lowerWithScales` again to recompute.
 
 ## Running a UI
 
@@ -1300,6 +1394,236 @@ val navBar: UI =
 
 `UILocation.assign(uri): Unit < Sync` performs a full browser navigation via `window.location.assign`. Unlike `push`/`replace` (History-API client-side routing that keeps the SPA mounted), `assign` hands control to the browser entirely. Use it for off-tree routes the SPA cannot resolve client-side.
 
+## SVG
+
+SVG is not a separate document model bolted on the side. Every SVG node is a `UI` element built by a `Svg.*` factory, reusing the same path/event/reactive engine as `div` and `button`. The one boundary that matters is HTML embedding: only `Svg.svg` (the `Root`) is also `HtmlContent`, so it embeds in an HTML container, while bare SVG primitives extend `SvgElement`/`SvgNode` but NOT `HtmlContent`. Reach for the `<svg>` root as the single embed point, then build shapes inside it.
+
+```scala
+import UI.*
+import kyo.*
+
+val drawing: UI =
+    div(
+        Svg.svg.width(120).height(120).viewBox(Svg.ViewBox(0, 0, 120, 120))(
+            Svg.circle.cx(60).cy(60).r(40)
+        )
+    )
+```
+
+> **Caution:** `div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does NOT. Bare SVG primitives extend `SvgElement`/`SvgNode` but not `HtmlContent`, so the only HTML embed point is the `<svg>` root. Build shapes inside it.
+
+### Structure and grouping
+
+`Svg.g` groups elements (and carries shared `fill`/`stroke`/`transform`); `Svg.defs` holds reusable definitions; `Svg.symbol` defines a template instantiated by `Svg.use`; `Svg.switch` and `Svg.a` (an `SvgAnchor`) round out the structural set. `Svg.use(target)` resolves the target's id automatically, so a symbol with no explicit `.id` still wires up:
+
+```scala
+import UI.*
+import kyo.*
+
+val reused: UI =
+    Svg.svg.width(200).height(100).viewBox(Svg.ViewBox(0, 0, 200, 100))(
+        Svg.defs(
+            Svg.symbol.id("dot")(Svg.circle.cx(5).cy(5).r(5))
+        ),
+        Svg.g(
+            Svg.use(Svg.symbol.id("dot")),
+            Svg.use(Svg.symbol.id("dot")).x(20).y(0)
+        )
+    )
+```
+
+### Shapes and text
+
+The shape factories are `Svg.rect`, `Svg.circle`, `Svg.ellipse`, `Svg.line`, `Svg.polyline`, `Svg.polygon`, and `Svg.path`. The text factories are `Svg.text`, `Svg.tspan`, and `Svg.textPath`; each accepts a plain `String` child. Which setters exist on a given element is gated by SVG capability traits (`HasFill`, `HasStroke`, `HasTransform`, `HasOpacity`, `Positioned`, `Sized`, `HasFilter`, ...): `Svg.line` has no `fill` (it mixes in `HasStroke` but not `HasFill`), and `Svg.rect` carries `x`/`y`/`width`/`height` from `Positioned` and `Sized`.
+
+```scala
+import UI.*
+import kyo.*
+
+val labeled: UI =
+    Svg.svg.width(200).height(60).viewBox(Svg.ViewBox(0, 0, 200, 60))(
+        Svg.rect.x(0).y(0).width(200).height(60).fill(Svg.Paint.Color(Style.Color.slate)),
+        Svg.text.x(100).y(34)
+            .textAnchor(Svg.TextAnchor.Middle)
+            .fill(Svg.Paint.Color(Style.Color.white))
+            .fontSize(Svg.SvgLength.px(18.0))("centered")
+    )
+```
+
+### Typed value DSLs, no raw attribute strings
+
+SVG attribute values are typed, never raw strings. A path's `d` is built from a `Svg.PathData` value: start at `PathData.from(x, y)`, then chain `moveTo`, `lineTo`, `cubicTo`, `arcTo`, and `close` (each appends a command). There is no raw `d` string overload. The same applies to `Svg.Points` (point sequences), `Svg.Transform` (translate/rotate/scale/skew/matrix), `Svg.ViewBox`, `Svg.PreserveAspectRatio`, and `Svg.SvgLength` (`px`/`pct`/`em`/`user`).
+
+```scala
+import UI.*
+import kyo.*
+
+val triangle: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.path
+            .d(Svg.PathData.from(10, 90).lineTo(50, 10).lineTo(90, 90).close)
+            .fill(Svg.Paint.Color(Style.Color.blue))
+            .transform(Svg.Transform.Translate(0, 0))
+    )
+```
+
+### Constrained enums
+
+Where SVG would otherwise take a magic token, kyo-ui takes a typed enum: `Svg.FillRule`, `Svg.StrokeLinecap`, `Svg.StrokeLinejoin`, `Svg.TextAnchor`, `Svg.DominantBaseline`, `Svg.SpreadMethod`, `Svg.Units`, `Svg.BlendMode`, and more (each renders to its exact SVG token). A misspelled `"middel"` is impossible because `textAnchor` takes `Svg.TextAnchor`, not a `String`:
+
+```scala
+import UI.*
+import kyo.*
+
+val capped: UI =
+    Svg.svg.width(100).height(40).viewBox(Svg.ViewBox(0, 0, 100, 40))(
+        Svg.line.x1(10).y1(20).x2(90).y2(20)
+            .stroke(Svg.Paint.Color(Style.Color.black))
+            .strokeWidth(6.0)
+            .strokeLinecap(Svg.StrokeLinecap.Round)
+    )
+```
+
+### Paint and typed references
+
+A `fill` or `stroke` takes a `Svg.Paint`: `Paint.None`, `Paint.CurrentColor`, `Paint.Color(c)`, or `Paint.Ref(server)`. An ambient `Style.Color => Paint` conversion lets you pass a plain `Style.Color` wherever a `Paint` is expected (with `scala.language.implicitConversions` in scope):
+
+```scala
+import UI.*
+import kyo.*
+
+val viaConversion: UI =
+    Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.circle.cx(30).cy(30).r(25).fill(Style.Color.green)
+    )
+```
+
+References are typed handles, never raw `url(#id)` strings. A paint server (`Svg.linearGradient`, `Svg.radialGradient`, `Svg.pattern`, holding `Svg.stop` children) yields a `Paint.Ref` through `.paint`; `Svg.clipPath`, `Svg.mask`, `Svg.marker`, and `Svg.filter` yield `ClipPath.Ref`/`Mask.Ref`/`Marker.Ref`/`Filter.Ref` through `.clipRef`/`.maskRef`/`.markerRef`/`.filterRef`. Define the server once, take its handle, and apply it:
+
+```scala
+import UI.*
+import kyo.*
+
+val gradientFill: UI =
+    val grad = Svg.linearGradient(
+        Svg.stop.offset(0.0).stopColor(Style.Color.blue),
+        Svg.stop.offset(1.0).stopColor(Style.Color.purple)
+    )
+    Svg.svg.width(120).height(80).viewBox(Svg.ViewBox(0, 0, 120, 80))(
+        Svg.defs(grad),
+        Svg.rect.x(0).y(0).width(120).height(80).fill(grad.paint)
+    )
+end gradientFill
+```
+
+> **Note:** SVG definition ids are derived deterministically from the construction-site `Frame` (`kyo-<hex(frame.hashCode)>`), not a global counter or randomness, so the id is stable across all three render targets. The `.paint`/`*Ref` handle and the emitted `id` attribute always agree, so a gradient referenced through `.paint` without an explicit `.id` still emits a matching `id` and never a dangling reference.
+
+### Filters
+
+`Svg.filter` defines a filter region and holds a pipeline of `fe*` primitives: `Svg.feGaussianBlur`, `Svg.feOffset`, `Svg.feBlend`, `Svg.feColorMatrix`, `Svg.feFlood`, `Svg.feComposite`, `Svg.feMerge` / `Svg.feMergeNode`, and more. Each primitive's `in`/`result` names wire the stages together; the consumer references the filter through the typed `Filter.Ref` from `.filterRef`:
+
+```scala
+import UI.*
+import kyo.*
+
+val blurred: UI =
+    val blur = Svg.filter(
+        Svg.feGaussianBlur.stdDeviation(2.0)
+    )
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.defs(blur),
+        Svg.circle.cx(40).cy(40).r(30).fill(Svg.Paint.Color(Style.Color.red)).filter(blur.filterRef)
+    )
+end blurred
+```
+
+### SMIL animation
+
+`Svg.animate`, `Svg.animateTransform`, `Svg.animateMotion`, and `Svg.set` are animation leaves placed INSIDE a shape (the `ShapeChild` content model), so the browser drives the tween with no server round-trip:
+
+```scala
+import UI.*
+import kyo.*
+
+val pulsing: UI =
+    Svg.svg.width(80).height(80).viewBox(Svg.ViewBox(0, 0, 80, 80))(
+        Svg.circle.cx(40).cy(40).r(20).fill(Svg.Paint.Color(Style.Color.blue))(
+            Svg.animate.attributeName("r").from(20.0).to(35.0).dur("1s").repeatCount("indefinite")
+        )
+    )
+```
+
+### Embedding and metadata
+
+`Svg.image(href: UI.ImgSrc)` embeds a raster or vector image into the SVG canvas. The `href` is typed as `UI.ImgSrc` (the same union used by `UI.img`): `ImgSrc.Path` for a relative path, `ImgSrc.Absolute` for a full URL, or `ImgSrc.Data` for an inline base64 data URI.
+
+`Svg.foreignObject` re-enters the HTML content model inside SVG coordinate space. Its children are `HtmlContent` nodes (any `div`, `span`, or other HTML element), letting you position styled HTML fragments at an exact SVG coordinate. It is the only SVG surface that crosses back into `HtmlContent`.
+
+`Svg.title(text)` and `Svg.desc(text)` attach an accessible name and description to the containing SVG element; screen readers surface these as the element's label. `Svg.metadata` holds arbitrary structured metadata (RDF, custom XML) for the SVG document and carries no visual output.
+
+```scala
+import UI.*
+import kyo.*
+
+val annotated: UI =
+    Svg.svg.width(100).height(100).viewBox(Svg.ViewBox(0, 0, 100, 100))(
+        Svg.title("Red circle"),
+        Svg.desc("A filled red circle centered in the viewport"),
+        Svg.circle.cx(50).cy(50).r(40).fill(Svg.Paint.Color(Style.Color.red))
+    )
+```
+
+### Events on SVG
+
+Because `Svg.Root` and the interactive SVG nodes mix in `Interactive`, the same typed event setters work as on HTML: `.onClick`, `.onHover((e: UI.MouseEvent) => ...)`, and `.onScroll((w: UI.WheelEvent) => ...)`, with the same payloads. Handlers usually live on the enclosing `Svg.g` (SVG hit-tests the topmost element, and dispatch delegates to ancestors), as the Flamegraph demo does:
+
+```scala
+import UI.*
+import kyo.*
+
+val interactiveCell: UI < Async =
+    for hovered <- Signal.initRef(false)
+    yield Svg.svg.width(60).height(60).viewBox(Svg.ViewBox(0, 0, 60, 60))(
+        Svg.g
+            .onClick(Console.printLine("clicked"))
+            .onHover(hovered.set(true))
+            .onUnhover(hovered.set(false))(
+                Svg.rect.x(5).y(5).width(50).height(50).fill(Svg.Paint.Color(Style.Color.green))
+            )
+    )
+```
+
+### A worked example: a small grid
+
+Putting the pieces together, a grid board is one backing `Svg.rect`, a `Svg.circle` marking a target cell, and one `Svg.rect` per occupied cell, each positioned by multiplying its grid coordinate by the cell size. This mirrors the in-repo `demo/SnakeDemo.scala` (charts have their own typed [Chart](#charts) layer, so reach for raw SVG like this when you are drawing something the chart marks do not cover):
+
+```scala
+import UI.*
+import kyo.*
+
+val board: UI =
+    val cell  = 16
+    val cells = 10
+    val snake = Chunk((4, 5), (3, 5), (2, 5)) // head-first cells
+    val food  = (7, 3)
+    val backing = Svg.rect.x(0).y(0).width(cell * cells).height(cell * cells)
+        .fill(Svg.Paint.Color(Style.Color.rgb(24, 28, 42)))
+    val foodDot = Svg.circle
+        .cx(food._1 * cell + cell / 2.0).cy(food._2 * cell + cell / 2.0).r(cell / 2.0 - 2.0)
+        .fill(Svg.Paint.Color(Style.Color.red))
+    val segments = snake.map { case (cx, cy) =>
+        Svg.rect.x(cx * cell + 1).y(cy * cell + 1).width(cell - 2).height(cell - 2)
+            .fill(Svg.Paint.Color(Style.Color.green))
+    }
+    div(
+        Svg.svg.width(cell * cells).height(cell * cells)
+            .viewBox(Svg.ViewBox(0, 0, cell * cells, cell * cells))(
+                (backing +: foodDot +: segments)*
+            )
+    )
+end board
+```
+
 ## Pattern-matching on UI (AST access)
 
 Every element factory returns an `UI.Ast.*` case class. `UI.Ast.Element` is the sealed base trait; the case classes are `Div`, `P`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code`, `Ul`, `Ol`, `Table`, `H1`..`H6`, `SpanElement`, `Nav`, `Li`, `Tr`, `Form`, `Textarea`, `Select`, `Hr`, `Br`, `Td`, `Th`, `Label`, `Opt`, `Button`, `Checkbox`, `Radio`, `Input`, `PasswordInput`, `EmailInput`, `TelInput`, `UrlInput`, `SearchInput`, `NumberInput`, `DateInput`, `TimeInput`, `ColorInput`, `RangeInput`, `FileInput`, `HiddenInput`, `Anchor`, `Img`, `Dropdown`. The non-element AST cases are `Text(value)`, `Reactive(signal)`, `Foreach[A](signal, key, render)`, `Fragment(children)`, and `RawHtml(value)` (the verbatim inline HTML passthrough described below).
@@ -1431,16 +1755,20 @@ This is the same value you would pass to `UI.runHandlers("/todos")(todoApp.map(_
 
 ## Demos
 
-Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-ui/Test/runMain demo.<Name>'`; the server-push demos print a `localhost` URL to open.
+Demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and cover all three runners. Run any with `sbt 'kyo-uiJVM/Test/runMain demo.<NameDemo>'`; the server-push demos print a `localhost` URL to open.
 
-- [**Kanban**](shared/src/test/scala/demo/Kanban.scala): Trello-style board over server-push: add, move, and delete cards across columns.
-- [**Signup**](shared/src/test/scala/demo/Signup.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
-- [**Dashboard**](shared/src/test/scala/demo/Dashboard.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
-- [**Search**](shared/src/test/scala/demo/Search.scala): live Wikipedia search via `HttpClient`, with loading and error states.
-- [**Cart**](shared/src/test/scala/demo/Cart.scala): shopping cart with quantity steppers and a derived running total.
-- [**Playground**](shared/src/test/scala/demo/Playground.scala): HTML playground: a textarea feeds a live `iframe` preview.
-- [**Router**](shared/src/test/scala/demo/Router.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
-- [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshot.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
-- [**Flamegraph**](shared/src/test/scala/demo/Flamegraph.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
-- [**BarChart**](shared/src/test/scala/demo/BarChart.scala): animated [SVG](#svg) bar chart with a SMIL grow-in and a signal-driven refresh tween.
-- [**LineChart**](shared/src/test/scala/demo/LineChart.scala): animated [SVG](#svg) line chart with a stroke-dashoffset draw-in, point markers, and an area fill.
+- [**Kanban**](shared/src/test/scala/demo/KanbanDemo.scala): Trello-style board over server-push: add, move, and delete cards across columns.
+- [**Signup**](shared/src/test/scala/demo/SignupDemo.scala): registration form with live reactive validation, inline errors, and a submit gated until valid.
+- [**Dashboard**](shared/src/test/scala/demo/DashboardDemo.scala): live metrics pushed over the WebSocket from a background fiber, with no client code.
+- [**Search**](shared/src/test/scala/demo/SearchDemo.scala): live Wikipedia search via `HttpClient`, with loading and error states.
+- [**Cart**](shared/src/test/scala/demo/CartDemo.scala): shopping cart with quantity steppers and a derived running total.
+- [**Playground**](shared/src/test/scala/demo/PlaygroundDemo.scala): HTML playground: a textarea feeds a live `iframe` preview.
+- [**Router**](shared/src/test/scala/demo/RouterDemo.scala): signal-routed multi-view SPA, including a parameterized `/users/:id` route.
+- [**HtmlSnapshot**](shared/src/test/scala/demo/HtmlSnapshotDemo.scala): server-side render via `UI.runRender`; prints the HTML, no browser.
+- [**ChartFeatureGallery**](shared/src/test/scala/demo/ChartFeatureGalleryDemo.scala): static gallery of the [Charts](#charts) layer, one cell per feature: sequential color scale, error bars, text annotations, stacked area, themes and named palettes, grouped bars, and an accessible titled chart.
+- [**ChartShowcase**](shared/src/test/scala/demo/ChartShowcaseDemo.scala): animated and interactive [Charts](#charts): a dual-axis bar-plus-line combo, a multi-series line with select-to-highlight, and animated multi-series areas that tween between datasets via `.animate`.
+- [**ChartReactiveScales**](shared/src/test/scala/demo/ChartReactiveScalesDemo.scala): reactive [Charts](#charts) and scales: a line bound to a `Signal` that morphs on update, a bar with a clamped fixed y-domain, and a `lowerWithScales` readback that pins an `Svg.line` to an exact data pixel.
+- [**LinkedSelection**](shared/src/test/scala/demo/LinkedSelectionDemo.scala): two linked [Charts](#charts) wired by a single shared `SignalRef`: clicking a bar in the category chart drives a detail line, with no event bus or callbacks.
+- [**LiveDashboard**](shared/src/test/scala/demo/LiveDashboardDemo.scala): a live service-metrics dashboard on the reactive [Charts](#charts) layer: KPI tiles, fixed-domain throughput bars, a rolling-window latency line split by series, and stacked status codes, all random-walked by one background fiber on a fixed cadence.
+- [**Flamegraph**](shared/src/test/scala/demo/FlamegraphDemo.scala): interactive [SVG](#svg) flamegraph of a real kyo-http profile, with click-to-zoom, hover-highlight, and wheel-zoom. Reads its profile from the test resources via `kyo.Path`.
+- [**Snake**](shared/src/test/scala/demo/SnakeDemo.scala): the classic game on the raw [SVG](#svg) API: a grid of `Svg.rect`s driven by a background game-loop fiber and arrow-key / WASD input, with all state in one `SignalRef`.

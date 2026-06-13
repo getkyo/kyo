@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Browser.*
-import scala.language.implicitConversions
 
 class LabelTest extends UITest:
 

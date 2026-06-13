@@ -2,6 +2,7 @@ package kyo.test
 
 import kyo.Duration
 import kyo.Maybe
+import kyo.minutes
 
 /** Configuration for a test run.
   *
@@ -32,6 +33,10 @@ import kyo.Maybe
   *   when `true` (the default), a leaf that completes Passed having evaluated zero assertions is flipped to Failed. A test that makes no
   *   assertions proves nothing. To opt out per-leaf, write `succeed` (or `succeed("note")`) in the leaf body (counts as one evaluation,
   *   always passes). To disable suite-wide, override `def config = super.config.failOnNoAssertion(false)`.
+  * @param heartbeatInterval
+  *   how long a single leaf may run before the runner reports it as still running via `TestReporter.onLeafHeartbeat`, repeating every
+  *   interval thereafter. This makes a slow or hung leaf visible while it runs (the console reporter is silent between a leaf's start and
+  *   finish otherwise, so a hung leaf is invisible). `Duration.Infinity` disables heartbeats; defaults to 1 minute.
   * @see
   *   `kyo.test.runner.TestRunner.runReport` which accepts a RunConfig as its second argument
   * @see
@@ -51,7 +56,8 @@ final case class RunConfig(
     strictStructure: Boolean = false,
     countOnly: Boolean = false,
     listOnly: Boolean = false,
-    failOnNoAssertion: Boolean = true
+    failOnNoAssertion: Boolean = true,
+    heartbeatInterval: Duration = 1.minutes
 ) derives CanEqual:
 
     /** Returns a copy with the given reporter installed. */
@@ -96,6 +102,11 @@ final case class RunConfig(
       * assertion evaluations is left as Passed instead of flipped to Failed.
       */
     def failOnNoAssertion(failOnNoAssertion: Boolean): RunConfig = copy(failOnNoAssertion = failOnNoAssertion)
+
+    /** Returns a copy with the given heartbeat interval. A leaf still running after this interval is reported via
+      * `TestReporter.onLeafHeartbeat`, and again every interval thereafter; `Duration.Infinity` disables heartbeats.
+      */
+    def heartbeatInterval(heartbeatInterval: Duration): RunConfig = copy(heartbeatInterval = heartbeatInterval)
 
 end RunConfig
 

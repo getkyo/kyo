@@ -4,7 +4,6 @@ import kyo.Browser.*
 import kyo.UI.*
 import kyo.UI.Ast.*
 import kyo.UI.foreach
-import scala.language.implicitConversions
 
 class FocusableTest extends UITest:
 

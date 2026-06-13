@@ -1,7 +1,6 @@
 package kyo
 
 import scala.annotation.tailrec
-import scala.language.implicitConversions
 
 /** An immutable, ordered list of style properties to attach to a [[kyo.UI]] element.
   *
@@ -16,7 +15,7 @@ import scala.language.implicitConversions
   *
   *   - **Pseudo-states**: `hover`, `focus`, `active`, and `disabled` each nest a *child* `Style` that applies only in that interaction state.
   *   - **Value clamping**: sizing values are clamped to non-negative (and to a sensible minimum where a zero would be invalid, e.g. font
-  *     size and border width), opacity/filter ratios are clamped to their valid ranges, and color channels are clamped on construction.
+  *     size and border width), opacity/filter ratios are clamped to their valid ranges, and color components are clamped on construction.
   *   - **Introspection**: the encoded props are pattern-matchable, so `find`, `filter`, and `without` can query or strip them.
   *
   * IMPORTANT: merge and dedup key on the property *kind*, so a later same-kind write silently replaces the earlier one rather than combining
@@ -813,7 +812,7 @@ object Style:
       *
       * `Color` is a sealed ADT with private constructors, so colors are built through the [[kyo.Style.Color]] companion: the `hex`, `rgb`,
       * and `rgba` factories, or the named constants (`Color.white`, `Color.blue`, ...). Construction validates and clamps: `rgb`/`rgba`
-      * clamp channels to `[0, 255]` and alpha to `[0, 1]`, while `hex` returns a `Maybe` because an invalid string yields `Absent` rather
+      * clamp components to `[0, 255]` and alpha to `[0, 1]`, while `hex` returns a `Maybe` because an invalid string yields `Absent` rather
       * than throwing.
       *
       * @see

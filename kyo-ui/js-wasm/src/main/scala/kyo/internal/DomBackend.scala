@@ -41,6 +41,7 @@ private[kyo] object DomBackend:
             html <- HtmlRenderer.render(ui, Seq.empty)
             _    <- Sync.defer(container.innerHTML = html)
             _    <- applyJsProps(container)
+            _    <- Sync.defer(beginAnimationsSync(container))
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
             // Single-consumer drain owned by the ambient page Scope: every JS event effect is run by a
@@ -99,6 +100,7 @@ private[kyo] object DomBackend:
                         val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                         if updated != null then
                             applyJsPropsSync(updated)
+                            beginAnimationsSync(updated)
                         if activePath != null then
                             restoreFocus(activePath, selStart, selEnd)
                     end if
@@ -184,6 +186,28 @@ private[kyo] object DomBackend:
 
     private def hasAnyKyoProp(el: dom.Element): Boolean =
         (0 until el.attributes.length).exists(i => el.attributes(i).name.startsWith("data-kyo-prop-"))
+
+    /** Start every freshly-inserted SMIL animation under `root`.
+      *
+      * Chart transition `<animate>` elements use `begin="indefinite"` so they do not auto-play against the
+      * shared SVG document timeline (which would make a post-load update snap to the frozen `to` value).
+      * Calling `beginElement()` after the node is inserted starts the tween relative to now. The call is
+      * deferred one animation frame so the SMIL engine has registered the newly inserted elements; a node
+      * that was already replaced again by then throws and is ignored.
+      */
+    private def beginAnimationsSync(root: dom.Element): Unit =
+        val anims = root.querySelectorAll("animate,animateTransform,animateMotion")
+        if anims.length > 0 then
+            discard(dom.window.requestAnimationFrame { (_: Double) =>
+                var i = 0
+                while i < anims.length do
+                    try anims(i).asInstanceOf[scalajs.js.Dynamic].beginElement()
+                    catch case _: Throwable => ()
+                    i += 1
+                end while
+            })
+        end if
+    end beginAnimationsSync
 
     /** Set up capture-phase event delegation on document.body. */
     private def setupEventDelegation(dispatch: (Seq[String], UIEvent) => Boolean < Async, events: Channel[Unit < Async])(using
