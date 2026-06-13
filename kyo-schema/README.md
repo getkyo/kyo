@@ -66,6 +66,8 @@ Schemas are derived automatically on demand, but adding `derives Schema` caches 
 case class Person(name: String, age: Int) derives Schema
 ```
 
+Recursive types are the one case where `derives Schema` is required, not optional: a case class or sealed trait that mentions itself (directly or indirectly through `List`, `Maybe`, another case class, etc.) must carry `derives Schema` on the recursive type itself, or expose `given Schema[T] = Schema.derived[T]` in its companion. Without that binding the derivation has no forward reference to close the cycle on.
+
 **Note:** nearly every method in this module takes an implicit `kyo.Frame` parameter used for source-location reporting in exceptions. The signatures shown throughout this document omit `(using Frame)` for readability; the compiler synthesizes it at the call site from the caller's frame.
 
 ## Schemas: the single source of truth
