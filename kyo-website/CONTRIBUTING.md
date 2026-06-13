@@ -41,10 +41,10 @@ before touching `SiteApp`, `LandingApp`, `WebsiteStyles`, or the bundle entry.
 ## Architecture at a glance
 
 The module is a `crossProject(JSPlatform, JVMPlatform)` with `CrossType.Full`
-(`build.sbt:1387-1390`). Native is intentionally not a target: the generator needs
-one host and the deploy runs on JVM (`build.sbt:1385-1386`). It depends on
-`kyo-ui` and `kyo-parse` (`build.sbt:1391-1392`); it does not directly depend on
-`kyo-http` (that is reachable only transitively via `kyo-ui`, `build.sbt:1331`).
+(`build.sbt:1349-1350`). Native is intentionally not a target: the generator needs
+one host and the deploy runs on JVM (`build.sbt:1346-1347`). It depends on
+`kyo-ui` and `kyo-parse` (`build.sbt:1352-1353`); it does not directly depend on
+`kyo-http` (that is reachable only transitively via `kyo-ui`, `build.sbt:1292`).
 
 The three source trees split by what each can reach:
 
@@ -58,8 +58,8 @@ A fourth project, `kyo-website-bundle`, is a separate JS-only crossProject that
 re-links the shared code as a browser-loadable ESModule (Chrome only). Its Compile
 classpath holds `kyo-website.js` + `kyo-ui.js` so the linked bundle has no
 Node-only `require` calls and loads in Chrome as `<script type="module">`
-(`build.sbt:1417-1432`); `fullLinkJS` runs in deploy. The bundle re-links as
-ESModule for Chrome (`build.sbt:1406-1411`).
+(`build.sbt:1375-1391`); `fullLinkJS` runs in deploy. The bundle re-links as
+ESModule for Chrome (`build.sbt:1387-1391`).
 
 ### Build-time vs client-time data flow
 
@@ -109,7 +109,7 @@ header stacks above the one content slot, which is a single reactive boundary at
 fixed position (`SiteApp.scala:118-141`). The header is rendered once by
 `SiteApp.view`; the nav fiber only ever rewrites the content signal (and, for docs
 pages, the shared `articleRef` / `tocRef`), so the header never remounts on
-navigation (`WebsiteBundleMain.scala:95-98`).
+navigation (`WebsiteBundleMain.scala:98-100`).
 
 ### Mechanism 2: renderer-vs-content injection via constructor callbacks
 
@@ -118,10 +118,10 @@ no-ops; the bundle passes live JS effects (`SiteApp.scala:100-111`):
 
 - The SSG generator's `siteShell` passes `(_: String) => Kyo.unit`, `Kyo.unit`,
   `Kyo.unit`, and `Signal.initConst(DocsSearch.Index(Chunk.empty))`
-  (`WebsiteGenerator.scala:284-302`).
+  (`WebsiteGenerator.scala:331-348`).
 - The bundle passes `target => UILocation.push(target).andThen(scrollToHash())`,
   `toggleTheme`, and the live `searchIndex` / `content` signals
-  (`WebsiteBundleMain.scala:169-182`).
+  (`WebsiteBundleMain.scala:205-218`).
 
 Because the no-op and the live effect produce the same DOM structure, the first
 render matches. This is why a new interactive feature on the shell must pass
@@ -148,30 +148,32 @@ JVM-only and never ships to the browser.
 Each docs page embeds a `#docs-island` and a `#versions-island` JSON
 `<script type="application/json">`, injected immediately before `</body>`. The
 islands are built as `UI.DataIsland` values via `UI.dataIsland(...)` and carried on
-`PageHead.dataIslands` (`WebsiteGenerator.scala:502-505`). The kyo-ui
+`PageHead.dataIslands` (`WebsiteGenerator.scala:558-562`). The kyo-ui
 `HtmlRenderer` renders them and owns the single `escScript` implementation that
-escapes `<` and `>` to `&lt;`/`&gt;`, ensuring a `</script>` substring in any
-field cannot close the element early (`HtmlRenderer.scala:82-97`). The website
+replaces `<` and `>` with their JSON unicode escapes (the backslash-u-003c /
+backslash-u-003e form, not the HTML-entity `&lt;`/`&gt;` form, because the body is
+JSON read back by `JSON.parse`), ensuring a `</script>` substring in any field
+cannot close the element early (`HtmlRenderer.scala:82-97`). The website
 contains no `escScript` call of its own. The `#docs-island` is the first-paint
 payload schema: `WebsiteBundleMain` reads it at bundle entry via `readDocsIsland`
 to seed the SPA with the current page's content before navigation, and the
 `article` field carries the pre-rendered HTML so the client never needs to call
 the transpiler. The same rendered bytes are produced by the new path, so the
-bundle's island reader (`WebsiteBundleMain.scala:63-82`) is unaffected. Reading
+bundle's island reader (`WebsiteBundleMain.scala:63-86`) is unaffected. Reading
 the island at JS entry is a synchronous parse before any Kyo fiber is running,
-marked Unsafe (`WebsiteBundleMain.scala:78-81`).
+marked Unsafe (`WebsiteBundleMain.scala:81-84`).
 
 Island JSON is parsed by a hand-rolled depth-aware scanner in `DocsClient`
 (`splitJsonArray` tracks brace/bracket depth and string state,
-`DocsClient.scala:403-446`); there is no JSON library. The manifest/island JSON
+`DocsClient.scala:436-470`); there is no JSON library. The manifest/island JSON
 carries only slug/group/title (the fields the client nav needs); it does not
 serialize per-platform support or the raw README, and `Platforms(true, true, true,
 true)` is an unused placeholder there, not a claim that every module is
-cross-platform (`DocsClient.scala:391-401`).
+cross-platform (`DocsClient.scala:416-424`).
 
 ### The bundle boot sequence
 
-`WebsiteBundleMain` (`WebsiteBundleMain.scala:8-29`):
+`WebsiteBundleMain` (`WebsiteBundleMain.scala:7-28`):
 
 1. Inject `WebsiteStyles.sheet` into `<head>`.
 2. Read the islands + `UILocation.current`.
@@ -179,45 +181,45 @@ cross-platform (`DocsClient.scala:391-401`).
    nav fiber.
 
 The JS-bootstrap island reads and the mount are the Unsafe-marked crossings
-(`WebsiteBundleMain.scala:85-90`). Beyond these boot crossings the bundle
+(`WebsiteBundleMain.scala:88-93`). Beyond these boot crossings the bundle
 holds zero `js.Dynamic` calls; all remaining browser interactions use the typed
 kyo-ui members. Five typed DOM boundaries that the kyo-ui DSL does not cover
 remain as confined casts or direct DOM calls in the bundle:
 
-1. **`data-theme` + `color-scheme` writes** on `<html>`: `setTheme` calls
-   `UIWindow.storageGet/Set`, `UIWindow.prefersColorScheme`, and a single
-   `root.asInstanceOf[dom.html.Element].style.setProperty(...)` for the CSS
-   `color-scheme` property, which `Element` does not expose
-   (`WebsiteBundleMain.scala:191-241`).
+1. **`data-theme` + `color-scheme` writes** on `<html>`: `applyStoredTheme` /
+   `toggleTheme` call `UIWindow.storageGet/Set`, `UIWindow.prefersColorScheme`, and
+   a single `root.asInstanceOf[dom.html.Element].style.setProperty(...)` (in
+   `setColorScheme`) for the CSS `color-scheme` property, which `Element` does not
+   expose (`WebsiteBundleMain.scala:234-273`).
 2. **Canonical link update**: `updateHead` calls `UIWindow.setTitle` for
    the title and a direct `dom.document.querySelector` + `setAttribute` for
    the `<link rel=canonical>` element, which has no kyo-ui counterpart
-   (`WebsiteBundleMain.scala:485-519`).
-3. **URL-hash read**: `scrollToHash` / `maybeScrollToHash` call
+   (`WebsiteBundleMain.scala:568-591`).
+3. **URL-hash read**: `scrollToHashOrTop` / `scrollToHash` call
    `dom.window.location.hash` because `UILocation.current` omits the fragment
-   (`WebsiteBundleMain.scala:556-570`).
+   (`WebsiteBundleMain.scala:623-650`).
 4. **`UI.rawHtml` article injection**: the pre-rendered article HTML is injected
    via `UI.rawHtml` (the named escape hatch for trusted HTML content) so the
    Markdown transpiler never runs on the client
-   (`WebsiteBundleMain.scala:137,471`).
+   (`WebsiteBundleMain.scala:149,539`).
 5. **JS-bootstrap island reads** (read `#docs-island` / `#versions-island`
-   via `document.getElementById` then parse JSON): these are the Unsafe-marked
+   via `document.querySelector` then parse JSON): these are the Unsafe-marked
    synchronous crossings at bundle entry before any Kyo fiber starts
-   (`WebsiteBundleMain.scala:63-82,612-621`).
+   (`WebsiteBundleMain.scala:63-86,680-692`).
 
 The nav fiber classifies each route into four kinds (`RouteKind` enum: `Landing`,
-`Module`, `Intro`, `OffTree`, `WebsiteBundleMain.scala:351-352`) and dispatches.
-`classifyRoute` is a pure, testable decision (`WebsiteBundleMain.scala:354-369`).
+`Module`, `Intro`, `OffTree`, `WebsiteBundleMain.scala:415-416`) and dispatches.
+`classifyRoute` is a pure, testable decision (`WebsiteBundleMain.scala:424-433`).
 Off-tree routes hand off to a full browser navigation so the server resolves the
 real page or a clean 404 instead of fetching a missing `content.html` into a broken
-docs shell (`WebsiteBundleMain.scala:423-429`).
+docs shell (`WebsiteBundleMain.scala:486-491`).
 
 `Module` and `Intro` routes share `showContentRoute`
-(`WebsiteBundleMain.scala:443-494`): they fetch `content.html` cache-first and swap
+(`WebsiteBundleMain.scala:507-550`): they fetch `content.html` cache-first and swap
 article + TOC in place. The article cache is a module-level mutable `Map` seeded
-from the island (single-threaded JS, Unsafe-marked, `WebsiteBundleMain.scala:45-50`).
+from the island (single-threaded JS, Unsafe-marked, `WebsiteBundleMain.scala:44-50`).
 `loadingRef` gates the prev/next pager and is lowered on every exit via `Sync.ensure`
-(`WebsiteBundleMain.scala:455-471`).
+(`WebsiteBundleMain.scala:528-541`).
 
 ### Two head-divergence traps the contract pins down
 
@@ -225,11 +227,11 @@ from the island (single-threaded JS, Unsafe-marked, `WebsiteBundleMain.scala:45-
    bundle must use the same `latest` prefix for `/`, NOT the island's version tag;
    using the version tag would point `docsHome` at `/v1.0.0-RC2/...` and diverge
    from the SSG header, breaking hydration parity on `/`
-   (`WebsiteBundleMain.scala:36-43`).
+   (`WebsiteBundleMain.scala:36-42`).
 2. **After every in-shell swap, the nav fiber updates `document.title` and
    `<link rel=canonical>` using the SAME formats the SSG emitted.** The in-browser
    head must never diverge from what crawlers indexed
-   (`WebsiteBundleMain.scala:23-27`).
+   (`WebsiteBundleMain.scala:22-25`).
 
 ### The decision rule for any shell change
 
@@ -318,7 +320,7 @@ too-short rows as `MalformedTable` (`WebsiteContent.scala:165`).
 
 `WebsiteModule.Platforms` is fully parsed but currently NOT rendered by any client
 surface; the client never reads `module.platforms`
-(`DocsClient.scala:391-401`). The landing page's "platforms" band
+(`DocsClient.scala:416-424`). The landing page's "platforms" band
 (`LandingApp.platforms`, `WebsiteStyles.landingPlatforms`) is hand-authored
 marketing copy, unrelated to `WebsiteModule.Platforms`.
 
@@ -350,26 +352,26 @@ sorts oldest-first; a pre-release sorts BEFORE the stable release of the same
 they land oldest and are never selected as latest); it is pure and `Frame`-free
 (`WebsiteVersion.scala:67-91`, `WebsiteVersion.scala:77-80`). "Stable" is defined
 once (`parse(...).preRelease.isEmpty`) and reused by both `WebsiteMain.pickLatestTag`
-and `WebsiteGenerator.pickLatest` (`WebsiteGenerator.scala:204-206`). `pickLatest`
+and `WebsiteGenerator.pickLatest` (`WebsiteGenerator.scala:227-231`). `pickLatest`
 honors an explicit `version.latest = true` flag first, then falls back to the newest
 stable; reusing `WebsiteVersion.parse` keeps one definition of stable
-(`WebsiteGenerator.scala:192-210`).
+(`WebsiteGenerator.scala:222-233`).
 
 ## The shared/JVM classpath wall
 
 scalameta is a JVM-only build-time library: it powers the Scala syntax highlighter
-and must not reach the JS link classpath (`build.sbt:1397-1404`). The dependency is
+and must not reach the JS link classpath (`build.sbt:1358-1366`). The dependency is
 `("org.scalameta" %% "scalameta" % "4.13.4").exclude("com.lihaoyi",
 "sourcecode_2.13")`; the exclude resolves the `_2.13` vs `_3` cross-version conflict
 that arises because `scalameta_3` transitively pulls in
-`trees_2.13 -> common_2.13 -> sourcecode_2.13` (`build.sbt:1400-1402`).
+`trees_2.13 -> common_2.13 -> sourcecode_2.13` (`build.sbt:1361-1365`).
 
 Markdown is rendered with kyo-parse, not a third-party Markdown library (no
 flexmark). The block-level recognizers (headings, list markers, table cells, fence
 info-strings, badge/link/image inline tokens) are genuine kyo-parse parsers run via
 `Parse.runResult` (`DocsMarkdownRender.scala:18-23`). The build comment records this
 as a decision: cross-platform kyo-parse Markdown transpiler, `DocsMarkdown` in
-`shared/`, no third-party Markdown dependency (`build.sbt:1383-1384`).
+`shared/`, no third-party Markdown dependency (`build.sbt:1344-1346`).
 
 The wall: only `DocsMarkdown.Heading` crosses into shared/JS. `DocsMarkdown` (shared)
 holds only the `Heading` type; the Markdown transpiler, syntax highlighter, and
@@ -427,9 +429,9 @@ The canonical adapter from the kyo-data filesystem effect to
 `Panic` re-raised via `Abort.error(p)`:
 
 - Read adapter: `Failure -> WebsiteReadmeException(path, ...Missing)`
-  (`WebsiteGenerator.scala:109-112`).
+  (`WebsiteGenerator.scala:113-116`).
 - Write adapter: `Failure -> WebsiteEmitException(path.toString, e)`
-  (`WebsiteGenerator.scala:601-604`).
+  (`WebsiteGenerator.scala:664-669`).
 - Degrade arm: `Success -> value; Failure -> Chunk.empty; Panic -> Abort.error(p)`
   (`WebsiteMain.scala:93-97`).
 
@@ -450,7 +452,7 @@ Common Gotchas). `WebsiteMain` works around this with `Frame.internal` plus a
 Methods for test/intra-module use only are scoped `private[website]`, never
 `protected`: `private[website] def parseContent(...)`,
 `private[website] def flagValue(...)` (`WebsiteMain.scala:76`,
-`WebsiteMain.scala:194`).
+`WebsiteMain.scala:212`).
 
 ### Everything visual is a kyo-ui value
 
@@ -536,7 +538,7 @@ A `UI`-producing component method takes `(using Frame)` and returns `UI` (pure) 
 
 Hand-tokenized landing code uses the exact same `tok-*` class names as the docs
 highlighter, so both share the highlighter color rules
-(`LandingApp.scala:271-331`, `DocsMarkdownRender.scala:963-970`,
+(`LandingApp.scala:271-331`, `DocsMarkdownRender.scala:966-973`,
 `WebsiteStyles.scala:1428-1436`).
 
 ## Extension recipes
@@ -602,24 +604,24 @@ Add a `.media(Stylesheet.MediaQuery.maxWidth(<n>.px))(...)` block inside the
 The MANIFESTO is read once from repo root (not a tag tree) and appended as the final
 docs group of every version. It is REQUIRED: a missing `MANIFESTO.md` aborts the
 build (`WebsiteReadmeException.Missing`) rather than silently shipping a site
-without it (`WebsiteGenerator.scala:82-89`, `WebsiteGenerator.scala:103-114`). A
+without it (`WebsiteGenerator.scala:85-92`, `WebsiteGenerator.scala:107-118`). A
 contributor who moves or renames it breaks deploy loud by design.
 `withManifestoGroup` appends it as a final one-page group named "Manifesto" with
 `slug = "manifesto"`, but only to versions that actually have a docs menu
 (`withManifesto = content.map(c => if c.groups.nonEmpty then withManifestoGroup(c,
-manifesto) else c)`, `WebsiteGenerator.scala:84-89,116-129`). README links to the
+manifesto) else c)`, `WebsiteGenerator.scala:90-93,120-133`). README links to the
 manifesto are rewritten by `DocsMarkdownRender.rewriteReadmePath`
 (`if path == "MANIFESTO.md" then "manifesto/" + fragment`,
-`DocsMarkdownRender.scala:751-773`). Intra-repo README links use the
+`DocsMarkdownRender.scala:765-776`). Intra-repo README links use the
 `<dir>/README.md` form so they resolve to the site route
 (`../kyo-prelude/README.md` becomes `../kyo-prelude/`,
-`DocsMarkdownRender.scala:751-772`).
+`DocsMarkdownRender.scala:769-773`).
 
 ### Add a new per-route emit-time output file
 
 Call `writeString` / `writeRoute` and wire it into `emitDocs` or `emit`, alongside
 the existing `writeManifest` / `writeSearchIndex` calls
-(`WebsiteGenerator.scala:145-160,398-410,439-449`). The generator is JVM-only; the
+(`WebsiteGenerator.scala:149-169,446-458,488-498`). The generator is JVM-only; the
 apps and stylesheet are in `shared` (`WebsiteGenerator.scala:5-6`,
 `LandingApp.scala:1-2`, `WebsiteStyles.scala:1-2`).
 
@@ -629,7 +631,7 @@ apps and stylesheet are in `shared` (`WebsiteGenerator.scala:5-6`,
 
 `WebsiteGenerator.emit` is the single entry point; it sequences the full artifact
 tree: landing + 404 + each version + latest mirror + versions.json + artifact-root
-files + sitemap + robots + copy assets (`WebsiteGenerator.scala:70-101`). The full
+files + sitemap + robots + copy assets (`WebsiteGenerator.scala:70-105`). The full
 output layout is documented in the generator scaladoc
 (`WebsiteGenerator.scala:30-39`). Notable emit-time behaviors:
 
@@ -637,29 +639,29 @@ output layout is documented in the generator scaladoc
   by draining the first emission of `WebsitePage.wrap(opts)(view)`; taking only the
   first emission gives the initial static render, and subsequent reactive re-renders
   are irrelevant for SSG (`WebsiteGenerator.scala:12-15`,
-  `WebsiteGenerator.scala:597-598`). `WebsitePage.wrap` is the single HTML-document
+  `WebsiteGenerator.scala:661-662`). `WebsitePage.wrap` is the single HTML-document
   boundary for every route; it builds the `<head>` and returns a `Stream[String,
   Async]` (`WebsitePage.scala:6-12,37-77`).
 - Each docs route ships three sibling files: `index.html`, `content.md`, and
-  `content.html` (`emitIntroPage` `WebsiteGenerator.scala:212-243`, `emitModulePage`
-  `WebsiteGenerator.scala:245-275`).
+  `content.html` (`emitIntroPage` `WebsiteGenerator.scala:235-278`, `emitModulePage`
+  `WebsiteGenerator.scala:280-322`).
 - `latest/` is a duplicate emission, not a symlink (Pages serves files, not
   symlinks); it mirrors the newest stable version (or newest pre-release when no
-  stable tag exists) (`WebsiteGenerator.scala:177-190`). A current-latest version's
+  stable tag exists) (`WebsiteGenerator.scala:200-213`). A current-latest version's
   own `/v<X>/<slug>/` pages canonicalize to `/latest/<slug>/`
-  (DECISION-SEO-A, `WebsiteGenerator.scala:168-170,314-337`).
+  (DECISION-SEO-A, `WebsiteGenerator.scala:191-193,361-384`).
 - The sitemap `<lastmod>` is the build date, computed ONCE and threaded to the pure
   builders so emitted artifacts are deterministic for a given run
-  (DECISION-SEO-C, `WebsiteGenerator.scala:78-80`).
+  (DECISION-SEO-C, `WebsiteGenerator.scala:78-84`).
 - `copyAssets` copies `kyo.svg`, `kyo.png`, `kyo.ico`, `main.js`, `main.js.map` at
-  emit time (`WebsiteGenerator.scala:719-733`); a missing `main.js` reports a
+  emit time (`WebsiteGenerator.scala:792-806`); a missing `main.js` reports a
   `WebsiteEmitException`, so a missing bundle fails loud rather than emitting a site
   with a broken script reference (`WebsiteMain.scala:131-137`).
 - `writeArtifactRootFiles` emits `CNAME` (`getkyo.io`) and `.nojekyll` so the custom
-  domain survives the Pages cutover (`WebsiteGenerator.scala:655-659`).
+  domain survives the Pages cutover (`WebsiteGenerator.scala:724-728`).
 - The 404 page deliberately ships NO bundle (`bundleHref = ""`) so the SPA does not
   boot on an unknown path and loop into a full-navigate
-  (`WebsiteGenerator.scala:561-579`).
+  (`WebsiteGenerator.scala:625-659`).
 
 The CLI is `WebsiteMain`, a `KyoApp` that drives `WebsiteGenerator.emit`
 (`WebsiteMain.scala:5,28`). Flags: `--out <dir>` (required output dir),
@@ -671,7 +673,7 @@ output holding `main.js`), using sorted-deterministic discovery so a stale
 `-fastopt` directory never wins (`WebsiteMain.scala:14-17,128-130`). The repo root
 is found as the nearest ancestor directory holding a `build.sbt`, because under
 `sbt 'kyo-websiteJVM/run ...'` the forked cwd is `kyo-website/jvm`, not the repo
-root (`WebsiteMain.scala:170-176`). `parseContent` reads one `WebsiteContent` per
+root (`WebsiteMain.scala:176-208`). `parseContent` reads one `WebsiteContent` per
 tag dir, sorted by SEMANTIC version (`WebsiteVersion.tagOrdering`, oldest-first), not
 lexicographically (`WebsiteMain.scala:67-74`); `pickLatestTag` chooses the newest
 stable, else the newest pre-release, order-independently via `max`
@@ -693,7 +695,7 @@ Two traps when iterating locally:
 - A CSS change needs BOTH `fullLinkJS` AND a regen, because the stylesheet is
   injected client-side from the bundle (`runStylesheetUnsafe` runs
   `UI.runStylesheet(WebsiteStyles.sheet)`) as well as embedded at build time
-  (`WebsitePage.scala:10-11,73`, `WebsiteBundleMain.scala:11,88,636-640`).
+  (`WebsitePage.scala:10-11,75`, `WebsiteBundleMain.scala:10,91,696-698`).
 
 ### The deploy pipeline
 
@@ -714,15 +716,15 @@ with git; the site ships only as the Pages artifact (INV-011).
 
 Search is title-only at boot and upgraded eagerly: `titleIndex` seeds from the boot
 island, then `Fiber.initUnscoped(refreshSearchIndex(...))` upgrades it
-(`WebsiteBundleMain.scala:160-167`); `refreshSearchIndex` keeps the seed on any
-failure, with no Abort widening (`WebsiteBundleMain.scala:314-319`).
+(`WebsiteBundleMain.scala:188-193`); `refreshSearchIndex` keeps the seed on any
+failure, with no Abort widening (`WebsiteBundleMain.scala:378-383`).
 
 ## Testing
 
 Every suite extends `WebsiteTest`, the module-local base:
 `abstract class WebsiteTest extends kyo.test.Test[Any]`
 (`WebsiteTest.scala:3`). There is no Native target; tests run on JVM and JS only
-(`build.sbt:1387-1390`), with `sbt 'kyo-websiteJVM/test'` and
+(`build.sbt:1349-1350`), with `sbt 'kyo-websiteJVM/test'` and
 `sbt 'kyo-websiteJS/test'`.
 
 ### The platform split for tests
@@ -760,12 +762,12 @@ normalize away positional `data-kyo-path` values
 ### Generator and content tests
 
 - `WebsiteGeneratorTest` carries a byte-exact golden string for `manifest.json`:
-  `assert(manifest == expectedManifest, ...)` (`WebsiteGeneratorTest.scala:1374-1392`).
+  `assert(manifest == expectedManifest, ...)` (`WebsiteGeneratorTest.scala:1433-1450`).
 - Generator tests assert concrete file contents, not existence; each test emits into
   a fresh temp directory; no git commits; output directories are ephemeral
-  (`WebsiteGeneratorTest.scala:7-11,86-99`). The fixture creates a fresh temp out-dir
+  (`WebsiteGeneratorTest.scala:7-11,87-100`). The fixture creates a fresh temp out-dir
   plus a stub bundle dir holding a `main.js` / `main.js.map`
-  (`WebsiteGeneratorTest.scala:47-56,70-75`).
+  (`WebsiteGeneratorTest.scala:48-57,71-76`).
 - `WebsiteContentTest` exercises `fromRepo` by writing README fixtures into a fresh
   `Path.tempDir` tree (`WebsiteContentTest.scala:72-82`), and the fixtures paste a
   VERBATIM slice of the actual root `README.md`
@@ -773,13 +775,13 @@ normalize away positional `data-kyo-path` values
 - JVM tests locate the repo root by walking up from `user.dir` until `build.sbt` is
   found (`WebsiteBuildGraphTest.scala:9-16`, `DeployWorkflowTest.scala:20-27`). A
   `readFile` helper maps `FileReadException` into `WebsiteEmitException` and
-  re-raises `Panic` (`WebsiteGeneratorTest.scala:77-82`,
+  re-raises `Panic` (`WebsiteGeneratorTest.scala:78-83`,
   `WebsiteMainTest.scala:31-36`).
 - Error-path leaves assert on the typed failure via `Abort.run[WebsiteException](...)`
   then match the typed leaves:
   `case Result.Failure(e: WebsiteReadmeException) => assert(e.detail ==
   ...ReadmeFailure.Missing, ...)` (`WebsiteContentTest.scala:132-150`,
-  `WebsiteGeneratorTest.scala:217-241`).
+  `WebsiteGeneratorTest.scala:218-243`).
 
 ### Build-graph and workflow guards
 
@@ -800,18 +802,18 @@ that confirms the fixture actually emits those classes
 ### Other patterns
 
 - Substring counting uses a local `countOccurrences` helper
-  (`WebsiteGeneratorTest.scala:1044-1051`, `SiteAppTest.scala:197-204`).
+  (`WebsiteGeneratorTest.scala:1054-1062`, `SiteAppTest.scala:197-204`).
 - `DocsMarkdown` JVM tests transpile then render through helper pipelines
   (`transpileHtml`), reusing them rather than re-wiring per leaf
-  (`DocsMarkdownTest.scala:9-20,517-519`). Token-highlight assertions match the
+  (`DocsMarkdownTest.scala:12-21,519-522`). Token-highlight assertions match the
   rendered HTML span shape with HTML-encoding
   (`assert(html.contains("tok-keyword\">val</"), ...)`,
-  `DocsMarkdownTest.scala:564-565,635`).
+  `DocsMarkdownTest.scala:563-564,635`).
 - Determinism/idempotence is pinned by emitting twice and asserting byte-identical
   output (`assert(html1 == html2, "index.html must be byte-identical across two
-  emits")`, `WebsiteGeneratorTest.scala:247-264`, `ChromeParityTest.scala:207-218`).
+  emits")`, `WebsiteGeneratorTest.scala:248-264`, `ChromeParityTest.scala:207-218`).
 - Forward-progress guards assert a wall-clock bound with a generous budget
-  (`assert(elapsed < 30000L, ...)`, `DocsMarkdownTest.scala:470-510`).
+  (`assert(elapsed < 30000L, ...)`, `DocsMarkdownTest.scala:472-510`).
 - Type-level contracts are asserted with an explicit type annotation that fails to
   compile if the effect row widens
   (`val _: String => Frame ?=> UI < Sync = h => LandingApp.body(h)`,
@@ -857,4 +859,4 @@ Run through this before writing code:
    (`WebsiteTest.scala:3`, `ChromeParityTest.scala:17-19`), and assert on concrete
    values. If you changed the shell, the manifest, or the article HTML, update the
    parity/golden tests (`ChromeParityTest.scala:55-66`,
-   `WebsiteGeneratorTest.scala:1374-1392`).
+   `WebsiteGeneratorTest.scala:1433-1450`).
