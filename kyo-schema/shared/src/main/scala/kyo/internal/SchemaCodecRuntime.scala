@@ -234,6 +234,8 @@ private[kyo] object SchemaCodecRuntime:
     /** Construct a `Schema[A]` for a derived sealed trait.
       *
       * `enumValuesEncoded` is `"name1;name2;..."` for the no-arg variant names; empty if none.
+      * `typeParamStructures` carries the structural type of each type-parameter slot of `A`, mirroring
+      * the same parameter on `buildProductSchema`.
       */
     def buildSumSchema[A](
         meta: SumVariantsMeta,
@@ -241,28 +243,30 @@ private[kyo] object SchemaCodecRuntime:
         schemasBuilder: () => Array[Schema[Any]],
         sourceFields: Seq[kyo.Field[?, ?]],
         tag: kyo.Tag[Any],
-        enumValuesEncoded: String
-    ): Schema[A] =
+        enumValuesEncoded: String,
+        typeParamStructures: () => Array[kyo.Structure.Type]
+    )(using frame: Frame): Schema[A] =
         lazy val schemas: Array[Schema[Any]] = schemasBuilder()
         val enumValues: Array[String] =
             if enumValuesEncoded.isEmpty then Array.empty else enumValuesEncoded.split(';')
         new Schema[A](Seq.empty, sourceFields = sourceFields):
             import scala.annotation.publicInBinary
             @publicInBinary private[kyo] def serializeWrite(value: A, writer: Writer): Unit =
-                writeSum[A](meta, matchVariant, schemas, value, writer)(using kyo.Frame.internal)
+                writeSum[A](meta, matchVariant, schemas, value, writer)(using frame)
             @publicInBinary private[kyo] def serializeRead(reader: Reader): A =
-                readSum[A](meta, schemas, reader)(using kyo.Frame.internal)
+                readSum[A](meta, schemas, reader)(using frame)
             @publicInBinary private[kyo] def getter(value: A): Maybe[Any] = Maybe(value)
             @publicInBinary private[kyo] def setter(value: A, next: Any): A =
                 next.asInstanceOf[A]
             private lazy val _structure: kyo.Structure.Type =
+                val tps = typeParamStructures()
                 val variants = kyo.Chunk.from((0 until meta.n).map { i =>
                     kyo.Structure.Variant(meta.names(i), schemas(i).structure)
                 })
                 kyo.Structure.Type.Sum(
                     meta.typeName,
                     tag,
-                    kyo.Chunk.empty,
+                    kyo.Chunk.from(tps),
                     variants,
                     kyo.Chunk.from(enumValues)
                 )
@@ -301,7 +305,7 @@ private[kyo] object SchemaCodecRuntime:
     )(using frame: Frame): A =
         discard(reader.objectStart())
         if !reader.hasNextField() then
-            throw kyo.MissingFieldException(Seq.empty, "<discriminator>")
+            throw kyo.MissingFieldException(Seq.empty, "<discriminator>")(using reader.frame)
         reader.fieldParse()
         var matchedIdx = -1
         var i          = 0
@@ -313,7 +317,7 @@ private[kyo] object SchemaCodecRuntime:
             if matchedIdx < 0 then
                 val parsed = reader.lastFieldName()
                 reader.skip()
-                throw kyo.UnknownVariantException(Seq.empty, parsed)
+                throw kyo.UnknownVariantException(Seq.empty, parsed)(using reader.frame)
             else
                 SchemaSerializer.readFrom(schemas(matchedIdx), reader).asInstanceOf[A]
         reader.objectEnd()

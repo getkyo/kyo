@@ -217,13 +217,13 @@ import scala.quoted.*
             $focus.getter.asInstanceOf[A => Maybe[Any]](root).map { (_: Any) =>
                 // Cast: Schema and computed-field lambda are stored as Any at the Focus boundary; type is recovered here.
                 // Focus.schema is always present for computed focuses: the macro sets it unconditionally in generateComputedFocus.
-                val schema = $focus.schema.getOrElse(throw new IllegalStateException(
+                val schema = $focus.schema.getOrElse(throw kyo.TransformFailedException(
                     s"Focus.schema is absent: computed-field focus requires a Schema instance"
-                )).asInstanceOf[Schema[A]]
+                )(using summonInline[kyo.Frame])).asInstanceOf[Schema[A]]
                 val computeFn = schema.computedFields.toSeq.find(_._1 == $fieldNameExpr)
-                    .getOrElse(throw new IllegalStateException(
+                    .getOrElse(throw kyo.TransformFailedException(
                         s"focus computed field '${$fieldNameExpr}' not present in Schema[A].computedFields: macro generation invariant violated"
-                    ))
+                    )(using summonInline[kyo.Frame]))
                     ._2
                 computeFn(root).asInstanceOf[V]
             }
@@ -646,6 +646,21 @@ import scala.quoted.*
         val nameExpr = Expr(typeName)
         val tagExpr  = summonSchemaTag(tpe)
 
+        // Type-parameter structures: one thunk building the full array of typeParam Structure.Types.
+        // Mirrors the same expression emitted by emitProductSchema so derived generic sealed traits
+        // populate Structure.Type.Sum.typeParams correctly.
+        val typeParamStructuresExpr: Expr[() => Array[Structure.Type]] =
+            val perParam: List[Expr[Structure.Type]] = tpe.typeArgs.map { tp =>
+                tp.asType match
+                    case '[t] =>
+                        '{
+                            given kyo.Frame = kyo.Frame.internal
+                            summonInline[Schema[t]].structure
+                        }
+            }
+            '{ () => Array[Structure.Type](${ Varargs(perParam) }*) }
+        end typeParamStructuresExpr
+
         '{
             val _meta = new kyo.internal.SchemaCodecRuntime.SumVariantsMeta(
                 $nameExpr,
@@ -657,8 +672,9 @@ import scala.quoted.*
                 $schemasArrayBuilderExpr,
                 $sourceFields,
                 $tagExpr,
-                ${ Expr(enumValuesEncoded) }
-            )
+                ${ Expr(enumValuesEncoded) },
+                $typeParamStructuresExpr
+            )(using kyo.Frame.internal)
         }
     end emitSealedSchema
 

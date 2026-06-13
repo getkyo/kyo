@@ -41,6 +41,13 @@ enum MixedArityEnum derives Schema, CanEqual:
     case Gamma
 end MixedArityEnum
 
+// Generic sealed trait for typeParams regression: derived Sum must populate typeParams.
+// Variants are concrete so the sealed-trait macro can emit each variant schema without
+// needing to substitute the parent's type argument into a generic child type.
+sealed trait GenericSealed[A] derives Schema, CanEqual
+case class GenericSealedA(a: Int) extends GenericSealed[Int] derives CanEqual
+case class GenericSealedB(b: Int) extends GenericSealed[Int] derives CanEqual
+
 // Scala 2 style sealed trait with mixed case class / case object cases.
 sealed trait SealedNoArgVariants derives Schema, CanEqual
 object SealedNoArgVariants:
@@ -302,6 +309,17 @@ class StructureTest extends kyo.test.Test[Any]:
             }
             // MTSmallTeam (Product) -> lead: MTPerson (Product) -> name: String (Primitive) -> age: Int (Primitive) -> size: Int (Primitive)
             assert(names == List("MTSmallTeam", "MTPerson", "String", "Int", "Int"))
+        }
+
+        "derived generic sealed trait populates typeParams" in {
+            // Regression guard for CR-r1-003: buildSumSchema must thread typeParamStructures
+            // so that Structure.Type.Sum.typeParams is non-empty for generic sealed traits.
+            val s = Schema[GenericSealed[Int]].structure
+            s match
+                case sum: Structure.Type.Sum =>
+                    assert(sum.typeParams.size == 1, s"Expected 1 typeParam for GenericSealed[Int], got ${sum.typeParams.size}")
+                case other => fail(s"Expected Sum, got $other")
+            end match
         }
 
         "Structure.of[Unit] produces Primitive(PrimitiveKind.Unit, _)" in {

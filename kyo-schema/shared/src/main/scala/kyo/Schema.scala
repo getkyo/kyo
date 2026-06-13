@@ -1394,16 +1394,9 @@ object Schema:
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalTime].asInstanceOf[Tag[Any]])
         )
 
-    /** Schema for java.time.LocalDateTime values. Serializes as ISO-8601 string.
-      *
-      * Note: the structure tag uses Tag[Any] directly rather than Tag[java.time.LocalDateTime].asInstanceOf[Tag[Any]].
-      * Attempting Tag[java.time.LocalDateTime].asInstanceOf[Tag[Any]] triggers a Scala 3 TagMacro internal-assertion
-      * bug (AssertionError: TypeBounds(TypeRef(...Nothing),...FromJavaObject>)) during compilation. This is a
-      * pre-existing Scala 3 compiler limitation affecting Java class tags in inline contexts. The Tag[Any] fallback
-      * preserves the Primitive(String, _) shape while avoiding the crash. This is a workaround for the same
-      * Scala 3 TagMacro limitation that affects all Java class types in inline contexts. Compiler bug followup:
-      * Scala 3 issue with Java class type bounds in TagMacro when asInstanceOf is used at a structural type
-      * position.
+    /** Schema for java.time.LocalDateTime values. Serializes as ISO-8601 string. The structure tag is
+      * `Tag[Any]` (rather than `Tag[java.time.LocalDateTime]`) due to a Scala 3 limitation with Java
+      * class tags in inline structural positions; the wire shape is unaffected.
       */
     given localDateTimeSchema: Schema[java.time.LocalDateTime] =
         Schema.init[java.time.LocalDateTime](
