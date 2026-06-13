@@ -269,8 +269,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                             val ptrVal   = s"${name}Ptr"
                             val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
                             val fromFn =
-                                if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef _)"
-                                else s"CFuncPtr${params.size}.fromScalaFunction($trampRef _)"
+                                if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
+                                else s"CFuncPtr${params.size}.fromScalaFunction($trampRef)"
                             val setup = List(
                                 s"val $ptrVal: $cbType = $fromFn",
                                 s"""kyo.ffi.internal.CallbackRegistry.$pushName("${spec.fqcn}", "${method.scalaName}", $name)"""
@@ -531,8 +531,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         val ptrVal2  = s"${caseClassVal}_${f.name}_cfp"
                         val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
                         val fromFn =
-                            if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef _)"
-                            else s"CFuncPtr${params.size}.fromScalaFunction($trampRef _)"
+                            if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
+                            else s"CFuncPtr${params.size}.fromScalaFunction($trampRef)"
                         buf += s"val $ptrVal2: $cbType = $fromFn"
                         buf += s"""kyo.ffi.internal.CallbackRegistry.$pushName("$bindingFqn", "$methodName", $fieldAcc)"""
                         buf += s"!($ptrVal + $offset).asInstanceOf[Ptr[Ptr[Byte]]] = CFuncPtr.toPtr($ptrVal2).asInstanceOf[Ptr[Byte]]"
@@ -591,8 +591,8 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         val ptrVal2  = s"${caseClassVal}_${f.name}_cfp"
                         val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
                         val fromFn =
-                            if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef _)"
-                            else s"CFuncPtr${params.size}.fromScalaFunction($trampRef _)"
+                            if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
+                            else s"CFuncPtr${params.size}.fromScalaFunction($trampRef)"
                         buf += s"val $ptrVal2: $cbType = $fromFn"
                         buf += s"""kyo.ffi.internal.CallbackRegistry.$pushName("$bindingFqn", "$methodName", $fieldAcc)"""
                         buf += s"$target = CFuncPtr.toPtr($ptrVal2).asInstanceOf[Ptr[Byte]]"
