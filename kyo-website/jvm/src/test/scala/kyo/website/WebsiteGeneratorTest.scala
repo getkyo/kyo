@@ -337,6 +337,14 @@ class WebsiteGeneratorTest extends WebsiteTest:
                 html.contains("""<script type="application/json" id="docs-island">"""),
                 s"landing must carry #docs-island: $html"
             )
+            // Regression: the landing #docs-island must carry the latest version's per-route outline map,
+            // not an empty one. The bundle reuses THIS island's docs body when the reader navigates from
+            // `/` into the docs, so an empty outline map leaves the rail unable to expand any module's
+            // sections on a landing-first visit.
+            assert(
+                html.contains("\"outlines\": [{\"route\": \"/latest/"),
+                s"landing #docs-island must carry the per-route outline map (not empty): $html"
+            )
             assert(
                 html.contains("""<script type="application/json" id="versions-island">"""),
                 s"landing must carry #versions-island: $html"

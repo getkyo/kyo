@@ -587,7 +587,14 @@ object WebsiteGenerator:
         for
             body <- LandingApp.body(landingHome)
             view <- siteShell(versions, landingHome, body)
-            island = latest.fold("")(c => docsIsland(c.copy(version = c.version.copy(latest = true)), versions, "", Chunk.empty, Map.empty))
+            // The landing seeds the SAME docs island the bundle reuses when the reader navigates into the
+            // docs from `/`, so it must carry the latest version's whole-version outline map. Without it the
+            // reused docs body has no outlines and the rail cannot expand any module on a landing-first visit.
+            island <- latest match
+                case Present(c0) =>
+                    val c = c0.copy(version = c0.version.copy(latest = true))
+                    outlinesByRoute(c, "latest").map(outlines => docsIsland(c, versions, "", Chunk.empty, outlines))
+                case Absent => Kyo.lift("")
             html <- wrapFirst(
                 if island.isEmpty then opts else opts.copy(dataIslands = islands(island, versions)),
                 view
