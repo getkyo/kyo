@@ -269,6 +269,10 @@ object Structure:
       * The structural type of the field is held by-name so a recursive or indirectly-recursive
       * type graph constructs without forcing the inner Schema's lazy structure mid-init.
       *
+      * Read the field type through [[fieldType]]; the case-class-generated `productElement(1)`,
+      * `unapply`, and `copy` expose the underlying `_fieldType` thunk directly, which is the lazy
+      * `() => Structure.Type` and not the forced value.
+      *
       * @param name
       *   the field name as declared in the case class
       * @param doc

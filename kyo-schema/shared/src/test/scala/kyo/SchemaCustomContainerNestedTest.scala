@@ -112,6 +112,35 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
         end match
     }
 
+    case class NestedItem(label: String, count: Int) derives CanEqual, Schema
+
+    case class NestedHolder(
+        data: Maybe[Map[String, Chunk[NestedItem]]]
+    ) derives CanEqual, Schema
+
+    "Maybe[Map[String, Chunk[NestedItem]]] derives via the macro container path and roundtrips" in {
+        // Covers the container-resolution path in FocusMacro.buildContainerSchemaOpt where the
+        // recursive `Expr.summon[Schema[inner]].orElse(buildContainerSchemaOpt(...).map(_.asInstanceOf[Schema[inner]]))`
+        // splice-and-recast is exercised at TWO levels: the outer `Maybe[...]` resolves through
+        // the macro's Optional builder, whose inner is `Map[String, Chunk[NestedItem]]`; the
+        // macro descends into the Mapping builder, whose value is `Chunk[NestedItem]`; that in
+        // turn descends into the Collection builder, whose element is a user-defined case class.
+        // Each descent recasts a `Schema[Any]` back to the locally-bound `Schema[inner]` via
+        // `asInstanceOf`, so a failure mode here surfaces as a derivation-time type mismatch on
+        // the spliced cast rather than a wire-shape issue.
+        val instance = NestedHolder(
+            Present(
+                Map(
+                    "first"  -> Chunk(NestedItem("a", 1), NestedItem("b", 2)),
+                    "second" -> Chunk(NestedItem("c", 3))
+                )
+            )
+        )
+        val encoded = Json.encode(instance)
+        val decoded = Json.decode[NestedHolder](encoded)
+        assert(decoded == Result.succeed(instance))
+    }
+
     "Box does not appear in any macro source symbol table".onlyJvm in {
         // Walk up from the test JVM's working directory until we find the worktree root (the
         // first ancestor containing both `build.sbt` and a `kyo-schema/shared/src/main/scala`

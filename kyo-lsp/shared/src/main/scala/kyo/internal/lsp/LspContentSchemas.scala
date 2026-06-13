@@ -86,6 +86,8 @@ private[kyo] object LspContentSchemas:
                 next match
                     case c: LspHandler.TextDocumentContentChangeEvent => c
                     case _                                            => value
+            // Open: see JsonRpcId for rationale. Same pattern applies at every other
+            // `Structure.Type.Open` site in this file.
             private lazy val _structure: Structure.Type =
                 Structure.Type.Open(Tag[LspHandler.TextDocumentContentChangeEvent].asInstanceOf[Tag[Any]])
             override def structure: Structure.Type = _structure

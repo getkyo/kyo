@@ -159,6 +159,7 @@ private[kyo] object McpContentSchema:
             next match
                 case c: McpContent => c
                 case _             => value
+        // Open: see JsonRpcId for rationale.
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[McpContent].asInstanceOf[Tag[Any]])
         override def structure: Structure.Type = _structure

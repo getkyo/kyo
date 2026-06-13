@@ -96,6 +96,7 @@ private[kyo] object McpSamplingContentSchema:
             next match
                 case c: McpServer.SamplingContent => c
                 case _                            => value
+        // Open: see JsonRpcId for rationale.
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[McpServer.SamplingContent].asInstanceOf[Tag[Any]])
         override def structure: Structure.Type = _structure

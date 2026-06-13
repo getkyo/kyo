@@ -69,6 +69,7 @@ private[kyo] object McpCompletionRefSchema:
             next match
                 case r: McpHandler.CompletionRef => r
                 case _                           => value
+        // Open: see JsonRpcId for rationale.
         private lazy val _structure: Structure.Type =
             Structure.Type.Open(Tag[McpHandler.CompletionRef].asInstanceOf[Tag[Any]])
         override def structure: Structure.Type = _structure

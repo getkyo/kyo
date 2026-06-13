@@ -63,6 +63,13 @@ object JsonRpcId:
                 case _         => Maybe.Absent
     end extension
 
+    // `Structure.Type.Open` is the wire-correct opacity marker for opaque types and unions:
+    // the runtime carrier is a `String | Long`, so there is no static product or sum decomposition
+    // to model. A structurally-derived `Product` would invent fields that do not exist; a `Sum`
+    // would invent variant tags that do not appear on the wire. `Open` records the carrier `Tag`
+    // and defers structure to the explicit `writeFn`/`readFn` pair, which is the only honest shape
+    // for a value whose static type is a union or an opaque alias. Sibling schemas across
+    // `kyo-jsonrpc`, `kyo-mcp`, and `kyo-lsp` follow this same pattern for the same reason.
     @nowarn("msg=anonymous")
     given schema: Schema[JsonRpcId] = Schema.init[JsonRpcId](
         writeFn = (id, writer) =>
