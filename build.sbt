@@ -245,6 +245,7 @@ lazy val kyoJVM: Project = project
         `kyo-stats-registry`.jvm,
         `kyo-config`.jvm,
         `kyo-stats-otlp`.jvm,
+        `kyo-whatsapp`.jvm,
         `kyo-logging-jpl`.jvm,
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
@@ -304,6 +305,7 @@ lazy val kyoJS = project
         `kyo-config`.js,
         `kyo-reactive-streams`.js,
         `kyo-stats-otlp`.js,
+        `kyo-whatsapp`.js,
         `kyo-zio-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
@@ -362,6 +364,7 @@ lazy val kyoNative = project
         `kyo-zio-test`.native,
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
+        `kyo-whatsapp`.native,
         `kyo-browser`.native,
         `kyo-ui`.native,
         `kyo-pod`.native,
@@ -405,6 +408,7 @@ lazy val kyoWasm = project
         `kyo-compat-zio`.wasm,
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
+        `kyo-whatsapp`.wasm,
         `kyo-flow`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
@@ -1085,6 +1089,23 @@ lazy val `kyo-stats-otlp` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-whatsapp` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-whatsapp"))
+        .dependsOn(`kyo-http`, `kyo-config`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(mimaCheck(false))
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-reactive-streams` =
