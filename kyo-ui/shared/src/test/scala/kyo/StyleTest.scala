@@ -210,6 +210,18 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Length.Auto.css == "auto")
         }
 
+        "vh" in {
+            assert(100.vh.css == "100vh")
+        }
+
+        "vh from double" in {
+            assert(33.5.vh.css == "33.5vh")
+        }
+
+        "calc" in {
+            assert(Length.Calc("100vh - 60px").css == "calc(100vh - 60px)")
+        }
+
         "zero" in {
             assert(0.px.css == "0")
         }
@@ -421,6 +433,22 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.textOverflow(Style.TextOverflow.clip).toCss == "text-overflow: clip;")
             assert(Style.textOverflow(Style.TextOverflow.ellipsis).toCss == "text-overflow: ellipsis;")
         }
+
+        "textWrap wrap/noWrap/ellipsis render overflow-wrap" in {
+            assert(Style.textWrap(Style.TextWrap.wrap).toCss == "overflow-wrap: break-word;")
+            assert(Style.textWrap(Style.TextWrap.noWrap).toCss == "overflow-wrap: normal;")
+            assert(Style.textWrap(Style.TextWrap.ellipsis).toCss == "overflow-wrap: normal; text-overflow: ellipsis;")
+        }
+
+        "textWrap balance and pretty render the CSS text-wrap property" in {
+            assert(Style.textWrap(Style.TextWrap.balance).toCss == "text-wrap: balance;")
+            assert(Style.textWrap(Style.TextWrap.pretty).toCss == "text-wrap: pretty;")
+        }
+
+        "textWrap selector overload builds the same prop as the direct form" in {
+            assert(Style.textWrap(_.balance).props(0) == Style.textWrap(Style.TextWrap.balance).props(0))
+            assert(Style.textWrap(_.pretty).toCss == "text-wrap: pretty;")
+        }
     }
 
     "borders" - {
@@ -598,6 +626,63 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.overflow(Style.Overflow.auto).toCss == "overflow: auto;")
         }
 
+        "overflowX single axis" in {
+            assert(Style.overflowX(Style.Overflow.auto).toCss == "overflow-x: auto;")
+            assert(Style.overflowX(Style.Overflow.hidden).toCss == "overflow-x: hidden;")
+            assert(Style.overflowX(_.scroll).toCss == "overflow-x: scroll;")
+        }
+
+        "overflowY single axis" in {
+            assert(Style.overflowY(Style.Overflow.auto).toCss == "overflow-y: auto;")
+            assert(Style.overflowY(Style.Overflow.hidden).toCss == "overflow-y: hidden;")
+            assert(Style.overflowY(_.visible).toCss == "overflow-y: visible;")
+        }
+
+        "overflowX and overflowY are distinct kinds that coexist" in {
+            // overflow-x and overflow-y are separate Prop cases, so both survive on one style; this is
+            // the rail's case (vertical scroll, horizontal clipped) without enabling both axes via the
+            // single `overflow` shorthand.
+            assert(
+                Style.overflowY(_.auto).overflowX(_.hidden).toCss == "overflow-y: auto; overflow-x: hidden;"
+            )
+        }
+
+        "single-axis overflow does not collapse into the both-axis overflow" in {
+            // The shorthand `overflow` is a different Prop kind from `overflowY`, so setting one does not
+            // replace the other under last-write-wins.
+            val s = Style.overflow(_.hidden).overflowY(_.auto)
+            assert(s.toCss == "overflow: hidden; overflow-y: auto;")
+        }
+
+        "scrollbarWidth renders the standard scrollbar-width keyword" in {
+            assert(Style.scrollbarWidth(Style.ScrollbarWidth.thin).toCss == "scrollbar-width: thin;")
+            assert(Style.scrollbarWidth(_.none).toCss == "scrollbar-width: none;")
+            assert(Style.scrollbarWidth(_.auto).toCss == "scrollbar-width: auto;")
+        }
+
+        "scrollbarColor renders thumb then track as the two-color scrollbar-color value" in {
+            val css = Style.scrollbarColor(Style.Color.rgba(0, 0, 0, 0.3), Style.Color.transparent).toCss
+            assert(css == "scrollbar-color: rgba(0, 0, 0, 0.3) transparent;")
+        }
+
+        "scrollbarWidth and scrollbarColor coexist with the axis overflow on one rail style" in {
+            val s = Style.overflowY(_.auto).scrollbarWidth(_.thin).scrollbarColor(Style.Color.rgba(0, 0, 0, 0.2), Style.Color.transparent)
+            assert(
+                s.toCss == "overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(0, 0, 0, 0.2) transparent;"
+            )
+        }
+
+        "scrollbarGutter renders the standard scrollbar-gutter keyword" in {
+            assert(Style.scrollbarGutter(Style.ScrollbarGutter.stable).toCss == "scrollbar-gutter: stable;")
+            assert(Style.scrollbarGutter(_.auto).toCss == "scrollbar-gutter: auto;")
+            assert(Style.scrollbarGutter(_.stableBothEdges).toCss == "scrollbar-gutter: stable both-edges;")
+        }
+
+        "backgroundClip renders the background-clip keyword (padding-box insets a transparent border)" in {
+            assert(Style.backgroundClip(Style.BackgroundClip.paddingBox).toCss == "background-clip: padding-box;")
+            assert(Style.backgroundClip(_.borderBox).toCss == "background-clip: border-box;")
+            assert(Style.backgroundClip(_.contentBox).toCss == "background-clip: content-box;")
+        }
     }
 
     "pseudo-states" - {
@@ -646,8 +731,319 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(s.props(0) == Style.Prop.PositionProp(Position.overlay))
         }
 
+        "relative" in {
+            val s = Style.position(Position.relative)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.relative))
+        }
+
+        "dropdown" in {
+            val s = Style.position(Position.dropdown)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.dropdown))
+        }
+
+        "sticky emits only position: sticky (no bundled top/z-index)" in {
+            val s = Style.position(Position.sticky)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.sticky))
+            assert(s.toCss == "position: sticky;")
+            assert(!s.toCss.contains("top:"))
+            assert(!s.toCss.contains("z-index:"))
+        }
+
+        "fixed emits only position: fixed (offsets/size set separately, unlike overlay)" in {
+            val s = Style.position(Position.fixed)
+            assert(s.props(0) == Style.Prop.PositionProp(Position.fixed))
+            assert(s.toCss == "position: fixed;")
+            assert(!s.toCss.contains("top:"))
+            assert(!s.toCss.contains("width:"))
+        }
+
+        "fixed composed with corner offsets (a floating button)" in {
+            val s = Style.position(_.fixed).left(16.px).bottom(16.px).zIndex(95)
+            assert(s.toCss.contains("position: fixed;"))
+            assert(s.toCss.contains("left: 16px;"))
+            assert(s.toCss.contains("bottom: 16px;"))
+        }
+
+        "sticky composed with explicit top + z-index" in {
+            val s = Style.position(_.sticky).top(60.px).zIndex(100)
+            assert(s.toCss.contains("position: sticky;"))
+            assert(s.toCss.contains("top: 60px;"))
+            assert(s.toCss.contains("z-index: 100;"))
+        }
+
         "enum values" in {
             assert(Position.flow != Position.overlay)
+            assert(Position.relative != Position.dropdown)
+            assert(Position.overlay != Position.dropdown)
+            assert(Position.sticky != Position.flow)
+            assert(Position.sticky != Position.overlay)
+            assert(Position.sticky != Position.relative)
+            assert(Position.sticky != Position.dropdown)
+        }
+    }
+
+    "top" - {
+        "px offset" in {
+            val s = Style.top(60.px)
+            assert(s.props(0) == Style.Prop.Top(Length.Px(60)))
+            assert(s.toCss == "top: 60px;")
+        }
+
+        "zero offset" in {
+            assert(Style.top(0.px).toCss == "top: 0;")
+        }
+
+        "last-write-wins" in {
+            val s = Style.top(10.px).top(20.px)
+            assert(s.props.size == 1)
+            assert(s.toCss == "top: 20px;")
+        }
+
+        "companion equals instance" in {
+            assert(Style.top(5.px).props(0) == Style.empty.top(5.px).props(0))
+        }
+    }
+
+    "right/bottom/left offsets" - {
+        "each renders its own CSS property" in {
+            assert(Style.right(8.px).toCss == "right: 8px;")
+            assert(Style.bottom(0.px).toCss == "bottom: 0;")
+            assert(Style.left(12.px).toCss == "left: 12px;")
+        }
+
+        "top and right are distinct kinds that coexist for a corner float" in {
+            val s = Style.position(_.absolute).top(8.px).right(8.px)
+            assert(s.toCss.contains("top: 8px;"))
+            assert(s.toCss.contains("right: 8px;"))
+        }
+    }
+
+    "zIndex" - {
+        "renders z-index" in {
+            val s = Style.zIndex(100)
+            assert(s.props(0) == Style.Prop.ZIndexProp(100))
+            assert(s.toCss == "z-index: 100;")
+        }
+
+        "last-write-wins" in {
+            val s = Style.zIndex(1).zIndex(50)
+            assert(s.props.size == 1)
+            assert(s.toCss == "z-index: 50;")
+        }
+
+        "companion equals instance" in {
+            assert(Style.zIndex(7).props(0) == Style.empty.zIndex(7).props(0))
+        }
+    }
+
+    "alignSelf" - {
+        "flex-start" in {
+            val s = Style.alignSelf(Alignment.start)
+            assert(s.props(0) == Style.Prop.AlignSelf(Alignment.start))
+            assert(s.toCss == "align-self: flex-start;")
+        }
+
+        "center" in {
+            assert(Style.alignSelf(Alignment.center).toCss == "align-self: center;")
+        }
+
+        "stretch" in {
+            assert(Style.alignSelf(Alignment.stretch).toCss == "align-self: stretch;")
+        }
+
+        "selector overload" in {
+            val s = Style.alignSelf(_.start)
+            assert(s.props(0) == Style.Prop.AlignSelf(Alignment.start))
+        }
+
+        "companion equals instance" in {
+            assert(Style.alignSelf(Alignment.start).props(0) == Style.empty.alignSelf(Alignment.start).props(0))
+        }
+    }
+
+    "scrollMarginTop" - {
+        "px value" in {
+            val s = Style.scrollMarginTop(72.px)
+            assert(s.props(0) == Style.Prop.ScrollMarginTopProp(Length.Px(72)))
+            assert(s.toCss == "scroll-margin-top: 72px;")
+        }
+
+        "last-write-wins" in {
+            val s = Style.scrollMarginTop(60.px).scrollMarginTop(72.px)
+            assert(s.props.size == 1)
+            assert(s.toCss == "scroll-margin-top: 72px;")
+        }
+
+        "companion equals instance" in {
+            assert(Style.scrollMarginTop(72.px).props(0) == Style.empty.scrollMarginTop(72.px).props(0))
+        }
+    }
+
+    "display" - {
+        "block" in {
+            val s = Style.display(Display.block)
+            assert(s.nonEmpty)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.block))
+            assert(s.toCss == "display: block;")
+        }
+
+        "inline" in {
+            val s = Style.display(Display.inline)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
+            assert(s.toCss == "display: inline;")
+        }
+
+        "inlineBlock" in {
+            val s = Style.display(Display.inlineBlock)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inlineBlock))
+            assert(s.toCss == "display: inline-block;")
+        }
+
+        "flex" in {
+            val s = Style.display(Display.flex)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.flex))
+            assert(s.toCss == "display: flex;")
+        }
+
+        "inlineFlex" in {
+            val s = Style.display(Display.inlineFlex)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inlineFlex))
+            assert(s.toCss == "display: inline-flex;")
+        }
+
+        "listItem" in {
+            val s = Style.display(Display.listItem)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.listItem))
+            assert(s.toCss == "display: list-item;")
+        }
+
+        "table" in {
+            val s = Style.display(Display.table)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.table))
+            assert(s.toCss == "display: table;")
+        }
+
+        "tableRow" in {
+            val s = Style.display(Display.tableRow)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.tableRow))
+            assert(s.toCss == "display: table-row;")
+        }
+
+        "tableCell" in {
+            val s = Style.display(Display.tableCell)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.tableCell))
+            assert(s.toCss == "display: table-cell;")
+        }
+
+        "block convenience" in {
+            assert(Style.block.props(0) == Style.Prop.DisplayProp(Display.block))
+            assert(Style.block.toCss == "display: block;")
+        }
+
+        "inline convenience" in {
+            assert(Style.inline.props(0) == Style.Prop.DisplayProp(Display.inline))
+            assert(Style.inline.toCss == "display: inline;")
+        }
+
+        "inlineBlock convenience" in {
+            assert(Style.inlineBlock.props(0) == Style.Prop.DisplayProp(Display.inlineBlock))
+            assert(Style.inlineBlock.toCss == "display: inline-block;")
+        }
+
+        "listItem convenience" in {
+            assert(Style.listItem.props(0) == Style.Prop.DisplayProp(Display.listItem))
+            assert(Style.listItem.toCss == "display: list-item;")
+        }
+
+        "table convenience" in {
+            assert(Style.table.props(0) == Style.Prop.DisplayProp(Display.table))
+            assert(Style.table.toCss == "display: table;")
+        }
+
+        "tableRow convenience" in {
+            assert(Style.tableRow.props(0) == Style.Prop.DisplayProp(Display.tableRow))
+            assert(Style.tableRow.toCss == "display: table-row;")
+        }
+
+        "tableCell convenience" in {
+            assert(Style.tableCell.props(0) == Style.Prop.DisplayProp(Display.tableCell))
+            assert(Style.tableCell.toCss == "display: table-cell;")
+        }
+
+        "selector overload" in {
+            val s = Style.display(_.inline)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
+        }
+
+        "dedup keeps last write" in {
+            val s = Style.block.inline
+            assert(s.props.size == 1)
+            assert(s.props(0) == Style.Prop.DisplayProp(Display.inline))
+            assert(s.toCss == "display: inline;")
+        }
+
+        "enum values" in {
+            assert(Display.block != Display.inline)
+            assert(Display.inline != Display.inlineBlock)
+            assert(Display.inlineBlock != Display.listItem)
+            assert(Display.listItem != Display.block)
+            assert(Display.table != Display.tableRow)
+            assert(Display.tableRow != Display.tableCell)
+            assert(Display.tableCell != Display.block)
+        }
+    }
+
+    "listStyle" - {
+        "disc" in {
+            val s = Style.listStyle(ListStyle.disc)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.disc))
+            assert(s.toCss == "list-style-type: disc;")
+        }
+
+        "decimal" in {
+            val s = Style.listStyle(ListStyle.decimal)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.decimal))
+            assert(s.toCss == "list-style-type: decimal;")
+        }
+
+        "none" in {
+            val s = Style.listStyle(ListStyle.none)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.none))
+            assert(s.toCss == "list-style-type: none;")
+        }
+
+        "selector overload" in {
+            val s = Style.listStyle(_.decimal)
+            assert(s.props(0) == Style.Prop.ListStyleProp(ListStyle.decimal))
+        }
+
+        "enum values" in {
+            assert(ListStyle.disc != ListStyle.decimal)
+            assert(ListStyle.decimal != ListStyle.none)
+            assert(ListStyle.none != ListStyle.disc)
+        }
+    }
+
+    "borderCollapse" - {
+        "collapse" in {
+            val s = Style.borderCollapse(BorderCollapse.collapse)
+            assert(s.props(0) == Style.Prop.BorderCollapseProp(BorderCollapse.collapse))
+            assert(s.toCss == "border-collapse: collapse;")
+        }
+
+        "separate" in {
+            val s = Style.borderCollapse(BorderCollapse.separate)
+            assert(s.props(0) == Style.Prop.BorderCollapseProp(BorderCollapse.separate))
+            assert(s.toCss == "border-collapse: separate;")
+        }
+
+        "selector overload" in {
+            val s = Style.borderCollapse(_.collapse)
+            assert(s.props(0) == Style.Prop.BorderCollapseProp(BorderCollapse.collapse))
+        }
+
+        "enum values" in {
+            assert(BorderCollapse.collapse != BorderCollapse.separate)
         }
     }
 
@@ -682,6 +1078,31 @@ class StyleTest extends kyo.test.Test[Any]:
         "flexBasis renders flex-basis css" in {
             assert(Style.flexBasis(Length.zero).toCss == "flex-basis: 0;")
             assert(Style.flexBasis(50.pct).toCss == "flex-basis: 50%;")
+        }
+    }
+
+    "flex direction" - {
+        "row sets FlexDirectionProp(row)" in {
+            assert(Style.row.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.row))
+        }
+
+        "column sets FlexDirectionProp(column)" in {
+            assert(Style.column.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.column))
+        }
+
+        "rowReverse sets FlexDirectionProp(rowReverse)" in {
+            assert(Style.rowReverse.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.rowReverse))
+        }
+
+        "columnReverse sets FlexDirectionProp(columnReverse)" in {
+            assert(Style.columnReverse.props(0) == Style.Prop.FlexDirectionProp(Style.FlexDirection.columnReverse))
+        }
+
+        "renders flex-direction css for every direction" in {
+            assert(Style.row.toCss == "flex-direction: row;")
+            assert(Style.column.toCss == "flex-direction: column;")
+            assert(Style.rowReverse.toCss == "flex-direction: row-reverse;")
+            assert(Style.columnReverse.toCss == "flex-direction: column-reverse;")
         }
     }
 
@@ -794,6 +1215,169 @@ class StyleTest extends kyo.test.Test[Any]:
             )
             assert(s.props.size == 2)
         }
+
+        "default color space is srgb" in {
+            val s = Style.bgGradient(GradientDirection.toBottom, (Color.hex("#fff").get, 0.pct), (Color.hex("#000").get, 100.pct))
+            val prop = s.props(0) match
+                case p: Style.Prop.BgGradientProp => p
+                case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
+            assert(prop.colorSpace == GradientColorSpace.srgb)
+        }
+
+        "explicit oklch color space is stored on the prop" in {
+            val s = Style.bgGradient(
+                GradientDirection.toBottom,
+                GradientColorSpace.oklch,
+                (Color.hex("#fff").get, 0.pct),
+                (Color.hex("#000").get, 100.pct)
+            )
+            val prop = s.props(0) match
+                case p: Style.Prop.BgGradientProp => p
+                case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
+            assert(prop.colorSpace == GradientColorSpace.oklch)
+            assert(prop.colors.size == 2)
+        }
+
+        "oklab color space via the inline-direction overload" in {
+            val s = Style.bgGradient(
+                _.toBottom,
+                GradientColorSpace.oklab,
+                (Color.hex("#fff").get, 0.pct),
+                (Color.hex("#123").get, 40.pct),
+                (Color.hex("#000").get, 100.pct)
+            )
+            val prop = s.props(0) match
+                case p: Style.Prop.BgGradientProp => p
+                case other                        => fail(s"Expected BgGradientProp, got ${other.getClass.getSimpleName}")
+            assert(prop.colorSpace == GradientColorSpace.oklab)
+            assert(prop.direction == GradientDirection.toBottom)
+            assert(prop.colors.size == 3)
+        }
+
+        "color space renders to the `in <space>` gradient prelude" in {
+            val srgb = Style.bgGradient(GradientDirection.toBottom, (Color.red, 0.pct), (Color.blue, 100.pct)).toCss
+            assert(srgb.contains("linear-gradient(to bottom"), srgb)
+            assert(!srgb.contains("in oklch"), srgb)
+            val oklch = Style.bgGradient(
+                GradientDirection.toBottom,
+                GradientColorSpace.oklch,
+                (Color.red, 0.pct),
+                (Color.blue, 100.pct)
+            ).toCss
+            // CSS spec order: the color-interpolation-method follows the direction.
+            assert(oklch.contains("linear-gradient(to bottom in oklch,"), oklch)
+        }
+    }
+
+    "transition" - {
+        "single property renders transition css" in {
+            val s = Style.transition(TransitionProperty.backgroundColor, 150, Easing.ease)
+            assert(s.toCss == "transition: background-color 150ms ease;")
+        }
+
+        "all shorthand renders transition: all" in {
+            val s = Style.transition(200, Easing.easeOut)
+            assert(s.toCss == "transition: all 200ms ease-out;")
+        }
+
+        "selector overloads build the same prop as direct" in {
+            val a = Style.transition(_.color, 100, _.easeInOut)
+            val b = Style.transition(TransitionProperty.color, 100, Easing.easeInOut)
+            assert(a.props(0) == b.props(0))
+            assert(a.toCss == "transition: color 100ms ease-in-out;")
+        }
+
+        "negative duration clamps to zero" in {
+            val s = Style.transition(TransitionProperty.opacity, -50, Easing.linear)
+            assert(s.toCss == "transition: opacity 0ms linear;")
+        }
+
+        "every TransitionProperty renders its css name" in {
+            assert(Style.transition(TransitionProperty.all, 1, Easing.ease).toCss == "transition: all 1ms ease;")
+            assert(Style.transition(TransitionProperty.backgroundColor, 1, Easing.ease).toCss == "transition: background-color 1ms ease;")
+            assert(Style.transition(TransitionProperty.color, 1, Easing.ease).toCss == "transition: color 1ms ease;")
+            assert(Style.transition(TransitionProperty.borderColor, 1, Easing.ease).toCss == "transition: border-color 1ms ease;")
+            assert(Style.transition(TransitionProperty.opacity, 1, Easing.ease).toCss == "transition: opacity 1ms ease;")
+            assert(Style.transition(TransitionProperty.transform, 1, Easing.ease).toCss == "transition: transform 1ms ease;")
+            assert(Style.transition(TransitionProperty.Custom("left"), 1, Easing.ease).toCss == "transition: left 1ms ease;")
+        }
+
+        "every Easing renders its css name" in {
+            assert(Style.transition(0, Easing.ease).toCss == "transition: all 0ms ease;")
+            assert(Style.transition(0, Easing.linear).toCss == "transition: all 0ms linear;")
+            assert(Style.transition(0, Easing.easeIn).toCss == "transition: all 0ms ease-in;")
+            assert(Style.transition(0, Easing.easeOut).toCss == "transition: all 0ms ease-out;")
+            assert(Style.transition(0, Easing.easeInOut).toCss == "transition: all 0ms ease-in-out;")
+        }
+
+        "last-write-wins on the transition kind" in {
+            val s = Style.transition(150, Easing.ease).transition(300, Easing.linear)
+            assert(s.props.size == 1)
+            assert(s.toCss == "transition: all 300ms linear;")
+        }
+    }
+
+    "animation" - {
+        "renders animation css with both fill mode" in {
+            val s = Style.animation("fade-in", 200, Easing.easeOut)
+            assert(s.toCss == "animation: fade-in 200ms ease-out both;")
+        }
+
+        "selector easing overload builds the same prop" in {
+            val a = Style.animation("fade-in", 200, (_: Easing.type).easeOut)
+            val b = Style.animation("fade-in", 200, Easing.easeOut)
+            assert(a.props(0) == b.props(0))
+        }
+
+        "negative duration clamps to zero" in {
+            val s = Style.animation("x", -10, Easing.ease)
+            assert(s.toCss == "animation: x 0ms ease both;")
+        }
+
+        "last-write-wins on the animation kind" in {
+            val s = Style.animation("a", 100, Easing.ease).animation("b", 200, Easing.linear)
+            assert(s.props.size == 1)
+            assert(s.toCss == "animation: b 200ms linear both;")
+        }
+
+        "coexists with transition (distinct kinds)" in {
+            val s = Style.transition(150, Easing.ease).animation("slide", 180, Easing.easeOut)
+            assert(s.props.size == 2)
+            assert(s.toCss.contains("transition: all 150ms ease;"))
+            assert(s.toCss.contains("animation: slide 180ms ease-out both;"))
+        }
+    }
+
+    "animationDelay" - {
+        "renders animation-delay css" in {
+            assert(Style.animationDelay(150).toCss == "animation-delay: 150ms;")
+        }
+
+        "allows a negative delay (starts mid-animation)" in {
+            assert(Style.animationDelay(-200).toCss == "animation-delay: -200ms;")
+        }
+
+        "is a distinct kind that coexists with animation, for staggered cascades" in {
+            val s = Style.animation("heroline", 320, Easing.easeOut).animationDelay(96)
+            assert(s.props.size == 2)
+            assert(s.toCss.contains("animation: heroline 320ms ease-out both;"))
+            assert(s.toCss.contains("animation-delay: 96ms;"))
+        }
+    }
+
+    "strokeDashoffset" - {
+        "renders unitless stroke-dashoffset css (for a pathLength-normalized stroke draw)" in {
+            assert(Style.strokeDashoffset(1.0).toCss == "stroke-dashoffset: 1;")
+            assert(Style.strokeDashoffset(0.0).toCss == "stroke-dashoffset: 0;")
+        }
+
+        "is the keyframe value an SVG stroke-draw animation tweens between" in {
+            // The gap chart's `gapdraw` keyframe goes from offset 1 (hidden) to 0 (drawn).
+            val from = Style.strokeDashoffset(1.0)
+            val to   = Style.strokeDashoffset(0.0)
+            assert(from.toCss == "stroke-dashoffset: 1;")
+            assert(to.toCss == "stroke-dashoffset: 0;")
+        }
     }
 
     "disabled pseudo-state" - {
@@ -853,6 +1437,18 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.position(Position.flow).props(0) == Style.empty.position(Position.flow).props(0))
         }
 
+        "display" in {
+            assert(Style.display(Display.block).props(0) == Style.empty.display(Display.block).props(0))
+            assert(Style.block.props(0) == Style.empty.block.props(0))
+            assert(Style.inline.props(0) == Style.empty.inline.props(0))
+            assert(Style.inlineBlock.props(0) == Style.empty.inlineBlock.props(0))
+            assert(Style.listItem.props(0) == Style.empty.listItem.props(0))
+        }
+
+        "listStyle" in {
+            assert(Style.listStyle(ListStyle.disc).props(0) == Style.empty.listStyle(ListStyle.disc).props(0))
+        }
+
         "flexGrow" in {
             assert(Style.flexGrow(1.0).props(0) == Style.empty.flexGrow(1.0).props(0))
         }
@@ -885,6 +1481,18 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(pa.direction == pb.direction)
             assert(pa.colors.size == pb.colors.size)
             assert(pa.positions.size == pb.positions.size)
+        }
+
+        "transition" in {
+            assert(Style.transition(150, Easing.ease).props(0) == Style.empty.transition(150, Easing.ease).props(0))
+            assert(
+                Style.transition(TransitionProperty.color, 100, Easing.linear).props(0) ==
+                    Style.empty.transition(TransitionProperty.color, 100, Easing.linear).props(0)
+            )
+        }
+
+        "animation" in {
+            assert(Style.animation("x", 200, Easing.easeOut).props(0) == Style.empty.animation("x", 200, Easing.easeOut).props(0))
         }
 
         "disabled" in {

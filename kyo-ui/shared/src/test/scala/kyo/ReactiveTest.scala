@@ -610,6 +610,32 @@ class ReactiveTest extends UITest:
         }
     }
 
+    "signal render updates when the ref is set from a separate forked fiber (route-driven pattern)" in {
+        val app: UI < Async =
+            for
+                trigger <- Signal.initRef(0)
+                content <- Signal.initRef("before")
+                _ <- Fiber.initUnscoped {
+                    Loop.forever {
+                        for
+                            _ <- trigger.next
+                            _ <- content.set("after")
+                        yield Loop.continue(())
+                    }
+                }
+            yield UI.div(
+                content.render(v => UI.span(v).id("v")),
+                UI.button("Go").id("btn").onClick(trigger.set(1))
+            )
+        withUI(app) {
+            for
+                _ <- Browser.assertText(Selector.id("v"), "before")
+                _ <- Browser.click(Selector.id("btn"))
+                _ <- Browser.assertText(Selector.id("v"), "after")
+            yield succeed
+        }
+    }
+
     "signal render switches element type" in {
         val app: UI < Async =
             for flag <- Signal.initRef(false)

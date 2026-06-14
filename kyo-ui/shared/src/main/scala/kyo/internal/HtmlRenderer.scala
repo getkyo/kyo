@@ -46,6 +46,56 @@ private[kyo] object HtmlRenderer:
            |</body>
            |</html>""".stripMargin
 
+    /** Wrap body HTML in a complete static HTML document with a configurable head (for SSG/SSR).
+      *
+      * Unlike `renderPage` (which injects the SSE client JS for server-push), this helper emits a
+      * clean static document with an optional module script: the caller's bundle or nothing. The
+      * `baseCss` reset is always emitted before `head.css` so framework defaults can be overridden.
+      * Called by `UI.runRenderPage`.
+      */
+    private[kyo] def page(head: UI.PageHead, body: String): String =
+        val metaTags = head.meta.map((n, c) => s"""<meta name="${esc(n)}" content="${esc(c)}">""").mkString
+        val linkTags = head.links.map((r, h) => s"""<link rel="${esc(r)}" href="${esc(h)}">""").mkString
+        val script = head.moduleScript match
+            case Present(src) => s"""<script type="module" src="${esc(src)}"></script>"""
+            case Absent       => ""
+        val ldBlock = head.jsonLd match
+            case Present(di) => renderDataIsland(di)
+            case Absent      => ""
+        val islands = head.dataIslands.map(renderDataIsland).mkString
+        s"""<!DOCTYPE html>
+           |<html lang="en">
+           |<head>
+           |<meta charset="utf-8">
+           |<meta name="viewport" content="width=device-width, initial-scale=1">
+           |<title>${esc(head.title)}</title>
+           |$metaTags$linkTags
+           |<style>$baseCss${head.css}</style>
+           |$ldBlock</head>
+           |<body>$body$islands</body>
+           |$script
+           |</html>""".stripMargin
+    end page
+
+    // Render a data island as `<script type="..."[ id="..."]>ESCAPED-JSON</script>`. The type
+    // and id attributes use the HTML-entity escape (`esc`); the JSON body uses the JS-unicode
+    // escape (`escScript`) so a `</script>` substring renders as `</script>`, inert
+    // text the consumer's JSON.parse still reads, rather than the HTML-entity form `&lt;` that
+    // would change the bytes and break JSON.parse on read-back.
+    private def renderDataIsland(di: UI.DataIsland): String =
+        val idAttr = di.id match
+            case Present(v) => s""" id="${esc(v)}""""
+            case Absent     => ""
+        s"""<script type="${esc(di.scriptType)}"$idAttr>${escScript(di.json)}</script>"""
+    end renderDataIsland
+
+    // The single owner of the data-island body escape: a literal "</script>" in the JSON body
+    // would close the element early, so "<"/">" become their JSON unicode escapes. This is the
+    // JS-unicode form ("<"/">"), NOT the HTML-entity esc(...) form, because the body
+    // is JSON read back by JSON.parse, not HTML re-parsed.
+    private def escScript(json: String): String =
+        json.replace("<", "\\u003c").replace(">", "\\u003e")
+
     // ---- Core rendering ----
 
     private def renderTo(sb: StringBuilder, ui: UI, path: Seq[String], svg: Boolean = false)(using Frame): Unit < Sync =
@@ -92,6 +142,9 @@ private[kyo] object HtmlRenderer:
                         )
                     end if
                 end for
+
+            case UI.Ast.RawHtml(value) =>
+                w(sb, value)
 
             case UI.Ast.Text(value) =>
                 w(sb, esc(value))
@@ -170,6 +223,9 @@ private[kyo] object HtmlRenderer:
         val tabAttr   = dd.attrs.tabIndex.map(n => s""" tabindex="$n"""").getOrElse("")
         val styleAttr = CssStyleRenderer.render(dd.attrs.uiStyle)
         val styleStr  = if styleAttr.nonEmpty then s""" style="${esc(styleAttr)}"""" else ""
+        // The dropdown wrapper carries its cssClasses (the same `.cssClass(...)` hook every other
+        // element honors) so callers can style the trigger container via a class selector.
+        val clsStr = if dd.attrs.cssClasses.nonEmpty then s""" class="${esc(dd.attrs.cssClasses.mkString(" "))}"""" else ""
         // Determine initial trigger label
         val firstLabel    = dd.options.headMaybe.map(_._1).getOrElse("")
         val currentLabel  = Maybe.fromOption(dd.options.toSeq.find(_._2 == currentVal)).map(_._1).getOrElse(firstLabel)
@@ -179,7 +235,10 @@ private[kyo] object HtmlRenderer:
         val triggerDdAttr = if baseId.nonEmpty then s""" data-kyo-dropdown-trigger="${esc(baseId)}"""" else ""
         val optionsDdAttr = if baseId.nonEmpty then s""" data-kyo-dropdown-options="${esc(baseId)}"""" else ""
         // Wrapper div
-        w(sb, s"""<div data-kyo-path="$pathStr"$idAttr$ddAttr data-kyo-ev="click,keydown,change"$hidAttr$disAttr$tabAttr$styleStr>""")
+        w(
+            sb,
+            s"""<div data-kyo-path="$pathStr"$idAttr$clsStr$ddAttr data-kyo-ev="click,keydown,change"$hidAttr$disAttr$tabAttr$styleStr>"""
+        )
         // Trigger button
         w(sb, s"""<button$triggerId type="button"$triggerDdAttr tabindex="0">$triggerLabel</button>""")
         // Options container (hidden by default)
@@ -202,6 +261,7 @@ private[kyo] object HtmlRenderer:
         case _: Header         => "header"
         case _: Footer         => "footer"
         case _: Pre            => "pre"
+        case _: Blockquote     => "blockquote"
         case _: Code           => "code"
         case _: Ul             => "ul"
         case _: Ol             => "ol"
@@ -257,6 +317,7 @@ private[kyo] object HtmlRenderer:
 
     private def renderCommonAttrs(sb: StringBuilder, attrs: Attrs): Unit =
         attrs.identifier.foreach(id => w(sb, s""" id="${esc(id)}""""))
+        if attrs.cssClasses.nonEmpty then w(sb, s""" class="${esc(attrs.cssClasses.mkString(" "))}"""")
         attrs.hidden.foreach(v => if v then w(sb, " hidden"))
         attrs.tabIndex.foreach(n => w(sb, s""" tabindex="$n""""))
         attrs.focusTrap.foreach(v => if v then w(sb, """ data-kyo-focus-trap="1""""))
@@ -514,7 +575,7 @@ private[kyo] object HtmlRenderer:
 
     // ---- Helpers ----
 
-    private val baseCss =
+    private[kyo] val baseCss =
         """*, *::before, *::after { box-sizing: border-box; }
           |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
           |div, section, main, header, footer, form, article, aside, p, ul, ol, pre, code, h1, h2, h3, h4, h5, h6, label { display: flex; flex-direction: column; }
@@ -1176,6 +1237,7 @@ private[kyo] object HtmlRenderer:
                 s.animKeySplines.foreach(v => svgAttr(sb, "keySplines", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
             case _: Svg.AnimateTransform =>
                 s.animAttributeName.foreach(v => svgAttr(sb, "attributeName", v))
                 s.animType.foreach(v => svgAttr(sb, "type", transformType(v)))
@@ -1184,14 +1246,17 @@ private[kyo] object HtmlRenderer:
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
             case _: Svg.AnimateMotion =>
                 s.d.foreach(d => svgAttr(sb, "path", pathData(d)))
                 s.animDur.foreach(v => svgAttr(sb, "dur", v))
                 s.animRepeatCount.foreach(v => svgAttr(sb, "repeatCount", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
             case _: Svg.SetAnim =>
                 s.animAttributeName.foreach(v => svgAttr(sb, "attributeName", v))
                 s.animTo.foreach(v => svgAttr(sb, "to", v))
                 s.animBegin.foreach(v => svgAttr(sb, "begin", v))
+                s.animFill.foreach(v => svgAttr(sb, "fill", animFill(v)))
         end match
     end renderSvgAttrs
 
@@ -1209,6 +1274,7 @@ private[kyo] object HtmlRenderer:
         }
         s.strokeDashoffset.foreach(l => svgAttr(sb, "stroke-dashoffset", svgLength(l)))
         s.strokeMiterlimit.foreach(v => svgAttr(sb, "stroke-miterlimit", fmtD(v)))
+        s.pathLength.foreach(v => svgAttr(sb, "pathLength", fmtD(v)))
         s.opacity.foreach(v => svgAttr(sb, "opacity", fmtD(v)))
         if s.transform.nonEmpty then
             svgAttr(sb, "transform", s.transform.map(transform).mkString(" "))
@@ -1325,7 +1391,8 @@ private[kyo] object HtmlRenderer:
             val la = if largeArc then 1 else 0
             val sw = if sweep then 1 else 0
             s"a${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(dx)} ${fmtD(dy)}"
-        case Svg.PathCommand.Close => "Z"
+        case Svg.PathCommand.Close  => "Z"
+        case Svg.PathCommand.Raw(d) => d
 
     private def fillRule(r: Svg.FillRule): String = r match
         case Svg.FillRule.NonZero => "nonzero"
@@ -1418,5 +1485,9 @@ private[kyo] object HtmlRenderer:
         case Svg.TransformType.Rotate    => "rotate"
         case Svg.TransformType.SkewX     => "skewX"
         case Svg.TransformType.SkewY     => "skewY"
+
+    private def animFill(f: Svg.AnimFill): String = f match
+        case Svg.AnimFill.Freeze => "freeze"
+        case Svg.AnimFill.Remove => "remove"
 
 end HtmlRenderer

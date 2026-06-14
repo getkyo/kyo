@@ -341,6 +341,21 @@ final case class BrowserInvalidArgumentException(method: String, message: String
     extends BrowserException(s"$method: $message")
     with BrowserReadException derives CanEqual
 
+/** A capture operation exceeded its configured unit limit.
+  *
+  * `operation` names the public method ("screenshotFullPage", "screenshotMarks", "screenshotFrames").
+  * `limit` and `reached` always share one unit. For band and mark caps `limit` is the cap (`maxBands`,
+  * `maxMarks`) and `reached` is the count the page demanded, raised BEFORE any capture (the call is rejected
+  * without partial work). For `screenshotFrames` the cap is checked frame-count-first: the frame cap reports
+  * `limit = maxFrames` against the frame count reached, and the duration cap reports `limit = maxDurationMs`
+  * against the elapsed milliseconds reached, so a caller can interpret the pair without knowing which cap fired.
+  * Pre-CDP argument errors (negative coords, non-positive size) use [[BrowserInvalidArgumentException]] instead,
+  * not this leaf.
+  */
+final case class BrowserCaptureLimitExceededException(operation: String, limit: Int, reached: Int)(using Frame)
+    extends BrowserException(s"Capture limit exceeded for $operation: limit $limit, reached $reached")
+    with BrowserReadException derives CanEqual
+
 // --- Assertion failures ---
 
 /** A waited-for condition did not become true before the deadline.

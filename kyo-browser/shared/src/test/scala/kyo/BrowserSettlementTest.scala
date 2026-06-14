@@ -1191,4 +1191,256 @@ class BrowserSettlementTest extends BrowserTest:
         }
     }
 
+    // ── data-kyo-internal filter + waitForStable + settleForCapture ──
+
+    // Test 1: injecting a data-kyo-internal node leaves __kyoMutCount unchanged.
+    // The observer is installed via a no-op afterAction call so __kyoMutCount and the
+    // observer exist; subsequent mutations inside the tagged subtree are filtered out
+    // and must not change the counter.
+    "data-kyo-internal mutations do not arm the settlement gate" in {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                // Install the observer via a no-op afterAction so __kyoMutCount is initialized.
+                kyo.internal.MutationSettlement.afterAction(Browser.eval("'noop'"))(Absent).andThen {
+                    // Read the count right after the no-op action settled.
+                    Browser.eval("String(window.__kyoMutCount || 0)").map { beforeStr =>
+                        val before = beforeStr.toLong
+                        // Inject a data-kyo-internal subtree and mutate it several times.
+                        Browser.eval("""(() => {
+                            const d = document.createElement('div');
+                            d.setAttribute('data-kyo-internal', 'overlay');
+                            d.id = 'overlay';
+                            document.body.appendChild(d);
+                            d.textContent = 'x';
+                            d.textContent = 'y';
+                            d.textContent = 'z';
+                            const child = document.createElement('span');
+                            child.textContent = 'child';
+                            d.appendChild(child);
+                            return 'done';
+                        })()""").andThen {
+                            Browser.eval("String(window.__kyoMutCount || 0)").map { afterStr =>
+                                val after = afterStr.toLong
+                                assert(
+                                    after == before,
+                                    s"expected __kyoMutCount to remain $before after data-kyo-internal mutations but got $after"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Test 2: real DOM mutations still arm the gate after the filter is applied.
+    // Proves the filter is narrow: untagged elements still increment __kyoMutCount.
+    // Strategy: use evalJsAwaiting (awaitPromise=true) to flush microtasks after the DOM mutation
+    // so the MutationObserver callback fires (MutationObserver delivers as a microtask; a
+    // synchronous eval cannot observe the post-callback count because microtasks run after the
+    // current script task, not between its statements). The async eval yields via setTimeout(0)
+    // to let the callback run, then reads the updated count.
+    "real DOM mutations still arm the gate after the data-kyo-internal filter" in {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                // The action installs the observer, triggers a real DOM mutation, then yields via
+                // setTimeout(0) inside an async block so the MutationObserver microtask fires.
+                // Returns "before,after" counts for assertion.
+                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                    const before = window.__kyoMutCount || 0;
+                    document.getElementById('real').textContent = 'changed';
+                    await new Promise(r => setTimeout(r, 0));
+                    const after = window.__kyoMutCount || 0;
+                    return String(before) + ',' + String(after);
+                })()""")
+                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                    val parts  = result.split(",")
+                    val before = parts(0).toLong
+                    val after  = parts(1).toLong
+                    assert(
+                        after > before,
+                        s"expected __kyoMutCount to increase from $before after an untagged mutation but got $after (filter must not suppress untagged mutations)"
+                    )
+                }
+            }
+        }
+    }
+
+    // Test 2b: APPENDING a data-kyo-internal root to document.body does NOT arm the gate.
+    // This is the overlay-injection case: the childList record's target is the UNTAGGED parent (document.body) and the
+    // tagged node is in addedNodes, so the original target-ancestor-only filter would have armed the gate. The extended
+    // filter treats a childList record as transparent when every added/removed node is (or is within) a tagged subtree.
+    // evalJsAwaiting flushes the MutationObserver microtask (via setTimeout(0)) before reading the post-callback count.
+    "appending a data-kyo-internal node does not arm the settlement gate" in {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                    const before = window.__kyoMutCount || 0;
+                    const d = document.createElement('div');
+                    d.setAttribute('data-kyo-internal', 'overlay');
+                    d.id = 'kyo-overlay-root';
+                    const child = document.createElement('span');
+                    child.textContent = 'box';
+                    d.appendChild(child);
+                    document.body.appendChild(d);
+                    await new Promise(r => setTimeout(r, 0));
+                    const after = window.__kyoMutCount || 0;
+                    return String(before) + ',' + String(after);
+                })()""")
+                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                    val parts  = result.split(",")
+                    val before = parts(0).toLong
+                    val after  = parts(1).toLong
+                    assert(
+                        after == before,
+                        s"expected __kyoMutCount to remain $before after appending a data-kyo-internal node but got $after"
+                    )
+                }
+            }
+        }
+    }
+
+    // Test 2c: REMOVING a data-kyo-internal root from document.body does NOT arm the gate.
+    // The childList record's target is document.body (untagged) and the tagged node is in removedNodes. A detached removed
+    // tagged element still satisfies closest('[data-kyo-internal]') on itself, so the extended filter treats the removal as
+    // transparent. Pre-seeds the tagged root before the observer is installed so the only mutation under measurement is the
+    // removal.
+    "removing a data-kyo-internal node does not arm the settlement gate" in {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                // Pre-seed the tagged overlay root before installing the observer.
+                Browser.eval("""(() => {
+                    const d = document.createElement('div');
+                    d.setAttribute('data-kyo-internal', 'overlay');
+                    d.id = 'kyo-overlay-root';
+                    document.body.appendChild(d);
+                    return 'seeded';
+                })()""").andThen {
+                    val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                        const before = window.__kyoMutCount || 0;
+                        const d = document.getElementById('kyo-overlay-root');
+                        document.body.removeChild(d);
+                        await new Promise(r => setTimeout(r, 0));
+                        const after = window.__kyoMutCount || 0;
+                        return String(before) + ',' + String(after);
+                    })()""")
+                    kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                        val parts  = result.split(",")
+                        val before = parts(0).toLong
+                        val after  = parts(1).toLong
+                        assert(
+                            after == before,
+                            s"expected __kyoMutCount to remain $before after removing a data-kyo-internal node but got $after"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Test 2d: appending a NON-tagged node STILL arms the gate (regression guard for the childList filter extension).
+    // Proves the extended filter is narrow: a childList record whose added node is untagged increments __kyoMutCount.
+    "appending a non-tagged node still arms the settlement gate" in {
+        withBrowser {
+            onPage("<body><div id='real'>initial</div></body>") {
+                val action = kyo.internal.BrowserEval.evalJsAwaiting("""(async () => {
+                    const before = window.__kyoMutCount || 0;
+                    const d = document.createElement('div');
+                    d.id = 'plain-node';
+                    d.textContent = 'plain';
+                    document.body.appendChild(d);
+                    await new Promise(r => setTimeout(r, 0));
+                    const after = window.__kyoMutCount || 0;
+                    return String(before) + ',' + String(after);
+                })()""")
+                kyo.internal.MutationSettlement.afterAction(action)(Absent).map { result =>
+                    val parts  = result.split(",")
+                    val before = parts(0).toLong
+                    val after  = parts(1).toLong
+                    assert(
+                        after > before,
+                        s"expected __kyoMutCount to increase from $before after appending an untagged node but got $after (the filter must not suppress untagged insertions)"
+                    )
+                }
+            }
+        }
+    }
+
+    // Test 3: waitForStable returns () once the DOM quiesces.
+    // A burst of 5 mutations fires at ~20ms intervals then stops; waitForStable must
+    // return within the 2s timeout. Uses Test.timed for the upper-bound assertion.
+    "waitForStable returns once the DOM quiesces after a mutation burst" in {
+        withBrowser {
+            onPage("""<body>
+                <div id='burst'>0</div>
+                <script>
+                    let n = 0;
+                    const id = setInterval(() => {
+                        document.getElementById('burst').textContent = String(++n);
+                        if (n >= 5) clearInterval(id);
+                    }, 20);
+                </script>
+            </body>""") {
+                timed(kyo.internal.MutationSettlement.waitForStable(2.seconds)).map {
+                    case (elapsedDur, ()) =>
+                        val elapsedMs = elapsedDur.toMillis
+                        assert(
+                            elapsedMs <= 2500L,
+                            s"expected waitForStable to return within 2500ms after quiescence but took ${elapsedMs}ms"
+                        )
+                }
+            }
+        }
+    }
+
+    // Test 4: waitForStable aborts with BrowserAssertionTimedOutException on a never-quiescing page.
+    // A perpetual setInterval mutation at 10ms never lets the observer quiesce; the call must abort
+    // with the typed exception. Result shape (not elapsed time) is the deterministic contract.
+    "waitForStable aborts BrowserAssertionTimedOutException on a never-quiescing page" in {
+        withBrowser {
+            onPage("""<body>
+                <div id='churn'>0</div>
+                <script>
+                    let n = 0;
+                    setInterval(() => { document.getElementById('churn').textContent = String(++n); }, 10);
+                </script>
+            </body>""") {
+                Browser.withConfig(_.mutationSettlementTimeout(300.millis)) {
+                    Abort.run[BrowserReadException] {
+                        kyo.internal.MutationSettlement.waitForStable(300.millis)
+                    }.map {
+                        case Result.Failure(_: BrowserAssertionTimedOutException) => succeed
+                        case other =>
+                            fail(s"expected Result.Failure(BrowserAssertionTimedOutException) but got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    // Test 5: settleForCapture proceeds (returns Success(())) on a perpetually-mutating page.
+    // Same never-quiescing fixture as test 4; settleForCapture must recover the timeout to ()
+    // and NEVER abort. Asserted via Abort.run shape.
+    "settleForCapture returns Result.Success(()) on a never-quiescing page (never aborts)" in {
+        withBrowser {
+            onPage("""<body>
+                <div id='churn2'>0</div>
+                <script>
+                    let n = 0;
+                    setInterval(() => { document.getElementById('churn2').textContent = String(++n); }, 10);
+                </script>
+            </body>""") {
+                Browser.withConfig(_.mutationSettlementTimeout(300.millis)) {
+                    Abort.run[BrowserReadException] {
+                        kyo.internal.MutationSettlement.settleForCapture
+                    }.map {
+                        case Result.Success(()) => succeed
+                        case other =>
+                            fail(s"expected Result.Success(()) from settleForCapture on never-quiescing page but got $other")
+                    }
+                }
+            }
+        }
+    }
+
 end BrowserSettlementTest
