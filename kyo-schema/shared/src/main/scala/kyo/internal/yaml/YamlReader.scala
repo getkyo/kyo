@@ -1,4 +1,4 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import java.nio.charset.StandardCharsets
 import kyo.*

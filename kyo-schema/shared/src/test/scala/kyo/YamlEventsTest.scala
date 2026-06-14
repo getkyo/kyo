@@ -53,26 +53,20 @@ class YamlEventsTest extends kyo.test.Test[Any]:
                     Result.succeed(context :+ label(event))
             end eventHandler
 
-            assert(
-                Yaml.Events.visit(yaml, Chunk.empty[String])(methodHandler) ==
-                    Result.succeed(Chunk(
-                        "scalar:name:Plain",
-                        "scalar:Alice:Plain"
-                    ))
-            )
-            assert(
-                Yaml.Events.visit(yaml, Chunk.empty[String])(eventHandler) ==
-                    Result.succeed(Chunk(
-                        "streamStart",
-                        "documentStart",
-                        "mappingStart::unknown",
-                        "scalar:name:Plain",
-                        "scalar:Alice:Plain",
-                        "collectionEnd:Mapping",
-                        "documentEnd",
-                        "streamEnd"
-                    ))
-            )
+            assert(Yaml.Events.visit(yaml, Chunk.empty[String])(methodHandler) == Result.succeed(Chunk(
+                "scalar:name:Plain",
+                "scalar:Alice:Plain"
+            )))
+            assert(Yaml.Events.visit(yaml, Chunk.empty[String])(eventHandler) == Result.succeed(Chunk(
+                "streamStart",
+                "documentStart",
+                "mappingStart::unknown",
+                "scalar:name:Plain",
+                "scalar:Alice:Plain",
+                "collectionEnd:Mapping",
+                "documentEnd",
+                "streamEnd"
+            )))
         }
 
         "renders transformed parser events through the public renderer" in {

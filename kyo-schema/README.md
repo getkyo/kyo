@@ -351,6 +351,94 @@ val rendered =
 assert(rendered == Result.succeed("name: Alice\nage: 30\n"))
 ```
 
+#### YAML CST
+
+`Yaml.cst` is an opt-in concrete syntax tree for structural YAML tools. It keeps source text, comments, whitespace, node syntax, anchors, tags, and source marks so unchanged documents render from the original source, and edits can preserve nearby comments and trivia while changed regions render canonically. Schema decode and encode remain the fast paths for typed values.
+
+```scala
+val source =
+    """# service owner
+      |name: Alice # current
+      |active: true
+      |""".stripMargin
+
+val replacement =
+    Yaml.Cst.from("Bob").getOrThrow.root.get
+
+val edited =
+    Yaml.cst(source).getOrThrow
+        .replace(Yaml.Cst.Path.root / "name", replacement)
+        .getOrThrow
+
+assert(
+    edited.render(using Yaml.WriterConfig.Default) ==
+        """# service owner
+          |name: Bob # current
+          |active: true
+          |""".stripMargin
+)
+```
+
+The assertion shows that the `name` value changed while the owner comment, inline comment, and `active` entry stayed in place.
+
+Pipeline CST helpers use the same event middleware as `decode` and `render`. With no middleware, `Yaml.pipeline.cst(input)` delegates to source-backed CST parsing. With middleware, the pipeline materializes transformed events into a canonical CST, which is useful for structural tooling that wants transformed YAML without schema decoding or building a `Yaml.Node` tree.
+
+```scala
+val renameFullName =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        val next =
+            if value == "fullName" then "name"
+            else value
+        Result.succeed((next, meta))
+    }
+
+val doc =
+    Yaml.pipeline
+        .through(renameFullName)
+        .cst("fullName: Alice\n")
+        .getOrThrow
+
+assert(doc.source.isEmpty)
+assert(doc.render(using Yaml.WriterConfig.Default) == "name: Alice\n")
+```
+
+The empty source proves the CST came from transformed events rather than the original bytes, and the render assertion proves the scalar rename happened.
+
+A CST document can also serve as the decode source directly. `Yaml.decode[A](doc)` reads the CST's event stream through the schema without re-parsing YAML text. `throughCst` composes a structural edit as a pipeline stage so the same pipeline can both decode the edited values and render the result with comments preserved:
+
+```scala
+val cfgSource =
+    """# deployment
+      |services:
+      |  api:
+      |    image: app:v1
+      |""".stripMargin
+
+// Decode straight from a CST document
+val cfgDoc = Yaml.cst(cfgSource).getOrThrow
+val cfgDecoded =
+    Yaml.decode[Map[String, Map[String, Map[String, String]]]](cfgDoc)
+assert(cfgDecoded.isSuccess)
+
+// Edit via throughCst (comments preserved), then render the result
+val imageV2 = Yaml.Cst.from("app:v2").getOrThrow.root.get
+val bumped =
+    Yaml.pipeline
+        .throughCst(
+            _.replace(
+                Yaml.Cst.Path.root / "services" / "api" / "image",
+                imageV2
+            )
+        )
+        .render(cfgSource)
+        .getOrThrow
+
+assert(bumped.contains("app:v2"))
+assert(bumped.contains("# deployment"))
+```
+
+The comment assertion holds because `throughCst` builds a source-backed CST from the input, applies the structural edit, and renders through the trivia-aware renderer. Nodes that were not edited retain their original text, so the leading `# deployment` comment survives.
+
 For richer examples, including an anchor audit that finds undeclared aliases and unused anchors, direct pipeline decode of case classes and ADTs, and a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala) and [YamlPipelineTest.scala](shared/src/test/scala/kyo/YamlPipelineTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
 
 ### Protobuf

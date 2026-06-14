@@ -1,8 +1,10 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import kyo.*
 
 class YamlDocumentsTest extends kyo.test.Test[Any]:
+
+    given CanEqual[Any, Any] = CanEqual.derived
 
     "YamlDocuments" - {
 
@@ -28,8 +30,12 @@ class YamlDocumentsTest extends kyo.test.Test[Any]:
                   |name: Bob
                   |""".stripMargin
 
-            assert(YamlDocuments.requiresSplit(yaml))
-            assert(YamlDocuments.split(yaml) == Chunk("name: Alice\n", "", "name: Bob\n"))
+            val obtained = (
+                requiresSplit = YamlDocuments.requiresSplit(yaml),
+                split = YamlDocuments.split(yaml)
+            )
+            assert(obtained.requiresSplit == true)
+            assert(obtained.split == Chunk("name: Alice\n", "", "name: Bob\n"))
         }
 
         "ignores directives and comments between documents" in {

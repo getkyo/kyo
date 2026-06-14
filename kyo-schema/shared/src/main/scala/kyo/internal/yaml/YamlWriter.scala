@@ -1,8 +1,9 @@
-package kyo.internal
+package kyo.internal.yaml
 
 import java.nio.charset.StandardCharsets
 import kyo.*
 import kyo.Codec.Writer
+import kyo.internal.Ryu
 import scala.annotation.tailrec
 
 final private[kyo] class YamlWriter private (private var config: Yaml.WriterConfig) extends Writer:
