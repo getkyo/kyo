@@ -268,7 +268,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         // and issuing EV_DELETE on a recycled fd number would hit the wrong fd). cancel() calls deregisterFds(fdClosing=false)
         // so the live-fd withdrawal explicitly removes the filter. The call log must reflect this distinction.
         //
-        // Stale-event witness (the INV-012 outcome): after closeHandle, the old fd is closed and the OS may recycle the number.
+        // Stale-event witness: after closeHandle, the old fd is closed and the OS may recycle the number.
         // A new socket at the same fd number must receive no stale readiness event from the old filter, confirming the OS
         // auto-removal of kqueue filters on close makes fdClosing=true safe for reuse.
         PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
