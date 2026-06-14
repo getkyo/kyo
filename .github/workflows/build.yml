@@ -181,6 +181,17 @@ jobs:
             export SBT_TASK_LIMIT=1
           fi
 
+          # Native: nativeLink forks one LLVM process per module and Scala Native's
+          # optimizer wants the full -Xmx12G heap. On the 16GB Linux runners
+          # (ubuntu-latest, ubuntu-24.04-arm) the concurrent native memory plus that
+          # heap overcommits and the kernel OOM-kills the runner (job fails with the
+          # test step stuck in progress and no uploaded log). Serialize so modules
+          # link one at a time, capping peak memory. macOS/Windows already serialize
+          # these targets above; this is the redundant-but-explicit Linux case.
+          if [ "${{ matrix.target }}" = "Native" ]; then
+            export SBT_TASK_LIMIT=1
+          fi
+
           # Windows: serialize all sbt tasks to avoid OverlappingFileLockException
           # during coursier dependency resolution (mandatory file locks).
           case "${{ inputs.os }}" in
