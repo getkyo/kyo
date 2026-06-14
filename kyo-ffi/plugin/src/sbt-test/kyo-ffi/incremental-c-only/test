@@ -1,0 +1,12 @@
+# Asserts ffiCompile input-hash caching:
+#  1. initial compile → artifact produced
+#  2. snapshot its mtime
+#  3. re-run with no changes → cache hit, mtime unchanged
+#  4. swap in a new C source body → cache miss, artifact rebuilt
+> ffiCompile
+> snapshotCompileMtime
+> assertCompileUnchanged
+$ delete src/main/c/lib.c
+$ copy-file template/lib_v2.c src/main/c/lib.c
+> ffiCompile
+> assertCompileChanged

@@ -1,0 +1,4 @@
+# Verify `zig cc` as ffiCCompiler works when zig is installed; skip otherwise.
+# The compileIfZig task is a no-op when `zig version` fails, so this test is
+# effectively always green but only exercises the real ZigCc branch when available.
+> compileIfZig

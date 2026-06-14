@@ -1,0 +1,5 @@
+# example-openssl: worked example binding OpenSSL-style init + RAND_bytes to a stub C ABI.
+> ffiCompile
+> ffiPackage
+> compile
+> run

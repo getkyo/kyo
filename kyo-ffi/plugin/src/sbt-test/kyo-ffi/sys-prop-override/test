@@ -1,0 +1,6 @@
+# sys-prop-override: libBuilder builds the .so. The root project has no ffiCSources,
+# so no META-INF/native/spo_lib library is packaged. runWithOverride forks with
+# -Dkyo.ffi.spo_lib.path=<abs> — success proves the override is honored.
+> libBuilder/ffiCompile
+> compile
+> runWithOverride

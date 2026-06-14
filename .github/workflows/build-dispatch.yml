@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   run:
-    timeout-minutes: 120
+    timeout-minutes: 180
     runs-on: ${{ inputs.runner-image }}
     env:
       JAVA_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'

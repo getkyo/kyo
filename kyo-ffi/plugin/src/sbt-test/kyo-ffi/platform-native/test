@@ -1,0 +1,4 @@
+# ScalaNativePlugin enabled → platform autodetected to Native; ffiCompile becomes a no-op.
+> show ffiTargetPlatform
+> checkPlatform
+> checkFfiCompileIsNoOp

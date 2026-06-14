@@ -1,0 +1,5 @@
+# example-sqlite: worked example binding sqlite3-style open/exec/close to a stub C ABI.
+> ffiCompile
+> ffiPackage
+> compile
+> run

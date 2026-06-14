@@ -4,7 +4,9 @@ import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.internal.Reducible
+import kyo.kernel.internal.Context
 import kyo.kernel.internal.Safepoint
+import kyo.kernel.internal.Trace
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOPromiseBase
 import kyo.scheduler.IOTask
@@ -381,6 +383,34 @@ object Fiber:
             f.onComplete(p)(using ExecutionContext.parasitic)
             p
         end fromFuture
+
+        /** Spawns a fire-and-forget carrier fiber running `v`, WITHOUT re-entering the effect system.
+          *
+          * The unsafe counterpart of [[Fiber.initUnscoped]]: where `initUnscoped` returns `Fiber[...] < (Sync & S)` (it suspends), this
+          * returns the `Fiber.Unsafe` directly so callers in unsafe code (drivers, transports) can spawn a carrier without
+          * `Sync.Unsafe.evalOrThrow`.
+          *
+          * Behavior, which callers MUST understand:
+          *   1. Empty effect context. The carrier runs with an EMPTY context (Context.empty). Any Local / context-dependent effect inside
+          *      `v` observes its DEFAULT, not the spawning fiber's bindings. Capturing the live context requires a suspension (it is
+          *      reachable only inside a running computation), which an unsafe entry has none of. Do not assume inherited Local values.
+          *   2. Trace captured. The current execution trace IS snapshotted for diagnostics, so a failure inside `v` enriches its stack
+          *      trace with the spawning frame chain.
+          *   3. Fire-and-forget scheduling. The carrier is scheduled the instant `init` returns; the caller need do nothing with the
+          *      returned fiber for it to run.
+          *   4. Cooperative interruption. The returned Fiber.Unsafe is interruptible exactly like initUnscoped's product:
+          *      `fiber.interrupt(error)` / `fiber.onInterrupt` work, honored at safepoints.
+          *   5. Throw becomes Panic. A throw in `v` becomes a Result.Panic in the fiber result, never propagated to the spawner; observe
+          *      it by registering onComplete.
+          *
+          * WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe.
+          */
+        def init[A](v: => A)(using AllowUnsafe, Frame): Fiber.Unsafe[A, Any] =
+            // Unsafe: spawns a fire-and-forget carrier without re-entering the effect system; replaces
+            // the evalOrThrow + initUnscoped idiom at every kyo-net spawn site.
+            IOTask(Sync.defer(v), Trace.saved(), Context.empty)
+                .asInstanceOf[Fiber.Unsafe[A, Any]]
+        end init
 
         extension [A, S](self: Unsafe[A, S])
             def done()(using AllowUnsafe): Boolean      = self.lower.done()
