@@ -54,6 +54,15 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 
+// Serialize scaladoc generation. Scala 3 dottydoc runs in-process (the `doc` task is not
+// forked) and is not safe to run concurrently within one sbt JVM: parallel per-module `doc`
+// runs intermittently corrupt shared compiler state and crash with a null
+// SignatureBuilder.content() NPE while rendering method signatures. That surfaced as flaky
+// `ci-release` failures on main (the per-module Native javadoc step). Every project tags its
+// `Compile / doc` with DocTag (see kyo-settings) and concurrentRestrictions caps it at 1, so
+// docs build one module at a time while compilation and tests stay parallel.
+lazy val DocTag = Tags.Tag("doc")
+
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
@@ -88,7 +97,10 @@ Global / concurrentRestrictions := {
         // `+=` in globalSettings, but our `:=` above replaces
         // concurrentRestrictions wholesale, so we restate it here. See
         // KyoDoctestPlugin.scala for the tag's role.
-        Tags.limit(DoctestTag, 2)
+        Tags.limit(DoctestTag, 2),
+        // Serialize scaladoc: dottydoc shares mutable compiler state across concurrent in-JVM
+        // `doc` runs and NPEs intermittently under parallelism. See DocTag above.
+        Tags.limit(DocTag, 1)
     )
 }
 
@@ -99,6 +111,9 @@ lazy val `kyo-settings` = Seq(
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     scalafmtOnCompile := true,
+    // Tag the doc task so concurrentRestrictions can serialize scaladoc across modules; dottydoc
+    // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
+    Compile / doc := (Compile / doc).tag(DocTag).value,
     scalacOptions += compilerOptionFailDiscard,
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
