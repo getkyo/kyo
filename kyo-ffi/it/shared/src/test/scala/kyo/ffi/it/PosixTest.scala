@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** POSIX bindings spec. Runs on JVM + Native only, `jvm-native/src/test/`, because Scala.js does not ship portable POSIX coverage for
@@ -12,8 +11,6 @@ import kyo.ffi.Ffi
   * Extends getpid stability + time monotonicity to more iterations and cross-call invariants.
   */
 class PosixTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "getpid" - {
         "returns a positive process id" in {

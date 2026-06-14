@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 
@@ -15,8 +14,6 @@ import kyo.ffi.Ffi
   * Table-driven density, each row invokes a binding method at least once so every row crosses the FFI boundary.
   */
 class LibCTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "strlen" - {
         "empty string returns 0" in {

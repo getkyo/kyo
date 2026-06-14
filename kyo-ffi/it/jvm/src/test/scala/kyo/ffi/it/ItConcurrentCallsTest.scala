@@ -2,7 +2,6 @@ package kyo.ffi.it
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.AllowUnsafe
 import kyo.discard
 import kyo.ffi.Ffi
 
@@ -15,8 +14,6 @@ import kyo.ffi.Ffi
   * Lives under `jvm/src/test/` because `java.util.concurrent` threading is JVM-specific and the JS runtime is single-threaded by design.
   */
 class ItConcurrentCallsTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     private val threads        = 8
     private val callsPerThread = 1000

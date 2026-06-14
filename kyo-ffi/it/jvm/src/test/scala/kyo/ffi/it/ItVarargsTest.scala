@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.discard
 import kyo.ffi.Ffi
 
@@ -10,8 +9,6 @@ import kyo.ffi.Ffi
   * `VariadicMarshaller`'s rejection of an unsupported runtime class.
   */
 class ItVarargsTest extends ItVarargsSharedTest:
-
-    import AllowUnsafe.embrace.danger
 
     "unsupported runtime class surfaces a clear FfiUnsupported" in {
         val b = Ffi.load[ItVarargsBindings]

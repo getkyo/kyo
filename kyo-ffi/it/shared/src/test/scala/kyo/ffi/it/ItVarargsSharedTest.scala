@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Abstract base with the 4 cross-platform varargs test cases.
@@ -12,8 +11,6 @@ import kyo.ffi.Ffi
   * workaround instead (see [[ItSumFixedSpec]]).
   */
 abstract class ItVarargsSharedTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "kyoItSumVarargs" - {
         "empty varargs sums to zero when count = 0" in {

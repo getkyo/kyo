@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Cross-platform union-feature spec.
@@ -15,8 +14,6 @@ import kyo.ffi.Ffi
   * either an int or a float and the bit pattern is preserved across the FFI boundary.
   */
 class ItUnionsTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     // IEEE-754 single-precision encoding of 42.0f is 0x42280000. Written as Int, read as Float should yield 42.0f.
     private val IntBitsOf42f: Int = 0x42280000

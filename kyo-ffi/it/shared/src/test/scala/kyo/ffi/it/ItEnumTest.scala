@@ -1,11 +1,8 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.*
 
 class ItEnumTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     private lazy val bindings = Ffi.load[ItEnumBindings]
 

@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 
@@ -14,8 +13,6 @@ import kyo.ffi.Ffi
   * Buffer-length + fill-value rows. Each row invokes the binding at least once.
   */
 class ItBuffersTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "kyoItSumInts" - {
         "sum of 1..5 is 15" in {

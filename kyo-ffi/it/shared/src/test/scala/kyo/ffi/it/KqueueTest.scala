@@ -17,8 +17,6 @@ import kyo.ffi.Ffi
   */
 class KqueueTest extends ItTestBase:
 
-    import AllowUnsafe.embrace.danger
-
     private val isMacOrBsd: Boolean =
         val os = java.lang.System.getProperty("os.name", "").toLowerCase
         os.contains("mac") || os.contains("bsd")

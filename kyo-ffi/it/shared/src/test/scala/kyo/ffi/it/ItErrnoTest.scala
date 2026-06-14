@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 import kyo.ffi.FfiErrno
 
@@ -14,8 +13,6 @@ import kyo.ffi.FfiErrno
   * `EINVAL` is numerically 22 on Linux, macOS, and Windows.
   */
 class ItErrnoTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "kyoItAlwaysFail (WithError return)" - {
         "returns -1 with errorCode 22 (EINVAL)" in {
