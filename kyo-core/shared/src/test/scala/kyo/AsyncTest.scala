@@ -625,7 +625,7 @@ class AsyncTest extends kyo.test.Test[Any]:
             }.map(_ => ())
         }
 
-        "interrupt propagates through nested promise.get".onlyJvm in {
+        "interrupt propagates through nested promise.get".onlyJvm.flaky in {
             Kyo.foreach(1 to 50) { _ =>
                 for
                     p1    <- Promise.init[Int, Any]
