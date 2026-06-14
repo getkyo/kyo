@@ -259,6 +259,7 @@ lazy val kyoJVM: Project = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
+        `kyo-slack`.jvm,
         `kyo-ui`.jvm,
         `kyo-case-app`.jvm,
         `kyo-pod`.jvm,
@@ -316,6 +317,7 @@ lazy val kyoJS = project
         `kyo-http`.js,
         `kyo-flow`.js,
         `kyo-browser`.js,
+        `kyo-slack`.js,
         `kyo-ui`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
@@ -363,6 +365,7 @@ lazy val kyoNative = project
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
         `kyo-browser`.native,
+        `kyo-slack`.native,
         `kyo-ui`.native,
         `kyo-pod`.native,
         `kyo-compat-future`.native,
@@ -408,6 +411,7 @@ lazy val kyoWasm = project
         `kyo-flow`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
+        `kyo-slack`.wasm,
         `kyo-ui`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
@@ -1641,6 +1645,28 @@ lazy val `kyo-browser` =
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-slack` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-slack"))
+        .dependsOn(`kyo-http`, `kyo-schema`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
         )
         .wasmSettings(`wasm-settings`)
 

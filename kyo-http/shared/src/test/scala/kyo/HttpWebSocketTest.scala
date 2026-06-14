@@ -30,6 +30,19 @@ class HttpWebSocketTest extends BaseHttpTest with internal.UnixSocketTestHelperI
             }.unit
         }
 
+        "upgrade request forwards the query string".notNative in {
+            // The Slack Socket Mode wss url carries its connection ticket in the query string,
+            // so the upgrade GET must send path AND query. The server echoes the received
+            // `probe` query param back as the first frame.
+            def probe(req: HttpRequest[Any], ws: HttpWebSocket)(using Frame): Unit < (Async & Abort[Closed]) =
+                ws.put(HttpWebSocket.Payload.Text(req.query("probe").getOrElse("<absent>"))).andThen(ws.stream.foreach(ws.put))
+            withWsServer(HttpHandler.webSocket("ws/probe")(probe)) { url =>
+                HttpClient.webSocket(s"ws://${url.host}:${url.port}/ws/probe?probe=xyz") { ws =>
+                    ws.take().map(f => discard(assert(f == HttpWebSocket.Payload.Text("xyz"))))
+                }
+            }.unit
+        }
+
         "binary echo".notNative in {
             val bytes = Span.fromUnsafe(Array[Byte](1, 2, 3, 4, 5))
             withWsServer(HttpHandler.webSocket("ws/echo")(echo)) { url =>
