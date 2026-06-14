@@ -40,6 +40,7 @@ private[kyo] object NodeFs extends js.Object:
     def symlinkSync(target: String, path: String): Unit                                         = js.native
     def mkdtempSync(prefix: String): String                                                     = js.native
     def writeFileSync(path: String, data: String): Unit                                         = js.native
+    def utimesSync(path: String, atime: Double, mtime: Double): Unit                            = js.native
 end NodeFs
 
 @js.native
@@ -48,6 +49,7 @@ trait NodeStats extends js.Object:
     def isDirectory(): Boolean    = js.native
     def isSymbolicLink(): Boolean = js.native
     def size: Double              = js.native
+    def mtimeMs: Double           = js.native
 end NodeStats
 
 @js.native
@@ -60,6 +62,7 @@ private[kyo] object NodePath extends js.Object:
     def basename(path: String): String    = js.native
     def dirname(path: String): String     = js.native
     def sep: String                       = js.native
+    def delimiter: String                 = js.native
 end NodePath
 
 @js.native
@@ -232,6 +235,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             NodeFs.statSync(pathStr).size.toLong
         }
 
+    def stat()(using AllowUnsafe, Frame): Result[FileReadException, kyo.Path.PathStat] =
+        catchRead {
+            val s = NodeFs.statSync(pathStr)
+            kyo.Path.PathStat(s.mtimeMs.toLong, s.size.toLong)
+        }
+
     // --- Write ---
 
     def write(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
@@ -277,6 +286,12 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
             val currentSize = NodeFs.lstatSync(pathStr).size.asInstanceOf[Double].toLong
             if size < currentSize then
                 NodeFs.truncateSync(pathStr, size.toDouble)
+        }
+
+    def setLastModified(epochMs: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        catchWrite {
+            val epochSec = epochMs / 1000.0
+            NodeFs.utimesSync(pathStr, epochSec, epochSec)
         }
 
     // --- Directory / structure ---
@@ -583,6 +598,9 @@ end bytesToUint8Array
 // --- PathPlatformSpecific ---
 
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
+
+    private[kyo] val platformPathSeparator: String = NodePath.delimiter
+    private[kyo] val platformFileSeparator: String = NodePath.sep
 
     private[kyo] def make(parts: Chunk[String]): Path =
         if parts.isEmpty then new NodePathUnsafe("").safe

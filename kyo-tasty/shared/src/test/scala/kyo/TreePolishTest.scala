@@ -1,0 +1,82 @@
+package kyo
+
+import AllowUnsafe.embrace.danger
+import kyo.Tasty.SymbolId
+
+/** Tree.show coverage and Tree.exists.
+  */
+class TreePolishTest extends kyo.test.Test[Any]:
+
+    "Tree.show returns non-empty String for representative Tree cases" in {
+        val symbol = Tasty.Symbol.Class(
+            SymbolId(0),
+            Tasty.Name("Foo"),
+            Tasty.Flags.empty,
+            SymbolId(0),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty
+        )
+        Tasty.Classpath.fromPicklesWithSymbols(Chunk(symbol)).map { classpath =>
+            val n     = Tasty.Name("x")
+            val tpe   = Tasty.Type.Named(SymbolId(0))
+            val lit   = Tasty.Tree.Literal(Tasty.Constant.IntConst(42))
+            val ident = Tasty.Tree.Ident(n, tpe)
+            val trees: Seq[Tasty.Tree] = Seq(
+                lit,
+                ident,
+                Tasty.Tree.Select(ident, n, tpe),
+                Tasty.Tree.Apply(ident, Chunk(lit)),
+                Tasty.Tree.TypeApply(ident, Chunk(tpe)),
+                Tasty.Tree.Block(Chunk(lit), lit),
+                Tasty.Tree.If(lit, lit, lit),
+                Tasty.Tree.New(tpe),
+                Tasty.Tree.Assign(ident, lit),
+                Tasty.Tree.Return(Maybe(lit), symbol),
+                Tasty.Tree.Throw(lit),
+                Tasty.Tree.Lambda(ident, Maybe(tpe)),
+                Tasty.Tree.Typed(lit, tpe),
+                Tasty.Tree.This(symbol),
+                Tasty.Tree.NamedArg(n, lit),
+                Tasty.Tree.Annotated(lit, ident),
+                Tasty.Tree.Shared(0),
+                Tasty.Tree.Modifier(Tasty.Flag.Final),
+                Tasty.Tree.TypeBounds(ident, ident),
+                Tasty.Tree.Unknown(99, 0)
+            )
+            trees.foreach { t =>
+                assert(classpath.treeShow(t).nonEmpty, s"Tree.show returned empty for ${t.getClass.getSimpleName}")
+            }
+            succeed
+        }
+    }
+
+    "Tree.exists returns true when predicate matches a descendant" in {
+        val fn  = Tasty.Tree.Ident(Tasty.Name("f"), Tasty.Type.Named(SymbolId(0)))
+        val lit = Tasty.Tree.Literal(Tasty.Constant.IntConst(1))
+        val t   = Tasty.Tree.Apply(fn, Chunk(lit))
+        assert(
+            t.exists { case _: Tasty.Tree.Literal => true; case _ => false },
+            "exists must return true when a Literal is present in the tree"
+        )
+        succeed
+    }
+
+    "Tree.exists returns false when predicate matches nothing" in {
+        val fn  = Tasty.Tree.Ident(Tasty.Name("f"), Tasty.Type.Named(SymbolId(0)))
+        val arg = Tasty.Tree.Ident(Tasty.Name("a"), Tasty.Type.Named(SymbolId(0)))
+        val t   = Tasty.Tree.Apply(fn, Chunk(arg))
+        assert(
+            !t.exists { case _: Tasty.Tree.Literal => true; case _ => false },
+            "exists must return false when no Literal is present"
+        )
+        succeed
+    }
+
+end TreePolishTest

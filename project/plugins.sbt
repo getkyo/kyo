@@ -29,6 +29,53 @@ addSbtPlugin("com.github.sbt" % "sbt-unidoc" % "0.6.1")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
 
+// ---------------------------------------------------------------------------
+// Source-link `kyo-ffi-plugin` into the meta-build so the main build's
+// `kyo-ffi-it` sub-project can call `enablePlugins(KyoFfiPlugin)` without
+// requiring a `publishLocal` round-trip.
+//
+// Approach: meta-build source-linking. The plugin's `CodegenBridge` extracts a
+// bundled `kyo-ffi-codegen.jar` (plus Scala 3 runtime deps) from the classpath
+// resource `/kyo-ffi-plugin/bundled.txt`. We replicate the resource generation
+// in the meta-build by delegating to the plugin sub-project's existing
+// `Compile / resourceManaged` output.
+//
+// Bootstrap order:
+//   1. `sbt kyo-ffi-plugin/compile`  (generates bundled resources)
+//   2. `sbt kyo-ffi-it/test`          (picks up the bundled resources via the resourceGenerator below)
+//
+// On CI, step 1 is equivalent to any other `compile` already in the matrix.
+// ---------------------------------------------------------------------------
+
+Compile / unmanagedSourceDirectories ++= {
+    val pluginRoot = baseDirectory.value.getParentFile / "kyo-ffi" / "plugin"
+    Seq(pluginRoot / "src" / "main" / "scala")
+}
+
+// Bundle the plugin's codegen resources into the meta-build's classpath.
+// The plugin's own build.sbt writes these to
+// `kyo-ffi-plugin/target/scala-2.12/resource_managed/main/kyo-ffi-plugin/`.
+Compile / resourceGenerators += Def.task {
+    val log            = sLog.value
+    val outDir         = (Compile / resourceManaged).value / "kyo-ffi-plugin"
+    val pluginRoot     = baseDirectory.value.getParentFile / "kyo-ffi" / "plugin"
+    val resolvedResDir = pluginRoot / "target" / "scala-2.12" / "sbt-1.0" / "resource_managed" / "main" / "kyo-ffi-plugin"
+    if (!resolvedResDir.exists) {
+        log.info(
+            s"[kyo-ffi-it] bundled plugin resources not found at $resolvedResDir; " +
+                "run `sbt kyo-ffi-plugin/compile` once, then reload."
+        )
+        Seq.empty[File]
+    } else {
+        IO.createDirectory(outDir)
+        IO.listFiles(resolvedResDir).toList.map { src =>
+            val dest = outDir / src.getName
+            IO.copyFile(src, dest)
+            dest
+        }
+    }
+}.taskValue
+
 libraryDependencies ++= Seq(
     "org.typelevel" %% "scalac-options" % "0.1.9"
 )

@@ -1251,6 +1251,23 @@ object Span:
             if len <= size then self
             else Span.concat(self)(Span.fill(len - size)(elem))
 
+        /** Structural hash code: 31-multiplier polynomial hash over elements.
+          *
+          * Mirrors java.util.Arrays.hashCode semantics for primitive Spans (no boxing for primitive A like Byte/Int/Long).
+          *
+          * @return
+          *   the hash code computed from all elements
+          */
+        inline def hash: Int =
+            var h   = 1
+            val len = self.length
+            var i   = 0
+            while i < len do
+                h = 31 * h + self(i).##
+                i += 1
+            h
+        end hash
+
     end extension
 
     extension [B](x: B)

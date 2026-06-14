@@ -42,10 +42,10 @@ import kyo.*
   */
 sealed abstract class HttpFilter[ReqUse, ReqAdd, ResUse, ResAdd, +E]:
 
-    def apply[In, Out, E2](
+    def apply[In, Out, E2, S](
         request: HttpRequest[In & ReqUse],
-        next: HttpRequest[In & ReqUse & ReqAdd] => HttpResponse[Out & ResUse] < (Async & Abort[E2 | HttpResponse.Halt])
-    )(using Frame): HttpResponse[Out & ResUse & ResAdd] < (Async & Abort[E | E2 | HttpResponse.Halt])
+        next: HttpRequest[In & ReqUse & ReqAdd] => HttpResponse[Out & ResUse] < (S & Async & Abort[E2 | HttpResponse.Halt])
+    )(using Frame): HttpResponse[Out & ResUse & ResAdd] < (S & Async & Abort[E | E2 | HttpResponse.Halt])
 
     /** Composes this filter with another, running this filter first, then `that`. Type parameters are intersected: the composed filter
       * requires the union of both filters' required fields and adds the union of both filters' added fields. If either filter is `noop`,
@@ -59,12 +59,12 @@ sealed abstract class HttpFilter[ReqUse, ReqAdd, ResUse, ResAdd, +E]:
         else
             val self = this
             new HttpFilter[ReqUse & RI2, ReqAdd & RO2, ResUse & SI2, ResAdd & SO2, E | E2]:
-                def apply[In, Out, E3](
+                def apply[In, Out, E3, S](
                     request: HttpRequest[In & ReqUse & RI2],
                     next: HttpRequest[In & ReqUse & RI2 & ReqAdd & RO2] => HttpResponse[
                         Out & ResUse & SI2
-                    ] < (Async & Abort[E3 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out & ResUse & SI2 & ResAdd & SO2] < (Async & Abort[E | E2 | E3 | HttpResponse.Halt]) =
+                    ] < (S & Async & Abort[E3 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out & ResUse & SI2 & ResAdd & SO2] < (S & Async & Abort[E | E2 | E3 | HttpResponse.Halt]) =
                     self(request, req => that(req, next))
             end new
     end andThen
@@ -87,20 +87,20 @@ object HttpFilter:
             else
                 val self = this
                 new Passthrough[E | E2]:
-                    def apply[In, Out, E3](
+                    def apply[In, Out, E3, S](
                         request: HttpRequest[In],
-                        next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E3 | HttpResponse.Halt])
-                    )(using Frame): HttpResponse[Out] < (Async & Abort[E | E2 | E3 | HttpResponse.Halt]) =
+                        next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E3 | HttpResponse.Halt])
+                    )(using Frame): HttpResponse[Out] < (S & Async & Abort[E | E2 | E3 | HttpResponse.Halt]) =
                         self(request, req => that(req, next))
                 end new
     end Passthrough
 
     val noop: Passthrough[Nothing] =
         new Passthrough[Nothing]:
-            def apply[In, Out, E2](
+            def apply[In, Out, E2, S](
                 request: HttpRequest[In],
-                next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-            )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                 next(request)
 
     // --- Server-side filters ---
@@ -123,12 +123,12 @@ object HttpFilter:
           */
         def basicAuth(validate: (String, String) => Boolean < Async): Request["authorization" ~ Maybe[String], "user" ~ String, Nothing] =
             new Request["authorization" ~ Maybe[String], "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In & "authorization" ~ Maybe[String]],
                     next: HttpRequest[In & "authorization" ~ Maybe[String] & "user" ~ String] => HttpResponse[
                         Out
-                    ] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    ] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     request.fields.authorization match
                         case Present(auth)
                             if auth.length > 6 && auth.regionMatches(true, 0, "Basic ", 0, 6) =>
@@ -157,10 +157,12 @@ object HttpFilter:
           */
         def bearerAuth(validate: String => Boolean < Async): Request["authorization" ~ Maybe[String], Any, Nothing] =
             new Request["authorization" ~ Maybe[String], Any, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In & "authorization" ~ Maybe[String]],
-                    next: HttpRequest[In & "authorization" ~ Maybe[String]] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "authorization" ~ Maybe[String]] => HttpResponse[
+                        Out
+                    ] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     request.fields.authorization match
                         case Present(auth)
                             if auth.length > 7 && auth.regionMatches(true, 0, "Bearer ", 0, 7) =>
@@ -181,10 +183,10 @@ object HttpFilter:
                     .setHeader("Retry-After", retryAfter.toString)
             )
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     // Meter.tryRun introduces Abort[Closed] which must be handled here to avoid
                     // leaking it into the filter's return type. A closed meter is treated as exhausted.
                     meter.tryRun(next(request)).handle(Abort.run[Closed]).map {
@@ -234,10 +236,10 @@ object HttpFilter:
                 HttpResponse.Halt(r4)
             end preflight
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     def addCorsHeaders[F](res: HttpResponse[F]): HttpResponse[F] =
                         val r0 = res.setHeader("Access-Control-Allow-Origin", allowOrigin)
                         val r1 =
@@ -265,10 +267,10 @@ object HttpFilter:
             csp: Maybe[String] = Absent
         ): Passthrough[Nothing] =
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request).map { res =>
                         val r0 = res
                             .setHeader("X-Content-Type-Options", "nosniff")
@@ -286,10 +288,10 @@ object HttpFilter:
         /** Logs requests: "METHOD /path -> STATUS (Xms)" */
         def logging: Passthrough[Nothing] =
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     Clock.stopwatch.map { sw =>
                         next(request).map { res =>
                             sw.elapsed.map { dur =>
@@ -305,10 +307,10 @@ object HttpFilter:
 
         def requestId(headerName: String): Passthrough[Nothing] =
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     val getId = request.headers.get(headerName) match
                         case Present(id) => id: String < Any
                         case Absent      => Random.nextStringAlphanumeric(32)
@@ -326,10 +328,10 @@ object HttpFilter:
         /** Adds Bearer token header to outgoing requests. */
         def bearerAuth(token: String): Passthrough[Nothing] =
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.setHeader("Authorization", s"Bearer $token"))
 
         /** Adds Basic auth header to outgoing requests. */
@@ -338,10 +340,10 @@ object HttpFilter:
                 s"$username:$password".getBytes("UTF-8")
             )
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.setHeader("Authorization", s"Basic $encoded"))
             end new
         end basicAuth
@@ -349,19 +351,19 @@ object HttpFilter:
         /** Adds a custom header to outgoing requests. */
         def addHeader(name: String, value: String): Passthrough[Nothing] =
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.setHeader(name, value))
 
         /** Logs requests: "METHOD /path -> STATUS (Xms)" */
         def logging: Passthrough[Nothing] =
             new Passthrough[Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     Clock.stopwatch.map { sw =>
                         next(request).map { res =>
                             sw.elapsed.map { dur =>
@@ -379,11 +381,11 @@ object HttpFilter:
         composed: HttpFilter[In, ReqAdd, Out, ResAdd, E]
     ): HttpFilter[In & ReqAdd, Any, Out & ResAdd, Any, E] =
         new HttpFilter[In & ReqAdd, Any, Out & ResAdd, Any, E]:
-            def apply[In2, Out2, E2](
+            def apply[In2, Out2, E2, S](
                 request: HttpRequest[In2 & (In & ReqAdd)],
-                next: HttpRequest[In2 & (In & ReqAdd)] => HttpResponse[Out2 & (Out & ResAdd)] < (Async & Abort[E2 | HttpResponse.Halt])
-            )(using Frame): HttpResponse[Out2 & (Out & ResAdd)] < (Async & Abort[E | E2 | HttpResponse.Halt]) =
-                composed[In2 & ReqAdd, Out2 & ResAdd, E2](request, next)
+                next: HttpRequest[In2 & (In & ReqAdd)] => HttpResponse[Out2 & (Out & ResAdd)] < (S & Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out2 & (Out & ResAdd)] < (S & Async & Abort[E | E2 | HttpResponse.Halt]) =
+                composed[In2 & ReqAdd, Out2 & ResAdd, E2, S](request, next)
 
     /** SPI for contributing HTTP filters that apply globally to all requests or responses, discovered via `java.util.ServiceLoader`.
       *

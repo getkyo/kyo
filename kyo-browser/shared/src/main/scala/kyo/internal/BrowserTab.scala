@@ -25,7 +25,8 @@ final private[kyo] class BrowserTab(
     val rootFrameId: AtomicRef[Maybe[FrameId]],
     val consoleCaptureRegistered: AtomicBoolean,
     val responseTrackerRegistered: AtomicBoolean,
-    val viewportOverride: AtomicRef[Maybe[(Int, Int)]],
+    val viewportOverride: AtomicRef[Maybe[BrowserTab.ViewportOverride]],
+    val emulationOverride: AtomicRef[Maybe[BrowserTab.EmulatedMediaState]],
     val downloadPolicy: AtomicRef[Maybe[(Browser.DownloadBehavior, Maybe[String])]]
 ):
     /** Session-scoped CDP client. Every interaction path issues CDP commands against this tab's specific session; capturing the
@@ -33,6 +34,31 @@ final private[kyo] class BrowserTab(
       * at every CDP call site.
       */
     val session: CdpClient = client.withSession(sessionId)
+end BrowserTab
+
+/** Companion for [[BrowserTab]], holding nested types shared across the internal module. */
+private[kyo] object BrowserTab:
+    /** Cached per-tab viewport override carrying the device-scale-factor (DPR).
+      *
+      * Stored in the per-tab `viewportOverride: AtomicRef[Maybe[ViewportOverride]]`. A value
+      * of `Absent` means no active override (natural viewport). `dpr` defaults to `1.0` for
+      * the no-DPR-override case. Consumed by `setViewport`/`withViewport`.
+      */
+    final case class ViewportOverride(width: Int, height: Int, dpr: Double) derives CanEqual
+
+    /** Cached per-tab emulated-media state backing the scoped restore in `Browser.withEmulation`.
+      *
+      * Stored in the per-tab `emulationOverride: AtomicRef[Maybe[EmulatedMediaState]]`. A value of `Absent` means no active
+      * override (the page sees its real media features). `colorScheme` and `media` hold the CDP wire strings sent to
+      * `Emulation.setEmulatedMedia` (`"light"`, `"dark"`, `"screen"`, `"print"`, or `""` for a cleared / unset feature);
+      * `reducedMotion` mirrors the `reducedMotion: Boolean` argument passed to `withEmulation`. On scope exit `withEmulation`
+      * re-applies the cached prior state, or clears the override when the prior was `Absent`.
+      */
+    final case class EmulatedMediaState(
+        colorScheme: Maybe[String],
+        media: Maybe[String],
+        reducedMotion: Boolean
+    ) derives CanEqual
 end BrowserTab
 
 /** All tab-attachment plumbing lives here; `Browser.scala` retains only the `Env[BrowserTab]` binding.
@@ -60,7 +86,8 @@ private[kyo] object BrowserTabSetup:
             rootRef          <- AtomicRef.init[Maybe[FrameId]](Absent)
             consoleRegister  <- AtomicBoolean.init(false)
             responseRegister <- AtomicBoolean.init(false)
-            viewportRef      <- AtomicRef.init[Maybe[(Int, Int)]](Absent)
+            viewportRef      <- AtomicRef.init[Maybe[BrowserTab.ViewportOverride]](Absent)
+            emulationRef     <- AtomicRef.init[Maybe[BrowserTab.EmulatedMediaState]](Absent)
             downloadRef      <- AtomicRef.init[Maybe[(Browser.DownloadBehavior, Maybe[String])]](Absent)
         yield new BrowserTab(
             targetId,
@@ -72,6 +99,7 @@ private[kyo] object BrowserTabSetup:
             consoleRegister,
             responseRegister,
             viewportRef,
+            emulationRef,
             downloadRef
         )
 
@@ -148,12 +176,19 @@ private[kyo] object BrowserTabSetup:
         """(() => {
             window.__kyoConsoleInstalled = true;
             window.__kyoConsoleLogs = [];
+            window.__kyoConsoleT0 = Date.now();
             const origLog = console.log;
+            const origInfo = console.info;
             const origWarn = console.warn;
             const origError = console.error;
+            const origDebug = console.debug;
             console.log = function() {
                 window.__kyoConsoleLogs.push({ level: 'log', message: Array.from(arguments).join(' '), timestamp: Date.now() });
                 origLog.apply(console, arguments);
+            };
+            console.info = function() {
+                window.__kyoConsoleLogs.push({ level: 'info', message: Array.from(arguments).join(' '), timestamp: Date.now() });
+                origInfo.apply(console, arguments);
             };
             console.warn = function() {
                 window.__kyoConsoleLogs.push({ level: 'warn', message: Array.from(arguments).join(' '), timestamp: Date.now() });
@@ -162,6 +197,10 @@ private[kyo] object BrowserTabSetup:
             console.error = function() {
                 window.__kyoConsoleLogs.push({ level: 'error', message: Array.from(arguments).join(' '), timestamp: Date.now() });
                 origError.apply(console, arguments);
+            };
+            console.debug = function() {
+                window.__kyoConsoleLogs.push({ level: 'debug', message: Array.from(arguments).join(' '), timestamp: Date.now() });
+                origDebug.apply(console, arguments);
             };
             return 'ok';
         })()"""

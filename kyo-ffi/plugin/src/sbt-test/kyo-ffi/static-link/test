@@ -1,0 +1,10 @@
+# Verify that ffiStaticLink := true reflects in the cc command line.
+# We dump the command to a file (dumpCcCommand) and grep for the GNU ld / lld
+# static toggle the plugin folds the named link libs in with
+# (`-Wl,-Bstatic <libs> -Wl,-Bdynamic`). A bare `-static` is intentionally NOT
+# emitted: it would pull libc.a into a `-shared` link and ld would fail.
+# Running ffiCompile directly would break on macOS; flag plumbing is the
+# property under test here.
+> dumpCcCommand
+$ exists target/cc-cmd.txt
+$ exec grep -- '-Wl,-Bstatic' target/cc-cmd.txt

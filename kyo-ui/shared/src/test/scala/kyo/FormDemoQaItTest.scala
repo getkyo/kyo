@@ -560,7 +560,7 @@ class FormDemoQaItTest extends UITest:
         val rows = (1 to 60).map(i => UI.span(s"r$i").id(s"r$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
-                _ <- Browser.scrollTo(Selector.id("r60"))
+                _ <- Browser.scrollToElement(Selector.id("r60"))
                 _ <- Browser.assertText(Selector.id("r60"), "r60")
             yield ()
         }
@@ -954,7 +954,7 @@ class FormDemoQaItTest extends UITest:
         val rows = (1 to 60).map(i => UI.span(s"line$i").id(s"l$i"))
         withUI(UI.div(rows.map(UI.Ast.HtmlChildVal.lift(_))*).id("root")) {
             for
-                _ <- Browser.scrollTo(Selector.id("l60"))
+                _ <- Browser.scrollToElement(Selector.id("l60"))
                 _ <- Browser.assertText(Selector.id("l60"), "line60")
             yield ()
         }

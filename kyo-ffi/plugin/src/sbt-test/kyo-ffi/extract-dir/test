@@ -1,0 +1,6 @@
+# Verify ffiExtractDir + ffiScratchSize surface as -D system properties on forks.
+> dumpJavaOptions
+$ exists target/test-java-options.txt
+$ exec grep -- '-Dkyo.ffi.tmpdir=' target/test-java-options.txt
+$ exec grep -- '-Dkyo.ffi.scratch.size=131072' target/test-java-options.txt
+$ exec grep -- '\.tmp/custom' target/test-java-options.txt

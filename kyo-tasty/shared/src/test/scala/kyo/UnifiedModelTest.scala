@@ -1,0 +1,411 @@
+package kyo
+
+import kyo.Tasty.SymbolId
+import kyo.internal.tasty.binary.ByteView
+import kyo.internal.tasty.classfile.ClassfileResult
+import kyo.internal.tasty.classfile.ClassfileUnpickler
+import kyo.internal.tasty.reader.AstUnpickler
+import kyo.internal.tasty.reader.FileAttributes
+import kyo.internal.tasty.reader.NameUnpickler
+import kyo.internal.tasty.reader.SectionIndex
+import kyo.internal.tasty.reader.TastyFormat
+import kyo.internal.tasty.reader.TastyHeader
+import kyo.internal.tasty.reader.TypeUnpickler
+import kyo.internal.tasty.symbol.LoadingSymbol
+import kyo.internal.tasty.symbol.SymbolKind
+import kyo.internal.tasty.type_.TypeArena
+import scala.collection.immutable.IntMap
+
+/** Tests for the unified Java/Scala model: SymbolKind matrix and type normalization.
+  *
+  * Uses Embedded fixture classfiles (throwsFixtureClass, pointRecordClass) and inline synthetic
+  * classfile bytes (interface, static-field class, mutable-field class). Runs cross-platform.
+  */
+class UnifiedModelTest extends kyo.test.Test[Any]:
+
+    import AllowUnsafe.embrace.danger
+
+    /** Load JDK class bytes by binary path from EmbeddedClassfiles (cross-platform). */
+    private def loadJdkClass(binaryPath: String): Array[Byte] =
+        kyo.fixtures.EmbeddedClassfiles.loadJdkClass(binaryPath)
+
+    /** Load fixture bytes from test resources (TASTy or .class files). */
+    private def loadFixture(name: String): Array[Byte] =
+        name match
+            case "PlainClass.tasty"             => kyo.fixtures.Embedded.plainClassTasty
+            case "SomeObject.tasty"             => kyo.fixtures.Embedded.someObjectTasty
+            case "SomeTrait.tasty"              => kyo.fixtures.Embedded.someTraitTasty
+            case "SomeCaseClass.tasty"          => kyo.fixtures.Embedded.someCaseClassTasty
+            case "FixtureClasses$package.tasty" => kyo.fixtures.Embedded.fixtureClassesPackageTasty
+            case "Container.tasty"              => kyo.fixtures.Embedded.containerTasty
+            case "GenericBox.tasty"             => kyo.fixtures.Embedded.genericBoxTasty
+            case other                          => TestResourceLoader.loadBytes(s"/kyo/fixtures/$other")
+        end match
+    end loadFixture
+
+    private def readClass(binaryPath: String)(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+        val bytes = loadJdkClass(binaryPath)
+        readClassBytes(bytes)
+
+    private def readClassBytes(bytes: Array[Byte])(using Frame): ClassfileResult < (Sync & Abort[TastyError]) =
+        Sync.Unsafe.defer {
+            given AllowUnsafe = AllowUnsafe.embrace.danger
+            Abort.get(ClassfileUnpickler.read(bytes, new TypeArena))
+        }
+
+    /** Run TASTy pass 1 on fixture file bytes. Returns symbols from the result. */
+    private def tastySymbols(fileName: String)(using Frame): AstUnpickler.Pass1Result < (Sync & Abort[TastyError]) =
+        val bytes = loadFixture(fileName)
+        val view  = ByteView(bytes)
+        val arena = TypeArena.canonical()
+        for
+            _        <- Sync.Unsafe.defer(Abort.get(TastyHeader.read(view)))
+            names    <- NameUnpickler.read(view)
+            sections <- SectionIndex.read(view, names)
+            attrs = FileAttributes.default
+            result <- sections.get(TastyFormat.ASTsSection) match
+                case Present((offset, length)) =>
+                    val astView = view.subView(offset, offset + length)
+                    AstUnpickler.readPass1(astView, names, attrs, arena)
+                case Absent =>
+                    Abort.fail(TastyError.MalformedSection("ASTs", "ASTs section not found", 0L))
+        yield result
+        end for
+    end tastySymbols
+
+    "SymbolKind.Package: Scala TASTy produces Package symbols via ClasspathOrchestrator" in {
+        val pickle = Tasty.Pickle("plain-class", Tasty.Version(28, 3, 0), Span.from(kyo.fixtures.Embedded.plainClassTasty))
+        Abort.run[TastyError](
+            Tasty.withPickles(Chunk(pickle)) {
+                Tasty.classpath.map(_.packages)
+            }
+        ).map {
+            case Result.Success(pkgs) =>
+                assert(pkgs.forall(_.kind == SymbolKind.Package), "Expected all packages to have kind Package")
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
+        }
+    }
+
+    "SymbolKind.Class appears for Java class and Scala class" in {
+        readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map { javaResult =>
+            assert(
+                javaResult.classSymbol.kind == SymbolKind.Class,
+                s"Expected Class for ThrowsFixture classfile, got ${javaResult.classSymbol.kind}"
+            )
+            tastySymbols("PlainClass.tasty").map { tastyResult =>
+                val scalaClass = tastyResult.symbols.find(_.kind == SymbolKind.Class)
+                assert(
+                    scalaClass.isDefined,
+                    s"Expected Class symbol in PlainClass.tasty; kinds: ${tastyResult.symbols.map(_.kind).mkString(", ")}"
+                )
+            }
+        }
+    }
+
+    "SymbolKind.Trait appears for Java interface and Scala trait" in {
+        val clsName = "kyo/fixtures/SyntheticRunnable".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        val buffer  = new java.io.ByteArrayOutputStream()
+        def writeInt(v: Int): Unit =
+            buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
+            buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
+        def writeShort(v: Int): Unit =
+            buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
+        def writeByte(v: Int): Unit = buffer.write(v & 0xff)
+        writeInt(0xcafebabe); writeShort(0); writeShort(55); writeShort(5)
+        writeByte(1); writeShort(clsName.length); buffer.write(clsName)
+        writeByte(7); writeShort(1)
+        writeByte(1); writeShort(supName.length); buffer.write(supName)
+        writeByte(7); writeShort(3)
+        writeShort(0x0601); writeShort(2); writeShort(4) // ACC_PUBLIC|INTERFACE|ABSTRACT
+        writeShort(0); writeShort(0); writeShort(0); writeShort(0)
+        val ifaceBytes = buffer.toByteArray
+        readClassBytes(ifaceBytes).map { javaResult =>
+            assert(
+                javaResult.classSymbol.kind == SymbolKind.Trait,
+                s"Expected Trait for synthetic interface, got ${javaResult.classSymbol.kind}"
+            )
+            tastySymbols("SomeTrait.tasty").map { tastyResult =>
+                val scalaTrait = tastyResult.symbols.find(_.kind == SymbolKind.Trait)
+                assert(
+                    scalaTrait.isDefined,
+                    s"Expected Trait symbol in SomeTrait.tasty; kinds: ${tastyResult.symbols.map(_.kind).mkString(", ")}"
+                )
+            }
+        }
+    }
+
+    "SymbolKind.Object appears only for Scala object; no Java symbol has Object kind" in {
+        readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map { javaObjectResult =>
+            assert(
+                javaObjectResult.classSymbol.kind != SymbolKind.Object,
+                "ThrowsFixture classfile should have kind=Class, not Object"
+            )
+            readClassBytes(kyo.fixtures.Embedded.pointRecordClass).map { javaPointResult =>
+                val javaSyms        = javaPointResult.classSymbol :: javaPointResult.symbols.toList
+                val javaObjectKinds = javaSyms.filter(_.kind == SymbolKind.Object)
+                assert(
+                    javaObjectKinds.isEmpty,
+                    s"Expected no Java symbols with kind=Object in PointRecord, found: ${javaObjectKinds.map(_.name.asString).mkString(", ")}"
+                )
+                tastySymbols("SomeObject.tasty").map { tastyResult =>
+                    val scalaObject = tastyResult.symbols.find(_.kind == SymbolKind.Object)
+                    assert(
+                        scalaObject.isDefined,
+                        s"Expected Object symbol in SomeObject.tasty; kinds: ${tastyResult.symbols.map(_.kind).distinct.mkString(", ")}"
+                    )
+                }
+            }
+        }
+    }
+
+    "TypeAlias, OpaqueType, AbstractType appear only in TASTy-sourced symbols" in {
+        readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass).map { javaResult =>
+            val allJavaSyms    = javaResult.classSymbol :: javaResult.symbols.toList
+            val scalaOnlyKinds = Set(SymbolKind.TypeAlias, SymbolKind.OpaqueType, SymbolKind.AbstractType)
+            val badJavaSyms    = allJavaSyms.filter(s => scalaOnlyKinds.contains(s.kind))
+            assert(
+                badJavaSyms.isEmpty,
+                s"Unexpected Scala-only kinds in ThrowsFixture classfile: ${badJavaSyms.map(s => s.name.asString + ":" + s.kind).mkString(", ")}"
+            )
+
+            tastySymbols("FixtureClasses$package.tasty").map { tastyResult =>
+                val allTastySyms = tastyResult.symbols
+                val hasTypeAlias = allTastySyms.exists(_.kind == SymbolKind.TypeAlias)
+                assert(
+                    hasTypeAlias,
+                    s"Expected TypeAlias in FixtureClasses package; kinds: ${allTastySyms.map(_.kind).distinct.mkString(", ")}"
+                )
+
+                val hasOpaque = allTastySyms.exists(_.kind == SymbolKind.OpaqueType)
+                assert(
+                    hasOpaque,
+                    s"Expected OpaqueType in FixtureClasses package; kinds: ${allTastySyms.map(_.kind).distinct.mkString(", ")}"
+                )
+
+                tastySymbols("Container.tasty").map { containerResult =>
+                    val hasAbstract = containerResult.symbols.exists(_.kind == SymbolKind.AbstractType)
+                    assert(
+                        hasAbstract,
+                        s"Expected AbstractType in Container.tasty; kinds: ${containerResult.symbols.map(_.kind).distinct.mkString(", ")}"
+                    )
+                }
+            }
+        }
+    }
+
+    "Type.Array is decoded from ArrayRecord classfile: record component 'values' has type Type.Array" in {
+        // ArrayRecord is a Java record with a single int[] component named "values".
+        // The classfile bytes are embedded cross-platform in Embedded.arrayRecordClass.
+        // ClassfileUnpickler.buildRecordComponents calls parseErasedDescriptorType which
+        // must produce Type.Array for the "[I" descriptor of the int[] field.
+        readClassBytes(kyo.fixtures.Embedded.arrayRecordClass).map { result =>
+            val components = result.classSymbol.javaMetadata.map(_.recordComponents).getOrElse(Chunk.empty)
+            assert(
+                components.nonEmpty,
+                s"Expected non-empty recordComponents for ArrayRecord; got empty. classSymbol=${result.classSymbol.name.asString}"
+            )
+            val valuesComponent = components.find(_.name.asString == "values")
+            assert(
+                valuesComponent.isDefined,
+                s"Expected component named 'values' in ArrayRecord; components: ${components.map(_.name.asString).mkString(", ")}"
+            )
+            valuesComponent.get.tpe match
+                case Tasty.Type.Array(_) =>
+                    succeed
+                case other =>
+                    fail(s"Expected Type.Array for 'values' component, got $other")
+            end match
+        }
+    }
+
+    "a Scala case class decoded from TASTy has flags.contains(Flag.Case)" in {
+        tastySymbols("SomeCaseClass.tasty").map { result =>
+            val caseClass = result.symbols.find { symbol =>
+                symbol.kind == SymbolKind.Class && symbol.flags.contains(Tasty.Flag.Case)
+            }
+            assert(
+                caseClass.isDefined,
+                s"Expected a Class symbol with Flag.Case in SomeCaseClass.tasty; symbols: ${result.symbols.map(s =>
+                        s.name.asString + ":" + s.kind + "[case=" + s.flags.contains(Tasty.Flag.Case) + "]"
+                    ).mkString(", ")}"
+            )
+        }
+    }
+
+    // Full SymbolKind matrix coverage (all 13 non-Unresolved kinds present).
+    // Coverage:
+    //   Class, Method: throwsFixtureClass
+    //   Trait: inline synthetic interface
+    //   Field: inline synthetic class with static field
+    //   Val: pointRecordClass (record component fields are final)
+    //   Var: inline synthetic class with non-final field
+    //   Object, Package, TypeAlias, OpaqueType, AbstractType, TypeParam, Parameter: TASTy fixtures
+    "full SymbolKind matrix: each non-Unresolved kind has at least one symbol in fixtures" in {
+        def kindsFromClassResult(r: ClassfileResult): Set[SymbolKind] =
+            val buffer = scala.collection.mutable.Set[SymbolKind]()
+            buffer += r.classSymbol.kind
+            r.symbols.toList.foreach(s => buffer += s.kind)
+            buffer.toSet
+        end kindsFromClassResult
+
+        def kindsFromTastyResult(r: AstUnpickler.Pass1Result): Set[SymbolKind] =
+            r.symbols.toList.map(_.kind).toSet
+
+        def makeSyntheticBytes(
+            clsNameStr: String,
+            accessFlags: Int,
+            fields: Seq[(String, String, Int)]
+        ): Array[Byte] =
+            val entries = scala.collection.mutable.ArrayBuffer[(Int, Array[Byte])]() // (tag, bytes)
+            val supName = "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val clsName = clsNameStr.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val pool    = scala.collection.mutable.ArrayBuffer[Array[Byte]]()
+            def utf8(s: Array[Byte]): Int =
+                val idx = pool.length + 1
+                pool += (Array(1.toByte) ++ Array(((s.length >> 8) & 0xff).toByte, (s.length & 0xff).toByte) ++ s)
+                idx
+            end utf8
+            def clazz(nameIdx: Int): Int =
+                val idx = pool.length + 1
+                pool += Array(7.toByte, ((nameIdx >> 8) & 0xff).toByte, (nameIdx & 0xff).toByte)
+                idx
+            end clazz
+            val clsUtf = utf8(clsName)
+            val clsRef = clazz(clsUtf)
+            val supUtf = utf8(supName)
+            val supRef = clazz(supUtf)
+            val fieldInfo = fields.map { (fname, fdesc, fflags) =>
+                val ni = utf8(fname.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val di = utf8(fdesc.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                (ni, di, fflags)
+            }
+            val buffer = new java.io.ByteArrayOutputStream()
+            def wi(v: Int): Unit =
+                buffer.write((v >>> 24) & 0xff); buffer.write((v >>> 16) & 0xff)
+                buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
+            def ws(v: Int): Unit =
+                buffer.write((v >>> 8) & 0xff); buffer.write(v & 0xff)
+            wi(0xcafebabe); ws(0); ws(55)
+            ws(pool.length + 1)
+            pool.foreach(buffer.write)
+            ws(accessFlags); ws(clsRef); ws(supRef); ws(0)
+            ws(fieldInfo.length)
+            fieldInfo.foreach { (ni, di, ff) =>
+                ws(ff); ws(ni); ws(di); ws(0)
+            }
+            ws(0); ws(0)
+            buffer.toByteArray
+        end makeSyntheticBytes
+
+        val ifaceBytes   = makeSyntheticBytes("kyo/fixtures/SyntheticIface2", 0x0601, Seq.empty)
+        val staticBytes  = makeSyntheticBytes("kyo/fixtures/StaticHolder2", 0x0021, Seq(("CONST", "I", 0x0019)))
+        val mutableBytes = makeSyntheticBytes("kyo/fixtures/MutableHolder2", 0x0021, Seq(("count", "I", 0x0001)))
+
+        for
+            throwRes     <- readClassBytes(kyo.fixtures.Embedded.throwsFixtureClass)
+            ifaceRes     <- readClassBytes(ifaceBytes)
+            pointRes     <- readClassBytes(kyo.fixtures.Embedded.pointRecordClass)
+            staticRes    <- readClassBytes(staticBytes)
+            mutableRes   <- readClassBytes(mutableBytes)
+            someObjRes   <- tastySymbols("SomeObject.tasty")
+            pkgRes       <- tastySymbols("FixtureClasses$package.tasty")
+            containerRes <- tastySymbols("Container.tasty")
+            genericRes   <- tastySymbols("GenericBox.tasty")
+            plainRes     <- tastySymbols("PlainClass.tasty")
+        yield
+            val foundKinds: Set[SymbolKind] =
+                kindsFromClassResult(throwRes) ++
+                    kindsFromClassResult(ifaceRes) ++
+                    kindsFromClassResult(pointRes) ++
+                    kindsFromClassResult(staticRes) ++
+                    kindsFromClassResult(mutableRes) ++
+                    kindsFromTastyResult(someObjRes) ++
+                    kindsFromTastyResult(pkgRes) ++
+                    kindsFromTastyResult(containerRes) ++
+                    kindsFromTastyResult(genericRes) ++
+                    kindsFromTastyResult(plainRes)
+
+            val expectedKinds = Set[SymbolKind](
+                SymbolKind.Package,
+                SymbolKind.Class,
+                SymbolKind.Trait,
+                SymbolKind.Object,
+                SymbolKind.Method,
+                SymbolKind.Field,
+                SymbolKind.Val,
+                SymbolKind.Var,
+                SymbolKind.TypeAlias,
+                SymbolKind.OpaqueType,
+                SymbolKind.AbstractType,
+                SymbolKind.TypeParam,
+                SymbolKind.Parameter
+            )
+            val missing = expectedKinds -- foundKinds
+            assert(missing.isEmpty, s"Missing SymbolKind coverage: $missing. Found: $foundKinds")
+        end for
+    }
+
+    // ── Nat encoding helpers (dotty big-endian base-128, stop-bit on last byte) ─
+
+    private def encodeNat(n: Int): Array[Byte] =
+        if n < 128 then Array((n | 0x80).toByte)
+        else if n < 16384 then Array((n >> 7).toByte, ((n & 0x7f) | 0x80).toByte)
+        else
+            Array(
+                (n >> 14).toByte,
+                ((n >> 7) & 0x7f).toByte,
+                ((n & 0x7f) | 0x80).toByte
+            )
+
+    private def cat2(tag: Int, n: Int): Array[Byte]           = tag.toByte +: encodeNat(n)
+    private def cat3(tag: Int, sub: Array[Byte]): Array[Byte] = tag.toByte +: sub
+
+    "CLASSconst with TYPEREFdirect decodes to ConstantType(ClassConst(Named(stringSym)))" in {
+        val stringSym =
+            LoadingSymbol.Materialising(id = 1, kind = SymbolKind.Class, flags = Tasty.Flags.empty, name = Tasty.Name("java.lang.String"))
+        val stringAddr = 10
+        val addrMap    = IntMap(stringAddr -> stringSym)
+        // CLASSconst (92) is category 3: tag + sub-type.
+        // Sub-type: TYPEREFdirect (63) category 2: tag + Nat(address).
+        val subBytes = cat2(TastyFormat.TYPEREFdirect, stringAddr)
+        val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
+        val view     = ByteView(bytes)
+        val arena    = TypeArena.canonical()
+        TypeUnpickler.readType(view, Array.empty, addrMap, arena, bytes, 0) match
+            case Result.Success(tpe) =>
+                tpe match
+                    case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(id))) =>
+                        // TYPEREFdirect encodes address as SymbolId(PHASE_B_ADDR_OFFSET + address).
+                        assert(id.value >= 0, s"Expected address-encoded positive id, got ${id.value}")
+                    case other =>
+                        fail(s"Expected ConstantType(ClassConst(Named(stringSym))), got $other")
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
+        end match
+    }
+
+    // CLASSconst with an unresolved TYPEREFpkg: the unresolved symbol carries the class fullName as its name.
+    "CLASSconst with unresolved TYPEREFpkg decodes to ConstantType(ClassConst(Named(Unresolved)))" in {
+        val missingFullName = "com.missing.X"
+        val names           = Array(Tasty.Name(missingFullName))
+        val nameRef         = 0
+        // Sub-type: TYPEREFpkg (65) category 2: tag + Nat(nameRef).
+        val subBytes = cat2(TastyFormat.TYPEREFpkg, nameRef)
+        val bytes    = cat3(TastyFormat.CLASSconst, subBytes)
+        val view     = ByteView(bytes)
+        val arena    = TypeArena.canonical()
+        TypeUnpickler.readType(view, names, IntMap.empty, arena, bytes, 0) match
+            case Result.Success(tpe) =>
+                tpe match
+                    case Tasty.Type.ConstantType(Tasty.Constant.ClassConst(Tasty.Type.Named(stubId))) =>
+                        assert(stubId.value == -1, s"Unresolved stub must carry SymbolId(-1), got ${stubId.value}")
+                    case other =>
+                        fail(s"Expected ConstantType(ClassConst(Named(Unresolved))), got $other")
+            case Result.Failure(e) => fail(s"Unexpected failure: $e")
+            case Result.Panic(t)   => throw t
+        end match
+    }
+
+end UnifiedModelTest

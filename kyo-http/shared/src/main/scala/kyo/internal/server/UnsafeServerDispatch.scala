@@ -266,12 +266,12 @@ private[kyo] object UnsafeServerDispatch:
         parser: Http1Parser
     )(using AllowUnsafe, Frame): Unit =
         val headers = HttpHeaders.fromPacked(request.headersAsPacked)
-        val path    = request.pathAsString
+        val url     = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
         val conn    = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
         discard(IOTask(
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
-                    serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, path)
+                    serveWebSocket(conn, streamCtx.inbound, streamCtx.outbound, wsHandler, headers, url)
                 }
             ).map {
                 case Result.Failure(error) =>
@@ -295,7 +295,7 @@ private[kyo] object UnsafeServerDispatch:
         outboundRaw: Channel.Unsafe[Span[Byte]],
         wsHandler: WebSocketHttpHandler,
         headers: HttpHeaders,
-        path: String
+        url: HttpUrl
     )(using Frame): Unit < Async =
         Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { inbound =>
             Channel.initUnscopedWith[HttpWebSocket.Payload](wsHandler.wsConfig.bufferSize) { outbound =>
@@ -308,11 +308,8 @@ private[kyo] object UnsafeServerDispatch:
                             closeReasonRef.set(Present((code, reason))).andThen {
                                 outbound.close.unit
                             }
-                        val ws = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
-                        val wsUrl = HttpUrl.parse(path) match
-                            case Result.Success(u) => u
-                            case _                 => HttpUrl.parse("/").getOrThrow
-                        val request = HttpRequest(HttpMethod.GET, wsUrl, headers, Record.empty)
+                        val ws      = new HttpWebSocket(inbound, outbound, closeReasonRef, peerClosedPromise, closeFn)
+                        val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
 
                         Fiber.initUnscoped {
                             Loop(conn.read) { stream =>

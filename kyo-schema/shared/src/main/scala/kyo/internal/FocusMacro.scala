@@ -712,7 +712,14 @@ import scala.quoted.*
         val childSym    = childType.typeSymbol
         val childFields = childSym.caseFields
 
-        if childFields.isEmpty then
+        // Sealed trait child (intermediate sealed trait in a multi-level hierarchy).
+        // Derive Schema[T] inline so the parent sealed schema can delegate to it.
+        if childSym.flags.is(Flags.Sealed) && childSym.flags.is(Flags.Trait) && !child.flags.is(Flags.Module) then
+            (self: Expr[Schema[A]]) =>
+                childType.asType match
+                    case '[t] =>
+                        '{ kyo.Schema.derived[t].asInstanceOf[kyo.Schema[Any]] }
+        else if childFields.isEmpty then
             // Case object variant — serialize as empty object
             val singletonRef: Expr[T] =
                 if child.flags.is(Flags.Module) then

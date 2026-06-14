@@ -125,6 +125,9 @@ object Selector:
     /** Matches an element by a raw CSS selector string. */
     def css(value: String): Selector = SelectorNode.Css(value)
 
+    /** Matches every element on the page (CSS `*`). The default for `Browser.elements`. */
+    def all: Selector = css("*")
+
     /** Matches an element by its `data-testid` attribute. */
     def testId(value: String): Selector = SelectorNode.TestId(value)
 

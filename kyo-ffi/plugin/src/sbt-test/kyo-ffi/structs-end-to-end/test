@@ -1,0 +1,5 @@
+# Struct end-to-end: nested, packed, String + Buffer return fields.
+> ffiCompile
+> ffiPackage
+> compile
+> run

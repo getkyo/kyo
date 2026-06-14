@@ -1,0 +1,4 @@
+# Verify that header-derived -I<dir> flags make the C source compile.
+# If ffiCHeaders -> -I<parent-dir> were not wired, `#include "foo.h"` would fail.
+> ffiCompile
+$ exists target/ffi

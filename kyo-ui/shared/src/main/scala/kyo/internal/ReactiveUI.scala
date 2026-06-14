@@ -376,7 +376,9 @@ private[kyo] object ReactiveUI:
                             targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
                         case _ => false
                     end match
-            case _: Text => false
+            // Text and RawHtml are leaf content with no kyo-addressable Element children, so no event
+            // target can resolve through them: neither can satisfy an Element predicate.
+            case _: Text | _: RawHtml => false
 
     private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, isDisabled)

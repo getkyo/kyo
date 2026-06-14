@@ -70,10 +70,10 @@ class HttpHandlerTest extends BaseHttpTest:
 
         "filter E accumulates with route E" in {
             val filter = new HttpFilter.Passthrough[String]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[String | E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[String | E2 | HttpResponse.Halt]) =
                     next(request)
 
             val route = HttpRoute.getRaw("users")
@@ -89,10 +89,10 @@ class HttpHandlerTest extends BaseHttpTest:
 
         "filter-added request fields are accessible in handler" in {
             val filter = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "alice"))
 
             val route = HttpRoute.getRaw("users")
@@ -109,10 +109,10 @@ class HttpHandlerTest extends BaseHttpTest:
 
         "filter-added fields survive request builder chaining" in {
             val filter = new HttpFilter.Request[Any, "user" ~ String, Nothing]:
-                def apply[In, Out, E2](
+                def apply[In, Out, E2, S](
                     request: HttpRequest[In],
-                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-                )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                    next: HttpRequest[In & "user" ~ String] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                     next(request.addField("user", "alice"))
 
             val route = HttpRoute.getRaw("users")
@@ -209,7 +209,7 @@ class HttpHandlerTest extends BaseHttpTest:
         "cannot extend HttpHandler directly" in {
             typeCheckFailure("""
                 new HttpHandler[Any, Any, Nothing](HttpRoute.getRaw("test")):
-                    def apply(request: HttpRequest[Any])(using Frame): HttpResponse[Any] < (Async & Abort[Nothing | HttpResponse.Halt]) =
+                    def apply(request: HttpRequest[Any])(using Frame): HttpResponse[Any] < (S & Async & Abort[Nothing | HttpResponse.Halt]) =
                         HttpResponse.ok
             """)(
                 "Cannot extend"

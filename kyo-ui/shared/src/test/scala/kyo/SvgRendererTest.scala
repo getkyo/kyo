@@ -43,6 +43,25 @@ class SvgRendererTest extends kyo.test.Test[Any]:
         yield assert(html.contains("""d="M50 50 L90 50 A40 40 0 0 1 50 90 Z""""))
     }
 
+    "PathData.raw emits the d string verbatim (for external/brand paths)" in {
+        val p = Svg.path.d(Svg.PathData.raw("M12 0a12 12 0 100 24z"))
+        for html <- HtmlRenderer.render(p, Seq.empty)
+        yield assert(html.contains("""d="M12 0a12 12 0 100 24z""""), s"raw d must pass through: $html")
+    }
+
+    "path pathLength normalizes the path length (for CSS stroke-draw)" in {
+        // pathLength=1 reparameterizes dash/offset to 0..1, so a CSS keyframe can tween
+        // stroke-dashoffset 1 -> 0 independent of the path's real length.
+        val p = Svg.path.d(Svg.PathData.from(0, 0).lineTo(10, 0)).pathLength(1.0)
+            .strokeDasharray(Seq(1.0)).strokeDashoffset(Svg.SvgLength.user(0.0))
+        for html <- HtmlRenderer.render(p, Seq.empty)
+        yield
+            assert(html.contains("""pathLength="1""""), s"pathLength must render camelCase: $html")
+            assert(html.contains("""stroke-dasharray="1""""), s"dash base must render: $html")
+            assert(html.contains("""stroke-dashoffset="0""""), s"offset base must render unitless: $html")
+        end for
+    }
+
     // transform list joins
     "transform list renders as space-separated functions" in {
         val g = Svg.g.transform(Svg.Transform.Translate(10, 20), Svg.Transform.Scale(2))
@@ -353,6 +372,24 @@ class SvgRendererTest extends kyo.test.Test[Any]:
             assert(html.contains("""to="30""""))
             assert(html.contains("""dur="1s""""))
             assert(html.contains("""repeatCount="indefinite""""))
+        end for
+    }
+
+    // animate fill freeze/remove: a draw-on-load tween must freeze its final value or it reverts to the
+    // base on end (the SMIL default), so the drawn line would vanish without fill="freeze".
+    "animate renders fill=freeze and fill=remove" in {
+        for
+            freeze <- HtmlRenderer.render(
+                Svg.circle.cx(50).cy(50).r(20)(Svg.animate.attributeName("r").to(30.0).dur("1s").fill(Svg.AnimFill.Freeze)),
+                Seq.empty
+            )
+            remove <- HtmlRenderer.render(
+                Svg.circle.cx(50).cy(50).r(20)(Svg.animate.attributeName("r").to(30.0).dur("1s").fill(Svg.AnimFill.Remove)),
+                Seq.empty
+            )
+        yield
+            assert(freeze.contains("""fill="freeze""""), s"freeze: $freeze")
+            assert(remove.contains("""fill="remove""""), s"remove: $remove")
         end for
     }
 

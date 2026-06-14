@@ -146,7 +146,8 @@ private[kyo] object WebSocketCodec:
             if config.subprotocols.nonEmpty && callerSuppliedProtocol.isEmpty then
                 discard(request.append("Sec-WebSocket-Protocol: ").append(config.subprotocols.mkString(", ")).append("\r\n"))
             headers.foreach { (name, value) =>
-                discard(request.append(name).append(": ").append(value).append("\r\n"))
+                if !isRequiredClientUpgradeHeader(name) then
+                    discard(request.append(name).append(": ").append(value).append("\r\n"))
             }
             discard(request.append("\r\n"))
             conn.write(Span.fromUnsafe(request.toString.getBytes(Utf8))).andThen {
@@ -182,6 +183,13 @@ private[kyo] object WebSocketCodec:
     end requestUpgradeWith
 
     // ── Pure functions (unit testable) ──────────────────────────
+
+    private def isRequiredClientUpgradeHeader(name: String): Boolean =
+        name.equalsIgnoreCase("Host") ||
+            name.equalsIgnoreCase("Upgrade") ||
+            name.equalsIgnoreCase("Connection") ||
+            name.equalsIgnoreCase("Sec-WebSocket-Version") ||
+            name.equalsIgnoreCase("Sec-WebSocket-Key")
 
     private[internal] def computeAcceptKey(clientKey: String): String =
         val hash = Sha1.hash((clientKey + WsGuid).getBytes(Utf8))

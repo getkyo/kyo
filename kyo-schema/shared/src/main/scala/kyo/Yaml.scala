@@ -15,11 +15,11 @@ import scala.annotation.targetName
   */
 final class Yaml(writerConfig: Yaml.WriterConfig = Yaml.WriterConfig.Default) extends Codec:
     /** Creates a YAML writer using this codec instance's writer configuration. */
-    def newWriter(): Codec.Writer = kyo.internal.YamlWriter(writerConfig)
+    def newWriter(): Codec.Writer = kyo.internal.yaml.YamlWriter(writerConfig)
 
     /** Creates a direct YAML reader over UTF-8 input bytes. */
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
-        kyo.internal.YamlReader(input)
+        kyo.internal.yaml.YamlReader(input)
 end Yaml
 
 /** Primary entry point for YAML 1.2 serialization, parsing, and visiting.
@@ -625,7 +625,7 @@ object Yaml:
           * decisions. Create a fresh renderer for each output, pass it as the terminal handler, then read [[resultString]] after event
           * processing completes.
           */
-        final class Renderer private (private val inner: internal.YamlEvents.Renderer) extends Handler[Unit, DecodeException]:
+        final class Renderer private (private val inner: internal.yaml.YamlEvents.Renderer) extends Handler[Unit, DecodeException]:
 
             /** Handles the start of a YAML mapping. */
             override def mappingStart(context: Unit, meta: Meta, size: Maybe[Int]): Result[DecodeException, Unit] =
@@ -661,7 +661,7 @@ object Yaml:
             /** Creates a YAML event renderer using the provided writer configuration. */
             @targetName("applyWithConfig")
             def apply(config: WriterConfig): Renderer =
-                new Renderer(internal.YamlEvents.Renderer(config))
+                new Renderer(internal.yaml.YamlEvents.Renderer(config))
         end Renderer
 
         /** Visits a YAML stream as events without constructing a YAML DOM. */
@@ -669,7 +669,7 @@ object Yaml:
             input: String,
             context: Ctx
         )(handler: Handler[Ctx, Err])(using Frame): Result[Err | DecodeException, Ctx] =
-            internal.YamlParser(input).visitEvents(context)(handler)
+            internal.yaml.YamlParser(input).visitEvents(context)(handler)
         end visit
 
         /** Visits one document from a YAML stream as events without constructing a YAML DOM. */
@@ -691,7 +691,7 @@ object Yaml:
             value: A,
             context: Ctx
         )(handler: Handler[Ctx, Err])(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Result[Err, Ctx] =
-            val writer = internal.YamlEvents.EventWriter(context, handler, writerConfig)
+            val writer = internal.yaml.YamlEvents.EventWriter(context, handler, writerConfig)
             schema.writeTo(value, writer)
             writer.resultContext
         end write
@@ -711,17 +711,19 @@ object Yaml:
     final class Pipeline[Err] private[Yaml] (
         private val readerConfig: ReaderConfig,
         private val writerConfig: WriterConfig,
-        private val processor: Maybe[Events.Processor[Err]]
+        private val processor: Maybe[Events.Processor[Err]],
+        private val cstTransform: Maybe[Cst.Document => Result[Err, Cst.Document]] = Absent,
+        private val cstStreamTransform: Maybe[Cst.Stream => Result[Err, Cst.Stream]] = Absent
     ):
 
         /** Uses the supplied reader configuration for decode, parse, render, and visit source selection. */
         def reader(config: ReaderConfig): Pipeline[Err] =
-            new Pipeline(config, writerConfig, processor)
+            new Pipeline(config, writerConfig, processor, cstTransform, cstStreamTransform)
         end reader
 
         /** Uses the supplied writer configuration for encode, write, and render output. */
         def writer(config: WriterConfig): Pipeline[Err] =
-            new Pipeline(readerConfig, config, processor)
+            new Pipeline(readerConfig, config, processor, cstTransform, cstStreamTransform)
         end writer
 
         /** Adds an event processor to this pipeline. Processors run in the order they are added. */
@@ -730,8 +732,59 @@ object Yaml:
                 processor match
                     case Present(current) => current.andThen(next)
                     case Absent           => widenProcessor(next)
-            new Pipeline(readerConfig, writerConfig, Maybe(combined))
+            new Pipeline(
+                readerConfig,
+                writerConfig,
+                Maybe(combined),
+                cstTransform.map(documentTransformWiden[Err, Err2]),
+                cstStreamTransform.map(streamTransformWiden[Err, Err2])
+            )
         end through
+
+        /** Adds a per-document CST transform stage. When set, the String read terminals build a source-backed CST, apply this transform
+          * (after any stream transform), emit events, and continue through event processors. The transform sees the document's comments and
+          * trivia intact.
+          */
+        def throughCst[Err2](f: Cst.Document => Result[Err2, Cst.Document]): Pipeline[Err | Err2] =
+            val combined: Cst.Document => Result[Err | Err2, Cst.Document] =
+                cstTransform match
+                    case Present(existing) =>
+                        d => documentTransformWiden[Err, Err2](existing)(d).flatMap(documentTransformWiden[Err2, Err](f))
+                    case Absent => documentTransformWiden[Err2, Err](f)
+            new Pipeline[Err | Err2](
+                readerConfig,
+                writerConfig,
+                processor.map(widenProcessor[Err2, Err]),
+                Maybe(combined),
+                cstStreamTransform.map(streamTransformWiden[Err, Err2])
+            )
+        end throughCst
+
+        /** Adds a whole-stream CST transform stage, applied before any per-document transform. */
+        def throughCstStream[Err2](f: Cst.Stream => Result[Err2, Cst.Stream]): Pipeline[Err | Err2] =
+            val combined: Cst.Stream => Result[Err | Err2, Cst.Stream] =
+                cstStreamTransform match
+                    case Present(existing) =>
+                        s => streamTransformWiden[Err, Err2](existing)(s).flatMap(streamTransformWiden[Err2, Err](f))
+                    case Absent => streamTransformWiden[Err2, Err](f)
+            new Pipeline[Err | Err2](
+                readerConfig,
+                writerConfig,
+                processor.map(widenProcessor[Err2, Err]),
+                cstTransform.map(documentTransformWiden[Err, Err2]),
+                Maybe(combined)
+            )
+        end throughCstStream
+
+        private def documentTransformWiden[E1, E2](
+            f: Cst.Document => Result[E1, Cst.Document]
+        ): Cst.Document => Result[E1 | E2, Cst.Document] =
+            document => f(document)
+
+        private def streamTransformWiden[E1, E2](
+            f: Cst.Stream => Result[E1, Cst.Stream]
+        ): Cst.Stream => Result[E1 | E2, Cst.Stream] =
+            stream => f(stream)
 
         /** Decodes YAML into a schema value.
           *
@@ -741,19 +794,21 @@ object Yaml:
         def decode[A](
             input: String
         )(using yaml: Yaml, schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
-            processor match
-                case Absent => Yaml.decode[A](input, readerConfig)
-                case Present(current) =>
-                    decodeSource(input).flatMap { source =>
-                        internal.YamlEventScanner.collect(source, current).flatMap { events =>
-                            Result.catching[DecodeException] {
-                                val reader = internal.YamlEventReader(events, readerConfig.yamlVersion)
-                                reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
-                                schema.readFrom(reader)
+            if cstStaged then stagedDocument(input).flatMap(decode[A](_))
+            else
+                processor match
+                    case Absent => Yaml.decode[A](input, readerConfig)
+                    case Present(current) =>
+                        decodeSource(input).flatMap { source =>
+                            internal.yaml.YamlEventScanner.collect(source, current).flatMap { events =>
+                                Result.catching[DecodeException] {
+                                    val reader = internal.yaml.YamlEventReader(events, readerConfig.yamlVersion)
+                                    reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
+                                    schema.readFrom(reader)
+                                }
                             }
                         }
-                    }
-            end match
+                end match
         end decode
 
         /** Decodes UTF-8 YAML bytes into a schema value. */
@@ -765,15 +820,83 @@ object Yaml:
 
         /** Renders a YAML source after routing its events through this pipeline's processors. */
         def render(input: String)(using Frame): Result[Err | DecodeException, String] =
-            val renderer = Events.Renderer(writerConfig)
-            visit(input, ())(renderer).map(_ => renderer.resultString)
+            if cstStaged then
+                cstStreamTransform match
+                    case Present(_) =>
+                        stagedStream(input).map(stream => stream.render(using writerConfig))
+                    case Absent => // no stream transform: per-document render path
+                        stagedDocument(input).map(doc => doc.render(using writerConfig))
+            else
+                val renderer = Events.Renderer(writerConfig)
+                visit(input, ())(renderer).map(_ => renderer.resultString)
         end render
 
         /** Parses a YAML source into a [[Node]] after routing its events through this pipeline's processors. */
         def parse(input: String)(using Frame): Result[Err | DecodeException, Node] =
-            val builder = NodeBuilder()
-            visit(input, ())(builder).flatMap(_ => builder.result)
+            if cstStaged then stagedDocument(input).flatMap(parse)
+            else
+                val builder = NodeBuilder()
+                visit(input, ())(builder).flatMap(_ => builder.result)
         end parse
+
+        /** Parses a YAML source into a CST after routing events through this pipeline's processors.
+          *
+          * Pipelines with no processors delegate to [[Yaml.cst]] after source selection, so source-backed CST rendering can return the
+          * selected source unchanged until an edit is applied. Processor-backed CSTs are materialized from transformed events. They do not
+          * preserve original source text or trivia because the transformed event stream, rather than the original bytes, is the source of
+          * truth.
+          */
+        def cst(input: String)(using Frame): Result[Err | DecodeException, Cst.Document] =
+            processor match
+                case Absent =>
+                    selectedSource(input).flatMap(Yaml.cst)
+                case Present(current) =>
+                    selectedSource(input).flatMap { source =>
+                        internal.yaml.YamlEventScanner.collect(source, current).flatMap(Yaml.Cst.fromEvents)
+                    }
+            end match
+        end cst
+
+        /** Parses UTF-8 YAML bytes into a CST after routing events through this pipeline's processors.
+          *
+          * This is the byte-input counterpart to [[cst]]. With no processors, rendering keeps the decoded UTF-8 source backing. With
+          * processors, the returned CST is rebuilt from transformed events and renders canonically.
+          */
+        def cstBytes(input: Span[Byte])(using Frame): Result[Err | DecodeException, Cst.Document] =
+            cst(String(input.toArray, StandardCharsets.UTF_8))
+        end cstBytes
+
+        /** Parses a YAML stream into a CST stream after routing events through this pipeline's processors.
+          *
+          * Pipelines with no processors delegate to [[Yaml.cstAll]], so rendering can return the original stream unchanged until an edit is
+          * applied. Processor-backed streams process each document and return canonical CST documents with no original stream source. Both
+          * paths return every document in the stream; `cstAll` ignores [[ReaderConfig.documentIndex]] because document selection produces a
+          * single document, which [[cst]] handles.
+          */
+        def cstAll(input: String)(using Frame): Result[Err | DecodeException, Cst.Stream] =
+            processor match
+                case Absent =>
+                    Yaml.cstAll(input)
+                case Present(current) =>
+                    val docs = internal.yaml.YamlCstParser.documentBodies(input)
+
+                    @tailrec def loop(index: Int, acc: Chunk[Cst.Document]): Result[Err | DecodeException, Chunk[Cst.Document]] =
+                        if index >= docs.size then Result.succeed(acc)
+                        else
+                            val parsed: Result[Err | DecodeException, Cst.Document] =
+                                internal.yaml.YamlEventScanner.collect(docs(index), current).flatMap(Yaml.Cst.fromEvents)
+                            parsed match
+                                case Result.Success(doc) => loop(index + 1, acc :+ doc)
+                                case Result.Failure(e)   => Result.fail(e)
+                                case Result.Panic(e)     => Result.panic(e)
+                            end match
+                    end loop
+
+                    loop(0, Chunk.empty).map { documents =>
+                        Cst.Stream(documents, Chunk.empty, Chunk.empty, streamSpan(documents), Absent)
+                    }
+            end match
+        end cstAll
 
         /** Visits a YAML source after routing its events through this pipeline's processors. */
         def visit[Ctx, Err2](
@@ -789,6 +912,155 @@ object Yaml:
                 end match
             }
         end visit
+
+        /** Visits a CST document through this pipeline's processors and the supplied handler.
+          *
+          * With no processors the handler receives events directly from the document. With processors each event passes through the processor
+          * chain before reaching the handler.
+          */
+        def visit[Ctx, Err2](
+            document: Cst.Document,
+            context: Ctx
+        )(handler: Events.Handler[Ctx, Err2])(using Frame): Result[Err | Err2 | DecodeException, Ctx] =
+            processor match
+                case Absent           => internal.yaml.YamlCstBuilder.emitDocument(document, context)(handler)
+                case Present(current) => internal.yaml.YamlCstBuilder.emitDocument(document, context)(current.andThen(handler))
+            end match
+        end visit
+
+        /** Visits a CST stream through this pipeline's processors and the supplied handler.
+          *
+          * With no processors the handler receives events directly from the stream. With processors each event passes through the processor
+          * chain before reaching the handler.
+          */
+        def visit[Ctx, Err2](
+            stream: Cst.Stream,
+            context: Ctx
+        )(handler: Events.Handler[Ctx, Err2])(using Frame): Result[Err | Err2 | DecodeException, Ctx] =
+            processor match
+                case Absent           => internal.yaml.YamlCstBuilder.emitStream(stream, context)(handler)
+                case Present(current) => internal.yaml.YamlCstBuilder.emitStream(stream, context)(current.andThen(handler))
+            end match
+        end visit
+
+        /** Renders a CST document after routing its events through this pipeline's processors. */
+        def render(document: Cst.Document)(using Frame): Result[Err | DecodeException, String] =
+            val renderer = Events.Renderer(writerConfig)
+            visit(document, ())(renderer).map(_ => renderer.resultString)
+        end render
+
+        /** Renders a CST stream after routing its events through this pipeline's processors.
+          *
+          * If the stream has an original source and no processors, that source is returned unchanged. Otherwise, each document is rendered
+          * individually and joined with `---` separators. A single `visit(stream)(Renderer)` call would not insert `---` separators between
+          * documents because the default `WriterConfig.documentMarkers` is `None`, so the per-document render-and-join approach mirrors
+          * `YamlCstRenderer.stream`.
+          */
+        def render(stream: Cst.Stream)(using Frame): Result[Err | DecodeException, String] =
+            stream.originalSource match
+                case Present(source) if processor.isEmpty =>
+                    Result.succeed(source)
+                case _ =>
+                    val multiDoc = stream.documents.size > 1
+                    val childPipeline =
+                        if multiDoc
+                        then
+                            new Pipeline(
+                                readerConfig,
+                                writerConfig.copy(documentMarkers = WriterConfig.DocumentMarkers.None),
+                                processor,
+                                cstTransform,
+                                cstStreamTransform
+                            )
+                        else this
+
+                    @tailrec def loop(
+                        index: Int,
+                        acc: StringBuilder
+                    ): Result[Err | DecodeException, String] =
+                        if index >= stream.documents.size then
+                            if multiDoc && writerConfig.documentMarkers == WriterConfig.DocumentMarkers.StartAndEnd then
+                                if acc.nonEmpty && acc.charAt(acc.length - 1) != '\n' then
+                                    val _ = acc.append('\n')
+                                val _ = acc.append("...\n")
+                            end if
+                            Result.succeed(acc.toString)
+                        else
+                            childPipeline.render(stream.documents(index)) match
+                                case Result.Success(rendered) =>
+                                    if multiDoc then
+                                        if acc.nonEmpty && acc.charAt(acc.length - 1) != '\n' then
+                                            val _ = acc.append('\n')
+                                        val _ = acc.append("---\n")
+                                    end if
+                                    val _ = acc.append(rendered)
+                                    loop(index + 1, acc)
+                                case Result.Failure(e) => Result.fail(e)
+                                case Result.Panic(e)   => Result.panic(e)
+                            end match
+                    end loop
+
+                    loop(0, StringBuilder())
+            end match
+        end render
+
+        /** Parses a CST document into a [[Node]] after routing its events through this pipeline's processors. */
+        def parse(document: Cst.Document)(using Frame): Result[Err | DecodeException, Node] =
+            val builder = NodeBuilder()
+            visit(document, ())(builder).flatMap(_ => builder.result)
+        end parse
+
+        /** Parses every document of a CST stream into a [[Node]]. */
+        def parseAll(stream: Cst.Stream)(using Frame): Result[Err | DecodeException, Chunk[Node]] =
+            @tailrec def loop(index: Int, acc: Chunk[Node]): Result[Err | DecodeException, Chunk[Node]] =
+                if index >= stream.documents.size then Result.succeed(acc)
+                else
+                    parse(stream.documents(index)) match
+                        case Result.Success(node) => loop(index + 1, acc :+ node)
+                        case Result.Failure(e)    => Result.fail(e)
+                        case Result.Panic(e)      => Result.panic(e)
+                    end match
+            loop(0, Chunk.empty)
+        end parseAll
+
+        /** Decodes a CST document into a schema value.
+          *
+          * The document's events are routed through this pipeline's processors, then read by the schema. [[ReaderConfig.maxDepth]],
+          * [[ReaderConfig.maxCollectionSize]], and [[ReaderConfig.yamlVersion]] apply; document selection does not, because a single
+          * document has nothing to select. The `Cst.Stream` overload decodes one value from a multi-document stream.
+          */
+        def decode[A](document: Cst.Document)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
+            visit(document, Chunk.empty[Events.Event])(cstEventCollector).flatMap { events =>
+                Result.catching[DecodeException] {
+                    val reader = internal.yaml.YamlEventReader(events, readerConfig.yamlVersion)
+                    reader.resetLimits(readerConfig.maxDepth, readerConfig.maxCollectionSize)
+                    schema.readFrom(reader)
+                }
+            }
+        end decode
+
+        /** Decodes a single value from a CST stream.
+          *
+          * The stream is first reduced to one document: a present [[ReaderConfig.documentIndex]] selects that document (failing when
+          * out of range), otherwise [[ReaderConfig.documentMode]] decides, merging top-level mappings or requiring a single document.
+          * The selected document is then decoded as in the `Cst.Document` overload, so the reader limits and version apply equally.
+          */
+        def decode[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, A] =
+            reduceStream(stream).flatMap(decode[A](_))
+        end decode
+
+        /** Decodes every document of a CST stream into schema values. */
+        def decodeAll[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[Err | DecodeException, Chunk[A]] =
+            @tailrec def loop(index: Int, acc: Chunk[A]): Result[Err | DecodeException, Chunk[A]] =
+                if index >= stream.documents.size then Result.succeed(acc)
+                else
+                    decode[A](stream.documents(index)) match
+                        case Result.Success(value) => loop(index + 1, acc :+ value)
+                        case Result.Failure(e)     => Result.fail(e)
+                        case Result.Panic(e)       => Result.panic(e)
+                    end match
+            loop(0, Chunk.empty)
+        end decodeAll
 
         /** Encodes a schema value to YAML.
           *
@@ -818,6 +1090,53 @@ object Yaml:
             end match
         end write
 
+        private def cstStaged: Boolean =
+            cstTransform.isDefined || cstStreamTransform.isDefined
+
+        private def applyDocumentTransform(document: Cst.Document)(using Frame): Result[Err | DecodeException, Cst.Document] =
+            cstTransform match
+                case Present(transform) => transform(document)
+                case Absent             => Result.succeed(document)
+
+        private def stagedDocument(input: String)(using Frame): Result[Err | DecodeException, Cst.Document] =
+            cstStreamTransform match
+                case Present(streamTransform) =>
+                    Yaml.cstAll(input).flatMap(streamTransform).flatMap(reduceStream).flatMap(applyDocumentTransform)
+                case Absent =>
+                    selectedSource(input).flatMap(Yaml.cst).flatMap(applyDocumentTransform)
+
+        private def stagedStream(input: String)(using Frame): Result[Err | DecodeException, Cst.Stream] =
+            val base: Result[Err | DecodeException, Cst.Stream] =
+                cstStreamTransform match
+                    case Present(streamTransform) =>
+                        Yaml.cstAll(input).flatMap(streamTransform).map(_.copy(originalSource = Absent))
+                    case Absent => Yaml.cstAll(input)
+            cstTransform match
+                case Present(transform) =>
+                    base.flatMap(stream =>
+                        mapDocuments(stream.documents, 0, Chunk.empty, transform).map(docs =>
+                            stream.copy(documents = docs, originalSource = Absent)
+                        )
+                    )
+                case Absent => base
+            end match
+        end stagedStream
+
+        @tailrec private def mapDocuments(
+            documents: Chunk[Cst.Document],
+            index: Int,
+            acc: Chunk[Cst.Document],
+            transform: Cst.Document => Result[Err, Cst.Document]
+        ): Result[Err | DecodeException, Chunk[Cst.Document]] =
+            if index >= documents.size then Result.succeed(acc)
+            else
+                transform(documents(index)) match
+                    case Result.Success(doc) => mapDocuments(documents, index + 1, acc :+ doc, transform)
+                    case Result.Failure(e)   => Result.fail(e)
+                    case Result.Panic(e)     => Result.panic(e)
+                end match
+        end mapDocuments
+
         private def selectedSource(input: String)(using Frame): Result[DecodeException, String] =
             readerConfig.documentIndex match
                 case Present(index) => selectDocument(input, index)
@@ -828,13 +1147,13 @@ object Yaml:
             readerConfig.documentIndex match
                 case Present(index) =>
                     selectDocument(input, index)
-                case Absent if !internal.YamlDocuments.requiresSplit(input) =>
+                case Absent if !internal.yaml.YamlDocuments.requiresSplit(input) =>
                     Result.succeed(input)
                 case Absent =>
                     val docs = splitDocuments(input)
                     readerConfig.documentMode match
                         case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
-                            Result.succeed(internal.YamlDocuments.mergeTopLevelMappings(docs))
+                            Result.succeed(internal.yaml.YamlDocuments.mergeTopLevelMappings(docs))
                         case ReaderConfig.DocumentMode.SingleDocument =>
                             if docs.size == 1 then Result.succeed(docs(0))
                             else if docs.isEmpty && input.trim.isEmpty then Result.succeed(input)
@@ -850,6 +1169,60 @@ object Yaml:
                     end match
             end match
         end decodeSource
+
+        // Buffers the full event sequence, including the StreamStart/StreamEnd boundaries, as YamlEventReader consumes them.
+        private val cstEventCollector: Events.Handler[Chunk[Events.Event], Nothing] =
+            new Events.EventHandler[Chunk[Events.Event], Nothing]:
+                override def event(
+                    context: Chunk[Events.Event],
+                    event: Events.Event
+                ): Result[Nothing, Chunk[Events.Event]] =
+                    Result.succeed(context :+ event)
+
+        private def reduceStream(stream: Cst.Stream)(using Frame): Result[DecodeException, Cst.Document] =
+            readerConfig.documentIndex match
+                case Present(index) =>
+                    if index >= 0 && index < stream.documents.size then
+                        Result.succeed(stream.documents(index))
+                    else
+                        Result.fail(ParseException(
+                            Yaml(),
+                            "",
+                            s"YAML document index $index is out of range; found ${stream.documents.size} document(s)",
+                            Nil,
+                            0
+                        ))
+                    end if
+                case Absent =>
+                    readerConfig.documentMode match
+                        case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
+                            Result.succeed(internal.yaml.YamlCstBuilder.mergeTopLevelMappings(stream))
+                        case ReaderConfig.DocumentMode.SingleDocument =>
+                            if stream.documents.size == 1 then Result.succeed(stream.documents(0))
+                            // An empty stream (no documents, e.g. from blank input) reduces to an empty document, mirroring how the
+                            // String path accepts blank input; decoding it then fails or succeeds per the target schema.
+                            else if stream.documents.isEmpty then
+                                Result.succeed(Cst.Document(Absent, Chunk.empty, Chunk.empty, stream.span, Absent))
+                            else
+                                Result.fail(ParseException(
+                                    Yaml(),
+                                    "",
+                                    "Unexpected content after YAML document end",
+                                    Nil,
+                                    0
+                                ))
+                            end if
+                    end match
+            end match
+        end reduceStream
+
+        private def streamSpan(documents: Chunk[Cst.Document]): Cst.SourceSpan =
+            if documents.isEmpty then
+                val mark = Mark(0, 1, 1)
+                Cst.SourceSpan(mark, mark)
+            else
+                Cst.SourceSpan(documents(0).span.start, documents(documents.size - 1).span.end)
+        end streamSpan
 
     end Pipeline
 
@@ -883,10 +1256,294 @@ object Yaml:
         case Alias(name: Anchor, mark: Mark)
     end Node
 
+    /** Concrete syntax tree for YAML documents.
+      *
+      * `Cst` models YAML structure together with source spans and surface syntax metadata. It is intended for tools that need structural
+      * paths, format-aware rendering, or later edit operations. Ordinary schema decoding and encoding continue to use the direct YAML
+      * reader and writer paths.
+      */
+    object Cst:
+
+        /** Source marks associated with a CST value.
+          *
+          * Collection roots parsed from source usually span the corresponding source region. Scalar and alias nodes may carry a zero-width
+          * mark range when only the node start is available, especially for event-backed or canonical CST values.
+          */
+        case class SourceSpan(start: Mark, end: Mark) derives CanEqual
+
+        /** Base type for CST-specific failures. */
+        sealed trait Error extends Exception
+
+        /** Raised when a CST edit cannot be applied. */
+        case class EditException(message: String, path: Path, mark: Maybe[Mark]) extends Exception(message), Error
+
+        /** Preserved non-structural YAML text. */
+        case class Trivia(text: String, span: SourceSpan) derives CanEqual
+
+        /** Source token captured by a CST node or entry. */
+        case class Token(text: String, span: SourceSpan) derives CanEqual
+
+        /** Scalar surface syntax. */
+        enum ScalarSyntax derives CanEqual:
+            /** Canonical syntax chosen by the CST renderer. */
+            case Canonical
+
+            /** Plain scalar syntax. */
+            case Plain
+
+            /** Single-quoted scalar syntax. */
+            case SingleQuoted
+
+            /** Double-quoted scalar syntax. */
+            case DoubleQuoted
+
+            /** Literal block scalar syntax. */
+            case Literal
+
+            /** Folded block scalar syntax. */
+            case Folded
+        end ScalarSyntax
+
+        /** Mapping surface syntax. */
+        enum MappingSyntax derives CanEqual:
+            /** Canonical syntax chosen by the CST renderer. */
+            case Canonical
+
+            /** Block mapping syntax. */
+            case Block
+
+            /** Flow mapping syntax. */
+            case Flow
+        end MappingSyntax
+
+        /** Sequence surface syntax. */
+        enum SequenceSyntax derives CanEqual:
+            /** Canonical syntax chosen by the CST renderer. */
+            case Canonical
+
+            /** Block sequence syntax. */
+            case Block
+
+            /** Flow sequence syntax. */
+            case Flow
+        end SequenceSyntax
+
+        /** Alias surface syntax. */
+        enum AliasSyntax derives CanEqual:
+            /** Canonical `*anchor` alias syntax. */
+            case Canonical
+        end AliasSyntax
+
+        /** Structural path to a YAML CST node.
+          *
+          * A path describes how to reach a node by YAML structure, not by character offset. [[Path.Segment.Key]] selects a mapping entry by
+          * key text and [[Path.Segment.Index]] selects a sequence entry by zero-based position. The root path has no segments. Use
+          * [[show]] for diagnostics and user-facing edit errors.
+          */
+        opaque type Path = Chunk[Path.Segment]
+
+        /** Constructors and accessors for structural CST paths.
+          *
+          * Paths are opaque over `Chunk[Segment]` so callers can inspect segments without confusing a path with an arbitrary collection.
+          * Appending with `/` keeps edit and lookup call sites compact while still preserving whether each step is a mapping key or a
+          * sequence index.
+          */
+        object Path:
+            /** One structural path step. */
+            enum Segment derives CanEqual:
+                /** Mapping key segment. */
+                case Key(value: String)
+
+                /** Sequence index segment. */
+                case Index(value: Int)
+            end Segment
+
+            /** Root path with no segments. */
+            val root: Path = Chunk.empty
+
+            /** Creates a path from explicit segments. */
+            def apply(segments: Chunk[Segment]): Path = segments
+
+            given CanEqual[Path, Path] = CanEqual.derived
+
+            extension (path: Path)
+                /** Appends a mapping key segment. */
+                @targetName("slashKey")
+                def /(key: String): Path =
+                    path :+ Segment.Key(key)
+
+                /** Appends a sequence index segment. */
+                @targetName("slashIndex")
+                def /(index: Int): Path =
+                    path :+ Segment.Index(index)
+
+                /** Returns the path segments. */
+                def segments: Chunk[Segment] =
+                    path
+
+                /** Renders the path in dotted form with bracketed indexes. */
+                def show: String =
+                    val builder = StringBuilder()
+
+                    @tailrec def loop(index: Int): String =
+                        if index >= path.size then builder.toString
+                        else
+                            path(index) match
+                                case Segment.Key(value) =>
+                                    if builder.length > 0 then
+                                        val _ = builder.append('.')
+                                    val _ = builder.append(value)
+                                case Segment.Index(value) =>
+                                    val _ = builder.append('[').append(value).append(']')
+                            end match
+                            loop(index + 1)
+                        end if
+                    end loop
+
+                    loop(0)
+                end show
+            end extension
+        end Path
+
+        /** One YAML CST node.
+          *
+          * CST nodes carry the decoded structural value, source syntax metadata, and source marks. `originalSource` is reserved for CSTs
+          * constructed by callers or future source-slice preserving parsers; the source parser currently preserves exact text at the document
+          * or stream level, and edited documents render changed regions canonically. Trivia that belongs to entries or documents is kept
+          * outside the node so structural editing can distinguish comments and whitespace from YAML values.
+          */
+        enum Node derives CanEqual:
+            /** Mapping node with entry CSTs. */
+            case Mapping(entries: Chunk[MappingEntry], syntax: MappingSyntax, meta: Meta, span: SourceSpan, originalSource: Maybe[String])
+
+            /** Sequence node with element CSTs. */
+            case Sequence(
+                entries: Chunk[SequenceEntry],
+                syntax: SequenceSyntax,
+                meta: Meta,
+                span: SourceSpan,
+                originalSource: Maybe[String]
+            )
+
+            /** Scalar node with scalar text and syntax metadata. */
+            case Scalar(value: String, syntax: ScalarSyntax, meta: ScalarMeta, span: SourceSpan, originalSource: Maybe[String])
+
+            /** Alias node referencing an anchor. */
+            case Alias(name: Anchor, syntax: AliasSyntax, span: SourceSpan, originalSource: Maybe[String])
+        end Node
+
+        /** Mapping key-value entry. */
+        case class MappingEntry(
+            key: Node,
+            value: Node,
+            span: SourceSpan,
+            leadingTrivia: Chunk[Trivia] = Chunk.empty,
+            trailingTrivia: Chunk[Trivia] = Chunk.empty
+        ) derives CanEqual
+
+        /** Sequence element entry. */
+        case class SequenceEntry(
+            value: Node,
+            span: SourceSpan,
+            leadingTrivia: Chunk[Trivia] = Chunk.empty,
+            trailingTrivia: Chunk[Trivia] = Chunk.empty
+        ) derives CanEqual
+
+        /** One YAML document CST.
+          *
+          * A document has an optional root node because YAML streams can contain empty documents. `leadingTrivia` and `trailingTrivia`
+          * reserve comments, blank lines, and whitespace that belong to the document rather than a particular node. `span` covers the
+          * document's source extent when it came from text, or a synthetic extent for programmatically constructed documents.
+          *
+          * Rendering is source-preserving when `originalSource` is present: the original text is returned unchanged. Otherwise the document
+          * is rendered canonically by emitting YAML events from the CST. The `events` method exposes that canonical event stream directly.
+          */
+        case class Document(
+            root: Maybe[Node],
+            leadingTrivia: Chunk[Trivia],
+            trailingTrivia: Chunk[Trivia],
+            span: SourceSpan,
+            originalSource: Maybe[String]
+        ) derives CanEqual:
+            /** Returns this document's optional root node. */
+            def node: Maybe[Node] =
+                root
+
+            /** Returns the original source used for source-preserving rendering. */
+            def source: Maybe[String] =
+                originalSource
+
+            /** Renders this document to YAML.
+              *
+              * A source-backed document that has not been edited renders its original source unchanged, so `config` only affects documents
+              * built from events or schema values, or documents with edits applied.
+              */
+            def render(using config: WriterConfig): String =
+                internal.yaml.YamlCstRenderer.document(this)
+
+            /** Emits this document as YAML events. */
+            def events: Chunk[Events.Event] =
+                internal.yaml.YamlCstBuilder.events(this)
+
+            /** Replaces the node at `path`.
+              *
+              * Fails when a mapping segment along `path` is ambiguous because the mapping contains more than one entry with the same key.
+              */
+            def replace(path: Path, node: Node): Result[Error, Document] =
+                internal.yaml.YamlCstEdits.replace(this, path, node)
+
+            /** Inserts `node` at `path`.
+              *
+              * For a mapping key that does not yet exist the entry is appended. Inserting a mapping key that already exists fails rather
+              * than overwriting it; use [[replace]] to change an existing value. Fails when a mapping segment along `path` is ambiguous.
+              */
+            def insert(path: Path, node: Node): Result[Error, Document] =
+                internal.yaml.YamlCstEdits.insert(this, path, node)
+
+            /** Removes the node at `path`. */
+            def remove(path: Path): Result[Error, Document] =
+                internal.yaml.YamlCstEdits.remove(this, path)
+        end Document
+
+        /** YAML stream CST containing zero or more documents.
+          *
+          * Stream-level trivia reserves content that belongs outside any individual document. When `originalSource` is present, rendering
+          * returns that full source stream unchanged. When it is absent, each document is rendered canonically and multi-document streams
+          * are separated with explicit `---` markers so the output remains parseable as a YAML stream.
+          */
+        case class Stream(
+            documents: Chunk[Document],
+            leadingTrivia: Chunk[Trivia],
+            trailingTrivia: Chunk[Trivia],
+            span: SourceSpan,
+            originalSource: Maybe[String]
+        ) derives CanEqual:
+            /** Returns the original source used for source-preserving rendering. */
+            def source: Maybe[String] =
+                originalSource
+
+            /** Renders this stream to YAML.
+              *
+              * A source-backed stream that has not been edited renders its original source unchanged, so `config` only affects streams
+              * built from events or schema values, or streams with edits applied.
+              */
+            def render(using config: WriterConfig): String =
+                internal.yaml.YamlCstRenderer.stream(this)
+        end Stream
+
+        /** Builds a CST document from YAML events. */
+        def fromEvents(events: Chunk[Events.Event])(using Frame): Result[DecodeException, Document] =
+            internal.yaml.YamlCstBuilder.fromEvents(events)
+
+        /** Builds a CST document from a schema value. */
+        def from[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): Result[DecodeException, Document] =
+            internal.yaml.YamlCstBuilder.fromValue(value)
+    end Cst
+
     /** Parses a single YAML document into an optional DOM node tree. */
     def parse(input: String)(using Frame): Result[DecodeException, Node] =
         val builder = NodeBuilder()
-        internal.YamlParser(input).visitEvents(())(builder).flatMap(_ => builder.result)
+        internal.yaml.YamlParser(input).visitEvents(())(builder).flatMap(_ => builder.result)
     end parse
 
     /** Parses one document from a YAML stream into an optional DOM node tree. */
@@ -897,6 +1554,67 @@ object Yaml:
     /** Parses an explicit YAML document stream into node trees. */
     def parseAll(input: String)(using Frame): Result[DecodeException, Chunk[Node]] =
         parseEach(input)(parse)
+
+    /** Parses a single YAML document into a source-backed CST.
+      *
+      * The returned document keeps the original source text and source marks. Rendering an unchanged document returns that source without
+      * re-emitting YAML events. Structural edits preserve collected comments and whitespace where supported, while changed regions render
+      * canonically. Use CST parsing for format-aware tooling; ordinary schema decoding should use [[decode]].
+      */
+    def cst(input: String)(using Frame): Result[DecodeException, Cst.Document] =
+        internal.yaml.YamlCstParser.document(input)
+
+    /** Parses a YAML document stream into a source-backed CST stream.
+      *
+      * The stream retains the original input so an unchanged render can return it directly, including document separators and stream-level
+      * trivia. Documents inside the stream expose the same structural edit API as [[cst]]. Use [[decodeAll]] for typed values and reserve CST
+      * parsing for source-preserving YAML tools.
+      */
+    def cstAll(input: String)(using Frame): Result[DecodeException, Cst.Stream] =
+        internal.yaml.YamlCstParser.stream(input)
+
+    /** Decodes a CST document into a value of type A using the default pipeline. */
+    def decode[A](document: Cst.Document)(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        pipeline.decode[A](document)
+    end decode
+
+    /** Decodes a single value from a CST stream using the default pipeline. */
+    def decode[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        pipeline.decode[A](stream)
+    end decode
+
+    /** Decodes every document of a CST stream into values of type A using the default pipeline. */
+    def decodeAll[A](stream: Cst.Stream)(using schema: Schema[A], frame: Frame): Result[DecodeException, Chunk[A]] =
+        pipeline.decodeAll[A](stream)
+    end decodeAll
+
+    /** Renders a CST document to YAML through the event renderer.
+      *
+      * Unlike [[Cst.Document.render]], which returns the original source verbatim until the document is edited, this always emits
+      * canonically through the supplied [[WriterConfig]].
+      */
+    def render(document: Cst.Document)(using config: WriterConfig, frame: Frame): Result[DecodeException, String] =
+        pipeline.writer(config).render(document)
+    end render
+
+    /** Renders a CST stream to YAML through the event renderer.
+      *
+      * Unlike [[Cst.Stream.render]], which returns the original source verbatim until the stream is edited, this always emits
+      * canonically through the supplied [[WriterConfig]].
+      */
+    def render(stream: Cst.Stream)(using config: WriterConfig, frame: Frame): Result[DecodeException, String] =
+        pipeline.writer(config).render(stream)
+    end render
+
+    /** Parses a CST document into a [[Node]] using the default pipeline. */
+    def parse(document: Cst.Document)(using Frame): Result[DecodeException, Node] =
+        pipeline.parse(document)
+    end parse
+
+    /** Parses every document of a CST stream into [[Node]] values using the default pipeline. */
+    def parseAll(stream: Cst.Stream)(using Frame): Result[DecodeException, Chunk[Node]] =
+        pipeline.parseAll(stream)
+    end parseAll
 
     /** Encodes a value of type A as YAML. */
     inline def encode[A](value: A)(using schema: Schema[A], writerConfig: WriterConfig, frame: Frame): String =
@@ -951,7 +1669,7 @@ object Yaml:
             case Present(index) =>
                 selectDocument(input, index).flatMap(doc => decode[A](doc, config.copy(documentIndex = Absent)))
             case Absent =>
-                if !internal.YamlDocuments.requiresSplit(input) then
+                if !internal.yaml.YamlDocuments.requiresSplit(input) then
                     decodePreparedString(
                         input,
                         config.maxDepth,
@@ -963,7 +1681,7 @@ object Yaml:
                     config.documentMode match
                         case ReaderConfig.DocumentMode.MergeTopLevelMappings =>
                             decodePreparedString(
-                                internal.YamlDocuments.mergeTopLevelMappings(docs),
+                                internal.yaml.YamlDocuments.mergeTopLevelMappings(docs),
                                 config.maxDepth,
                                 config.maxCollectionSize,
                                 config.yamlVersion
@@ -1018,7 +1736,7 @@ object Yaml:
         yamlVersion: SpecVersion
     )(using schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         Result.catching[DecodeException] {
-            val reader = internal.YamlReader(input, yamlVersion)
+            val reader = internal.yaml.YamlReader(input, yamlVersion)
             reader.resetLimits(maxDepth, maxCollectionSize)
             schema.readFrom(reader)
         }
@@ -1118,7 +1836,7 @@ object Yaml:
     end selectDocument
 
     private def splitDocuments(input: String): Chunk[String] =
-        internal.YamlDocuments.split(input)
+        internal.yaml.YamlDocuments.split(input)
     end splitDocuments
 
     sealed private trait NodeFrame

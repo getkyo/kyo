@@ -1,0 +1,10 @@
+# #34 + #247: when the user deletes the binding trait's source (here the only one), ffiGenerate
+# must remove the previously-generated *Impl.scala so zinc does not try to compile an impl for a
+# trait that no longer exists. With the only source gone there is no TASTy to run codegen over, so
+# the cleanup keys off "no binding sources remain". The final `compile` would fail with a dangling
+# reference to the deleted trait if the orphan impl were left behind, so it is part of the check.
+> compile
+> assertImplPresent
+$ delete src/main/scala/stale/StaleBindings.scala
+> compile
+> assertImplGone

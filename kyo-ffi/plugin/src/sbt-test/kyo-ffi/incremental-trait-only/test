@@ -1,0 +1,6 @@
+# Asserts ffiGenerate input-hash caching across two same-state invocations.
+# ffiGenerate hashes trait sources — running the task twice without a change
+# must not touch the output files.
+> compile
+> snapshotGenerateMtime
+> assertGenerateUnchanged

@@ -120,6 +120,40 @@ class CssStyleRendererTest extends kyo.test.Test[Any]:
         )
         assert(css.contains("linear-gradient"))
         assert(css.contains("to right"))
+        // The default sRGB space emits no `in <space>` prelude.
+        assert(!css.contains("in oklch"))
+        assert(!css.contains("in oklab"))
+    }
+
+    "render oklch gradient with the in-space prelude" in {
+        val css = CssStyleRenderer.render(
+            Style.bgGradient(
+                Style.GradientDirection.toBottom,
+                Style.GradientColorSpace.oklch,
+                (Color.red, 0.pct),
+                (Color.blue, 100.pct)
+            )
+        )
+        // CSS spec order: the color-interpolation-method follows the direction.
+        assert(css.contains("linear-gradient(to bottom in oklch,"), css)
+    }
+
+    "render oklab gradient with the in-space prelude" in {
+        val css = CssStyleRenderer.render(
+            Style.bgGradient(
+                Style.GradientDirection.toBottom,
+                Style.GradientColorSpace.oklab,
+                (Color.red, 0.pct),
+                (Color.blue, 100.pct)
+            )
+        )
+        // CSS spec order: the color-interpolation-method follows the direction.
+        assert(css.contains("linear-gradient(to bottom in oklab,"), css)
+    }
+
+    "render text-wrap balance and pretty" in {
+        assert(CssStyleRenderer.render(Style.textWrap(Style.TextWrap.balance)).contains("text-wrap: balance"))
+        assert(CssStyleRenderer.render(Style.textWrap(Style.TextWrap.pretty)).contains("text-wrap: pretty"))
     }
 
     "render cursor pointer" in {

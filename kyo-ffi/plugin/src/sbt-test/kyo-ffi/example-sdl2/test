@@ -1,0 +1,5 @@
+# example-sdl2: worked example binding a subset of SDL2 primitives to a stub C ABI.
+> ffiCompile
+> ffiPackage
+> compile
+> run

@@ -16,11 +16,6 @@ class ContainerOrchestrationItTest extends BasePodTest:
         .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
         .stopTimeout(0.seconds)
 
-    private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
-
-    def uniqueName(prefix: String) =
-        s"$prefix-${nameCounter.incrementAndGet()}"
-
     "multi-container scenarios" - {
         "shared volume between two containers" - runBackend {
             val volName = Container.Volume.Id(uniqueName("kyo-shared"))

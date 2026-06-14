@@ -1221,7 +1221,7 @@ class BrowserCoreTest extends BrowserTest:
                 val before = beforeStr.toDouble
                 assert(before > 1000.0, s"Expected target initially below viewport (top > 1000) but got top=$before")
             }.andThen {
-                Browser.scrollTo(Browser.Selector.id("target")).andThen {
+                Browser.scrollToElement(Browser.Selector.id("target")).andThen {
                     Browser.eval(
                         "(() => { const r = document.getElementById('target').getBoundingClientRect(); return r.top + '|' + window.innerHeight; })()"
                     ).map { vh =>
@@ -1230,7 +1230,7 @@ class BrowserCoreTest extends BrowserTest:
                         val viewportHeight = parts(1).toDouble
                         assert(
                             top >= 0.0 && top <= viewportHeight,
-                            s"Expected target's top within viewport [0, $viewportHeight] after scrollTo but got top=$top"
+                            s"Expected target's top within viewport [0, $viewportHeight] after scrollToElement but got top=$top"
                         )
                     }
                 }
@@ -1946,14 +1946,14 @@ class BrowserCoreTest extends BrowserTest:
         }
     }
 
-    // ---- scrollTo(selector) ----
+    // ---- scrollToElement(selector) ----
 
     "scrollTo(selector) scrolls a deeply-positioned element into viewport" in {
         withBrowser {
             onPage(
                 """<div style='height:5000px'></div><div id='far' style='height:40px;background:red'>far</div>"""
             ) {
-                Browser.scrollTo(Browser.Selector.id("far")).andThen {
+                Browser.scrollToElement(Browser.Selector.id("far")).andThen {
                     Browser.eval(
                         """(() => {
                             const el = document.getElementById('far');
@@ -1963,7 +1963,7 @@ class BrowserCoreTest extends BrowserTest:
                     ).map { v =>
                         assert(
                             v == "true",
-                            s"Expected element to be in viewport after scrollTo but getBoundingClientRect check returned '$v'"
+                            s"Expected element to be in viewport after scrollToElement but getBoundingClientRect check returned '$v'"
                         )
                     }
                 }
@@ -1976,7 +1976,7 @@ class BrowserCoreTest extends BrowserTest:
             onPage("<div>no matching element here</div>") {
                 tight {
                     Abort.run[BrowserElementException] {
-                        Browser.scrollTo(Browser.Selector.id("no-such-element"))
+                        Browser.scrollToElement(Browser.Selector.id("no-such-element"))
                     }.map {
                         case Result.Failure(_: BrowserElementNotFoundException) => ()
                         case other =>

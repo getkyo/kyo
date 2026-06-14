@@ -112,6 +112,7 @@ object UI:
     def main(using Frame): Main                   = Main()
     def label(using Frame): Label                 = Label()
     def pre(using Frame): Pre                     = Pre()
+    def blockquote(using Frame): Blockquote       = Blockquote()
     def code(using Frame): Code                   = Code()
     def table(using Frame): Table                 = Table()
     def tr(using Frame): Tr                       = Tr()
@@ -166,6 +167,73 @@ object UI:
       */
     def fragment[C <: UI](cs: C*)(using Frame): Fragment[C] = Fragment[C](Chunk.from(cs))
 
+    /** Inline HTML passthrough: emits `html` verbatim into the rendered output without any escaping.
+      *
+      * This is the framework's single deliberate escape hatch for trusted HTML content that cannot be expressed through the normal `UI`
+      * element API. Use it only for content you control and trust completely: strings from external sources, user input, or any untrusted
+      * origin must NOT be passed here as doing so creates an XSS vulnerability. There is no sanitization.
+      *
+      * Intended for the bounded case of inline HTML snippets (such as `<img>` or `<a><img></a>` nodes found in module README files) that
+      * the Markdown transpiler encounters and must pass through verbatim. The article body itself is always a real `UI` subtree; this node
+      * appears only at the leaf positions where raw HTML snippets exist in the source.
+      *
+      * The rendered bytes are byte-identical to `html`. Contrast with `UI.text`, which HTML-escapes its argument:
+      * `UI.text("<b>x</b>")` renders `&lt;b&gt;x&lt;/b&gt;`; `UI.rawHtml("<b>x</b>")` renders `<b>x</b>`.
+      *
+      * @param html
+      *   Trusted HTML string to emit verbatim. Must come from a controlled, trusted source.
+      * @see
+      *   [[kyo.UI.Ast.RawHtml]] for the AST node this factory returns
+      * @see
+      *   [[kyo.UI.text]] for the safe alternative that HTML-escapes its argument
+      */
+    def rawHtml(html: String)(using Frame): UI = Ast.RawHtml(html)
+
+    /** Build a `<script type="...">` data island carrying a verbatim JSON body and an optional `id`.
+      *
+      * A data island is an inert structured-data block read back by a script (the JSON-LD
+      * SEO block, the SSG-seeded boot payload), NOT a reactive element. It returns a
+      * [[kyo.UI.DataIsland]], which does NOT extend [[kyo.UI]], so the type system rejects
+      * placing it as a live tree child: it can be placed ONLY through the [[kyo.UI.PageHead]]
+      * `jsonLd` (head) / `dataIslands` (body-end) fields. `scriptType` is
+      * `application/ld+json` for the JSON-LD block and `application/json` for a data island;
+      * `id` is `Present` for an addressable island (read back by `querySelector("#id")`) and
+      * `Absent` for the JSON-LD block.
+      *
+      * The `json` body is stored verbatim at construction and escaped only at render time
+      * (`<` becomes `<`, `>` becomes `>`), so a literal `</script>` substring in
+      * any field renders as inert text that cannot close the element. This factory owns the
+      * one escape; callers pass trusted JSON and never pre-escape it.
+      *
+      * @param scriptType
+      *   the `type` attribute (`application/ld+json` or `application/json`)
+      * @param id
+      *   the element `id` (`Present` for an addressable island, `Absent` for the JSON-LD block)
+      * @param json
+      *   the verbatim JSON body (trusted; escaped at render time)
+      * @see
+      *   [[kyo.UI.PageHead.jsonLd]], [[kyo.UI.PageHead.dataIslands]] for the fields that place it
+      * @see
+      *   [[kyo.UI.rawHtml]] for the verbatim-HTML leaf
+      */
+    def dataIsland(scriptType: String, id: Maybe[String], json: String)(using Frame): UI.DataIsland =
+        UI.DataIsland(scriptType, id, json)
+
+    /** A `<script type="..." id="...?">json</script>` document-level payload, built by
+      * [[kyo.UI.dataIsland]] and carried on [[kyo.UI.PageHead]] (the `jsonLd` head field and the
+      * `dataIslands` body-end field).
+      *
+      * It does NOT extend [[kyo.UI]]: a data island is a `PageHead` payload, not a renderable UI
+      * node. Because it is not a `UI`, the type system rejects placing it as a live tree child,
+      * and the renderer never sees it as a tree node; it is rendered only from the `PageHead`
+      * fields that carry it, as an inert, position-stable block with no `data-kyo-path`, no
+      * attributes, and no event handler. The `json` body is verbatim at construction and escaped
+      * at render time. `derives CanEqual` because [[kyo.UI.PageHead]] carries these values and
+      * itself `derives CanEqual`.
+      */
+    final case class DataIsland(scriptType: String, id: Maybe[String], json: String)
+        derives CanEqual
+
     /** Conditional rendering: shows `body` while `condition` is true and an empty node otherwise, re-evaluating when the signal emits. */
     def when[C <: UI](condition: Signal[Boolean])(body: => C)(using Frame): Reactive[C] =
         Reactive[C](condition.map(v => if v then body else UI.empty))
@@ -216,6 +284,76 @@ object UI:
                 }
             }
         }
+
+    /** The base CSS reset kyo-ui relies on for correct layout: `box-sizing: border-box`, the
+      * flex-column / flex-row element defaults, `[data-kyo-reactive] { display: contents }`, the
+      * list/heading/anchor/table normalizations, and `[hidden] { display: none }`.
+      *
+      * Every kyo-ui runner injects this automatically (`runMount` via the DOM stylesheet,
+      * `runHandlers` and the page runner via the document `<head>`), so a normal app never names
+      * it. It is public for one case: a static site that hand-builds its own HTML document and
+      * wants the framework reset in its `<head>`. Emit it BEFORE any custom stylesheet so custom
+      * rules win at equal specificity (CSS is last-declaration-wins). `UI.runRenderPage` already
+      * does this ordering for you; reach for `UI.baseCss` directly only when you assemble the
+      * document yourself.
+      */
+    val baseCss: String = HtmlRenderer.baseCss
+
+    /** Configuration for the `<head>` of a full HTML document produced by [[kyo.UI.runRenderPage]].
+      *
+      * `title` becomes the `<title>` (attribute-escaped). `meta` is a sequence of
+      * `(name, content)` pairs each emitted as `<meta name="..." content="...">` (both escaped),
+      * for SEO/OpenGraph/viewport tags; the renderer always prepends `charset=utf-8` and a
+      * responsive `viewport` so a minimal `PageHead` is still a valid document. `links` is a
+      * sequence of `(rel, href)` pairs each emitted as `<link rel="..." href="...">` (escaped),
+      * for canonical, icons, preconnect, and stylesheet links such as web fonts. `css` is extra
+      * stylesheet text emitted in a `<style>` block AFTER [[kyo.UI.baseCss]] so site rules win at
+      * equal specificity. `moduleScript` is an optional `<script type="module" src="...">` ESModule
+      * reference (a custom Scala.js bundle); `Absent` emits no script. `jsonLd` is an optional
+      * head-level data island (a `<script type="application/ld+json">` structured-data
+      * block) rendered immediately before `</head>`; `Absent` (the default) emits none.
+      * `dataIslands` is an ordered list of body-end data islands (`<script
+      * type="application/json" id="...">` blocks) rendered immediately before `</body>`;
+      * empty (the default) emits none. Both carry [[kyo.UI.DataIsland]] values built by
+      * [[kyo.UI.dataIsland]]; the renderer escapes their JSON bodies so a `</script>`
+      * substring cannot close the element early.
+      */
+    final case class PageHead(
+        title: String,
+        meta: Seq[(String, String)] = Seq.empty,
+        links: Seq[(String, String)] = Seq.empty,
+        css: String = "",
+        moduleScript: Maybe[String] = Absent,
+        jsonLd: Maybe[UI.DataIsland] = Absent,
+        dataIslands: Seq[UI.DataIsland] = Seq.empty
+    ) derives CanEqual
+
+    /** Read-only stream of a COMPLETE HTML document (`<!DOCTYPE html>` ... `</html>`) for static-site
+      * generation and SSR. Like [[kyo.UI.runRender]], the first emission is the initial render and each
+      * later emission is a full re-render whenever any signal changes; unlike `runRender` (which emits
+      * a body FRAGMENT), this wraps the fragment in a document with a configurable head and an
+      * optional module `<script>`.
+      *
+      * The head is built from `head`: charset + viewport are always present, then the `meta`/`links`
+      * pairs, then a single `<style>` block containing [[kyo.UI.baseCss]] strictly before `head.css` so
+      * custom rules override the framework reset. The body holds the rendered UI fragment; the
+      * optional module script is emitted last, before `</html>`, so the page paints before the bundle
+      * loads. Take the first emission for a one-shot SSG snapshot.
+      *
+      * This is the SSG counterpart to [[kyo.UI.runHandlers]] (which serves a server-push page with the
+      * SSE client baked in): `runRenderPage` produces a static document that links YOUR bundle, with
+      * no kyo-ui server-push client injected.
+      */
+    def runRenderPage(head: PageHead)(ui: UI)(using Frame): Stream[String, Async] =
+        runRender(ui).map(fragment => HtmlRenderer.page(head, fragment))
+
+    /** The base CSS plus a stylesheet, ready to drop into [[kyo.UI.PageHead.css]]: returns
+      * `sheet.render` (the stylesheet alone). [[kyo.UI.runRenderPage]] already prepends [[kyo.UI.baseCss]],
+      * so pass `sheet.render` as `PageHead.css` directly; this helper is the named, discoverable
+      * bridge from a `Stylesheet` value to the page head, parallel to how `baseCss` is the bridge for
+      * the reset.
+      */
+    def stylesheetCss(sheet: Stylesheet)(using Frame): String = sheet.render
 
     /** A property value that is either a constant or a reactive [[kyo.SignalRef]].
       *
@@ -506,6 +644,14 @@ object UI:
                 withAttrs(attrs.copy(dataAttrs = attrs.dataAttrs ++ pairs))
             end data
 
+            /** Adds a CSS class to this element (emitted as `class="..."`); repeated calls space-join.
+              * The class is the stable hook a [[kyo.Stylesheet]] class rule ([[kyo.Selector.cls]])
+              * targets, so document-level rules (`@media`, shared component styles, `:hover` against a
+              * named class) apply to it. For per-element one-off styling use [[style]] instead; the two
+              * coexist on one element.
+              */
+            def cssClass(name: String): Self = withAttrs(attrs.copy(cssClasses = attrs.cssClasses :+ name))
+
             // Internal JS property setter (used by Checkbox.indeterminate, etc.)
             private[kyo] def jsProp(name: String, value: String): Self =
                 withAttrs(attrs.copy(jsProps = attrs.jsProps.updated(name, value)))
@@ -570,9 +716,11 @@ object UI:
           *
           * Recursive givens cover: direct `HtmlContent` values, `Reactive[C]`/`Foreach[A,C]`/`Fragment[C]` where `C` has an
           * `AsHtmlChild` witness (so a nested `Fragment[Fragment[...]]` and a `foreach`/`when` returning a `Fragment` are
-          * accepted), and union types `A | B` where both sides have witnesses. `AsHtmlChild[UI]` has no given, so a value
-          * statically typed as bare `UI` is still rejected; `AsHtmlChild[Svg.Circle]` has no given (SVG primitives do not extend
-          * `HtmlContent`), so SVG nodes are rejected. Each child is checked individually at the call site via the `HtmlChildVal`
+          * accepted), and union types `A | B` where both sides have witnesses. A lowest-priority
+          * `AsHtmlChild[UI]` given (in `AsHtmlChildLowestPriority`) accepts bare `UI` values as children; it resolves only
+          * when no higher-priority given matches, so named `HtmlContent` subtypes, wrappers, and fragments all resolve first.
+          * `AsHtmlChild[Svg.Circle]` has no given (SVG primitives do not extend `HtmlContent`), so SVG nodes are rejected.
+          * Each child is checked individually at the call site via the `HtmlChildVal`
           * implicit conversion, which avoids the LUB-widening that varargs would otherwise cause for heterogeneous arg lists.
           *
           * The `if cond then elem else UI.empty` idiom infers the branch union `A | Fragment[Nothing]`. The general `A | B`
@@ -594,11 +742,23 @@ object UI:
           */
         trait AsHtmlChild[T]
 
+        /** Lowest-priority `AsHtmlChild` given: allows bare `UI` values as children. This is the fallback
+          * for callers whose helpers return `UI` (rather than a specific `HtmlContent` subtype); the
+          * typed givens in `AsHtmlChild` and `AsHtmlChildLowPriority` take precedence for all named types.
+          * Correctness is maintained by `HtmlRenderer`, which handles every `UI` variant at runtime.
+          */
+        sealed trait AsHtmlChildLowestPriority:
+            given AsHtmlChild_UI: AsHtmlChild[UI] = new AsHtmlChild[UI] {}
+
         /** Lower-priority `AsHtmlChild` givens. Holds the `emptyOr` given for the `A | Fragment[Nothing]` branch union so it does
           * not create an ambiguity with the direct `Fragment` given when the static type is a bare `Fragment[Nothing]`.
           */
-        sealed trait AsHtmlChildLowPriority:
+        sealed trait AsHtmlChildLowPriority extends AsHtmlChildLowestPriority:
             given emptyOr[A <: UI](using AsHtmlChild[A]): AsHtmlChild[A | Fragment[Nothing]] = new AsHtmlChild[A | Fragment[Nothing]] {}
+            // RawHtml extends UI (not HtmlContent); given here at low priority so the
+            // HtmlContent-based given in AsHtmlChild takes precedence for HtmlContent subtypes.
+            given AsHtmlChild_RawHtml: AsHtmlChild[RawHtml] = new AsHtmlChild[RawHtml] {}
+        end AsHtmlChildLowPriority
 
         object AsHtmlChild extends AsHtmlChildLowPriority:
             given [T <: HtmlContent]: AsHtmlChild[T]                               = new AsHtmlChild[T] {}
@@ -765,6 +925,7 @@ object UI:
             ariaAttrs: Map[String, String] = Map.empty,
             dataAttrs: Map[String, String] = Map.empty,
             jsProps: Map[String, String] = Map.empty,
+            cssClasses: Chunk[String] = Chunk.empty,
             role: Maybe[String] = Absent
         )
 
@@ -772,6 +933,18 @@ object UI:
 
         /** A literal text node; a bare `String` child auto-lifts to one. */
         case class Text(value: String)(using val frame: Frame) extends UI with HtmlContent
+
+        /** Verbatim inline HTML passthrough node. The `value` string is emitted byte-for-byte into the rendered output with no HTML
+          * escaping. This is the AST counterpart to [[kyo.UI.rawHtml]].
+          *
+          * Security contract: `value` must come from a trusted, controlled source. There is no sanitization; passing user-supplied or
+          * externally-sourced strings here creates an XSS vulnerability. Use [[kyo.UI.Ast.Text]] (which escapes its argument) for any
+          * content that is not fully trusted.
+          *
+          * @param value
+          *   Trusted HTML string; rendered verbatim, no escaping applied.
+          */
+        case class RawHtml(value: String)(using val frame: Frame) extends UI
 
         /** A subtree driven by a `Signal[UI]`: re-renders the bound region whenever the signal emits a new value. The type parameter `C`
           * is a phantom bound that records the content type at the construction site; it erases to `UI` at runtime.
@@ -849,6 +1022,13 @@ object UI:
             def withAttrs(a: Attrs): Pre      = copy(attrs = a)
             def apply(cs: HtmlChildVal*): Pre = copy(children = children ++ Chunk.from(cs.map(_.value)))
         end Pre
+
+        final case class Blockquote(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
+            with Interactive:
+            type Self = Blockquote
+            def withAttrs(a: Attrs): Blockquote      = copy(attrs = a)
+            def apply(cs: HtmlChildVal*): Blockquote = copy(children = children ++ Chunk.from(cs.map(_.value)))
+        end Blockquote
 
         final case class Code(attrs: Attrs = Attrs(), children: Chunk[UI] = Chunk.empty)(using val frame: Frame) extends Block
             with Interactive:

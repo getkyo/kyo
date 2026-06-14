@@ -661,15 +661,63 @@ HttpServer.init(
 
 #### Client Filters
 
-Filters also work on the client side, attaching to typed routes to add authentication or custom headers to outgoing requests.
+Filters also work on the client side, adding authentication, request IDs, logging, tracing, metrics, or custom headers to outgoing requests.
+They can be attached at several levels:
 
-Built-in client filters: `bearerAuth(token)`, `basicAuth(username, password)`, `addHeader(name, value)`, and `logging`.
+```scala
+// Reusable policy carried by HttpClientConfig
+HttpClient.withConfig(
+    HttpClientConfig()
+        .baseUrl("https://api.example.com")
+        .filter(HttpFilter.client.bearerAuth("secret-token"))
+) {
+    HttpClient.getText("/users")
+}
+```
+
+```scala
+// Temporary policy scoped to one computation, composed into the active HttpClientConfig
+HttpClient.withFilter(HttpFilter.client.addHeader("X-Request-Id", "request-123")) {
+    HttpClient.postJson[User]("/users", CreateUser("Alice", "alice@example.com"))
+}
+```
+
+```scala
+// Endpoint-specific policy attached to a typed route
+val route = HttpRoute
+    .getText("/users")
+    .filter(HttpFilter.client.bearerAuth("secret-token"))
+```
+
+Configured filters are stored in the active `HttpClientConfig`, so they can be inspected with `HttpClient.useConfig` or
+`HttpClient.useFilter`. Use `HttpClient.withoutFilters { ... }` to clear configured client filters in a nested computation.
+
+The client-side composition order is auto filters, configured filters, then route filters. Auto filters come from
+`HttpFilter.Factory` implementations discovered through `ServiceLoader`. Configured filters come from `HttpClientConfig.filter`,
+`HttpClient.withFilter`, and `HttpClient.withFilters`. Route filters come from `HttpRoute.filter`. Built-in client filters:
+`bearerAuth(token)`, `basicAuth(username, password)`, `addHeader(name, value)`, and `logging`.
+
+Client filters also apply to WebSocket HTTP upgrade handshakes, so auth and tracing headers can be configured in the same place for HTTP
+requests and WebSocket connections. They do not intercept WebSocket messages after the connection has upgraded.
+
+Use `HttpClient.withoutAutoFilters { ... }` or `HttpClientConfig.withoutAutoFilters` to disable auto filters while keeping configured and
+route filters. `HttpClient.useAutoFilter` exposes the currently active auto filter, returning `HttpFilter.noop` when no auto filter is
+active.
 
 #### Global Filters via `HttpFilter.Factory`
 
-For cross-cutting concerns that should apply to every request without touching each route (distributed tracing, metrics, structured logging), implement the `HttpFilter.Factory` ServiceLoader SPI. Register your implementation in `META-INF/services/kyo.HttpFilter$Factory`, then override `serverFilter` to install a filter on every incoming request and `clientFilter` to install one on every outgoing request. Either method may return `Absent` to skip installation, which lets a factory be enabled or disabled at runtime via system properties or environment variables. All discovered factories are composed in discovery order.
+For cross-cutting concerns that should apply without touching each route, such as distributed tracing, metrics, structured logging, and
+shared authentication policy, implement the `HttpFilter.Factory` ServiceLoader SPI. Register your implementation in
+`META-INF/services/kyo.HttpFilter$Factory`, then override `serverFilter` to install an auto filter on incoming HTTP requests and
+`clientFilter` to install an auto filter on outgoing HTTP requests and WebSocket upgrade handshakes. Either method may return `Absent` to
+skip installation, which lets a factory be enabled or disabled at runtime via system properties or environment variables. All discovered
+factories are composed in discovery order.
 
-Caution: Factory instances load eagerly at first server or client use, so any side effect in the Factory constructor runs at an unexpected time. Put initialization logic inside the `serverFilter` / `clientFilter` body, not the constructor.
+Server auto filters are applied during `HttpServer` initialization and can be disabled per server with
+`HttpServerConfig.withoutAutoFilters`. This switch affects only auto filters. Route filters still apply.
+
+Caution: Factory instances load eagerly at first server or client use, so any side effect in the Factory constructor runs at an unexpected
+time. Put initialization logic inside the `serverFilter` / `clientFilter` body, not the constructor.
 
 ### Custom Codecs
 
