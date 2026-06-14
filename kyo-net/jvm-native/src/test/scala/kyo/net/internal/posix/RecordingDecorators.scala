@@ -331,8 +331,7 @@ end RecordingIoUringBindings
   *
   * Per-fd latches let a test synchronize on the exact change running on the driver's change-FIFO worker: registeredRead(fd) completes when
   * registerRead(fd) runs, deregisteredFd(fd) when deregister(fd) runs. onRegisterRead runs at the very start of registerRead (before counting
-  * or completing the per-fd latch) so a test can pin the change worker inside the first change. onRearm runs from inside rearm with the fired
-  * flags so a test can latch on the survivor re-arm.
+  * or completing the per-fd latch) so a test can pin the change worker inside the first change.
   *
   * The authorized synthetic-scratch-entry injection: when syntheticErrorFd is set to a non-negative fd, the next poll() delegates to
   * real.poll() and then injects one synthetic error-flag entry for that fd into the returned scratch (scratch.fds[n] = fd,
@@ -353,9 +352,6 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // Count of registerWrite calls.
     val registerWriteCount: AtomicInteger = new AtomicInteger(0)
 
-    // Count of rearm calls.
-    val rearmCount: AtomicInteger = new AtomicInteger(0)
-
     // Fds registered for read.
     val registeredReadFds: ConcurrentLinkedQueue[Int] = new ConcurrentLinkedQueue[Int]()
 
@@ -365,8 +361,8 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // Fds deregistered, in execution order.
     val deregisteredFds: ConcurrentLinkedQueue[Int] = new ConcurrentLinkedQueue[Int]()
 
-    // Every interest change recorded in execution order: "registerRead(fd)", "registerWrite(fd)", "rearm(fd, firedRead=.., firedWrite=..)",
-    // "deregister(fd)". Used by FIFO-ordering and survivor-rearm assertions.
+    // Every interest change recorded in execution order: "registerRead(fd)", "registerWrite(fd)", "deregister(fd)".
+    // Used by FIFO-ordering assertions. Under edge-triggered registration there is no rearm; the fd stays armed at the kernel.
     val callLogQueue: ConcurrentLinkedQueue[String] = new ConcurrentLinkedQueue[String]()
 
     /** The recorded interest changes in execution order. */
@@ -417,10 +413,6 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // change worker inside the first change (the single-owner proof). null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onRegisterRead: Int => Unit = null
 
-    // Callback fired from inside rearm with (fd, firedRead, firedWrite) after counting and recording. Not one-shot: a test reads its first
-    // invocation via the rearm per-fd latch below. null means none set.
-    @volatile var onRearm: (Int, Boolean, Boolean) => Unit = null
-
     // Per-fd latch that completes the first time registerRead(fd) runs on the change worker.
     private val registeredReadOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
 
@@ -429,9 +421,6 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
 
     // Per-fd latch that completes the first time deregister(fd) runs on the change worker.
     private val deregisteredFdOf: ConcurrentHashMap[Int, Promise.Unsafe[Unit, Any]] = new ConcurrentHashMap()
-
-    // Per-fd latch carrying the (firedRead, firedWrite) flags of the first rearm(fd) that runs.
-    private val rearmedOf: ConcurrentHashMap[Int, Promise.Unsafe[(Boolean, Boolean), Any]] = new ConcurrentHashMap()
 
     /** A promise that completes when registerRead(fd) executes on the change worker. Created on first request so it is ready before the change
       * runs; a test sets it up before submitting the change.
@@ -446,10 +435,6 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     /** A promise that completes when deregister(fd) executes on the change worker. Created on first request. */
     def deregisteredFd(fd: Int)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
         deregisteredFdOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[Unit, Any]())
-
-    /** A promise carrying the (firedRead, firedWrite) flags of the first rearm(fd). Created on first request. */
-    def rearmed(fd: Int)(using AllowUnsafe): Promise.Unsafe[(Boolean, Boolean), Any] =
-        rearmedOf.computeIfAbsent(fd, _ => Promise.Unsafe.init[(Boolean, Boolean), Any]())
 
     // Authorized one-shot synthetic-scratch injection: the fd to inject an error entry for, or -1 if no injection is pending.
     // CAS from the target fd to -1 on first use so the injection fires exactly once even under concurrent poll calls.
@@ -482,29 +467,27 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         rc
     end registerWrite
 
-    override def rearm(pollerFd: Int, fd: Int, firedRead: Boolean, firedWrite: Boolean, scratch: PollScratch)(using
-        AllowUnsafe,
-        Frame
-    ): Unit =
-        discard(rearmCount.getAndIncrement())
-        discard(callLogQueue.add(s"rearm($fd, firedRead=$firedRead, firedWrite=$firedWrite)"))
-        real.rearm(pollerFd, fd, firedRead, firedWrite, scratch)
-        val hook = onRearm
-        if hook != null then hook(fd, firedRead, firedWrite)
-        rearmed(fd).completeDiscard(Result.succeed((firedRead, firedWrite)))
-    end rearm
-
-    def deregister(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+    def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         deregisteredFds.add(fd)
-        discard(callLogQueue.add(s"deregister($fd)"))
-        real.deregister(pollerFd, fd, scratch)
+        discard(callLogQueue.add(s"deregister($fd, fdClosing=$fdClosing)"))
+        real.deregister(pollerFd, fd, fdClosing, scratch)
         deregisteredFd(fd).completeDiscard(Result.succeed(()))
     end deregister
 
-    def poll(pollerFd: Int, timeoutMs: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any] =
+    // Count of poll() calls that carried at least one batched change (nChanges > 0). On kqueue the changelist is submitted atomically
+    // alongside the kevent call; this counter confirms that at least one poll cycle delivered interest changes via the batch, proving
+    // the changelist accumulation path is live and not a no-op. On epoll the backend ignores the changelist, so this counter stays 0
+    // on Linux, but the test that checks it gates with assumeKqueue().
+    val pollWithChangesCount: AtomicInteger = new AtomicInteger(0)
+
+    def poll(pollerFd: Int, timeoutMs: Int, changelist: kyo.ffi.Buffer[Byte], nChanges: Int, scratch: PollScratch)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Int, Any] =
         lastPollTimeoutMs = timeoutMs.toLong
         pollEventsBufs.add(scratch.eventsBuffer)
         pollFdsArrays.add(scratch.fds)
+        if nChanges > 0 then discard(pollWithChangesCount.getAndIncrement())
         // Fire the pre-poll latch before delegating so the waiting fiber can act before epoll_wait/kevent blocks.
         val raw = prePollLatch.getAndSet(null)
         if raw != null then
@@ -516,7 +499,7 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         // Consume the one-shot synthetic injection atomically before delegating so the CAS wins exactly once.
         val injFd     = syntheticErrorFd.get()
         val hasInject = injFd >= 0 && syntheticErrorFd.compareAndSet(injFd, -1)
-        val realFiber = real.poll(pollerFd, timeoutMs, scratch)
+        val realFiber = real.poll(pollerFd, timeoutMs, changelist, nChanges, scratch)
         if hasInject then
             // After the real poll returns n events, append one synthetic error-flag entry at index n for the target fd, guarded to stay
             // within the scratch arrays (MaxEvents). The driver's drainReady calls dispatchError(fd) which calls getsockopt(SO_ERROR) on the

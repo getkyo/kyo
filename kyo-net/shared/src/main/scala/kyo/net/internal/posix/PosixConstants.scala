@@ -100,6 +100,14 @@ private[net] object PosixConstants:
     val EPOLLERR: Int     = 0x008
     val EPOLLHUP: Int     = 0x010
     val EPOLLONESHOT: Int = 1 << 30
+    // EPOLLET enables edge-triggered mode: the kernel fires readiness once per empty->ready transition (one event per state change, not
+    // continuously while data is present). Combined with EPOLLRDHUP for half-close detection, this eliminates the per-event EPOLLONESHOT
+    // re-arm: the fd is registered once and stays armed until explicitly deregistered.
+    val EPOLLET: Int = 1 << 31
+    // EPOLLRDHUP detects peer half-close (peer called shutdown(SHUT_WR) or close). It fires alongside EPOLLIN when there are still buffered
+    // bytes before the EOF, so data must be drained before surfacing the half-close. Always included in the interest mask under EPOLLET so
+    // the driver learns about peer half-close without a subsequent recv returning 0.
+    val EPOLLRDHUP: Int = 0x2000
     // Flags for `eventfd(2)`, the epoll poll-loop wakeup fd: EFD_CLOEXEC closes it across exec, EFD_NONBLOCK makes the counter read/write
     // non-blocking (a drained counter reads EAGAIN instead of parking, which the wakeup-drain loop relies on). Linux-only (eventfd is a Linux
     // syscall); the literals are the stable Linux ABI values.
@@ -116,6 +124,11 @@ private[net] object PosixConstants:
     val EV_ADD: Short      = 0x0001
     val EV_DELETE: Short   = 0x0002
     val EV_ENABLE: Short   = 0x0004
+    // EV_DISABLE deactivates a kqueue filter without removing it from the interest list. Used to suppress spurious write-ready events after a
+    // write completes: the EVFILT_WRITE filter stays registered (EV_ADD | EV_CLEAR | EV_ENABLE) and is toggled off with EV_DISABLE after the
+    // write drains, then toggled back on with EV_ENABLE when the next awaitWritable call arms the fd for writing. This avoids the overhead of
+    // EV_DELETE + EV_ADD per write cycle while preventing the send-buffer-full filter from firing continuously.
+    val EV_DISABLE: Short = 0x0008
     // EV_CLEAR auto-resets the EVFILT_USER trigger state after the event is delivered, so one NOTE_TRIGGER wakes the poll exactly once and the
     // filter re-arms for the next wake without an explicit reset (the level-vs-edge analog of draining the epoll eventfd counter).
     val EV_CLEAR: Short   = 0x0020

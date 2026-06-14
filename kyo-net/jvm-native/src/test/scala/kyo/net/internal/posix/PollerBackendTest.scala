@@ -91,9 +91,13 @@ class PollerBackendTest extends Test:
                     sock.send(client, wb, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map(r => assert(r.value == 1L))
                 }.andThen {
                     // Test 2: poll returns a Fiber.Unsafe; on JVM done() is true inline and poll() yields the ready count and fills scratch.
-                    val pollFiber = backend.poll(pollerFd, 1000, scratch)
+                    // Pass an empty changelist (no pending changes from tests; the changelist path is tested by PollerIoDriverEdgeTriggeredTest).
+                    val (clBuf, clN) = scratch.kqueueData match
+                        case Present(kq) => (kq.changelistBuf, kq.nChanges)
+                        case Absent      => (scratch.armBuf, 0)
+                    val pollFiber = backend.poll(pollerFd, 1000, clBuf, clN, scratch)
                     pollFiber.safe.get.map { n =>
-                        backend.deregister(pollerFd, accepted, scratch)
+                        backend.deregister(pollerFd, accepted, fdClosing = false, scratch)
                         scratch.close()
                         sock.close(client).safe.get.andThen(sock.close(accepted).safe.get).andThen {
                             backend.close(pollerFd)
@@ -113,7 +117,10 @@ class PollerBackendTest extends Test:
             val scratch  = backend.newPollScratch()
             assert(pollerFd >= 0)
             // Test 3: poll returns 0 events after bounded timeout with no ready fd (a bounded park, never indefinite).
-            backend.poll(pollerFd, 50, scratch).safe.get.map { n =>
+            val (clBuf2, clN2) = scratch.kqueueData match
+                case Present(kq) => (kq.changelistBuf, kq.nChanges)
+                case Absent      => (scratch.armBuf, 0)
+            backend.poll(pollerFd, 50, clBuf2, clN2, scratch).safe.get.map { n =>
                 scratch.close()
                 backend.close(pollerFd)
                 assert(n == 0, s"expected 0 events, got $n")

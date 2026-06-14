@@ -33,21 +33,17 @@ private[net] trait PollerBackend:
       */
     def registerWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int
 
-    /** Re-arm the still-desired direction(s) on `fd` after a readiness event fired, given which directions the event delivered (`firedRead` /
-      * `firedWrite`). This exists for epoll only: epoll carries ONE interest mask per fd plus `EPOLLONESHOT`, so when any direction fires the
-      * kernel disables the WHOLE fd, dropping the OTHER direction's still-pending interest. The epoll arm re-arms that survivor here so a read
-      * parked next to a writable (and vice versa) is not starved. kqueue registers read and write as independent one-shot filters, so a fired
-      * filter never disturbs the other and this is a no-op there. The fired direction is NOT re-armed (the driver re-expresses continued read
-      * interest with a fresh [[registerRead]], and a writable is one-shot), so a consumed direction never busy-loops. Runs on the driver's
-      * serial interest-change worker, in submission order with [[registerRead]] / [[registerWrite]] / [[deregister]]. `scratch` is the
-      * per-driver [[PollScratch]] (see [[registerRead]]).
+    /** Remove `fd` from the poller. Epoll issues `EPOLL_CTL_DEL`; kqueue deletes both filters via `kevent`. When `fdClosing` is true the fd is
+      * already closed (the OS auto-removes it from the interest set), so the delete syscall is skipped; an `EV_DELETE` on a recycled fd number
+      * would hit the wrong entry. `scratch` is the per-driver [[PollScratch]] (see [[registerRead]]).
       */
-    def rearm(pollerFd: Int, fd: Int, firedRead: Boolean, firedWrite: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
+    def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
 
-    /** Remove `fd` from the poller. Epoll issues `EPOLL_CTL_DEL`; kqueue deletes both filters via `kevent`. `scratch` is the per-driver
-      * [[PollScratch]] (see [[registerRead]]).
+    /** Disable the kqueue EVFILT_WRITE filter on `fd` without removing it. Called from `dispatchWritable` after the write completes so the
+      * write-ready filter does not keep firing spuriously while no write is pending. On epoll this is a no-op (write interest is expressed
+      * atomically in the per-fd interest union and the ET mask already collapses write-only events correctly).
       */
-    def deregister(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
+    def disableWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit = ()
 
     /** Fill the `scratch.fds` and `scratch.flags` arrays with decoded event data after a bounded `timeoutMs` wait. The `@Ffi.blocking`
       * `epoll_wait` / `kevent` runs inline on JVM/Native (fiber is already `done()` on return) and on a libuv worker on JS (fiber is
@@ -56,8 +52,15 @@ private[net] trait PollerBackend:
       * `scratch.eventsBuffer` (epoll) or `scratch.kqueueData.get.eventsBuffer` (kqueue) is the reused raw event buffer, filled in-place.
       * Returns the ready count `n` (0 if no events, negative on error). Ownership: `eventsBuffer`, `fds`, and `flags` in `scratch` are
       * owned exclusively by the poll loop carrier; `armBuf` is owned exclusively by the change worker. The two workers never share a slot.
+      *
+      * `changelist` and `nChanges` are the kqueue changelist batched by `drainChanges` this cycle. On kqueue these are passed directly to
+      * `kevent` so the interest registrations and the wait are one atomic syscall. On epoll `changelist` and `nChanges` are ignored (epoll_wait
+      * has no changelist parameter; changes go through `epoll_ctl` in `drainChanges` before `poll` is called).
       */
-    def poll(pollerFd: Int, timeoutMs: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any]
+    def poll(pollerFd: Int, timeoutMs: Int, changelist: kyo.ffi.Buffer[Byte], nChanges: Int, scratch: PollScratch)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Int, Any]
 
     /** Arm the poll-loop wakeup so a [[wake]] call makes a parked [[poll]] return promptly (instead of waiting out the bounded timeout). Called
       * once at driver start, after [[newPollScratch]]. epoll: create an eventfd and register it in the epoll set for read interest, storing it
@@ -120,7 +123,12 @@ end PollerBackend
   * number of `KEvent.size`-byte slots and accessed field-by-field through the manual [[KEvent$]] codec; a generic `Buffer[KEvent]` would box
   * every `Long` field on each poll-hot-path read/write. These are allocated once per driver (via `KqueuePollerBackend.newPollScratch`) and
   * closed via `PollScratch.close`. Owned by the same carriers as the corresponding `PollScratch` fields: `armBuf` by the change worker,
-  * `eventsBuffer` and `emptyChangelist` by the poll loop.
+  * `eventsBuffer` and `changelistBuf` by the poll loop.
+  *
+  * `changelistBuf` is the batched kqueue changelist built by `drainChanges` and passed to `kevent` together with the poll wait, reducing K
+  * interest-change syscalls to one atomic `kevent` call per poll cycle. Sized for `MaxChanges * KEvent.size` bytes; `drainChanges`
+  * fills it and records `nChanges`; `poll` passes it verbatim to the `kevent` syscall. Owned by the poll-loop carrier (the same carrier that
+  * owns `eventsBuffer`).
   *
   * `pollMemoMs` and `pollMemoTs` form a 1-element poll-timeout memo keyed on `timeoutMs`. They are written and read exclusively by the
   * single poll-loop carrier that owns this scratch (one per driver). No concurrent access is possible: the poll loop runs on one carrier,
@@ -129,16 +137,22 @@ end PollerBackend
 final private[net] class KqueuePollData(
     val armBuf: kyo.ffi.Buffer[Byte],
     val eventsBuffer: kyo.ffi.Buffer[Byte],
-    val emptyChangelist: kyo.ffi.Buffer[Byte]
+    val changelistBuf: kyo.ffi.Buffer[Byte]
 ):
     // Poll-loop-carrier-owned memo: one entry per driver. Single owner: the poll-loop carrier for this driver's scratch.
     var pollMemoMs: Int      = -1
     var pollMemoTs: Timespec = null.asInstanceOf[Timespec]
 
+    // Number of changes currently encoded in changelistBuf, ready to be passed to the next kevent call. Reset to 0 inside poll() after the
+    // changelist is submitted. Accumulates across drainChanges cycles: drainChanges appends starting at nChanges; backend.disableWrite (called
+    // from dispatchWritable during drainReady) also appends here so the EV_DISABLE lands in the next poll's changelist. Single owner: the
+    // poll-loop carrier for this scratch (drainChanges, drainReady, and poll all run on the same carrier).
+    var nChanges: Int = 0
+
     def close()(using AllowUnsafe): Unit =
         armBuf.close()
         eventsBuffer.close()
-        emptyChangelist.close()
+        changelistBuf.close()
     end close
 end KqueuePollData
 
@@ -153,7 +167,7 @@ end KqueuePollData
   *
   * On epoll: `eventsBuffer` holds `MaxEvents * EpollEvent.size` bytes; `armBuf` holds `EpollEvent.size` bytes; `kqueueData` is `Absent`.
   * On kqueue: `eventsBuffer` and `armBuf` are zero-element `Buffer[Byte]` sentinels (not used by kqueue code); the actual `Buffer[Byte]`
-  * changelist / eventlist buffers (sized in `KEvent.size`-byte slots) live in `kqueueData` (Present).
+  * changelist (`changelistBuf`) and eventlist (`eventsBuffer`) buffers (sized in `KEvent.size`-byte slots) live in `kqueueData` (Present).
   */
 final private[net] class PollScratch(
     val eventsBuffer: kyo.ffi.Buffer[Byte],
@@ -200,6 +214,9 @@ private[net] object PollFlags:
     val Read: Int  = 1
     val Write: Int = 2
     val Error: Int = 4
+    // Eof signals peer half-close: the peer called shutdown(SHUT_WR) or close. On epoll this maps from EPOLLRDHUP; on kqueue from EV_EOF.
+    // Eof can fire alongside Read when bytes are still buffered before the EOF marker; the driver drains those bytes first, then surfaces Eof.
+    val Eof: Int = 8
 end PollFlags
 
 private[net] object PollerBackend:

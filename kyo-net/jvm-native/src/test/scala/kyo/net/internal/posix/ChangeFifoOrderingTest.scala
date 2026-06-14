@@ -64,9 +64,9 @@ class ChangeFifoOrderingTest extends Test:
                     PosixTestSockets.closePeerForEof(spy, clientFd)
                     PosixTestSockets.closePeerForEof(spy, acceptedFd)
                     val log     = backend.callLog
-                    val deregIx = log.indexOf(s"deregister($targetFd)")
+                    val deregIx = log.indexOf(s"deregister($targetFd, fdClosing=false)")
                     val regIx   = log.indexOf(s"registerRead($targetFd)")
-                    assert(deregIx >= 0, s"the deregister must have executed: $log")
+                    assert(deregIx >= 0, s"the deregister (fdClosing=false) must have executed: $log")
                     assert(regIx >= 0, s"the registerRead must have executed: $log")
                     assert(
                         deregIx < regIx,

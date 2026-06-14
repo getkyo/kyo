@@ -147,14 +147,17 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private val wakeArmed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // Opcode constants for the packed Long change command:
-    //   Bits 34+: opcode (2 bits: 0=RegisterRead, 1=RegisterWrite, 2=Rearm, 3=Deregister)
-    //   Bit  33:  firedWrite (for Rearm opcode only; false for others)
-    //   Bit  32:  firedRead  (for Rearm opcode only; false for others)
-    //   Bits 31-0: fd (32-bit signed int; OS fds fit in 31 bits on Linux; the full 32-bit range is preserved in the low 32 bits)
+    //   Bits 34-35: opcode (2 bits: 0=RegisterRead, 1=RegisterWrite, 3=Deregister; value 2 RETIRED from OpRearm, not reassigned)
+    //   Bit  36:    fdClosing (for Deregister opcode only; 0 for all other opcodes)
+    //   Bits 32-33: unused (formerly firedRead/firedWrite for the retired OpRearm opcode; zeroed for all current opcodes)
+    //   Bits 31-0:  fd (32-bit signed int; OS fds fit in 31 bits on Linux; the full 32-bit range is preserved in the low 32 bits)
+    // OpDeregister=3 occupies both bits 34 and 35 of the opcode field (3 = 0b11); bit 35 is part of the opcode, NOT a spare bit.
+    // The fdClosing flag therefore uses bit 36, which is the first bit above the 2-bit opcode field and never set by any current opcode.
     private val OpRegisterRead: Long  = 0L
     private val OpRegisterWrite: Long = 1L
-    private val OpRearm: Long         = 2L
-    private val OpDeregister: Long    = 3L
+    // OpRearm = 2L retired. Edge-triggered registration eliminates per-event re-arm; value 2 is intentionally left as a gap
+    // to avoid encoding collisions with any in-flight commands that may have been packed before the switch.
+    private val OpDeregister: Long = 3L
 
     // Bound on in-place EINTR retries for one recv/send call. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal before any byte
     // is transferred returns -1 with errno EINTR and MUST be retried (no data was moved, the socket is unchanged), exactly as PosixTransport.accept
@@ -215,7 +218,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             // Clearing wakePending right before the park arms the wake for any change submitted from here on.
             wakePending.set(false)
             drainChanges()
-            val waitFiber = backend.poll(pollerFd, timeoutMs = 100, pollScratch) // sanctioned bounded park
+            // Pass the kqueue changelist (changelistBuf + nChanges) so kevent can submit pending changes (e.g. EV_DISABLE from
+            // dispatchWritable) atomically with the wait. On epoll the changelist / nChanges arguments are ignored by EpollPollerBackend.poll.
+            val (clBuf, clN) = pollScratch.kqueueData match
+                case Present(kq) => (kq.changelistBuf, kq.nChanges)
+                case Absent      => (pollScratch.armBuf, 0) // epoll: unused sentinel
+            val waitFiber = backend.poll(pollerFd, timeoutMs = 100, clBuf, clN, pollScratch) // sanctioned bounded park
             if waitFiber.done() then
                 // JVM/Native inline-completion path: the @Ffi.blocking wait completed synchronously. Extract events and continue the
                 // while loop without growing the stack (the while iteration is the tail-loop equivalent of @tailrec).
@@ -261,7 +269,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         // rc<0 failure is handled inside dispatchCmd, which reads pendingReads and fails the stored promise.
         // The pendingReadPromise write happens-before the changeQueue.offer (the MpscLongQueue offer's tail swap is the
         // happens-before barrier): the change worker sees the stored promise when it processes rc<0.
-        submitChange(packCmd(OpRegisterRead, handle.readFd, firedRead = false, firedWrite = false))
+        submitChange(packCmd(OpRegisterRead, handle.readFd))
     end awaitRead
 
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -298,7 +306,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         // path, which reads the id off the stored handle and compares against activeFds[fd]).
         discard(pendingWritables.put(handle.writeFd, PendingWritable(promise, handle.id)))
         // rc<0 failure is handled inside dispatchCmd, which reads pendingWritables and fails the stored promise.
-        submitChange(packCmd(OpRegisterWrite, handle.writeFd, firedRead = false, firedWrite = false))
+        submitChange(packCmd(OpRegisterWrite, handle.writeFd))
     end armSocketWritable
 
     def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -315,7 +323,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         handle.pendingAcceptPromise = Present(promise)
         discard(pendingAccepts.put(handle.readFd, handle))
         // rc<0 failure is handled inside dispatchCmd, which checks pendingAccepts and fails the stored promise.
-        submitChange(packCmd(OpRegisterRead, handle.readFd, firedRead = false, firedWrite = false))
+        submitChange(packCmd(OpRegisterRead, handle.readFd))
     end awaitAccept
 
     /** Dispatch a read-ready event on a listen fd registered via `awaitAccept`. Completes the accept promise with -1 as a readiness
@@ -635,12 +643,18 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             armSocketWritable(handle, p)
     end armWritableForFlush
 
-    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+    /** Remove this handle's fds from the poller interest set and fail any pending promises with Closed.
+      *
+      * @param fdClosing
+      *   false when the fd is still open (live withdrawal: kqueue must issue EV_DELETE); true when the fd is being closed (the OS auto-removes
+      *   kqueue filters on close, so EV_DELETE is unnecessary and targeting a recycled fd number by mistake is avoided).
+      */
+    private def deregisterFds(handle: PosixHandle, fdClosing: Boolean)(using AllowUnsafe, Frame): Unit =
         discard(activeFds.remove(handle.readFd))
         discard(activeFds.remove(handle.writeFd))
-        submitChange(packCmd(OpDeregister, handle.readFd, firedRead = false, firedWrite = false))
+        submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
         if handle.writeFd != handle.readFd then
-            submitChange(packCmd(OpDeregister, handle.writeFd, firedRead = false, firedWrite = false))
+            submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
         Maybe(pendingReads.remove(handle.readFd)).foreach { h =>
@@ -656,10 +670,16 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         // the handle, not armed on socket readiness). Releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
         handle.backpressureWaiter.foreach { case (p, _) => p.completeDiscard(Result.fail(closed)) }
         handle.backpressureWaiter = Absent
-    end cancel
+    end deregisterFds
+
+    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        // Public IoDriver cancel: the fd is still open (live-fd withdrawal). EV_DELETE must execute on kqueue to prevent stale events.
+        deregisterFds(handle, fdClosing = false)
 
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        cancel(handle)
+        // Close path: the fd will be closed below. The OS auto-removes kqueue filters on close, so EV_DELETE is unnecessary and dangerous
+        // (a recycled fd number would receive EV_DELETE intended for the old fd). Pass fdClosing=true to skip EV_DELETE on kqueue.
+        deregisterFds(handle, fdClosing = true)
         // Route the engine free through the engine FIFO so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before requestClose can fire so whoever runs freeResources (here, or a deferred endDispatch /
         // endWrite on the FIFO worker) sees the sink.
@@ -748,11 +768,13 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     /** Drain all ready events from one bounded poll result, dispatching reads, writables, and error-only events in order.
       *
       * Called from the `while`-loop body of `pollLoop` after `backend.poll` completes (inline on JVM/Native, via `onComplete` on JS). Each event:
-      *   - Re-arms the still-pending OTHER direction first (epoll's EPOLLONESHOT disables the whole fd when any direction fires; kqueue
-      *     `rearm` is a no-op). Submitted before dispatch so the survivor is ordered ahead of any re-arm the dispatch itself may issue.
-      *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds).
+      *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds); under edge-triggered the fd is persistently
+      *     armed and there is no survivor re-arm to submit.
       *   - Dispatches write-ready events to `dispatchWritable`.
-      *   - Dispatches error-ONLY events (no read/write bit) to `dispatchError` so a peer reset surfaces immediately rather than being
+      *   - Dispatches Eof events (peer half-close): when Eof fires alongside Read, `dispatchRead` drains buffered bytes first (the drain loop
+      *     passes `eofPending=true` so the final EAGAIN surfaces as Span.empty rather than a silent stop). When Eof fires without Read, the
+      *     fd's read-promise is completed directly with Span.empty (no bytes to drain first).
+      *   - Dispatches error-ONLY events (no read/write/eof bit) to `dispatchError` so a peer reset surfaces immediately rather than being
       *     missed until a later op fails. When a read or write bit is also set, the normal dispatch runs and surfaces the error in-band.
       */
     private def drainReady(fds: Array[Int], flags: Array[Int], n: Int)(using AllowUnsafe, Frame): Unit =
@@ -769,16 +791,19 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 val read  = (f & PollFlags.Read) != 0
                 val write = (f & PollFlags.Write) != 0
                 val error = (f & PollFlags.Error) != 0
-                // Re-arm the still-pending OTHER direction first (see scaladoc above).
-                if read || write then rearmSurvivors(fd, firedRead = read, firedWrite = write)
+                val eof   = (f & PollFlags.Eof) != 0
                 if read then
                     // Prefer accept dispatch over read dispatch: a listen fd registered via awaitAccept must not be routed to dispatchRead.
+                    // Pass eofPending=eof so the drain-to-EAGAIN loop surfaces half-close after the buffered bytes are consumed.
                     if pendingAccepts.containsKey(fd) then dispatchAccept(fd)
-                    else dispatchRead(fd)
+                    else dispatchRead(fd, eofPending = eof)
+                else if eof then
+                    // Eof without Read: no buffered bytes before the EOF marker (or already drained). Surface the half-close directly.
+                    dispatchEof(fd)
                 end if
                 if write then dispatchWritable(fd)
-                // Error-ONLY event: no read/write-ready bit carried it, so no recv/send will observe the error. Fail the pending op(s).
-                if error && !read && !write then dispatchError(fd)
+                // Error-ONLY event: no read/write/eof bit carried it, so no recv/send will observe the error. Fail the pending op(s).
+                if error && !read && !write && !eof then dispatchError(fd)
             end if
             i += 1
         end while
@@ -834,7 +859,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         end try
     end soError
 
-    private def dispatchRead(fd: Int)(using AllowUnsafe, Frame): Unit =
+    private def dispatchRead(fd: Int, eofPending: Boolean = false)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
                 val promise   = handle.pendingReadPromise
@@ -855,7 +880,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                         case Present(p) =>
                             handle.tls match
                                 case Present(engine) => dispatchReadTls(fd, p, handle, engine)
-                                case Absent          => dispatchReadPlain(fd, p, handle)
+                                case Absent          => dispatchReadPlain(fd, p, handle, eofPending)
                         case Absent =>
                             // Promise was already cleared (e.g. by a concurrent cancel); release the dispatch guard.
                             discard(handle.endDispatch())
@@ -885,9 +910,10 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             // scheduler's promise contract without introducing a kyo-effect row in this method, and the type params are erased so it cannot throw.
             promise.asInstanceOf[kyo.scheduler.IOPromise[Any, Any]].completeDiscard(result)
 
-    /** Release this dispatch's ownership and re-arm one-shot read interest to keep waiting (the EAGAIN / partial-record path), UNLESS a
-      * `closeHandle` raced this dispatch, in which case the deferred free has happened and the read is failed `Closed` instead of re-armed (a
-      * re-arm on a closed handle would leak interest and never fire).
+    /** Release this dispatch's ownership and re-deposit the handle into `pendingReads` to keep waiting (the EAGAIN close-race guard), UNLESS a
+      * `closeHandle` raced this dispatch, in which case the deferred free has happened and the read is failed `Closed` instead (a handle that
+      * was closed during dispatch must not be re-deposited into pendingReads). Under edge-triggered (ET) registration the fd is persistently
+      * armed at the kernel; this method does NOT submit a new RegisterRead command (no re-arm needed; the kernel re-fires when data arrives).
       */
     private def rearmOwned(fd: Int, handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using
         AllowUnsafe,
@@ -898,16 +924,32 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         else
             handle.pendingReadPromise = Present(promise)
             discard(pendingReads.put(fd, handle))
-            rearmRead(fd)
+            // ET: fd stays armed; no re-arm submission needed. The kernel re-fires when more data arrives.
 
-    private def dispatchReadPlain(fd: Int, promise: Promise.Unsafe[Span[Byte], Abort[Closed]], handle: PosixHandle)(using
-        AllowUnsafe,
-        Frame
-    ): Unit =
-        // recvNow is the synchronous non-blocking recv; the fd is O_NONBLOCK and MSG_DONTWAIT guards against any momentarily
-        // blocking fd, so recv never parks. Returns >0 (bytes), 0 (EOF), or -1 with errno EAGAIN/EWOULDBLOCK (spurious wakeup)
-        // or a hard error. EINTR (a signal interrupted the call before any byte moved) is retried in place by recvNowWithRetry, bounded,
-        // so a signal does not surface as Closed and drop a healthy connection (POSIX recv(2); the accept path's precedent).
+    /** Drain-to-EAGAIN plain (non-TLS) read loop under edge-triggered registration.
+      *
+      * Under ET the kernel fires once per empty->ready transition. The driver must keep calling recvNow until EAGAIN to guarantee
+      * it does not miss bytes that arrived between the readiness event and this first recv.
+      *
+      * Loop behaviour:
+      *   - n > 0: deliver the first chunk to the caller's promise (each `pendingReads` slot holds one promise; the consumer re-registers
+      *     before issuing the next read, so delivering the first chunk and stopping the drain is correct: the next re-register will re-enter
+      *     `pendingReads` and the FIFO will drain the remaining kernelspace buffer on the next event). `rearmOwned` re-deposits the handle.
+      *   - n == 0 (recv returned 0): orderly peer close (TCP FIN received and kernel buffer empty). Surface as Span.empty (not Closed).
+      *   - EAGAIN / EWOULDBLOCK with eofPending: the kernel buffer is now empty and we know the peer half-closed. Surface Span.empty.
+      *   - EAGAIN / EWOULDBLOCK without eofPending: buffer drained, no pending EOF; the fd stays armed, re-deposit handle.
+      *   - Hard error: surface Closed.
+      *
+      * `eofPending` is forwarded from `drainReady` when `PollFlags.Eof` fired alongside `PollFlags.Read`, signalling that the peer
+      * half-closed but bytes were still buffered at the time of the event (EPOLLRDHUP can fire with EPOLLIN; EV_EOF can fire with EV_READ).
+      * After draining to EAGAIN with eofPending=true, the buffer is confirmed empty and Span.empty is the correct EOF delivery.
+      */
+    private def dispatchReadPlain(
+        fd: Int,
+        promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
+        handle: PosixHandle,
+        eofPending: Boolean = false
+    )(using AllowUnsafe, Frame): Unit =
         val result = recvNowWithRetry(fd, handle.readBuffer, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
         val n      = result.value.toInt
         if n > 0 then
@@ -917,13 +959,18 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             handle.lastPlaintextRead = Present(arr)
             finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(arr)))
         else if n == 0 then
-            // Orderly peer close: EOF is an empty Span, not a failure.
+            // Orderly peer close: recv(2) returns 0 when the kernel buffer is empty and the peer sent FIN. Surface as empty Span (not error).
             finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
         else if isWouldBlock(result.errorCode) then
-            // Spurious wakeup / drained buffer: re-arm the one-shot read interest and keep waiting.
-            rearmOwned(fd, handle, promise)
+            if eofPending then
+                // Buffer fully drained and the peer's half-close is confirmed empty. Deliver EOF (Span.empty) and release the dispatch.
+                finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+            else
+                // Buffer drained with no pending EOF: the fd stays armed (ET keeps it in the kernel's interest set). Re-deposit the handle.
+                rearmOwned(fd, handle, promise)
+            end if
         else
-            // Hard error (e.g. peer reset / ECONNRESET): surface Closed.
+            // Hard error (e.g. ECONNRESET, ECONNABORTED): surface Closed.
             finishDispatch(
                 fd,
                 handle,
@@ -932,6 +979,44 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             )
         end if
     end dispatchReadPlain
+
+    /** Surface a peer half-close (Eof-without-Read) to the fd's pending read promise as an empty Span.
+      *
+      * Called from `drainReady` when `PollFlags.Eof` fires without `PollFlags.Read`, meaning the peer's TCP FIN arrived while the kernel
+      * receive buffer was already empty (no bytes to drain before delivering EOF). The read promise is completed with `Span.empty` to signal
+      * orderly half-close to the consumer (not a failure; the consumer decides whether to close the write side or continue writing).
+      *
+      * When the fd has no pending read promise (the consumer did not issue a read before the FIN arrived, or a cancel raced this event),
+      * the event is dropped silently: the next read the consumer issues will call recv and get 0 immediately, surfacing the EOF in-band.
+      */
+    private def dispatchEof(fd: Int)(using AllowUnsafe, Frame): Unit =
+        Maybe(pendingReads.remove(fd)) match
+            case Present(handle) =>
+                val promise   = handle.pendingReadPromise
+                val currentId = Maybe(activeFds.get(handle.readFd))
+                if currentId != Present(handle.id) then
+                    // Stale event: fd recycled. Drop it.
+                    promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale eof event fd=$fd"))))
+                    handle.pendingReadPromise = Absent
+                else if !handle.beginDispatch() then
+                    // Handle closed before dispatch acquired it. Drop it.
+                    promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"eof on closed handle fd=$fd"))))
+                    handle.pendingReadPromise = Absent
+                else
+                    handle.pendingReadPromise = Absent
+                    promise match
+                        case Present(p) =>
+                            // Surface the orderly half-close as Span.empty (not Closed); the consumer decides next steps.
+                            finishDispatch(fd, handle, p, Result.succeed(Span.empty[Byte]))
+                        case Absent =>
+                            discard(handle.endDispatch())
+                    end match
+                end if
+            case Absent =>
+                // No pending read: the consumer will see EOF on the next recv call (returns 0). Nothing to signal here.
+                ()
+        end match
+    end dispatchEof
 
     /** Return the per-handle recvStaging Buffer, lazily allocated on the first TLS read.
       *
@@ -1101,30 +1186,30 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         if wakeArmed.get() && wakePending.compareAndSet(false, true) then backend.wake(pollerFd, pollScratch)
     end submitChange
 
-    /** Pack an opcode, fd, and direction bits into a single Long command for the change FIFO.
-      *   Bits 34+: opcode (OpRegisterRead=0 / OpRegisterWrite=1 / OpRearm=2 / OpDeregister=3)
-      *   Bit  33:  firedWrite (for OpRearm only; false for others)
-      *   Bit  32:  firedRead  (for OpRearm only; false for others)
-      *   Bits 31-0: fd as a signed 32-bit value (OS fds fit in 31 bits on Linux; the full 32-bit signed range is preserved in the low 32 bits)
+    /** Pack an opcode, fd, and fdClosing flag into a single Long command for the change FIFO.
+      *   Bits 34-35: opcode (OpRegisterRead=0 / OpRegisterWrite=1 / OpDeregister=3; value 2 retired from OpRearm)
+      *   Bit  36:    fdClosing (for OpDeregister only: true when the fd is being closed; 0 for all other opcodes)
+      *   Bits 32-33: unused (formerly firedRead/firedWrite for the retired OpRearm opcode; always 0 for current opcodes)
+      *   Bits 31-0:  fd as a signed 32-bit value (OS fds fit in 31 bits on Linux; the full 32-bit signed range is preserved)
+      * OpDeregister=3 (binary 11) occupies both bits 34 and 35. The fdClosing flag uses bit 36, which is above the 2-bit
+      * opcode field and therefore never set by any opcode value (0, 1, or 3 all fit in 2 bits).
       */
-    private def packCmd(op: Long, fd: Int, firedRead: Boolean, firedWrite: Boolean): Long =
+    private def packCmd(op: Long, fd: Int, fdClosing: Boolean = false): Long =
         (op << 34) |
             (fd.toLong & 0xffffffffL) |
-            (if firedRead then 1L << 32 else 0L) |
-            (if firedWrite then 1L << 33 else 0L)
+            (if fdClosing then 1L << 36 else 0L)
 
     /** Decode a packed Long command and dispatch to the appropriate backend method. On rc<0 from registerRead/registerWrite, the pending
       * promise is failed via the pending tables. For OpRegisterRead, pendingAccepts is checked before pendingReads (matching the existing
       * drainReady accept-before-read priority so that a listen fd registered via awaitAccept is correctly handled on rc<0).
       */
     private def dispatchCmd(cmd: Long)(using AllowUnsafe, Frame): Unit =
-        val op         = cmd >>> 34
-        val fd         = (cmd & 0xffffffffL).toInt
-        val firedRead  = (cmd & (1L << 32)) != 0
-        val firedWrite = (cmd & (1L << 33)) != 0
+        val op        = (cmd >>> 34) & 0x3L // 2-bit opcode: mask off bit 36 (fdClosing) to avoid confusion with op values
+        val fd        = (cmd & 0xffffffffL).toInt
+        val fdClosing = (cmd & (1L << 36)) != 0
         // Built lazily: only the rare rc<0 register-failure branches below consume it, but dispatchCmd runs once per
-        // readiness command (register/rearm/deregister) on the hot path, so an eager val allocated a Closed plus its
-        // interpolated message on every successful command and on every rearm/deregister, which never use it.
+        // readiness command (register/deregister) on the hot path, so an eager val allocated a Closed plus its
+        // interpolated message on every successful command and on every deregister, which never use it.
         def closed = Closed(label, summon[Frame], s"register failed fd=$fd")
         if op == OpRegisterRead then
             // awaitAccept and awaitRead both use OpRegisterRead. Check pendingAccepts first (accept takes priority, matching drainReady).
@@ -1149,11 +1234,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             val rc = backend.registerWrite(pollerFd, fd, pollScratch)
             if rc < 0 then
                 Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
-        else if op == OpRearm then
-            backend.rearm(pollerFd, fd, firedRead, firedWrite, pollScratch)
         else
-            // OpDeregister
-            backend.deregister(pollerFd, fd, pollScratch)
+            // OpDeregister: pass fdClosing to the backend so kqueue can skip EV_DELETE when the OS already closed the fd.
+            backend.deregister(pollerFd, fd, fdClosing, pollScratch)
         end if
     end dispatchCmd
 
@@ -1169,19 +1252,8 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             drainChanges()
     end drainChanges
 
-    /** Re-arm one-shot read interest on `fd` through the serial worker (the poll loop's EAGAIN / partial-record re-register). Routing it through
-      * the same FIFO as the synchronous register / deregister keeps a re-arm from being reordered against a concurrent cancel for the same fd.
-      */
-    private def rearmRead(fd: Int)(using AllowUnsafe, Frame): Unit =
-        submitChange(packCmd(OpRegisterRead, fd, firedRead = false, firedWrite = false))
-
-    /** After a readiness event fired on `fd`, re-arm the still-pending OTHER direction through the serial worker. On epoll a fired event under
-      * `EPOLLONESHOT` disables the whole fd, so a read parked next to a writable (or the reverse) would otherwise be starved; the backend re-arms
-      * the non-fired survivor here. On kqueue this is a no-op (the directions are independent filters). Routed through the same FIFO as register /
-      * deregister so it stays ordered against a concurrent cancel for the same fd.
-      */
-    private def rearmSurvivors(fd: Int, firedRead: Boolean, firedWrite: Boolean)(using AllowUnsafe, Frame): Unit =
-        submitChange(packCmd(OpRearm, fd, firedRead, firedWrite))
+    // rearmRead and rearmSurvivors removed: edge-triggered registration (EPOLLET / EV_CLEAR) keeps the fd persistently armed;
+    // re-arming after a readiness event is neither necessary nor correct under ET. OpRearm (value 2) is retired; see opcode constant comment.
 
     /** Submit a TLS engine op to the engine FIFO and return immediately. The poll-loop carrier runs the thunk in submission order on its next cycle
       * (see [[drainFifos]]), so no two engine ops for any connection on this driver overlap (one carrier is the engine-serialization invariant). A

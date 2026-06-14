@@ -34,8 +34,10 @@ class KqueuePollerBackendTest extends Test:
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 discard(backend.registerRead(pollerFd, accepted, scratch))
                 // Make `accepted` readable, then poll: the readiness event is already pending so kevent returns it without waiting.
+                // Pass the kqueue changelist from scratch (no pending changes at this call site; nChanges is 0).
                 assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](7)), 1L, 0).value == 1L)
-                backend.poll(pollerFd, 1000, scratch).safe.get.map { n =>
+                val kq1 = scratch.kqueueData.get
+                backend.poll(pollerFd, 1000, kq1.changelistBuf, kq1.nChanges, scratch).safe.get.map { n =>
                     val firedFds = (0 until n).map(scratch.fds(_)).toList
                     scratch.close()
                     discard(sock.close(client))
@@ -56,7 +58,8 @@ class KqueuePollerBackendTest extends Test:
             PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                 discard(backend.registerRead(pollerFd, accepted, scratch))
                 // Nothing is written to `client`, so `accepted` has no readable data: poll returns 0 within the bounded timeout.
-                backend.poll(pollerFd, 100, scratch).safe.get.map { n =>
+                val kq2 = scratch.kqueueData.get
+                backend.poll(pollerFd, 100, kq2.changelistBuf, kq2.nChanges, scratch).safe.get.map { n =>
                     scratch.close()
                     discard(sock.close(client))
                     discard(sock.close(accepted))

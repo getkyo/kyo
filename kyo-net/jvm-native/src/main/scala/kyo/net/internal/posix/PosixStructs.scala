@@ -148,6 +148,20 @@ private[net] object KEvent:
         putLongLe(buf, 24, fd.toLong) // udata
     end encodeChange
 
+    /** Write the changelist entry for `fd` at element `slot` of `buf` (slot is a 0-based index; byte offset = slot * size). Identical to the
+      * single-element overload but writes at the given slot for changelist batching: `drainChanges` encodes multiple changes at
+      * consecutive slots in `KqueuePollData.changelistBuf` before passing the batch to `kevent` alongside the poll wait.
+      */
+    def encodeChange(buf: Buffer[Byte], slot: Int, fd: Int, filter: Short, flags: Short): Unit =
+        val base = slot * size
+        putLongLe(buf, base + 0, fd.toLong)  // ident
+        putShortLe(buf, base + 8, filter)    // filter
+        putShortLe(buf, base + 10, flags)    // flags
+        putIntLe(buf, base + 12, 0)          // fflags
+        putLongLe(buf, base + 16, 0L)        // data
+        putLongLe(buf, base + 24, fd.toLong) // udata
+    end encodeChange
+
     /** Write a one-element `EVFILT_USER` changelist at element 0 of `buf` with explicit `fflags`. Used by the kqueue poll-loop wakeup: the
       * register call passes `flags = EV_ADD | EV_CLEAR` and `fflags = 0`; the trigger call passes `flags = 0` and `fflags = NOTE_TRIGGER`. The
       * `ident` is a fixed wakeup key (not an fd), distinct from any socket fd so its delivered event is recognized and consumed by the poll loop
