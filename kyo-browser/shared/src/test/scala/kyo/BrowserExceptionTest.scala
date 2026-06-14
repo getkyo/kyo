@@ -280,4 +280,17 @@ class BrowserExceptionTest extends BrowserTest:
         }
     }
 
+    "BrowserCaptureLimitExceededException renders message and is a BrowserReadException" in {
+        val ex  = BrowserCaptureLimitExceededException("screenshotFullPage", 3, 7)
+        val ex2 = BrowserCaptureLimitExceededException("screenshotFullPage", 3, 7)
+        val msg = ex.getMessage
+        assert(msg.contains("screenshotFullPage"), s"expected message to contain operation name, got: $msg")
+        assert(msg.contains("3"), s"expected message to contain limit, got: $msg")
+        assert(msg.contains("7"), s"expected message to contain reached, got: $msg")
+        val asRead: BrowserReadException = ex
+        assert(asRead.getMessage == msg, "upcasted value preserves message")
+        assert(ex == ex2, "expected two equal instances to compare equal (CanEqual)")
+        succeed
+    }
+
 end BrowserExceptionTest

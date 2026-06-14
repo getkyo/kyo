@@ -804,6 +804,35 @@ val noPadding: Style                   = base.without[Style.Prop.Padding]
 
 The `Style.Prop` sum is the full property AST: `BgColor`, `TextColor`, `Padding`, `Width`, `Height`, `BorderWidthProp`, `HoverProp(style: Style)`, etc. You will rarely name these in app code, but they are useful for theme transforms (drop one property kind across an entire merged style, or query whether a hover variant exists).
 
+### Document stylesheets (`Stylesheet`)
+
+`Style` styles a single element with inline declarations. `Stylesheet` is the document-level counterpart: an ordered, immutable collection of CSS rules keyed by a stable selector, plus `@media` breakpoints, `:root` CSS variables, and `@font-face` declarations. It reuses `Style` for the declaration bodies, so the same `Color`, `Length`, and pseudo-state values apply.
+
+The primary element hook is `UI.cssClass(name)`: it emits `class="name"` on the element, giving a `Stylesheet` rule something stable to target. Call it multiple times to space-join classes. `style(...)` and `cssClass(...)` coexist on one element.
+
+```scala
+import UI.*
+import kyo.*
+import kyo.Style.Color
+
+val sheet: Stylesheet =
+    Stylesheet.vars("accent" -> "#4E46E0")
+        .rule("btn", Style.bg(Color.blue).color(Color.white).hover(_.bg(Color.indigo)))
+        .media(Stylesheet.MediaQuery.maxWidth(640.px))(
+            Stylesheet.rule("btn", Style.padding(8.px))
+        )
+
+// SSG: pass the rendered CSS to PageHead
+val css: String = sheet.render
+
+// Client (Scala.js): inject into the live document stylesheet
+// UI.runStylesheet(sheet): Unit < Sync
+```
+
+Selectors: `Selector.cls("btn")` (`.btn`), `Selector.id("hero")` (`#hero`), `Selector.data("open")` (`[data-open]`), `Selector.tag("body")`. Combine with `.descendant(child)` and `.pseudo("hover")`.
+
+Reference a `:root` variable in a declaration with `Color.variable("accent")`, which renders as `var(--accent)`.
+
 ## Charts
 
 A `Chart` is a pure immutable spec, not a `UI` node. You describe what to plot from your data and a list of marks, and nothing renders until you call `.lower`, which yields an `Svg.Root`. `Svg.Root` is the one SVG type that is also `HtmlContent` (the typed [SVG](#svg) layer, covered later), so a lowered chart drops into any `UI` container exactly where an `<svg>` root fits. Lowering suspends in `Sync` because it allocates the chart's reactive state and samples live data once, so you thread it like any other effect.
@@ -1208,6 +1237,59 @@ val firstFrame: String < Async       = snapshots.take(1).run.map(_.headMaybe.get
 
 When to use which target. `UI.runMount` is the right answer for any Scala.js client. `UI.runHandlers` is the right answer when you want server-rendered + server-driven (the server holds the state, the client is a thin presenter over a WebSocket). `UI.runRender` is for everything else: a test that asserts on HTML, an SSR pre-render, or a custom transport you want to write yourself.
 
+### `UI.runRenderPage(head)(ui)` (SSG / static-site generation)
+
+`runRenderPage` wraps `runRender` in a complete HTML document with a configurable head. Use it for static-site generation or any case where `runRender`'s body fragment is not enough and you need the full `<!DOCTYPE html>` wrapper with title, meta tags, links (e.g. web fonts), an inline stylesheet, and an optional module `<script>`. `UI.baseCss` is always emitted before `head.css` so your custom rules override the framework reset.
+
+`UI.baseCss` is the base CSS reset kyo-ui injects automatically in every runner. It is public for the one case where you hand-assemble a document: emit it before your custom stylesheet. Normally you do not reference it directly; `runRenderPage` handles the ordering for you.
+
+```scala
+import UI.*
+import kyo.*
+
+val ssgPage: Stream[String, Async] =
+    runRenderPage(
+        PageHead(
+            title = "My Site",
+            meta = Seq("description" -> "A kyo-ui SSG page"),
+            links = Seq("canonical" -> "https://example.com/"),
+            css = "",
+            moduleScript = Present("main.js")
+        )
+    )(div(h1("Hello from SSG")))
+
+val html: String < Async = ssgPage.take(1).run.map(_.headMaybe.getOrElse(""))
+```
+
+### Data islands and JSON-LD (`UI.dataIsland`, `PageHead.jsonLd`, `PageHead.dataIslands`)
+
+A data island is a `<script type="...">` element used to pass structured data from the server render into the page without running any JavaScript. `UI.dataIsland(scriptType, id, json)` builds a `UI.DataIsland` value; the renderer escapes `<` and `>` inside `json` so a `</script>` substring in any field cannot close the element early. You never call an escape function yourself.
+
+```scala
+import UI.*
+import kyo.*
+
+// JSON-LD structured data in <head>:
+val ldIsland: UI.DataIsland =
+    dataIsland("application/ld+json", Absent, """{"@context":"https://schema.org","@type":"WebPage"}""")
+
+// Boot-payload island injected before </body>:
+val bootIsland: UI.DataIsland =
+    dataIsland("application/json", Present("my-island"), """{"version":"1.0"}""")
+
+val page: Stream[String, Async] =
+    runRenderPage(
+        PageHead(
+            title = "My Site",
+            css = "",
+            jsonLd = Present(ldIsland),
+            dataIslands = Seq(bootIsland)
+        )
+    )(div(h1("Hello")))
+```
+
+`PageHead.jsonLd` is an `Maybe[UI.DataIsland]`; when `Present`, the renderer emits it as a `<script type="application/ld+json">` block inside `<head>`. `PageHead.dataIslands` is a `Seq[UI.DataIsland]`; each is emitted in order immediately before `</body>`. `UI.DataIsland` does NOT extend `UI`: it is a head/body-end payload, not a tree node, so placing it as a child of a `div` or other element is a compile error.
+
 ## Window and routing (Scala.js)
 
 `UIWindow` and `UILocation` are JS-only namespaces useful inside `UI.runMount` apps. Both expose reactive `Signal`s for browser state plus thin wrappers over the underlying browser APIs, so a Scala.js component reads window size or the current path the same way it reads any other signal.
@@ -1242,6 +1324,33 @@ val keyboardShortcuts: Unit < (Async & Scope) =
 ```
 
 The handler closure receives a `UI.KeyboardEvent` (key, modifiers, targetId), matching the typed payload from in-element `onKeyDown` handlers.
+
+`UIWindow.onClick` is the document-level counterpart for clicks. It fires in the capture phase for the lifetime of the enclosing scope and delivers a `UI.MouseEvent`. The primary use cases are clicks on targets inside `UI.rawHtml`-injected content (which carries no `data-kyo-path` so the element-level `.onClick` cannot reach them) and dismiss-on-outside-click patterns. Inside the handler, `e.targetClosest(selector)` walks from the click target to the nearest matching ancestor, returning `Maybe[kyo.ElementRef]`.
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+
+val copyButtons: Unit < (Async & Scope) =
+    UIWindow.onClick { e =>
+        e.targetClosest("[data-copy]") match
+            case Present(el) =>
+                val text = el.getAttribute("data-copy").getOrElse("")
+                UIWindow.writeClipboard(text)
+            case Absent => Kyo.unit
+    }
+```
+
+`kyo.ElementRef` is an opaque handle over a DOM element. Its extension methods are `closest(selector)`, `querySelector(selector)`, `getAttribute(name)`, `setAttribute(name, value)`, `removeAttribute(name)`, and `textContent`. All return `Maybe` or `Unit`; no `null` escapes the boundary. `ElementRef` is only built by `UI.MouseEvent.targetClosest`; you never construct one directly.
+
+Additional `UIWindow` members (all JS-only, all return typed Kyo effects):
+
+- `UIWindow.prefersColorScheme: Signal[Boolean]` is `true` when the OS prefers dark. Updates on the media query `change` event; backed by a single process-lifetime listener installed lazily on first read.
+- `UIWindow.writeClipboard(text): Unit < Sync` writes to the system clipboard (fire-and-forget; rejection is non-fatal).
+- `UIWindow.storageGet(key): Maybe[String] < Sync` / `UIWindow.storageSet(key, value): Unit < Sync` read/write `localStorage`; `null` is mapped to `Absent`.
+- `UIWindow.setTitle(title): Unit < Sync` sets `document.title`.
+- `UIWindow.scrollToTop: Unit < Sync` scrolls to `(0, 0)`.
+- `UIWindow.scrollIntoViewById(id): Boolean < Sync` scrolls the element with `id` into view, returning `true` when found, `false` when absent (total, no throw).
 
 ### `UILocation`: client-side routing
 
@@ -1282,6 +1391,8 @@ val navBar: UI =
         a.href(Href.External("https", "example.com"), Target.Blank)("external") // not intercepted
     )
 ```
+
+`UILocation.assign(uri): Unit < Sync` performs a full browser navigation via `window.location.assign`. Unlike `push`/`replace` (History-API client-side routing that keeps the SPA mounted), `assign` hands control to the browser entirely. Use it for off-tree routes the SPA cannot resolve client-side.
 
 ## SVG
 
@@ -1515,7 +1626,7 @@ end board
 
 ## Pattern-matching on UI (AST access)
 
-Every element factory returns an `UI.Ast.*` case class. `UI.Ast.Element` is the sealed base trait; the case classes are `Div`, `P`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code`, `Ul`, `Ol`, `Table`, `H1`..`H6`, `SpanElement`, `Nav`, `Li`, `Tr`, `Form`, `Textarea`, `Select`, `Hr`, `Br`, `Td`, `Th`, `Label`, `Opt`, `Button`, `Checkbox`, `Radio`, `Input`, `PasswordInput`, `EmailInput`, `TelInput`, `UrlInput`, `SearchInput`, `NumberInput`, `DateInput`, `TimeInput`, `ColorInput`, `RangeInput`, `FileInput`, `HiddenInput`, `Anchor`, `Img`, `Dropdown`. The non-element AST cases are `Text(value)`, `Reactive(signal)`, `Foreach[A](signal, key, render)`, `Fragment(children)`.
+Every element factory returns an `UI.Ast.*` case class. `UI.Ast.Element` is the sealed base trait; the case classes are `Div`, `P`, `Section`, `Main`, `Header`, `Footer`, `Pre`, `Code`, `Ul`, `Ol`, `Table`, `H1`..`H6`, `SpanElement`, `Nav`, `Li`, `Tr`, `Form`, `Textarea`, `Select`, `Hr`, `Br`, `Td`, `Th`, `Label`, `Opt`, `Button`, `Checkbox`, `Radio`, `Input`, `PasswordInput`, `EmailInput`, `TelInput`, `UrlInput`, `SearchInput`, `NumberInput`, `DateInput`, `TimeInput`, `ColorInput`, `RangeInput`, `FileInput`, `HiddenInput`, `Anchor`, `Img`, `Dropdown`. The non-element AST cases are `Text(value)`, `Reactive(signal)`, `Foreach[A](signal, key, render)`, `Fragment(children)`, and `RawHtml(value)` (the verbatim inline HTML passthrough described below).
 
 Capability traits surface here too: `Interactive`, `Block`, `Inline`, `Void`, `Focusable`, `HasDisabled`, `TextInput`, `PickerInput`, `BooleanInput`, `Activatable`, `Clickable`. They let you pattern-match on capability rather than a specific element class.
 
@@ -1559,6 +1670,30 @@ val isInputWithRef: Boolean < Async =
 ```
 
 `Foreach[A]` carries an existential `A`. To re-introduce the type parameter inside a custom backend, use `applyTyped` (the source documents it as the audited single-cast escape hatch).
+
+### Inline HTML passthrough (escape hatch)
+
+`UI.rawHtml(html: String)` is the single named escape hatch for content that cannot be expressed as a `UI` subtree. It returns an `Ast.RawHtml(value)` node that the renderer emits byte-for-byte with no HTML escaping.
+
+> **Caution:** `rawHtml` bypasses all escaping. Passing user-supplied, externally-sourced, or otherwise untrusted content here creates an XSS vulnerability. Use only for trusted, controlled HTML strings, such as inline `<img>` or `<a><img></a>` snippets from your own templates.
+
+The safe alternative is a plain string child or `Ast.Text(s)`, both of which always HTML-escape their argument:
+
+```scala
+import UI.*
+import kyo.*
+
+// verbatim: renders <b>x</b>
+val raw: UI = rawHtml("<b>x</b>")
+
+// escaped: renders &lt;b&gt;x&lt;/b&gt; (string auto-lifts to Ast.Text)
+val safe: UI = Ast.Text("<b>x</b>")
+
+// pattern-match the AST node directly
+val matched: Boolean = raw match
+    case Ast.RawHtml("<b>x</b>") => true
+    case _                       => false
+```
 
 ## Putting it together: a todo list
 

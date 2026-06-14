@@ -69,6 +69,36 @@ private[kyo] object MutationSettlement:
         }
     end afterAction
 
+    /** STRICT on-demand quiescence wait backing `Browser.waitForStable`. Installs the observer with no action to settle after, runs the
+      * existing single-`awaitPromise` `awaitQuiescence` loop with `overallDeadline = timeout`, and ABORTS `BrowserAssertionTimedOutException`
+      * on timeout (it does NOT swallow the `SettlementResult.Timeout` path). The startCount baseline is captured at observer-install, so the
+      * loop waits for quiescence from the current moment.
+      */
+    private[kyo] def waitForStable(timeout: Duration)(using Frame): Unit < (Browser & Async & Abort[BrowserReadException]) =
+        Browser.configLocal.use { cfg =>
+            val quiescenceWindow = cfg.mutationQuiescenceWindow
+            val firstGrace       = cfg.mutationFirstMutationGrace
+            val pollInterval     = cfg.mutationPollInterval
+            Scope.run {
+                Browser.use { tab =>
+                    Scope.acquireRelease(installObserver())(_ => releaseObserver(tab)).andThen {
+                        awaitQuiescence(quiescenceWindow, timeout, firstGrace, pollInterval)
+                    }
+                }
+            }
+        }
+
+    /** Best-effort CAPTURE-SETTLE entry: same as `waitForStable` but maps the timeout outcome to `()` instead of aborting (recovers the
+      * `BrowserAssertionTimedOutException` to unit). The hold-still capture path calls it once before injecting the freeze stylesheet, so a
+      * pre-capture DOM settle runs first; on timeout it proceeds to capture rather than aborting.
+      */
+    private[kyo] def settleForCapture(using Frame): Unit < (Browser & Async & Abort[BrowserReadException]) =
+        Browser.configLocal.use { cfg =>
+            Abort.recover[BrowserAssertionTimedOutException](_ => ()) {
+                waitForStable(cfg.mutationSettlementTimeout)
+            }
+        }
+
     // --- Internal ---
 
     /** Installs (or increments the ref count on) the window-level mutation observer. Idempotent: a subsequent install while an observer
@@ -92,7 +122,28 @@ private[kyo] object MutationSettlement:
             window.__kyoMutCount = 0;
             window.__kyoMutObsRef = 1;
             window.__kyoMutObs = new MutationObserver((records) => {
-                window.__kyoMutCount = (window.__kyoMutCount || 0) + records.length;
+                const inInternal = (n) => {
+                    const el = (n && n.nodeType === 1) ? n : (n && n.parentElement);
+                    return !!(el && el.closest && el.closest('[data-kyo-internal]'));
+                };
+                const real = records.filter(r => {
+                    // Transparent when the record's target sits inside a data-kyo-internal subtree (covers attribute /
+                    // characterData / childList mutations made WITHIN a tagged overlay).
+                    if (inInternal(r.target)) return false;
+                    // Transparent when the record INSERTS or REMOVES a tagged root: the target is the untagged parent
+                    // (e.g. document.body), and the tagged node is in addedNodes / removedNodes. Treat the record as
+                    // transparent only when it touches at least one node and EVERY added AND removed node is (or is
+                    // within) a tagged subtree, so a mixed batch that also moves real nodes still arms the gate.
+                    const touched = (r.addedNodes ? r.addedNodes.length : 0) + (r.removedNodes ? r.removedNodes.length : 0);
+                    if (r.type === 'childList' && touched > 0) {
+                        const added = Array.prototype.every.call(r.addedNodes || [], inInternal);
+                        const removed = Array.prototype.every.call(r.removedNodes || [], inInternal);
+                        if (added && removed) return false;
+                    }
+                    return true;
+                });
+                if (real.length === 0) return;
+                window.__kyoMutCount = (window.__kyoMutCount || 0) + real.length;
                 window.__kyoMutLast = Date.now();
             });
             const opts = { childList: true, subtree: true, attributes: true, characterData: true };

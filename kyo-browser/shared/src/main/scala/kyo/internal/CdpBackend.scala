@@ -103,6 +103,36 @@ private[kyo] object CdpBackend:
     private[kyo] def clearDeviceMetricsOverride(sender: CdpSender)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
         sender.send("Emulation.clearDeviceMetricsOverride").unit
 
+    /** Sets the emulated media type and/or media features (e.g. prefers-color-scheme). */
+    private[kyo] def setEmulatedMedia(sender: CdpSender, params: SetEmulatedMediaParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        sender.send("Emulation.setEmulatedMedia", params).unit
+
+    /** Overrides the default background color (used for transparent-background captures). */
+    private[kyo] def setDefaultBackgroundColorOverride(sender: CdpSender, params: SetDefaultBackgroundColorOverrideParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        sender.send("Emulation.setDefaultBackgroundColorOverride", params).unit
+
+    // --- Page domain (screencast) ---
+
+    /** Starts a screencast session, delivering frames via `Page.screencastFrame` events. */
+    private[kyo] def startScreencast(sender: CdpSender, params: StartScreencastParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        sender.send("Page.startScreencast", params).unit
+
+    /** Stops the current screencast session. */
+    private[kyo] def stopScreencast(sender: CdpSender)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+        sender.send("Page.stopScreencast").unit
+
+    /** Acknowledges a screencast frame, allowing Chrome to deliver the next one. */
+    private[kyo] def screencastFrameAck(sender: CdpSender, params: ScreencastFrameAckParams)(using
+        Frame
+    ): Unit < (Async & Abort[BrowserReadException]) =
+        sender.send("Page.screencastFrameAck", params).unit
+
     // --- Input domain ---
 
     /** Dispatches a keyboard event (keyDown / keyUp / char) to the focused element. */

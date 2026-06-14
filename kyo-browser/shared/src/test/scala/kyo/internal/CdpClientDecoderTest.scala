@@ -47,8 +47,21 @@ class CdpClientDecoderTest extends kyo.BaseBrowserTest:
         makeDialogFixtures.map { (handlers, queue) =>
             AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { dispatchers =>
                 AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { downloadDispatchers =>
-                    AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty).map { recorders =>
-                        CdpClient.decodeCdpMessage(wire, handlers, queue, dispatchers, downloadDispatchers, recorders)
+                    AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { screencastDispatchers =>
+                        AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { consoleDispatchers =>
+                            AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty).map { recorders =>
+                                CdpClient.decodeCdpMessage(
+                                    wire,
+                                    handlers,
+                                    queue,
+                                    dispatchers,
+                                    downloadDispatchers,
+                                    screencastDispatchers,
+                                    consoleDispatchers,
+                                    recorders
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -161,7 +174,73 @@ class CdpClientDecoderTest extends kyo.BaseBrowserTest:
     }
 
     // -------------------------------------------------------------------------
-    // 5. eventWhitelist negative-assertion
+    // 5. dispatchOrDrop: console/exception events skip when no subscriber
+    // -------------------------------------------------------------------------
+
+    /** Build a decoder call with a caller-supplied consoleEventDispatchers map. All other registries are empty. */
+    private def decodeWithConsoleDispatchers(
+        wire: String,
+        consoleDispatchersMap: Dict[String, CdpEvent.Generic => Unit < Sync]
+    )(using Frame): Exchange.Message[Int, String, CdpEvent] < Sync =
+        makeDialogFixtures.map { (handlers, queue) =>
+            AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { dispatchers =>
+                AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { downloadDispatchers =>
+                    AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty).map { screencastDispatchers =>
+                        AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](consoleDispatchersMap).map { consoleDispatchers =>
+                            AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty).map { recorders =>
+                                CdpClient.decodeCdpMessage(
+                                    wire,
+                                    handlers,
+                                    queue,
+                                    dispatchers,
+                                    downloadDispatchers,
+                                    screencastDispatchers,
+                                    consoleDispatchers,
+                                    recorders
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    "dispatchOrDrop: Runtime.consoleAPICalled with no subscriber returns Skip (drop)" in {
+        val wire =
+            """{"method": "Runtime.consoleAPICalled", "params": {"type": "log", "args": [], "executionContextId": 1, "timestamp": 0, "stackTrace": null}}"""
+        decodeWithConsoleDispatchers(wire, Dict.empty).map { msg =>
+            assert(msg == Exchange.Message.Skip, s"Expected Skip (drop) for consoleAPICalled with no subscriber, got: $msg")
+        }
+    }
+
+    "dispatchOrDrop: Runtime.exceptionThrown with no subscriber returns Skip (drop)" in {
+        val wire =
+            """{"method": "Runtime.exceptionThrown", "params": {"timestamp": 0, "exceptionDetails": {"exceptionId": 1, "text": "Uncaught", "lineNumber": 0, "columnNumber": 0}}}"""
+        decodeWithConsoleDispatchers(wire, Dict.empty).map { msg =>
+            assert(msg == Exchange.Message.Skip, s"Expected Skip (drop) for exceptionThrown with no subscriber, got: $msg")
+        }
+    }
+
+    "dispatchOrDrop: Runtime.consoleAPICalled with a registered subscriber invokes the handler (not a silent drop)" in {
+        val consoleWire =
+            """{"method": "Runtime.consoleAPICalled", "sessionId": "test-session-1", "params": {"type": "log", "args": [], "executionContextId": 1, "timestamp": 0, "stackTrace": null}}"""
+        AtomicInt.init(0).map { invocationCount =>
+            val handler: CdpEvent.Generic => Unit < Sync = (_: CdpEvent.Generic) =>
+                invocationCount.incrementAndGet.unit
+            val sessionKey = "test-session-1"
+            decodeWithConsoleDispatchers(consoleWire, Dict(sessionKey -> handler)).map { msg =>
+                // With a registered handler the result is still Skip (the handler consumed the event),
+                // but invocationCount must be 1: the handler was called, not silently dropped.
+                assert(msg == Exchange.Message.Skip, s"Expected Skip (handler path) for consoleAPICalled with subscriber, got: $msg")
+                invocationCount.get.map { n =>
+                    assert(n == 1, s"Expected handler invocation count 1, got: $n")
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. eventWhitelist negative-assertion
     // -------------------------------------------------------------------------
 
     "eventWhitelist: non-whitelisted event is NOT emitted as CdpEvent" in {
