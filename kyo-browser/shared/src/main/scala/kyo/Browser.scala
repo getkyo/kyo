@@ -3336,7 +3336,17 @@ object Browser:
                             // into the finalizer. The send's own request timeout bounds a silent Chrome, so this never hangs.
                             val stop = Abort.run[BrowserReadException](CdpBackend.stopScreencast(session)).unit
                             Scope.run {
-                                Scope.ensure(restore).andThen(Scope.ensure(stop)).andThen {
+                                // Scope finalizers run sequentially in reverse registration order, so the two cleanups
+                                // must not be registered independently: that would always run `stop` before `restore`,
+                                // gating the local dispatcher removal behind a network round-trip bounded only by the
+                                // request timeout. On normal completion stop Chrome first so no in-flight frame is
+                                // orphaned to the bounded event channel, then drop the dispatcher. On failure or
+                                // interruption drop the dispatcher first so local cleanup is prompt and independent of
+                                // the best-effort stop (the connection is tearing down anyway).
+                                Scope.ensure {
+                                    case Absent     => stop.andThen(restore)
+                                    case Present(_) => restore.andThen(stop)
+                                }.andThen {
                                     CdpBackend.startScreencast(
                                         session,
                                         StartScreencastParams(Present(wireFormat), screenshotQuality(format, quality))
