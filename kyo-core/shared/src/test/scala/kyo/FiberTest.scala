@@ -652,6 +652,107 @@ class FiberTest extends kyo.test.Test[Any]:
                     result <- mappedFiber.safe.get
                 yield assert(result == 42)
             }
+
+            "Unsafe.init" - {
+
+                "schedules and completes a synchronous thunk" in {
+                    val fiber = Fiber.Unsafe.init { 42 }
+                    for
+                        result <- fiber.safe.get
+                    yield assert(result == 42)
+                }
+
+                "empty effect context: Local observes default, not spawner binding" in {
+                    val local = Local.init(0)
+                    val relay = Promise.Unsafe.init[Int, Any]()
+                    local.let(99) {
+                        // Spawner has local = 99, but carrier runs with Context.empty
+                        Sync.defer {
+                            val _ = Fiber.Unsafe.init {
+                                // local.get.eval evaluates with Context.empty, returning 0 (default)
+                                relay.completeDiscard(Result.succeed(local.get.eval))
+                            }
+                        }
+                    }.andThen(relay.safe.get)
+                        .map(v => assert(v == 0))
+                }
+
+                "throw becomes Panic, spawner does not throw" in {
+                    // init must not throw even when the thunk throws; the panic lives in the fiber result
+                    val carrier = Fiber.Unsafe.init { throw new IllegalStateException("x") }: Fiber.Unsafe[Int, Any]
+                    Abort.run[Any](carrier.safe.get).map {
+                        case Result.Panic(ex) =>
+                            assert(ex.isInstanceOf[IllegalStateException])
+                            assert(ex.getMessage == "x")
+                        case other =>
+                            fail(s"expected Panic, got $other")
+                    }
+                }
+
+                "cooperative interruption: onInterrupt fires after carrier is interrupted".notJs in {
+                    val relay            = Promise.Unsafe.init[Unit, Any]()
+                    var onInterruptFired = false
+                    // Create a carrier that blocks on a never-completing promise,
+                    // giving the test time to interrupt it before completion
+                    val blocker = Promise.Unsafe.init[Unit, Any]()
+                    val carrier = Fiber.Unsafe.init {
+                        // Block the carrier thread on the blocker promise (test-boundary bridge)
+                        discard(blocker.block(Clock.live.unsafe.deadline(Duration.Infinity)))
+                    }
+                    carrier.onInterrupt { _ =>
+                        onInterruptFired = true
+                        relay.completeDiscard(Result.succeed(()))
+                    }
+                    for
+                        _ <- Async.sleep(20.millis)
+                        _ <- Sync.defer { discard(carrier.interrupt(Result.Panic(new Exception("cancel")))) }
+                        _ <- relay.safe.get
+                    yield assert(onInterruptFired)
+                    end for
+                }
+
+                "returned value is a usable Fiber.Unsafe[A, Any]" in {
+                    val fiber: Fiber.Unsafe[String, Any] = Fiber.Unsafe.init { "hi" }
+                    for
+                        result <- fiber.safe.get
+                    yield assert(result == "hi")
+                }
+
+                "Trace.saved captures frames from a running computation" in {
+                    // Spawning from inside run{} means the Safepoint has accumulated frames.
+                    // When trace.index > 0, the exception thrown by the carrier is enriched
+                    // with Kyo frame elements (format: "snippet @ className" in the class-name field).
+                    val carrier = Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
+                    Abort.run[Any](carrier.safe.get).map {
+                        case Result.Panic(ex) =>
+                            val frames = ex.getStackTrace
+                            assert(frames.nonEmpty)
+                            // Kyo frames use the format "snippet @ className" in the declaring-class field
+                            // (from Trace.Owner.enrich); their presence proves Trace.saved() captured frames.
+                            val hasKyoFrame = frames.exists(_.getClassName.contains("@"))
+                            assert(
+                                hasKyoFrame,
+                                s"Expected enriched Kyo frames in stack trace but found: ${frames.take(3).mkString(", ")}"
+                            )
+                        case other =>
+                            fail(s"expected Panic, got $other")
+                    }
+                }
+
+                "two concurrent carriers run independently" in {
+                    val p1 = Promise.Unsafe.init[Int, Any]()
+                    val p2 = Promise.Unsafe.init[String, Any]()
+                    val _  = Fiber.Unsafe.init { p1.completeDiscard(Result.succeed(1)) }
+                    val _  = Fiber.Unsafe.init { p2.completeDiscard(Result.succeed("two")) }
+                    for
+                        v1 <- p1.safe.get
+                        v2 <- p2.safe.get
+                    yield
+                        assert(v1 == 1)
+                        assert(v2 == "two")
+                    end for
+                }
+            }
         }
 
         "Promise" - {
@@ -855,7 +956,7 @@ class FiberTest extends kyo.test.Test[Any]:
                 result <- fiber.get
             yield
                 assert(result.size == 2)
-                // The first 2 successes depend on scheduler timing — any 2 of {1,2,3}
+                // The first 2 successes depend on scheduler timing: any 2 of {1,2,3}
                 assert(result.toSet.subsetOf(Set(1, 2, 3)))
             end for
         }

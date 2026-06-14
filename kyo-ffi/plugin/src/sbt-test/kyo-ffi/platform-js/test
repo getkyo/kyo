@@ -1,0 +1,3 @@
+# ScalaJSPlugin enabled → platform autodetected to JS.
+> show ffiTargetPlatform
+> checkPlatform

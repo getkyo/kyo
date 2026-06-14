@@ -1,0 +1,3 @@
+# Native-only end-to-end: nativeLink the Scala Native binary, run it, and assert on stdout. The generated {T}Impl class is annotated with @EnableReflectiveInstantiation so Ffi.load can reach it via scala.scalanative.reflect.Reflect.
+> nativeLink
+$ exec sh -c 'set -eu; bin=$(find target/scala-3.8.3 -maxdepth 4 -type f -perm -u+x \( -name "*-out" -o -name "*.Main" \) 2>/dev/null | grep -v "nativelib" | head -n1); [ -n "$bin" ] || { echo "no native binary found under target/scala-3.8.3/" >&2; find target/scala-3.8.3 -type f -perm -u+x >&2; exit 1; }; echo "running: $bin"; "$bin" 2>&1 | tee /tmp/ne_out.txt; grep -q "OK: add=5 sub=6 mul=3000000000" /tmp/ne_out.txt'

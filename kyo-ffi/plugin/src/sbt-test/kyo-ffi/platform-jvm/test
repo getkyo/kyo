@@ -1,0 +1,3 @@
+# Plugin alone on a plain project → platform defaults to JVM.
+> show ffiTargetPlatform
+> checkPlatform

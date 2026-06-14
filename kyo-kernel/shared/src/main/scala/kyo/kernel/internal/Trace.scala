@@ -28,6 +28,11 @@ private[kyo] object Trace:
 
     private[kyo] def init: Trace = Trace(new Array[Frame](maxTraceFrames), 0)
 
+    /** Captures the current Safepoint's execution trace for a detached unsafe computation. The only path by which kyo-core's
+      * Fiber.Unsafe.init can snapshot the caller trace, since saveTrace() is private[kernel] on Trace.Owner (Safepoint extends it).
+      */
+    private[kyo] def saved()(using safepoint: Safepoint): Trace = safepoint.saveTrace()
+
     abstract private[kernel] class Owner extends TracePool.Local:
         final private var frames = new Array[Frame](maxTraceFrames)
         final private var index  = 0

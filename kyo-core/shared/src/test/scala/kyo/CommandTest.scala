@@ -432,11 +432,19 @@ class CommandTest extends kyo.test.Test[Any]:
     "andThen chains three commands in a pipeline" in {
         assumeUnix("sort/head");
         {
-            val step1 = Command("sort", "-r").andThen(Command("head", "-1"))
-            Command("printf", "a\\nb\\nc\\n")
-                .andThen(step1)
-                .text
-                .map(t => assert(t.trim == "c"))
+            // Looped to guard a stdout-capture race: the JS backend used to drain the final stage
+            // on the process 'exit' event, which can fire before Node delivers the stdout 'data'/
+            // 'end' events, truncating short pipeline output to "". Repeating makes that ordering
+            // race, if reintroduced, fail reliably instead of flaking on a single run.
+            Kyo.foreach(1 to 30) { _ =>
+                val step1 = Command("sort", "-r").andThen(Command("head", "-1"))
+                Command("printf", "a\\nb\\nc\\n").andThen(step1).text
+            }.map { results =>
+                assert(
+                    results.forall(_.trim == "c"),
+                    s"expected every run to yield 'c', got: ${results.map(_.trim).distinct}"
+                )
+            }
         }
     }
 

@@ -32,7 +32,7 @@ jobs:
     # suites now run their leaves sequentially (shared Chrome can't take concurrent CDP). That
     # full run is ~95-100 min on the JVM target, which overran the previous 90. Post-merge, runs
     # go incremental again and finish well under this. Raised to give the forced full run headroom.
-    timeout-minutes: 120
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 1

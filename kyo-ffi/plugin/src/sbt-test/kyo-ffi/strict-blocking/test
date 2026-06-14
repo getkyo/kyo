@@ -1,0 +1,4 @@
+# strict-blocking: SbBindings.read is on the blocking allowlist but lacks
+# @Ffi.blocking. With ffiStrictBlocking := true, ffiGenerate must fail.
+# The `->` prefix asserts the task FAILS.
+-> ffiGenerate

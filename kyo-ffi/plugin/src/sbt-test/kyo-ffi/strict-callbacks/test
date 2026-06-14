@@ -1,0 +1,4 @@
+# strict-callbacks: ScBindings.signal resolves to a retention-allowlist C symbol
+# but the method has no Ffi.Guard parameter. With ffiStrictCallbacks := true,
+# ffiGenerate must fail.
+-> ffiGenerate

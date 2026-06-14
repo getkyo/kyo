@@ -1,0 +1,10 @@
+# JS-only end-to-end: compile the C lib on the host toolchain (ffiCompile), link the Scala.js bundle, install koffi via npm, run with node.
+# Ffi.load uses scala.scalajs.reflect.Reflect + @EnableReflectiveInstantiation (applied by JsEmitter).
+# koffi is loaded from a local node_modules; the native library path is supplied via the KYO_FFI_JE_LIB_PATH env var.
+# koffi is pinned to the `^2.7` range — matches `KoffiAbiProbe`'s supported-range check.
+$ exec sh -c 'npm init -y >/dev/null 2>&1 && npm install --no-audit --no-fund --silent koffi@^2.7 >/dev/null 2>&1'
+> ffiCompile
+> ffiPackage
+> compile
+> fastLinkJS
+$ exec sh -c 'set -eu; libpath=$(find target/scala-3.8.3/resource_managed/main/kyo-ffi/native -maxdepth 2 -type f \( -name "libje_lib.*" -o -name "je_lib.dll" \) | head -n1); [ -n "$libpath" ] || { echo "je_lib shared library not found under resource_managed/kyo-ffi/native/" >&2; find target/scala-3.8.3/resource_managed -type f >&2; exit 1; }; libabs=$(cd "$(dirname "$libpath")" && pwd)/$(basename "$libpath"); js=$(find target/scala-3.8.3 -maxdepth 3 -name main.js -type f | head -n1); [ -n "$js" ] || { echo "fastLinkJS main.js not found under target/scala-3.8.3/" >&2; find target/scala-3.8.3 -name "*.js" >&2; exit 1; }; KYO_FFI_JE_LIB_PATH="$libabs" node "$js" 2>&1 | tee /tmp/je_out.txt; grep -q "OK: add=5 sub=6" /tmp/je_out.txt'
