@@ -1,0 +1,14 @@
+// Be careful editing this file!
+// It contains various legal whitespace characters.
+
+// Horizontal tab U+0009 (CTRL-I) between 1 and a:
+1	a
+(1	a)
+
+// Vertical tab U+000B (CTRL-K) between 1 and a:
+1a
+(1a)
+
+// Form feed U+000C (CTRL-L) between 1 and a:
+1a
+(1a)
