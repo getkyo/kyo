@@ -684,9 +684,16 @@ final private[kyo] class NodeCommandUnsafe(
                         )))
                     }
                 ))
-                // Attach to the exit event directly so we read all buffered output after exit
+                // Drain on 'close', not 'exit'. Node delivers a child's stdout (and stderr)
+                // 'data'/'end' events asynchronously, and they can arrive after the 'exit' event;
+                // 'close' fires only once the process has exited AND every stdio stream is fully
+                // drained. By then the NodeInputStream buffer holds all output and read() reaches a
+                // real EOF (-1) rather than the -2 "no data yet" sentinel, which the loop below
+                // would otherwise treat as end-of-output and truncate (returning empty for fast,
+                // small-output pipelines). The handlers are registered synchronously in the same
+                // tick as spawn(), so 'close' cannot have fired yet and is never missed.
                 discard(proc.child.on(
-                    "exit",
+                    "close",
                     { (_: js.Any) =>
                         val baos = new java.io.ByteArrayOutputStream()
                         var b    = outIs.read()
@@ -696,16 +703,6 @@ final private[kyo] class NodeCommandUnsafe(
                         p.completeDiscard(Result.succeed(baos.toString("UTF-8")))
                     }
                 ))
-                // Handle if process already exited
-                val ec = proc.child.exitCode
-                if ec != null && !js.isUndefined(ec) then
-                    val baos = new java.io.ByteArrayOutputStream()
-                    var b    = outIs.read()
-                    while b >= 0 do
-                        baos.write(b)
-                        b = outIs.read()
-                    p.completeDiscard(Result.succeed(baos.toString("UTF-8")))
-                end if
             case Result.Success(_) =>
                 p.completeDiscard(Result.panic(new IllegalStateException("Unexpected Process.Unsafe type")))
         end match
