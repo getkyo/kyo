@@ -1248,4 +1248,25 @@ class ContainerTest extends BasePodTest:
         }
     }
 
+    "uniqueName" - {
+        // Regression guard for the shared-/tmp collision: container suites are forked once per
+        // runtime and those forks run concurrently on one machine. A bare `prefix-counter` resets
+        // to the same sequence in every fork, so they generated identical host bind-mount paths
+        // (e.g. /tmp/kyo-tmp-bind-1) and raced on them. The name must carry a per-process token
+        // between the prefix and the counter.
+        "carries a per-process token, not just a per-JVM counter" in {
+            val name  = uniqueName("kyobind")
+            val parts = name.split('-')
+            assert(parts.length == 3, s"expected prefix-token-counter, got $name")
+            assert(parts(0) == "kyobind")
+            assert(parts(1).nonEmpty)
+            assert(parts(2).toLongOption.isDefined)
+        }
+
+        "is distinct across calls within a process" in {
+            val names = (1 to 100).map(_ => uniqueName("kyox"))
+            assert(names.toSet.size == 100)
+        }
+    }
+
 end ContainerTest
