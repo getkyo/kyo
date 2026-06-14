@@ -95,6 +95,12 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
     def size()(using AllowUnsafe, Frame): Result[FileReadException, Long] =
         catchRead(Files.size(jpath))
 
+    def stat()(using AllowUnsafe, Frame): Result[FileReadException, kyo.Path.PathStat] =
+        catchRead {
+            val attrs = Files.readAttributes(jpath, classOf[BasicFileAttributes])
+            kyo.Path.PathStat(attrs.lastModifiedTime.toMillis, attrs.size)
+        }
+
     // --- Write ---
 
     def write(value: String, createFolders: Boolean)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
@@ -164,6 +170,12 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
             val ch = FileChannel.open(jpath, StandardOpenOption.WRITE)
             try discard(ch.truncate(size))
             finally ch.close()
+        }
+
+    def setLastModified(epochMs: Long)(using AllowUnsafe, Frame): Result[FileWriteException, Unit] =
+        catchWrite {
+            import java.nio.file.attribute.FileTime
+            discard(Files.setLastModifiedTime(jpath, FileTime.fromMillis(epochMs)))
         }
 
     // --- Directory / structure ---
@@ -426,6 +438,9 @@ end NioWalkHandle
 
 /** Platform-specific `Path` factory and system-directory accessors for JVM and Scala Native. */
 abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
+
+    private[kyo] val platformPathSeparator: String = java.io.File.pathSeparator
+    private[kyo] val platformFileSeparator: String = java.io.File.separator
 
     /** Wraps an existing `java.nio.file.Path` as a kyo `Path`.
       *
