@@ -307,10 +307,10 @@ class ResolverTest extends BaseCalibanTest:
 
     "Config - filter adds response header" in {
         val filter = new HttpFilter.Passthrough[Nothing]:
-            def apply[In, Out, E2](
+            def apply[In, Out, E2, S](
                 request: HttpRequest[In],
-                next: HttpRequest[In] => HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt])
-            )(using Frame): HttpResponse[Out] < (Async & Abort[E2 | HttpResponse.Halt]) =
+                next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+            )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
                 next(request).map(_.setHeader("X-Custom", "test-value"))
 
         val api = graphQL(RootResolver(defaultQuery))

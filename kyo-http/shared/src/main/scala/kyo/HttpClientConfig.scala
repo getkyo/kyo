@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-/** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, and base URL resolution.
+/** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, client filters, and base URL resolution.
   *
   * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config — nested
   * `withConfig` calls stack rather than replace each other, so each layer only overrides the fields it changes. To discard the current
@@ -41,6 +41,11 @@ import kyo.*
   * @param tls
   *   TLS settings applied to HTTPS connections made by this client. See [[HttpTlsConfig]]. Per-request TLS overrides can be set via
   *   `HttpClientConfig` on [[HttpClient.init]].
+  * @param autoFilters
+  *   Whether ServiceLoader-discovered client filters are applied. Defaults to true.
+  * @param clientFilter
+  *   Programmatic client filter applied to outgoing HTTP requests and WebSocket upgrade handshakes after auto filters and before route
+  *   filters.
   *
   * @see
   *   [[kyo.HttpClient.withConfig]] Applies this config to a block of code
@@ -60,7 +65,9 @@ case class HttpClientConfig(
     retrySchedule: Maybe[Schedule] = Absent,
     retryOn: HttpStatus => Boolean = _.isServerError,
     transportConfig: HttpTransportConfig = HttpTransportConfig.default,
-    tls: HttpTlsConfig = HttpTlsConfig.default
+    tls: HttpTlsConfig = HttpTlsConfig.default,
+    autoFilters: Boolean = true,
+    clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
 ):
     require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
     require(timeout > Duration.Zero || timeout == Duration.Infinity, s"timeout must be positive or Infinity: $timeout")
@@ -79,4 +86,12 @@ case class HttpClientConfig(
     def retryOn(f: HttpStatus => Boolean): HttpClientConfig       = copy(retryOn = f)
     def transportConfig(v: HttpTransportConfig): HttpClientConfig = copy(transportConfig = v)
     def tls(config: HttpTlsConfig): HttpClientConfig              = copy(tls = config)
+    def autoFilters(v: Boolean): HttpClientConfig                 = copy(autoFilters = v)
+    def withoutAutoFilters: HttpClientConfig                      = autoFilters(false)
+    def filter(f: HttpFilter.Passthrough[Nothing]): HttpClientConfig =
+        copy(clientFilter = clientFilter.andThen(f))
+    def filters(fs: Seq[HttpFilter.Passthrough[Nothing]]): HttpClientConfig =
+        copy(clientFilter = fs.foldLeft(clientFilter)(_.andThen(_)))
+    def clearFilters: HttpClientConfig =
+        copy(clientFilter = HttpFilter.noop)
 end HttpClientConfig

@@ -44,9 +44,7 @@ final case class HttpUrl(
     def full: String =
         scheme match
             case Absent =>
-                rawQuery match
-                    case Present(q) => s"$path?$q"
-                    case Absent     => path
+                pathWithQuery
             case Present(s) =>
                 unixSocket match
                     case Present(socketPath) =>
@@ -71,6 +69,12 @@ final case class HttpUrl(
                             case Present(q) => discard(sb.append('?').append(q))
                             case Absent     =>
                         sb.toString
+
+    /** Path plus query string, suitable as an HTTP/1.1 request target. */
+    def pathWithQuery: String =
+        rawQuery match
+            case Present(q) => s"$path?$q"
+            case Absent     => path
 
     def ssl: Boolean = scheme match
         case Present(s) => s.equalsIgnoreCase("https")

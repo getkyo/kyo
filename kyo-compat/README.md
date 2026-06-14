@@ -526,7 +526,7 @@ The bundled `kyo-compat-plugin` sbt plugin extends `sbt-projectmatrix`'s `Projec
 
 ```scala doctest:expect=skipped
 // project/plugins.sbt
-addSbtPlugin("io.getkyo"          % "kyo-compat-plugin"              % "<latest version>")
+addSbtPlugin("io.getkyo"          % "kyo-compat-plugin"             % "<latest version>")
 addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1")
 addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2")
 addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.20.2")

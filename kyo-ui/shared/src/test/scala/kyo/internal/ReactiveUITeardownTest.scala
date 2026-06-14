@@ -105,12 +105,33 @@ class ReactiveUITeardownTest extends kyo.test.Test[Any]:
             _ <- assertEventually(live.get.map(_ == 0))
             // Descendant witness: SET each leaf (swapping its promise, discarding the parked ghost). A leaked live region
             // fiber would re-park and keep waiters == 1; `== 0` proves every leaf observation was released by the cascade.
-            _  <- ref1.set("a2")
-            _  <- ref2.set("b2")
-            _  <- ref3.set("c2")
-            _  <- assertEventually(ref1.waiters.map(_ == 0))
-            _  <- assertEventually(ref2.waiters.map(_ == 0))
-            _  <- assertEventually(ref3.waiters.map(_ == 0))
+            _ <- ref1.set("a2")
+            _ <- ref2.set("b2")
+            _ <- ref3.set("c2")
+            // The cascade-close finalizers only SIGNAL each observer fiber's interrupt; the actual unwind happens
+            // asynchronously on the scheduler. Under load (observed on slow linux-arm64 CI), a not-yet-unwound observer
+            // can be woken by the old promise's completion (driven by the SET above), run a no-op render iteration, and
+            // re-park on the new promise, momentarily flipping waiters from 0 to 1 between a transient-zero catch and a
+            // trailing sync read. Poll each leaf until waiters has been 0 for `stableSamples` consecutive samples: once
+            // the observer's interrupt is finally delivered it dies and waiters stays 0 indefinitely, so a sustained zero
+            // proves every observation was released, not just briefly between a wake and the cascade's late arrival. The
+            // per-test 60s timeout bounds a genuinely-leaked observer (waiters stays 1 forever) so we fail loudly.
+            stableSamples = 5
+            pollSpacing   = 10.millis
+            _ <- Loop(0) { count =>
+                for
+                    w1 <- ref1.waiters
+                    w2 <- ref2.waiters
+                    w3 <- ref3.waiters
+                    out <-
+                        if w1 != 0 || w2 != 0 || w3 != 0 then
+                            Async.sleep(pollSpacing).andThen(Loop.continue(0))
+                        else if count + 1 >= stableSamples then
+                            Kyo.lift(Loop.done[Int])
+                        else
+                            Async.sleep(pollSpacing).andThen(Loop.continue(count + 1))
+                yield out
+            }
             w1 <- ref1.waiters
             w2 <- ref2.waiters
             w3 <- ref3.waiters
