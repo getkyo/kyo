@@ -53,10 +53,17 @@ import kyo.scheduler.IOPromise
   */
 final private[net] class PosixTransport private[posix] (
     config: kyo.net.TransportConfig,
-    ioDriver: IoDriver[PosixHandle],
+    val pool: IoDriverPool[PosixHandle],
+    representative: IoDriver[PosixHandle],
     sockets: SocketBindings,
     backendIsEpoll: Boolean
 ) extends TransportImpl[PosixHandle]:
+    // `representative` is one pool driver used ONLY for the transport-level, NON-per-handle paths that have no bound handle:
+    //   - stdio (a single per-process handle; selectDriver bypasses the pool, so stdio rides the representative),
+    //   - the backend-uniform label/capability queries (ioDriver.label is identical across all pool drivers).
+    // Every PER-HANDLE op (read/write/await/closeHandle/submitEngineOp) routes through handle.driver, the driver the handle was bound to at
+    // openWith/pool.next() time, so a connection's engine FIFO and poll loop stay on its one owning driver for the connection's whole lifetime.
+    private val ioDriver: IoDriver[PosixHandle] = representative
 
     import PosixTransport.AcceptDrain
 
@@ -98,16 +105,6 @@ final private[net] class PosixTransport private[posix] (
     /** The number of accept loops still running (in `scheduleNextAccept` or `acceptAll`). Drops to 0 once every closed listener's loop has exited. */
     private[posix] def activeAcceptLoops(using AllowUnsafe): Long = acceptLoopsActive.get()
 
-    /** The driver pool powering this transport. A single-driver pool wrapping `ioDriver`: stdio, connect, listen, accept, and the TLS
-      * handshake all run on that one driver, and `close()` shuts it down through the pool (no additional driver seam is introduced).
-      */
-    val pool: IoDriverPool[PosixHandle] =
-        // Unsafe: this val is computed once at transport construction, outside any effect, so there is no ambient AllowUnsafe; the bridge only
-        // wraps the already-built single driver in a one-element pool (no I/O is performed here).
-        import AllowUnsafe.embrace.danger
-        IoDriverPool.init(Array(ioDriver))
-    end pool
-
     /** Open the stdio connection: read side is process stdin (fd 0), write side is process stdout (fd 1). A second concurrent call aborts
       * `Closed` (the CAS fails) so fd 0/1 are never double-owned. The connection closes its driver registration on scope exit but never closes
       * fds 0/1 (the process owns them).
@@ -131,12 +128,16 @@ final private[net] class PosixTransport private[posix] (
         if pollable(fd) then ioDriver
         else BlockingReaderDriver.init(ioDriver)
 
-    /** Build an internal connection over `handle`/`driver`, returned as the public `Connection`. The caller starts it. */
+    /** Build an internal connection over `handle`/`driver`, returned as the public `Connection`. Binds `handle.driver` so every per-handle op
+      * (read/write/await/closeHandle/submitEngineOp) routes through the driver this handle was assigned to. The caller starts it.
+      */
     private[posix] def openWith(handle: PosixHandle, driver: IoDriver[PosixHandle])(using
         AllowUnsafe,
         Frame
     ): InternalConnection[PosixHandle] =
+        handle.driver = driver
         InternalConnection.init(handle, driver, config.channelCapacity)
+    end openWith
 
     // ---------------------------------------------------------------------------------------------------------------------------------------
     // TCP / UDS client connect
@@ -314,6 +315,7 @@ final private[net] class PosixTransport private[posix] (
                 else
                     val driver = pool.next()
                     val handle = PosixHandle.socket(fd, config.readChunkSize, connectTarget = Present((addr, len)))
+                    handle.driver = driver
                     // Arm the connect-deadline before either arm awaits, so the deadline races the OS connect on the same `promise` for both the
                     // io_uring completion arm and the epoll/kqueue readiness arm. A deadline-fired close surfaces the typed
                     // NetConnectTimeoutException; an OS-failure close surfaces NetConnectException through `connectFail`: the close cause is
@@ -685,6 +687,7 @@ final private[net] class PosixTransport private[posix] (
                         promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(sockR.errorCode))))
                     else
                         setReuseAddr(fd)
+                        applySocketBuffers(fd)
                         val bindR = sockets.bind(fd, addr, len)
                         if bindR.value != 0 then
                             closeRawFd(fd)
@@ -842,6 +845,7 @@ final private[net] class PosixTransport private[posix] (
         else
             val driver = pool.next()
             val handle = PosixHandle.socket(clientFd, config.readChunkSize, connectTarget = Absent)
+            handle.driver = driver
             tls match
                 case Absent =>
                     spawnHandler(InternalConnection.init(handle, driver, config.channelCapacity), driver, handler)
@@ -875,7 +879,7 @@ final private[net] class PosixTransport private[posix] (
                     // so it frees the engine exactly once.
                     def teardown(): Unit =
                         reaped.set(true)
-                        ioDriver.closeHandle(handle)
+                        handle.driver.closeHandle(handle)
                         if handle.claimFdClose() then
                             discard(sockets.shutdown(clientFd, PosixConstants.SHUT_RDWR))
                             closeRawFd(clientFd)
@@ -888,7 +892,7 @@ final private[net] class PosixTransport private[posix] (
                     // on the engine FIFO worker (submitEngineOp) so it is serialized against any in-flight feedCiphertext from a read that completed
                     // just before the deadline, matching the engine-op single-owner discipline. handshakeTimeout = Infinity arms no timer
                     // (preserving the original behavior). See [[armHandshakeDeadline]].
-                    val disarm = armHandshakeDeadline(clientFd, () => ioDriver.submitEngineOp(() => teardown()))
+                    val disarm = armHandshakeDeadline(clientFd, () => handle.driver.submitEngineOp(() => teardown()))
                     driveHandshake(
                         handle,
                         engine,
@@ -1013,8 +1017,19 @@ final private[net] class PosixTransport private[posix] (
                 setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_NOSIGPIPE, 1)
             if nodelay then
                 setIntOpt(fd, PosixConstants.IPPROTO_TCP, PosixConstants.TCP_NODELAY, 1)
+                if PosixConstants.isLinux then
+                    setIntOpt(fd, PosixConstants.IPPROTO_TCP, PosixConstants.TCP_QUICKACK, 1)
+            end if
+            applySocketBuffers(fd)
             true
     end prepareClientSocket
+
+    /** Apply the configured SO_RCVBUF and SO_SNDBUF socket buffer sizes when Present. A kernel may silently clamp the value to a site-maximum
+      * (see setsockopt(7) SO_RCVBUF). Both options are best-effort: a failure does not abort the connection. Absent leaves the kernel default.
+      */
+    private def applySocketBuffers(fd: Int)(using AllowUnsafe): Unit =
+        config.soRcvBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_RCVBUF, sz))
+        config.soSndBuf.foreach(sz => setIntOpt(fd, PosixConstants.SOL_SOCKET, PosixConstants.SO_SNDBUF, sz))
 
     /** Set `SO_REUSEADDR` on a listen socket so repeated binds do not trip `TIME_WAIT`. */
     private def setReuseAddr(fd: Int)(using AllowUnsafe): Unit =
@@ -1179,13 +1194,13 @@ final private[net] class PosixTransport private[posix] (
                         // through the upgrade carry-over instead of issuing a second, racing recv (see recvAndFeed). False on the pollers (synchronous
                         // reads, no in-flight recv), so they read normally. Set after detach (the recv is parked awaiting the flight, not yet reaped)
                         // and after the coalesced-flight recovery, so a flight already in the socket buffer was handled above.
-                        handle.upgradeActive = ioDriver.hasInFlightRead(handle)
+                        handle.upgradeActive = handle.driver.hasInFlightRead(handle)
                         driveHandshake(
                             handle,
                             engine,
                             onFinished = () =>
                                 handle.tls = Present(engine)
-                                val upgraded = InternalConnection.init(handle, ioDriver, channelCapacity)
+                                val upgraded = InternalConnection.init(handle, handle.driver, channelCapacity)
                                 // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
                                 // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
                                 // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
@@ -1335,7 +1350,7 @@ final private[net] class PosixTransport private[posix] (
         def step(): Unit =
             // Submit one coarse-grained thunk: run handshakeStep + drainCiphertext inside the FIFO worker so no concurrent
             // read or write op can touch the engine during this step. The send and recv calls stay outside the thunk.
-            ioDriver.submitEngineOp { () =>
+            handle.driver.submitEngineOp { () =>
                 // Reap guard: a deadline reap that ran ahead of this thunk on the FIFO worker has already freed the engine; skip rather
                 // than call handshakeStep on freed native state (the disarm guard already ensured onFinished / onFailed will not fire).
                 if isReaped() then ()
@@ -1426,12 +1441,16 @@ final private[net] class PosixTransport private[posix] (
         onPanic: Throwable => Unit
     )(using AllowUnsafe, Frame): Unit =
         try
-            ioDriver.write(handle, data, offset) match
+            handle.driver.write(handle, data, offset) match
                 case WriteResult.Done  => cont()
                 case WriteResult.Error => onFailed("")
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
-        catch case e: Throwable => onPanic(e)
+        catch
+            // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
+            // never allowed to escape the carrier (a carrier escape would abort the process or stall
+            // the event loop). See the listen-handler containment pattern at listenImpl ~:972-974.
+            case e: Throwable => onPanic(e)
         end try
     end sendAll
 
@@ -1448,7 +1467,7 @@ final private[net] class PosixTransport private[posix] (
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)
         }
-        ioDriver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        handle.driver.awaitWritable(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
     end awaitWritable
 
     private def isWouldBlock(errno: Int): Boolean =
@@ -1489,7 +1508,7 @@ final private[net] class PosixTransport private[posix] (
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
-        ioDriver.submitEngineOp { () =>
+        handle.driver.submitEngineOp { () =>
             if isReaped() then ()
             else
                 try
@@ -1497,7 +1516,11 @@ final private[net] class PosixTransport private[posix] (
                     try discard(engine.feedCiphertext(buf, arr.length))
                     finally buf.close()
                     cont()
-                catch case e: Throwable => onPanic(e)
+                catch
+                    // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
+                    // never allowed to escape the carrier (a carrier escape would abort the process or stall
+                    // the event loop). See the listen-handler containment pattern at listenImpl ~:972-974.
+                    case e: Throwable => onPanic(e)
                 end try
         }
     end feedCiphertextThenCont
@@ -1550,7 +1573,7 @@ final private[net] class PosixTransport private[posix] (
                 // feedCiphertext is an engine op: submit it through the FIFO so it is serialized against concurrent ops.
                 // The continuation (cont) is called from inside the FIFO thunk after the feed; cont itself may re-enter step(),
                 // which submits a NEW submitEngineOp and returns (no reentrancy: the inner submit enqueues, this thunk returns first).
-                ioDriver.submitEngineOp { () =>
+                handle.driver.submitEngineOp { () =>
                     // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
                     if isReaped() then ()
                     else
@@ -1559,7 +1582,11 @@ final private[net] class PosixTransport private[posix] (
                             try discard(engine.feedCiphertext(buf, n))
                             finally buf.close()
                             cont()
-                        catch case e: Throwable => onPanic(e)
+                        catch
+                            // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
+                            // never allowed to escape the carrier (a carrier escape would abort the process or stall
+                            // the event loop). See the listen-handler containment pattern at listenImpl ~:972-974.
+                            case e: Throwable => onPanic(e)
                         end try
                 }
             else if n == 0 then
@@ -1603,7 +1630,7 @@ final private[net] class PosixTransport private[posix] (
                 else
                     val arr = bytes.toArrayUnsafe
                     // feedCiphertext is an engine op: submit through the FIFO. The continuation runs inside the FIFO thunk.
-                    ioDriver.submitEngineOp { () =>
+                    handle.driver.submitEngineOp { () =>
                         // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
                         if isReaped() then ()
                         else
@@ -1612,13 +1639,17 @@ final private[net] class PosixTransport private[posix] (
                                 try discard(engine.feedCiphertext(buf, arr.length))
                                 finally buf.close()
                                 cont()
-                            catch case e: Throwable => onPanic(e)
+                            catch
+                                // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
+                                // never allowed to escape the carrier (a carrier escape would abort the process or stall
+                                // the event loop). See the listen-handler containment pattern at listenImpl ~:972-974.
+                                case e: Throwable => onPanic(e)
                             end try
                     }
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)
         }
-        ioDriver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        handle.driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
     end awaitReadCiphertext
 
 end PosixTransport
@@ -1636,11 +1667,13 @@ private[net] object PosixTransport:
         case Drained
         case ResourceExhausted
 
-    /** Build the production transport over the OS-selected poller/io_uring `ioDriver`, loading the real socket bindings and detecting whether
-      * the active poller backend is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
+    /** Build the production transport over the given `pool`. The representative driver (pool.next() before any connection is opened, i.e.
+      * drivers(0)) backs stdio and the backend-label queries. Loads the real socket bindings and detects whether the active poller backend
+      * is epoll (the regular-file fallback's gate; true only on Linux when epoll, not io_uring, is selected).
       */
-    def init(config: kyo.net.TransportConfig, ioDriver: IoDriver[PosixHandle])(using AllowUnsafe): PosixTransport =
-        new PosixTransport(config, ioDriver, Ffi.load[SocketBindings], backendIsEpoll(ioDriver))
+    def init(config: kyo.net.TransportConfig, pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
+        val representative = pool.next()
+        new PosixTransport(config, pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
 
     /** True when `ioDriver` is the readiness poller AND that poller is epoll (the only backend the regular-file fallback applies to). io_uring's driver has
       * a different label, and kqueue is selected on macOS/BSD, so both correctly report false.

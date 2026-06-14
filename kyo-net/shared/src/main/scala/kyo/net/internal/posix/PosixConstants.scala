@@ -53,6 +53,8 @@ private[net] object PosixConstants:
     val SO_REUSEADDR: Int = if isMacOrBsd then 0x0004 else 2
     val SO_ERROR: Int     = if isMacOrBsd then 0x1007 else 4
     val TCP_NODELAY: Int  = if isMacOrBsd then 0x0001 else 1
+    // Linux-only (TCP_QUICKACK has no macOS/BSD equivalent); used only behind an isLinux gate. The macOS slot is unused (0).
+    val TCP_QUICKACK: Int = if isMacOrBsd then 0 else 12
     // Send / receive buffer sizes. Used by the write-backpressure regression test to shrink the kernel buffers so a large send hits EAGAIN
     // deterministically; the driver itself does not set these.
     val SO_SNDBUF: Int = if isMacOrBsd then 0x1001 else 7
@@ -98,14 +100,29 @@ private[net] object PosixConstants:
     val EPOLLERR: Int     = 0x008
     val EPOLLHUP: Int     = 0x010
     val EPOLLONESHOT: Int = 1 << 30
+    // Flags for `eventfd(2)`, the epoll poll-loop wakeup fd: EFD_CLOEXEC closes it across exec, EFD_NONBLOCK makes the counter read/write
+    // non-blocking (a drained counter reads EAGAIN instead of parking, which the wakeup-drain loop relies on). Linux-only (eventfd is a Linux
+    // syscall); the literals are the stable Linux ABI values.
+    val EFD_CLOEXEC: Int  = 0x80000
+    val EFD_NONBLOCK: Int = 0x800
 
     // --- kqueue (macOS/BSD) filters and flags ---
     val EVFILT_READ: Short  = -1
     val EVFILT_WRITE: Short = -2
-    val EV_ADD: Short       = 0x0001
-    val EV_DELETE: Short    = 0x0002
-    val EV_ENABLE: Short    = 0x0004
-    val EV_ONESHOT: Short   = 0x0010
+    // EVFILT_USER is the user-triggered filter kqueue exposes for an application to wake its own blocked `kevent`. It is the kqueue poll-loop
+    // wakeup mechanism (the analog of the epoll eventfd): a one-shot `NOTE_TRIGGER` change makes the parked poll return so the change FIFO is
+    // drained promptly. Stable macOS/BSD ABI value.
+    val EVFILT_USER: Short = -10
+    val EV_ADD: Short      = 0x0001
+    val EV_DELETE: Short   = 0x0002
+    val EV_ENABLE: Short   = 0x0004
+    // EV_CLEAR auto-resets the EVFILT_USER trigger state after the event is delivered, so one NOTE_TRIGGER wakes the poll exactly once and the
+    // filter re-arms for the next wake without an explicit reset (the level-vs-edge analog of draining the epoll eventfd counter).
+    val EV_CLEAR: Short   = 0x0020
+    val EV_ONESHOT: Short = 0x0010
+    // NOTE_TRIGGER is the fflags bit that fires an already-registered EVFILT_USER filter; the wake path encodes it into the change so the parked
+    // `kevent` returns. Stable macOS/BSD ABI value.
+    val NOTE_TRIGGER: Int = 0x01000000
     // kqueue per-event error / end-of-file flags. EV_ERROR marks a changelist/event error (the error code lands in the event's `data`); EV_EOF
     // is set when the peer has shut down or reset. Either on a readiness event signals the fd is dead, so the driver fails its pending op rather
     // than dropping the event.

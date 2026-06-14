@@ -122,18 +122,18 @@ class IoDriverPoolTest extends Test:
         succeed
     }
 
-    "start continues if one driver fails to start" in {
+    "start rethrows when a driver fails to start (all-or-nothing)" in {
         assumePoller()
         val rawSpies = mkSpies(3)
-        // Make driver 1 throw on start.
+        // Make driver 1 throw on start: the pool must close the already-started subset and rethrow.
         rawSpies(1).throwOnStart = true
         val spies: Array[IoDriver[PosixHandle]] = rawSpies.asInstanceOf[Array[IoDriver[PosixHandle]]]
         val pool                                = IoDriverPool.init(spies)
-        // Should not throw even though driver 1 fails.
-        pool.start()
-        // Driver 0 and 2 started fine (their real loops are running); driver 1 failed.
-        // Pool continues past the failure; close is safe.
-        pool.close()
+        // All-or-nothing: a partially-started pool is never handed to the transport.
+        val thrown = intercept[RuntimeException] { pool.start() }
+        assert(thrown.getMessage.contains("throwOnStart"), s"expected throwOnStart message, got: ${thrown.getMessage}")
+        // Driver 0 (already started) must have been closed by the all-or-nothing cleanup.
+        assert(rawSpies(0).closeCalls.get() >= 1, "driver 0 must be closed by the all-or-nothing cleanup")
         succeed
     }
 

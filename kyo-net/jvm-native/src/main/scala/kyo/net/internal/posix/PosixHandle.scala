@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Buffer
 import kyo.net.internal.tls.TlsEngine
+import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.util.GrowableByteBuffer
 
 /** Unified raw-fd handle (the unification of the transport layer).
@@ -27,6 +28,13 @@ final private[net] class PosixHandle private (
     @volatile var tls: Maybe[TlsEngine],
     val connectTarget: Maybe[(Buffer[Byte], Int)]
 ):
+    /** The single I/O driver this handle is bound to for its lifetime (set once when the connection is opened via the transport's
+      * pool.next() / openWith). Every per-handle op (read/write/await/closeHandle/submitEngineOp) routes through this driver, so a
+      * connection's poll loop and TLS engine FIFO stay on one owning driver across the N-driver pool: each handle is bound to exactly one driver
+      * for its whole lifetime, never re-routed mid-life. @volatile carries the bind-site write to the driver carriers that read it.
+      */
+    @volatile var driver: IoDriver[PosixHandle] = null
+
     /** The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
       * flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
       * chunk. The upgrade scans this for a TLS record (everything before it is the signal) and clears the slot; in every other case it is just

@@ -97,15 +97,17 @@ class PollerIoDriverRaceTest extends Test:
                 handle.tls = Present(engine)
                 handleRef = handle
 
-                // Handshake + encrypt the peer's record on the FIFO worker (submitEngineOp runs independently of the poll loop), then pre-send the
-                // REAL TLS ciphertext from the client so the kernel buffers it before awaitRead. When the poll loop fires recvNow on acceptedFd it
-                // returns these bytes immediately (no parking) and feedCiphertext consumes a valid record.
+                // Start the poll loop first: it is the single carrier that drains the engine FIFO (and later fires the read poll), so the handshake
+                // engine op below runs on it. The poll loop bounded-waits on the idle poller fd until awaitRead arms the read interest.
+                discard(driver.start())
+                // Handshake + encrypt the peer's record on the engine FIFO (drained by the poll loop), then pre-send the REAL TLS ciphertext from the
+                // client so the kernel buffers it before awaitRead. When the poll loop fires recvNow on acceptedFd it returns these bytes immediately
+                // (no parking) and feedCiphertext consumes a valid record.
                 handshakeAndEncrypt(driver, clientEngine, serverEngine, knownPlain).safe.get.map { ciphertext =>
                     val preSendBuf = Buffer.fromArray[Byte](ciphertext)
                     discard(Ffi.load[SocketBindings].sendNow(clientFd, preSendBuf, ciphertext.length.toLong, PosixConstants.MSG_NOSIGNAL))
                     preSendBuf.close()
 
-                    discard(driver.start())
                     val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
                     driver.awaitRead(handle, readPromise)
 

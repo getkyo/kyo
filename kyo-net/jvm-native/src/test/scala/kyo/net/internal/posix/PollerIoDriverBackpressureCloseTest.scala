@@ -15,8 +15,9 @@ import kyo.net.internal.util.GrowableByteBuffer
   * widens and the hang reproduces (CloseDuringBackpressuredFlushTest times out). This leaf drives the precise interleaving deterministically:
   * cancel, then park, then teardown, then a non-blocking [[Promise.Unsafe.done]] check, so there is no sleep, no timer, and no load dependency.
   *
-  * Runs on every poller host (epoll on Linux, kqueue on macOS/BSD). The poll loop is never started: the park, cancel, and teardown are driven
-  * directly, and the engine FIFO is drained to a barrier so the park's own double-check has run before the teardown, leaving nothing to race it.
+  * Runs on every poller host (epoll on Linux, kqueue on macOS/BSD). The poll loop is started because the change and engine FIFOs drain only on its
+  * carrier (it bounded-waits on the idle poller fd, no fds registered); the park, cancel, and teardown are sequenced through the FIFO, and the engine
+  * FIFO is drained to a barrier so the park's own double-check has run before the teardown, leaving nothing to race it.
   */
 class PollerIoDriverBackpressureCloseTest extends Test:
 
@@ -44,6 +45,7 @@ class PollerIoDriverBackpressureCloseTest extends Test:
             val real     = PollerBackend.default()
             val pollerFd = real.create()
             val driver   = TestDrivers.forBackend(real, pollerFd)
+            discard(driver.start())
             PosixTestSockets.loopbackPair().map { case (writeFd, peerFd) =>
                 val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
                 // Put the write tail at the high-water mark so awaitWritable takes the backpressure PARK branch (tail >= low-water).

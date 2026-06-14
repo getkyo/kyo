@@ -70,4 +70,49 @@ class TransportConfigTest extends Test:
         succeed
     }
 
+    "soRcvBuf defaults to Absent" in {
+        assert(TransportConfig.default.soRcvBuf == Absent)
+        succeed
+    }
+
+    "soSndBuf defaults to Absent" in {
+        assert(TransportConfig.default.soSndBuf == Absent)
+        succeed
+    }
+
+    "soRcvBuf and soSndBuf override exactly their fields" in {
+        val base    = TransportConfig.default
+        val updated = base.copy(soRcvBuf = Present(65536), soSndBuf = Present(32768))
+        assert(updated.soRcvBuf == Present(65536))
+        assert(updated.soSndBuf == Present(32768))
+        assert(updated.channelCapacity == base.channelCapacity)
+        assert(updated.readChunkSize == base.readChunkSize)
+        assert(updated.ioPoolSize == base.ioPoolSize)
+        assert(updated.handshakeTimeout == base.handshakeTimeout)
+        succeed
+    }
+
+    // --- ioPoolSizeScaladocTruth ---
+    // Verifies that the "single I/O event-loop driver per transport" phrasing is absent from TransportConfig.scala source: the transport
+    // builds an N-driver pool, so the scaladoc must describe the pool, not a single driver. This pins the scaladoc to the code as it evolves.
+    "ioPoolSizeScaladocTruth: stale single-driver scaladoc absent from TransportConfig" in {
+        val srcPath     = "kyo-net/shared/src/main/scala/kyo/net/TransportConfig.scala"
+        val stalePhrase = "single I/O event-loop driver per transport"
+        // Read TransportConfig.scala from the source tree relative to the worktree root.
+        // Use java.nio.file.Files so the test is cross-platform (JVM, Native).
+        import java.nio.file.Files
+        import java.nio.file.Paths
+        // Locate the file relative to the JVM working directory (set to the worktree root by the build).
+        val path = Paths.get(srcPath)
+        if Files.exists(path) then
+            val content = new String(Files.readAllBytes(path), "UTF-8")
+            assert(
+                !content.contains(stalePhrase),
+                s"TransportConfig.scala contains the single-driver phrasing '$stalePhrase'. " +
+                    "Update the scaladoc to reflect the N-driver pool."
+            )
+        end if
+        succeed
+    }
+
 end TransportConfigTest

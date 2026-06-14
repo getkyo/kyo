@@ -148,6 +148,20 @@ private[net] object KEvent:
         putLongLe(buf, 24, fd.toLong) // udata
     end encodeChange
 
+    /** Write a one-element `EVFILT_USER` changelist at element 0 of `buf` with explicit `fflags`. Used by the kqueue poll-loop wakeup: the
+      * register call passes `flags = EV_ADD | EV_CLEAR` and `fflags = 0`; the trigger call passes `flags = 0` and `fflags = NOTE_TRIGGER`. The
+      * `ident` is a fixed wakeup key (not an fd), distinct from any socket fd so its delivered event is recognized and consumed by the poll loop
+      * rather than dispatched to a connection. Identical layout to [[encodeChange]] except `filter` is `EVFILT_USER` and `fflags` is settable.
+      */
+    def encodeUser(buf: Buffer[Byte], ident: Long, flags: Short, fflags: Int): Unit =
+        putLongLe(buf, 0, ident)                       // ident (fixed wakeup key)
+        putShortLe(buf, 8, PosixConstants.EVFILT_USER) // filter
+        putShortLe(buf, 10, flags)                     // flags
+        putIntLe(buf, 12, fflags)                      // fflags (NOTE_TRIGGER on the trigger call)
+        putLongLe(buf, 16, 0L)                         // data
+        putLongLe(buf, 24, ident)                      // udata
+    end encodeUser
+
     /** Read the `ident` (watched fd as `uintptr_t`) of the event at element `i`. */
     def ident(buf: Buffer[Byte], i: Int): Long = getLongLe(buf, i * size + 0)
 

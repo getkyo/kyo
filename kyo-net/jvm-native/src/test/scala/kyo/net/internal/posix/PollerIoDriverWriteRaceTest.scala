@@ -78,14 +78,16 @@ class PollerIoDriverWriteRaceTest extends Test:
             val serverEngine = TlsRealEngines.singleEngine(isServer = true)
             PosixTestSockets.loopbackPair().map { case (clientFd, acceptedFd) =>
                 val targetFd = acceptedFd
-                // The write race never starts the poll loop, so poll() is never invoked; a RecordingPollerBackend over the real epoll/kqueue
-                // serves purely to construct the driver (its create() allocates the real poller fd, freed by driver.close() at the end).
+                // A RecordingPollerBackend over the real epoll/kqueue; the poll loop is started because the engine FIFO drains only on the poll-loop
+                // carrier (it bounded-waits on the idle poller fd, no fds registered, and drains the engine queue each cycle). create() allocates the
+                // real poller fd, freed by driver.close() at the end.
                 val real     = PollerBackend.default()
                 val pollerFd = real.create()
                 val backend  = RecordingPollerBackend(real)
                 val spy      = RecordingSocketBindings(Ffi.load[SocketBindings])
                 val driver   = TestDrivers.forBackend(backend, pollerFd, spy)
-                val handle   = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
+                discard(driver.start())
+                val handle = PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent)
 
                 val engine = new RecordingTlsEngine(clientEngine)
                 engine.onWritePlain = () => driver.closeHandle(handle)

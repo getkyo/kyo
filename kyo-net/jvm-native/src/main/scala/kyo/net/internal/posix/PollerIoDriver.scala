@@ -92,15 +92,21 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     // recycles drained nodes, so a steady-state enqueue allocates nothing). The MpscLongQueue.offer is the happens-before barrier the awaitRead
     // promise-store relies on, exactly as the prior ConcurrentLinkedQueue.offer was.
     // Exposed for allocation-seam tests: the unboxed long element type proves neither a closure nor a boxed Long is allocated per change.
+    //
+    // Single-consumer drain model (mirrors IoUringDriver's engine FIFO over its reap loop): the change FIFO and the engine FIFO below are drained
+    // ONLY by the always-running poll-loop carrier, once per poll cycle (see drainFifos, called from pollLoop). `submitChange` / `submitEngineOp`
+    // are pure offers that return immediately, so the offload contract (submit never drains on the submitting carrier; draining is on the separate
+    // poll-loop carrier) holds, and there is exactly one consumer (the poll loop), so the MpscLongQueue / ConcurrentLinkedQueue single-consumer
+    // contract is preserved with no flag. This replaces the prior fire-and-forget `Fiber.Unsafe.init` drain task, whose loss under a scheduler
+    // strand left the FIFO undrained forever (the Native TLS deadlock): the poll loop cannot be stranded the way an ephemeral spawned task can,
+    // because it is the one carrier running for the driver's whole life, so a submitted op is always drained within one poll cycle.
     private[posix] val changeQueue = new MpscLongQueue()
-    private val changeWorkerActive = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
-    // Engine-op serialization: all TLS engine ops (handshakeStep, feedCiphertext, readPlain, writePlain, drainCiphertext,
-    // hasBufferedPlaintext, readBuffered) for every connection on this driver route through this FIFO and are drained by one
-    // dedicated worker carrier. This guarantees at most one engine op runs at a time per connection (the single-owner guarantee),
-    // which allows the per-engine lock to be deleted. The recv/send syscalls stay outside the FIFO.
-    private val engineQueue        = new ConcurrentLinkedQueue[() => Unit]()
-    private val engineWorkerActive = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+    // Engine-op serialization: all TLS engine ops (handshakeStep, feedCiphertext, readPlain, writePlain, drainCiphertext, hasBufferedPlaintext,
+    // readBuffered) for every connection on this driver route through this FIFO and are drained by the single poll-loop carrier (see above). This
+    // guarantees at most one engine op runs at a time per connection (the single-owner guarantee), so a stateful TLS engine is never touched by two
+    // carriers at once.
+    private val engineQueue = new ConcurrentLinkedQueue[() => Unit]()
 
     // Per-driver reused poll/arm scratch. Allocated once at driver init. Ownership:
     //   eventsBuffer + fds + flags: poll loop carrier (pollLoop + drainReady on the same fiber).
@@ -127,6 +133,18 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     // Frees pollScratch exactly once. CASed by the poll loop's terminal exit (the loop ran) and by close()'s never-started path (the loop never
     // ran); the CAS guarantees no double-free and no use-after-free between the two single owners.
     private val freeScratchOnce = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    // Poll-loop wakeup coalescing flag. submitChange CASes it false->true and triggers backend.wake exactly once between poll cycles; the poll
+    // loop CASes it back to false at the top of each cycle (before the next park). This (1) dedups wakes so a burst of submits triggers at most one
+    // wake per cycle, and (2) serializes the kqueue wake-arm buffer to a single in-flight trigger (the buffer is written only by the CAS winner).
+    // Without the prompt wake, a change submitted while the loop is parked in the bounded epoll_wait/kevent waits out the whole park (up to ~100ms,
+    // longer under load) before it is registered with the kernel; the connect write-readiness arm then misses a short connect deadline (the
+    // NetConnectTimeoutException regression). The wake makes the parked poll return at once so the change is registered within microseconds.
+    private val wakePending = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    // True while the wakeup mechanism is armed (registerWake succeeded at start). When false (best-effort arm failed) the driver still works via the
+    // bounded-park drain; only the prompt-wake latency improvement is lost, so submitChange skips the wake rather than calling into a dead fd.
+    private val wakeArmed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // Opcode constants for the packed Long change command:
     //   Bits 34+: opcode (2 bits: 0=RegisterRead, 1=RegisterWrite, 2=Rearm, 3=Deregister)
@@ -158,6 +176,10 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         // JVM/Native because done() is always true: this avoids the StackOverflowError that naive self-recursive onComplete would cause
         // (IOPromise.eval fires onComplete INLINE when the fiber is already done; it is NOT a trampoline).
         started.set(true)
+        // Arm the poll-loop wakeup (epoll eventfd / kqueue EVFILT_USER) so submitChange can make a parked poll return promptly instead of waiting
+        // out the bounded park. Best-effort: if it fails to arm, the driver still drains every cycle via the bounded park, only losing the
+        // prompt-wake latency improvement. Armed before the loop starts so the very first submitted change can wake it.
+        wakeArmed.set(backend.registerWake(pollerFd, pollScratch))
         Fiber.Unsafe.init { pollLoop() }
     end start
 
@@ -167,7 +189,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       * no loop runs).
       */
     private def freeScratch()(using AllowUnsafe): Unit =
-        if freeScratchOnce.compareAndSet(false, true) then pollScratch.close()
+        if freeScratchOnce.compareAndSet(false, true) then
+            // Close the wakeup fd (epoll eventfd; kqueue no-op) before freeing the scratch buffers, under the same single-owner CAS so the eventfd
+            // is closed exactly once. backend.closeWake needs a Frame; use the internal frame (no effectful suspension, a plain fd close).
+            backend.closeWake(pollScratch)(using summon[AllowUnsafe], Frame.internal)
+            pollScratch.close()
+    end freeScratch
 
     /** Run the poll loop body on the current fiber. Called from `start()` and from the JS onComplete re-entry path. The while loop runs
       * the JVM/Native inline-completion path without stack growth. On JS, where the wait fiber is genuinely pending, we exit the while
@@ -180,6 +207,14 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         // the free below runs after the while loop.
         var enteredPending = false
         while running do
+            // Apply any queued interest changes BEFORE parking so a change submitted since the last drain (e.g. a connect's write-interest arm via
+            // armSocketWritable -> submitChange) is registered with the kernel NOW. The bounded poll that follows then returns its readiness
+            // immediately when the fd is already ready (a loopback connect's socket is writable at once, so epoll_wait/kevent returns without waiting
+            // out the timeout). This, paired with the submitChange wake that cuts a park short when work arrives DURING it, is what keeps the connect
+            // write-readiness from being stranded behind the ~100ms park past a short connect deadline (the NetConnectTimeoutException regression).
+            // Clearing wakePending right before the park arms the wake for any change submitted from here on.
+            wakePending.set(false)
+            drainChanges()
             val waitFiber = backend.poll(pollerFd, timeoutMs = 100, pollScratch) // sanctioned bounded park
             if waitFiber.done() then
                 // JVM/Native inline-completion path: the @Ffi.blocking wait completed synchronously. Extract events and continue the
@@ -199,11 +234,19 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 waitFiber.onComplete {
                     case Result.Success(n) =>
                         drainReady(pollScratch.fds, pollScratch.flags, n.eval)
+                        // Drain both FIFOs on the JS re-entry path too: JS is single-threaded so it never strands a drain, but the poll loop is the
+                        // sole FIFO consumer on every platform, so the drain must run on whichever poll path executes.
+                        drainFifos()
                         if !closedFlag.get() then discard(Fiber.Unsafe.init { pollLoop() })
                         else freeScratch() // terminal JS exit: closed flag set, not re-entering, last poll done -> free the scratch once.
                     case _ => freeScratch() // terminal JS exit: wait failed, not re-entering -> free the scratch once.
                 }
             end if
+            // Drain both FIFOs once per poll cycle on the JVM/Native always-running carrier, whether or not events fired this cycle: the poll loop is
+            // the sole consumer of the change/engine FIFOs, so a command or engine op enqueued by submitChange/submitEngineOp (or by this cycle's own
+            // dispatch) is drained here within one cycle. The poll's bounded ~100ms park guarantees the cycle runs even with no readiness, so a re-arm
+            // submitted while idle is never stranded. On the JS pending path the loop exited before reaching here, so the JS drain runs in onComplete.
+            if !enteredPending then drainFifos()
         end while
         // Terminal exit on JVM/Native (the while loop ended on closedFlag or a backend failure/panic): the last poll has completed and the
         // scratch is provably not in use, so the poll loop carrier frees it here. Skipped when the JS branch parked on a pending wait fiber:
@@ -715,21 +758,28 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def drainReady(fds: Array[Int], flags: Array[Int], n: Int)(using AllowUnsafe, Frame): Unit =
         var i = 0
         while i < n do
-            val fd    = fds(i)
-            val f     = flags(i)
-            val read  = (f & PollFlags.Read) != 0
-            val write = (f & PollFlags.Write) != 0
-            val error = (f & PollFlags.Error) != 0
-            // Re-arm the still-pending OTHER direction first (see scaladoc above).
-            if read || write then rearmSurvivors(fd, firedRead = read, firedWrite = write)
-            if read then
-                // Prefer accept dispatch over read dispatch: a listen fd registered via awaitAccept must not be routed to dispatchRead.
-                if pendingAccepts.containsKey(fd) then dispatchAccept(fd)
-                else dispatchRead(fd)
+            val fd = fds(i)
+            if backend.isWakeFd(fd, pollScratch) then
+                // The poll-loop wakeup fired (a submitChange triggered backend.wake to cut this park short). It carries no connection readiness:
+                // consume the signal so it does not immediately re-fire, then fall through to the cycle's drainFifos, which applies the change(s)
+                // that prompted the wake. Not dispatched as a socket readiness (it is the eventfd / EVFILT_USER wake key, never a socket fd).
+                backend.drainWake(pollScratch)
+            else
+                val f     = flags(i)
+                val read  = (f & PollFlags.Read) != 0
+                val write = (f & PollFlags.Write) != 0
+                val error = (f & PollFlags.Error) != 0
+                // Re-arm the still-pending OTHER direction first (see scaladoc above).
+                if read || write then rearmSurvivors(fd, firedRead = read, firedWrite = write)
+                if read then
+                    // Prefer accept dispatch over read dispatch: a listen fd registered via awaitAccept must not be routed to dispatchRead.
+                    if pendingAccepts.containsKey(fd) then dispatchAccept(fd)
+                    else dispatchRead(fd)
+                end if
+                if write then dispatchWritable(fd)
+                // Error-ONLY event: no read/write-ready bit carried it, so no recv/send will observe the error. Fail the pending op(s).
+                if error && !read && !write then dispatchError(fd)
             end if
-            if write then dispatchWritable(fd)
-            // Error-ONLY event: no read/write-ready bit carried it, so no recv/send will observe the error. Fail the pending op(s).
-            if error && !read && !write then dispatchError(fd)
             i += 1
         end while
     end drainReady
@@ -1033,14 +1083,22 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         loop(0)
     end sendBlockingWithRetry
 
-    /** Submit an interest change command to the serial worker. The packed `long` command is appended to the unboxed FIFO (no boxing, no
-      * closure) and a single worker fiber is started if none is running; changes therefore run strictly in submission order, never reordered
-      * against one another.
+    /** Submit an interest change command to the change FIFO and return immediately. The packed `long` command is appended to the unboxed FIFO (no
+      * boxing, no closure); the poll-loop carrier drains it in submission order on its next cycle (see [[drainFifos]]). A pure offer with no spawn:
+      * the prior design spawned a `Fiber.Unsafe.init` drain task here, which a scheduler strand could lose, leaving the FIFO undrained forever (the
+      * Native TLS deadlock). The poll loop is the always-running carrier and cannot be stranded that way, so routing the drain through it makes the
+      * delivery self-healing while keeping the offload contract (this returns immediately; the drain runs on the separate poll-loop carrier).
+      *
+      * After the offer it triggers the poll-loop wakeup (coalesced via `wakePending`) so a parked poll returns and drains this change promptly,
+      * rather than waiting out the bounded ~100ms park. Without the wake, a change submitted while the loop is parked (e.g. a connect's write-
+      * readiness arm) is not registered with the kernel until the current park times out, so a short connect deadline fires first (the
+      * NetConnectTimeoutException regression). `wakePending.compareAndSet(false, true)` makes a burst of submits trigger at most one wake per poll
+      * cycle (the poll loop clears the flag before each park) and serializes the kqueue wake-arm buffer to a single in-flight trigger. The offer
+      * happens-before the wake, so the poll loop, once woken, always observes the just-offered command in its drain.
       */
     private def submitChange(cmd: Long)(using AllowUnsafe, Frame): Unit =
         changeQueue.offer(cmd)
-        if changeWorkerActive.compareAndSet(false, true) then
-            discard(Fiber.Unsafe.init(drainChanges()))
+        if wakeArmed.get() && wakePending.compareAndSet(false, true) then backend.wake(pollerFd, pollScratch)
     end submitChange
 
     /** Pack an opcode, fd, and direction bits into a single Long command for the change FIFO.
@@ -1099,21 +1157,16 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         end if
     end dispatchCmd
 
-    /** Drain the change FIFO one entry at a time, running each to completion before the next so the underlying `epoll_ctl` / `kevent`
-      * syscalls execute in submission order. After the queue looks empty the worker stands down (CAS active->false) and re-checks once: a
-      * change offered between the empty poll and the CAS is not lost because the offering thread restarts the worker only when it observes
-      * active=false.
+    /** Drain the change FIFO to empty, running each command to completion before the next so the underlying `epoll_ctl` / `kevent` syscalls execute
+      * in submission order. Called once per poll cycle from [[drainFifos]] on the single poll-loop carrier, so it is the FIFO's only consumer (the
+      * MpscLongQueue single-consumer contract holds with no flag). A command offered after this returns empty is drained on the next poll cycle.
       */
     @scala.annotation.tailrec
     private def drainChanges()(using AllowUnsafe, Frame): Unit =
         val cmd = changeQueue.poll()
-        if cmd == MpscLongQueue.Empty then
-            changeWorkerActive.set(false)
-            if changeQueue.peekNonEmpty() && changeWorkerActive.compareAndSet(false, true) then drainChanges()
-        else
+        if cmd != MpscLongQueue.Empty then
             dispatchCmd(cmd)
             drainChanges()
-        end if
     end drainChanges
 
     /** Re-arm one-shot read interest on `fd` through the serial worker (the poll loop's EAGAIN / partial-record re-register). Routing it through
@@ -1130,33 +1183,46 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def rearmSurvivors(fd: Int, firedRead: Boolean, firedWrite: Boolean)(using AllowUnsafe, Frame): Unit =
         submitChange(packCmd(OpRearm, fd, firedRead, firedWrite))
 
-    /** Submit a TLS engine op to the serial engine worker and return immediately. The thunk runs to completion before the next, so no
-      * two engine ops for any connection on this driver overlap. Mirrors the submitChange/drainChanges pattern; the recv/send syscalls
-      * that surround engine ops stay outside the FIFO.
+    /** Submit a TLS engine op to the engine FIFO and return immediately. The poll-loop carrier runs the thunk in submission order on its next cycle
+      * (see [[drainFifos]]), so no two engine ops for any connection on this driver overlap (one carrier is the engine-serialization invariant). A
+      * pure offer with no spawn, for the same reason as [[submitChange]]: the prior `Fiber.Unsafe.init` drain task could be lost by a scheduler
+      * strand, leaving engine ops undrained forever (the Native TLS deadlock); the always-running poll loop cannot be stranded that way. The
+      * recv/send syscalls that surround engine ops stay outside the FIFO.
       */
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit =
         discard(engineQueue.offer(op))
-        if engineWorkerActive.compareAndSet(false, true) then discard(Fiber.Unsafe.init(drainEngineOps()))
-    end submitEngineOp
 
-    /** Drain the engine-op FIFO one entry at a time, running each to completion before the next. The stand-down / re-check pattern
-      * (same as drainChanges) ensures an op offered between the empty peek and the CAS is not lost.
+    /** Drain the engine-op FIFO to empty, running each op to completion before the next. Called once per poll cycle from [[drainFifos]] on the single
+      * poll-loop carrier, so it is the FIFO's only consumer (the ConcurrentLinkedQueue single-consumer contract holds with no flag). An op offered
+      * after this returns empty is drained on the next poll cycle.
       */
     @scala.annotation.tailrec
     private def drainEngineOps()(using AllowUnsafe, Frame): Unit =
         engineQueue.poll() match
-            case null =>
-                engineWorkerActive.set(false)
-                if engineQueue.peek() != null && engineWorkerActive.compareAndSet(false, true) then drainEngineOps()
-            case op =>
-                // A throwing engine op must not kill the worker: that would leave engineWorkerActive stuck true with no replacement worker
-                // spawned, stranding every other connection's engine ops on this driver (a multi-connection silent hang, Netty #7337 class).
-                // Surface the failure and keep draining; the throwing op's own promise handling is its concern.
+            case null => ()
+            case op   =>
+                // A throwing engine op must not kill the drain: that would strand every later op on this driver (a multi-connection silent hang,
+                // Netty #7337 class). Surface the failure and keep draining; the throwing op's own promise handling is its concern.
                 try op()
                 catch case ex: Throwable => Log.live.unsafe.error(s"$label engine op threw; the engine FIFO worker continues draining", ex)
                 end try
                 drainEngineOps()
     end drainEngineOps
+
+    /** Drain both per-driver FIFOs once, on the poll-loop carrier. The poll loop calls this every cycle (see [[pollLoop]]), making it the single
+      * authoritative consumer of both FIFOs: `submitChange` / `submitEngineOp` only enqueue, so a submitted command or engine op is always drained
+      * within one poll cycle, even when no readiness event fired (the poll's bounded ~100ms park guarantees the cycle runs). This is the recovery for
+      * the Native TLS deadlock: the prior design drained on a `Fiber.Unsafe.init` task spawned per burst, which a scheduler strand could lose, leaving
+      * the FIFO undrained forever; the poll loop is the one carrier running for the driver's whole life and cannot be lost that way. Draining on the
+      * poll-loop carrier (not the submitting carrier) keeps the offload contract: a submit never drains inline on the carrier that called it.
+      *
+      * `private[posix]` so a deterministic leaf can drive exactly one poll cycle's drain after enqueuing work without starting the poll loop;
+      * production calls it only from the poll loop.
+      */
+    private[posix] def drainFifos()(using AllowUnsafe, Frame): Unit =
+        drainChanges()
+        drainEngineOps()
+    end drainFifos
 
     /** Extract the value of an already-inline-completed `@Ffi.blocking` fiber without parking (no `.block` / `LockSupport.park`).
       * `poll()` is the non-parking peek; it returns `Present` when the fiber is done (always true on JVM/Native for `@Ffi.blocking`) and

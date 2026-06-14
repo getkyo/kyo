@@ -14,6 +14,7 @@ import kyo.net.internal.posix.PosixHandle
 import kyo.net.internal.posix.PosixTransport
 import kyo.net.internal.posix.SocketBindings
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.IoDriverPool
 
 /** The posix backends and their registry entry, shared verbatim by the JVM and Native `IoBackendPlatform` registries. Both platforms produce the
   * same unified drivers over `PosixHandle` (`IoUringDriver.init` / `PollerIoDriver.init`) and wire them into the same `PosixTransport`, so a JVM
@@ -104,8 +105,14 @@ final private[net] class PosixEntry(backend: PosixIoBackend) extends Entry:
     def priority                                = backend.priority
     def isAvailable(using AllowUnsafe): Boolean = backend.isAvailable
     def build(config: TransportConfig)(using AllowUnsafe, Frame): Transport =
-        val driver = backend.createDriver(config)
-        discard(driver.start())
-        PosixTransport.init(config, driver)
+        // Build ioPoolSize independent drivers, wrap them in the pool, and start them all-or-nothing. Each driver owns its own poller/io_uring fd
+        // and carrier fiber; pool.next() distributes new connections round-robin across the drivers, and each connection is then bound to one
+        // driver for its lifetime, so per-handle single-driver ownership holds downstream. Both JVM and Native run the scheduler over real OS
+        // threads, so each driver's poll loop parks its own carrier thread and ioPoolSize drivers give real cross-core parallelism.
+        val n       = math.max(1, config.ioPoolSize)
+        val drivers = Array.fill(n)(backend.createDriver(config))
+        val pool    = IoDriverPool.init(drivers)
+        pool.start() // all-or-nothing: on any driver-start failure this closes the started subset and rethrows.
+        PosixTransport.init(config, pool)
     end build
 end PosixEntry

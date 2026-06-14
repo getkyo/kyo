@@ -45,6 +45,21 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
         if !tlsAvailable then cancel("No TLS provider staged for this host")
     end assumeReady
 
+    /** Stack-safe server echo: take one inbound span, offer it to outbound, repeat. Each iteration's next step is started as a fresh scheduler
+      * task via Fiber.Unsafe.init, so the loop never self-recurses inline. takeFiber().onComplete fires SYNCHRONOUSLY when a span is already
+      * buffered in inbound (the common case under load, where the read pump fills inbound faster than the echo drains it), so a direct
+      * self-recursive call would grow the carrier stack once per buffered span and overflow it under sustained load. Re-entering through a fresh
+      * Fiber.Unsafe.init runs each iteration on a fresh stack frame, bounding the stack to one iteration regardless of how much is buffered.
+      */
+    private def echoLoop(serverConn: Connection)(using Frame): Unit =
+        serverConn.inbound.takeFiber().onComplete {
+            case Result.Success(bytes) =>
+                discard(serverConn.outbound.offer(bytes.asInstanceOf[Span[Byte]]))
+                discard(Fiber.Unsafe.init(echoLoop(serverConn)))
+            case _ => () // connection closed or error
+        }
+    end echoLoop
+
     // Each connection runs two independent fibers, a writer and a reader, against the SAME connection (and so the same engine), looping
     // `rounds` request/response frames. The writer runs up to `window` frames ahead of the reader (a bounded write-ahead permit pool), so
     // the server side decrypts an inbound frame (unwrap, read pump) while it re-encrypts a prior frame (wrap, write pump) on the same
@@ -125,14 +140,7 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
             val transport = NetPlatform.transport
             for
                 listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
-                    def loopEcho(): Unit =
-                        serverConn.inbound.takeFiber().onComplete {
-                            case Result.Success(bytes) =>
-                                discard(serverConn.outbound.offer(bytes.asInstanceOf[Span[Byte]]))
-                                loopEcho()
-                            case _ => ()
-                        }
-                    loopEcho()
+                    echoLoop(serverConn)
                 }.safe.get
                 port = listener.port
                 // Many connections so the per-frame cert read races real, ongoing FIFO read/write engine ops on a freshly negotiated
@@ -175,15 +183,7 @@ class PosixTransportTlsConcurrentEchoTest extends Test:
             val transport = NetPlatform.transport
             for
                 listener <- transport.listen("127.0.0.1", 0, 128, serverTls) { serverConn =>
-                    // Echo loop using the Unsafe API: take a span from inbound, offer it to outbound, repeat.
-                    def loopEcho(): Unit =
-                        serverConn.inbound.takeFiber().onComplete {
-                            case Result.Success(bytes) =>
-                                discard(serverConn.outbound.offer(bytes.asInstanceOf[Span[Byte]]))
-                                loopEcho()
-                            case _ => () // connection closed or error
-                        }
-                    loopEcho()
+                    echoLoop(serverConn)
                 }.safe.get
                 port = listener.port
                 results <- Async.fillIndexed(connections, connections) { connId =>

@@ -539,6 +539,26 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         s
     end newPollScratch
 
+    // Count of wake() triggers (poll-loop wakeup), for tests asserting a submitted change triggers a prompt wake.
+    val wakeCount: AtomicInteger = new AtomicInteger(0)
+
+    def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
+        real.registerWake(pollerFd, scratch)
+
+    def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        discard(wakeCount.getAndIncrement())
+        real.wake(pollerFd, scratch)
+    end wake
+
+    def drainWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        real.drainWake(scratch)
+
+    def isWakeFd(fd: Int, scratch: PollScratch): Boolean =
+        real.isWakeFd(fd, scratch)
+
+    def closeWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        real.closeWake(scratch)
+
     def close(pollerFd: Int)(using AllowUnsafe, Frame): Unit =
         real.close(pollerFd)
 

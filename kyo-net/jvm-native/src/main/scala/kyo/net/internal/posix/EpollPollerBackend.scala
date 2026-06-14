@@ -101,6 +101,40 @@ private[net] object EpollPollerBackend extends PollerBackend:
         // scratch.armBuf is NOT closed here: it is the caller-owned per-driver reused buffer, freed via PollScratch.close.
     end deregister
 
+    def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
+        // Create the eventfd counter and register it in the epoll set for LEVEL-triggered read interest (no EPOLLONESHOT): it stays armed across
+        // polls, so every wake write is delivered and the loop drains the counter each time. A dedicated arm buffer is used (the eventfd is not a
+        // socket fd and must not enter scratch.epollDesired / the one-shot re-arm machinery).
+        val efd = ep.eventfd(0, PosixConstants.EFD_NONBLOCK | PosixConstants.EFD_CLOEXEC)
+        if efd.value < 0 then false
+        else
+            scratch.wakeFd = efd.value
+            scratch.wakeDrainBuf = Buffer.alloc[Byte](8) // eventfd counter is a uint64
+            val armBuf = Buffer.alloc[Byte](EpollEvent.size)
+            scratch.wakeArmBuf = armBuf // owned by registerWake/close only; reused for the (single) wake registration
+            EpollEvent.encode(armBuf, 0, EpollEvent(PosixConstants.EPOLLIN, efd.value.toLong))
+            val rc = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, efd.value, armBuf)
+            rc.value >= 0
+        end if
+    end registerWake
+
+    def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        // Atomic counter increment; thread-safe with no shared buffer, so concurrent callers are safe. Wakes any parked epoll_wait on this set.
+        if scratch.wakeFd >= 0 then discard(ep.eventfd_write(scratch.wakeFd, 1L))
+
+    def drainWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        // Read-drain the counter so the level-triggered eventfd does not immediately re-fire. With EFD_NONBLOCK a single read returns the whole
+        // accumulated count (or EAGAIN if already drained), so one read clears it; the rc is not actionable.
+        if scratch.wakeFd >= 0 && scratch.wakeDrainBuf != null then discard(ep.eventfd_read(scratch.wakeFd, scratch.wakeDrainBuf))
+
+    def isWakeFd(fd: Int, scratch: PollScratch): Boolean = scratch.wakeFd >= 0 && fd == scratch.wakeFd
+
+    def closeWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        if scratch.wakeFd >= 0 then
+            discard(ep.close(scratch.wakeFd))
+            scratch.wakeFd = -1
+    end closeWake
+
     def poll(pollerFd: Int, timeoutMs: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any] =
         // Unsafe: the @Ffi.blocking wait fills scratch.eventsBuffer (the caller-owned per-driver reused buffer). Decode inline inside .map.
         // The buffer is NOT closed here: it is the per-driver PollScratch.eventsBuffer, reused across poll cycles, freed via PollScratch.close.

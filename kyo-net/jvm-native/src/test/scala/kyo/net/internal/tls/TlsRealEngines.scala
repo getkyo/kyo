@@ -7,7 +7,10 @@ import kyo.net.NetTlsConfig
 import kyo.net.TransportConfig
 import kyo.net.internal.posix.PollerIoDriver
 import kyo.net.internal.posix.PosixConstants
+import kyo.net.internal.posix.PosixHandle
 import kyo.net.internal.posix.PosixTransport
+import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.IoDriverPool
 
 /** Shared real-engine factories and availability probes for TLS tests on JVM and Native.
   *
@@ -127,7 +130,8 @@ object TlsRealEngines:
     )(using Frame): A < (S & Async & Abort[Closed]) =
         import AllowUnsafe.embrace.danger
         val driver    = PollerIoDriver.init(config)
-        val transport = PosixTransport.init(config, driver)
+        val pool      = IoDriverPool.init(Array[IoDriver[PosixHandle]](driver))
+        val transport = PosixTransport.init(config, pool)
         discard(driver.start())
         val serverTls = serverConfig
         val clientTls = clientConfig

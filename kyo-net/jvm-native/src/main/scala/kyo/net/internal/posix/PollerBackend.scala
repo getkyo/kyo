@@ -59,6 +59,41 @@ private[net] trait PollerBackend:
       */
     def poll(pollerFd: Int, timeoutMs: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any]
 
+    /** Arm the poll-loop wakeup so a [[wake]] call makes a parked [[poll]] return promptly (instead of waiting out the bounded timeout). Called
+      * once at driver start, after [[newPollScratch]]. epoll: create an eventfd and register it in the epoll set for read interest, storing it
+      * on `scratch.wakeFd`. kqueue: register an `EVFILT_USER` filter (EV_ADD | EV_CLEAR) on the fixed `scratch.wakeUserIdent`. Initializes the
+      * scratch wake buffers. Returns true on success; false (best-effort) if the wakeup could not be armed, in which case the driver still works
+      * via the bounded-park drain (only the prompt-wake latency improvement is lost). Idempotent is NOT required (called exactly once at start).
+      */
+    def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean
+
+    /** Trigger the poll-loop wakeup: make a parked [[poll]] on `pollerFd` return now so the driver drains its change/engine FIFOs without waiting
+      * out the bounded park. Thread-safe and callable from any carrier (it is the cross-carrier wake): epoll writes the eventfd counter (an atomic
+      * syscall, no shared buffer); kqueue submits a one-element `NOTE_TRIGGER` changelist via the non-blocking `keventNow` into `scratch.wakeArmBuf`
+      * (the caller serializes access to that buffer through the driver's `wakePending` CAS, so at most one trigger is in flight). A no-op if the
+      * wakeup was not armed ([[registerWake]] returned false) or `scratch.wakeFd`/the filter is gone after close.
+      */
+    def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
+
+    /** Consume the wakeup signal after a [[poll]] returned it, so it does not immediately re-fire. epoll: read-drain the eventfd counter into
+      * `scratch.wakeDrainBuf` (with EFD_NONBLOCK a drained counter returns EAGAIN, ending the drain). kqueue: a no-op (EV_CLEAR auto-resets the
+      * EVFILT_USER trigger on delivery). The poll loop calls this when a decoded event matches the wake fd/ident; the wake event carries no
+      * connection work, so after draining it the loop just proceeds to its FIFO drain.
+      */
+    def drainWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit
+
+    /** True when the decoded event fd/ident at the given decoded value is the wakeup signal (epoll: equals `scratch.wakeFd`; kqueue: equals
+      * `scratch.wakeUserIdent`). The poll loop uses it in `drainReady` to recognize and consume the wake event rather than dispatching it as a
+      * socket readiness.
+      */
+    def isWakeFd(fd: Int, scratch: PollScratch): Boolean
+
+    /** Close the epoll eventfd (the wakeup fd) if one was created. Called from the driver close path on the poll-loop carrier's terminal exit (or
+      * the never-started close), alongside the scratch free. kqueue has no wake fd (the EVFILT_USER filter is released when the kqueue fd closes),
+      * so this is a no-op there.
+      */
+    def closeWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit
+
     /** Allocate the per-driver poll scratch (events buffer, fds/flags arrays, arm buffer, and any backend-specific extras). Called once at
       * driver init. The scratch is closed when the driver closes.
       */
@@ -133,11 +168,30 @@ final private[net] class PollScratch(
       */
     val epollDesired: java.util.HashMap[Int, Int] = new java.util.HashMap[Int, Int]()
 
+    /** Poll-loop wakeup state, initialized by [[PollerBackend.registerWake]] at driver start.
+      *
+      * epoll: `wakeFd` is the eventfd (created with EFD_NONBLOCK | EFD_CLOEXEC, registered in the epoll set for read interest); `wakeDrainBuf`
+      * is the reused 8-byte buffer the poll loop reads the eventfd counter into when the wake fires. kqueue: `wakeFd` stays -1 (EVFILT_USER is
+      * keyed on a fixed ident on the kqueue fd, not a separate fd); `wakeArmBuf` is the reused one-element changelist the trigger encodes the
+      * NOTE_TRIGGER into. The wake buffers are off-heap and freed in [[close]]. Single-writer per buffer: the poll-loop carrier owns
+      * `wakeDrainBuf`; the wake trigger owns `wakeArmBuf`, serialized by the driver's `wakePending` CAS so at most one trigger is in flight.
+      */
+    var wakeFd: Int                        = -1
+    var wakeDrainBuf: kyo.ffi.Buffer[Byte] = null
+    var wakeArmBuf: kyo.ffi.Buffer[Byte]   = null
+
+    /** The fixed kqueue `EVFILT_USER` ident used as the wakeup key. Distinct from any socket fd (a large sentinel), so a delivered wake event
+      * is recognized and consumed by the poll loop rather than dispatched to a connection. Unused on epoll.
+      */
+    val wakeUserIdent: Long = 0x7fffffffL
+
     def close()(using AllowUnsafe): Unit =
         eventsBuffer.close()
         armBuf.close()
         kqueueData.foreach(_.close())
-        // fds and flags are heap arrays, collected by GC.
+        if wakeDrainBuf != null then wakeDrainBuf.close()
+        if wakeArmBuf != null then wakeArmBuf.close()
+        // fds and flags are heap arrays, collected by GC. wakeFd (epoll eventfd) is closed by the backend's closeWake via the driver close path.
     end close
 end PollScratch
 

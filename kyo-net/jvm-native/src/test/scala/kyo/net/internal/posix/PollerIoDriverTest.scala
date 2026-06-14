@@ -169,7 +169,10 @@ class PollerIoDriverTest extends Test:
             val pollerFd = real.create()
             val spy      = RecordingPollerBackend(real)
             val driver   = TestDrivers.forBackend(spy, pollerFd)
-            val stdioH   = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
+            // The change FIFO drains only on the poll-loop carrier, so start the poll loop; it bounded-waits on the idle poller fd and drains the
+            // registrations each cycle. The registrations and the fifoBarrier below settle on the real change/engine drain, no sleep.
+            discard(driver.start())
+            val stdioH = PosixHandle.stdio(PosixHandle.DefaultReadBufferSize)
             assert(stdioH.readFd != stdioH.writeFd, "split handle must have distinct fds")
             // A per-fd promise for the write registration: completes when registerWrite(writeFd) has recorded the fd. Watch the spy's
             // registeredWriteFds via a fifoBarrier (the write registration is the second change; its execution latch is the read latch's twin).

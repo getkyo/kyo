@@ -40,6 +40,23 @@ private[net] trait EpollBindings extends Ffi:
     @Ffi.blocking
     def epoll_wait(epfd: Int, events: Buffer[Byte], maxevents: Int, timeout: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any]
 
+    /** `int eventfd(unsigned int initval, int flags)`. Creates the poll-loop wakeup eventfd (counter object). Created with `EFD_NONBLOCK |
+      * EFD_CLOEXEC` and registered in the epoll set for read interest; a write to it makes a parked `epoll_wait` return so the change FIFO is
+      * drained without waiting out the bounded park. Returns the fd or -1 with `errno`. Non-blocking downcall (returns the rc inline).
+      */
+    def eventfd(initval: Int, flags: Int)(using AllowUnsafe): Ffi.WithError[Int]
+
+    /** `int eventfd_write(int fd, uint64_t value)` (glibc helper). Adds `value` to the eventfd counter, making it read-ready and waking a
+      * parked `epoll_wait`. The wake path writes 1. Non-blocking; returns 0 or -1 with `errno`.
+      */
+    def eventfd_write(fd: Int, value: Long)(using AllowUnsafe): Ffi.WithError[Int]
+
+    /** `int eventfd_read(int fd, uint64_t* value)` (glibc helper). Reads and clears the eventfd counter into the 8-byte `value` buffer. The
+      * poll loop calls it after an eventfd read-readiness to drain the counter (with `EFD_NONBLOCK`, a drained counter returns -1/EAGAIN, which
+      * the drain loop treats as "no more wake bytes"). Non-blocking; returns 0 or -1 with `errno`.
+      */
+    def eventfd_read(fd: Int, value: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int]
+
     /** `int close(int fd)`. Releases the epoll fd. Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await. */
     @Ffi.blocking
     def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any]
@@ -48,5 +65,5 @@ end EpollBindings
 
 private[net] object EpollBindings extends Ffi.Config(
         library = "c",
-        headers = Chunk("sys/epoll.h")
+        headers = Chunk("sys/epoll.h", "sys/eventfd.h")
     )

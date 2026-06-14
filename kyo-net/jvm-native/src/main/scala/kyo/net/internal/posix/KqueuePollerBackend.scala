@@ -60,6 +60,43 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     ): Unit =
         ()
 
+    def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
+        // Register the EVFILT_USER wake filter on the fixed wakeUserIdent with EV_CLEAR (auto-reset on delivery). No wake fd: the filter lives on
+        // the kqueue fd and is released when it closes. wakeArmBuf is the reused one-element changelist the trigger encodes NOTE_TRIGGER into.
+        scratch.wakeArmBuf = Buffer.alloc[Byte](KEvent.size)
+        val empty = scratch.kqueueData match
+            case Present(data) => data.emptyChangelist
+            case Absent        => Buffer.alloc[Byte](0)
+        KEvent.encodeUser(scratch.wakeArmBuf, scratch.wakeUserIdent, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, 0)
+        val rc = kq.keventNow(pollerFd, scratch.wakeArmBuf, 1, empty, 0, ZeroTimeout).value
+        if scratch.kqueueData.isEmpty then empty.close()
+        rc >= 0
+    end registerWake
+
+    def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        // Fire the EVFILT_USER filter with NOTE_TRIGGER so a parked kevent returns. The caller serializes access to wakeArmBuf via the driver's
+        // wakePending CAS (at most one trigger in flight), so re-encoding it here is race-free. keventNow is the non-blocking register-only syscall.
+        if scratch.wakeArmBuf != null then
+            val empty = scratch.kqueueData match
+                case Present(data) => data.emptyChangelist
+                case Absent        => Buffer.alloc[Byte](0)
+            KEvent.encodeUser(scratch.wakeArmBuf, scratch.wakeUserIdent, 0, PosixConstants.NOTE_TRIGGER)
+            discard(kq.keventNow(pollerFd, scratch.wakeArmBuf, 1, empty, 0, ZeroTimeout))
+            if scratch.kqueueData.isEmpty then empty.close()
+        end if
+    end wake
+
+    def drainWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        // No-op: EV_CLEAR auto-resets the EVFILT_USER trigger state when the event is delivered, so there is nothing to drain (the epoll eventfd
+        // counter analog).
+        ()
+
+    def isWakeFd(fd: Int, scratch: PollScratch): Boolean = fd.toLong == scratch.wakeUserIdent
+
+    def closeWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        // No wake fd on kqueue: the EVFILT_USER filter is released when the kqueue fd closes. wakeArmBuf is freed via PollScratch.close.
+        ()
+
     /** Submit a single one-element register-only changelist and return the `kevent` rc. Uses the non-blocking synchronous `keventNow` (the
       * change applies and returns immediately at `timeout = 0`); it never blocks, so it does not park a carrier even when many changes are
       * drained serially by the interest-change worker.

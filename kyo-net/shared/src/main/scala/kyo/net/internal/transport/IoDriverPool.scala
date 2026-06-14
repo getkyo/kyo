@@ -2,6 +2,7 @@ package kyo.net.internal.transport
 
 import kyo.*
 import scala.annotation.tailrec
+import scala.util.control.NonFatal
 
 /** Fixed-size pool of I/O drivers for parallel event processing. Channels are assigned to drivers via round-robin. Each driver runs its own
   * event loop.
@@ -15,6 +16,9 @@ final private[kyo] class IoDriverPool[Handle] private (
     // Unsafe: created at construction with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the caller's
     // AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    /** Number of drivers in the pool. */
+    private[kyo] def size: Int = drivers.length
 
     /** Return the next driver via round-robin.
       *
@@ -30,18 +34,25 @@ final private[kyo] class IoDriverPool[Handle] private (
 
     /** Start all event loops. Stores fiber references for shutdown.
       *
-      * Must be called exactly once after construction, before any calls to next(). If a driver fails to start, its fiber slot is skipped
-      * and start continues with the remaining drivers.
+      * Must be called exactly once after construction, before any calls to next(). If any driver fails to start, the already-started drivers
+      * are closed, their fibers interrupted, and the failure is rethrown (all-or-nothing).
       */
     def start()(using AllowUnsafe, Frame): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < drivers.length then
-                try fibers(i) = Maybe(drivers(i).start())
-                catch
-                    case t: Throwable =>
-                        // TODO this seems to leave `fibers`` in an inconsistent state with nulls?
-                        Log.live.unsafe.error(s"IoDriverPool: driver $i failed to start", t)
-                end try
+                val started =
+                    try drivers(i).start()
+                    catch
+                        case ex: Throwable if NonFatal(ex) =>
+                            // All-or-nothing: a partially-started pool is never handed to the transport. Close the already-started
+                            // subset (close() skips Absent slots and is CAS-guarded) and rethrow, so the transport build fails atomically
+                            // rather than running fewer drivers than ioPoolSize requested. Guarded on NonFatal: on a fatal/control
+                            // throwable the process is dying, so the subset-close is moot; let the fatal propagate uncaught.
+                            close()
+                            throw ex
+                    end try
+                end started
+                fibers(i) = Present(started)
                 loop(i + 1)
         loop(0)
     end start

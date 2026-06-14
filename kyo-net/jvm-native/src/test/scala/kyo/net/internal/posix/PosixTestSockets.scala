@@ -265,6 +265,53 @@ object PosixTestSockets:
         discard(sockets.shutdown(fd, SHUT_WR))
     end halfClose
 
+    /** An in-flight (SYN-SENT) client connect whose write-readiness provably never fires, plus the fd it owns.
+      *
+      * `targetFd` is a fresh non-blocking client socket whose connect to a non-routable black-hole address is stuck mid-handshake. The OS signals
+      * write-readiness on a connecting socket only when the connect succeeds (3-way handshake completes) or fails (RST / error). A connect to a
+      * black-hole address (no SYN-ACK, no RST) does neither, so the socket stays in SYN-SENT and the poller never reports it writable. This is the
+      * connect-side mirror of a listen fd with no incoming connection: the kernel cannot spontaneously make either fd ready without an external
+      * event the setup denies.
+      */
+    final case class InFlightConnect(targetFd: Int)
+
+    // RFC 5737 TEST-NET-1 (192.0.2.0/24) is reserved for documentation and is guaranteed non-routable on the public internet. A non-blocking
+    // connect to it gets no SYN-ACK and no RST, so it stays in SYN-SENT for the whole connect timeout (far longer than any test leaf), giving a
+    // genuinely never-writable connecting socket. Chosen over a backlog-saturated loopback listener (whose dropped SYN can still complete on a
+    // transient slot, re-introducing the flake) and over a closed loopback port (which RSTs immediately, firing a write-ready error event).
+    private val BlackHoleHost = "192.0.2.1"
+    private val BlackHolePort = 9
+
+    /** Build a client TCP connect parked in SYN-SENT against a non-routable black-hole address, so a write-readiness arm on the returned
+      * `targetFd` provably never fires for the duration of a test leaf. The connect-side equivalent of [[listenSocket]]'s never-accept-ready
+      * listen fd, giving the connect/writable interrupt leaves the same deterministic "the op cannot complete, so interrupt always wins" property
+      * the accept leaves have. The caller closes `targetFd` when done.
+      *
+      * The non-blocking connect downcall runs inline on JVM/Native so `.safe.get` resolves immediately with the connect's `WithError`, which must
+      * be `EINPROGRESS` (in flight). A host with no default route may instead reject the connect immediately with `ENETUNREACH`/`EHOSTUNREACH`; in
+      * that case the leaf cannot construct a stably-in-flight connect, so the test cancels rather than running a non-deterministic setup.
+      */
+    def connectInFlight()(using Frame, AllowUnsafe): InFlightConnect < Async =
+        val sockets = sock
+        val client  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val shim    = Ffi.load[PosixShimBindings]
+        assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
+        val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, BlackHoleHost, BlackHolePort).getOrElse(???)
+        Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get).map { res =>
+            if res.value < 0 && res.errorCode == PosixConstants.EINPROGRESS then InFlightConnect(client)
+            else
+                discard(sockets.close(client).poll())
+                throw new kyo.test.TestCancelled(
+                    s"black-hole connect to $BlackHoleHost:$BlackHolePort did not stay in flight (value=${res.value} errno=${res.errorCode}); host has no route to TEST-NET-1"
+                )
+        }
+    end connectInFlight
+
+    /** Close the fd owned by an [[InFlightConnect]]. */
+    def closeInFlight(sockets: SocketBindings, c: InFlightConnect)(using AllowUnsafe): Unit =
+        closePeerForEof(sockets, c.targetFd)
+    end closeInFlight
+
     /** Cancel the test if neither epoll nor kqueue is available on this host.
       *
       * Lifted from PollerIoDriverTest.scala lines 25-27. Returns cleanly where the platform has epoll (Linux) or kqueue (macOS/BSD).

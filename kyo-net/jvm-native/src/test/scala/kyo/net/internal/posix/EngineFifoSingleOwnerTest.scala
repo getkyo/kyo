@@ -17,12 +17,11 @@ import scala.jdk.CollectionConverters.*
   * The existing coverage of this invariant is a real-TLS load test (48 connections x 120 rounds). That is probabilistic: it makes overlap
   * LIKELY but never pins it, so a regression that opened a narrow overlap window (an ABA on the CAS, a second worker spawned) could pass
   * flakily. These leaves pin the invariant directly and the SAME body runs against BOTH drivers ([[PollerIoDriver]] over a real epoll/kqueue
-  * backend whose poll loop is never started and [[IoUringDriver]] over a real io_uring ring whose reap loop IS started), so the io_uring engine
-  * FIFO, which carries identical machinery yet had ZERO engine coverage, is exercised too. The two drivers drain their engine FIFO differently: the
-  * poller's is carrier-driven (the `engineWorkerActive` CAS makes whichever carrier submits the worker), independent of its poll loop, so the poller
-  * arm leaves the poll loop unstarted; the io_uring FIFO drains only on the reap carrier (submitEngineOp enqueues, drainEngineOps runs from reapLoop),
-  * so the io_uring arm starts the reap loop (it bounded-waits on the idle ring, draining the engine queue each cycle). On a host where the
-  * production-depth ring cannot init the io_uring arm is omitted and the backend-independent invariant is still asserted on the poller arm.
+  * backend and [[IoUringDriver]] over a real io_uring ring), so the io_uring engine FIFO, which carries identical machinery yet had ZERO engine
+  * coverage, is exercised too. Both drivers drain their engine FIFO the same way: the FIFO is drained ONLY on the always-running loop carrier
+  * (submitEngineOp enqueues; the poller's drainEngineOps runs from drainFifos on the poll loop, the io_uring's from reapLoop), so both arms start
+  * their loop (it bounded-waits ~100ms on the idle fd/ring, draining the engine queue each cycle) for an enqueued engine op to execute. On a host
+  * where the production-depth ring cannot init the io_uring arm is omitted and the backend-independent invariant is still asserted on the poller arm.
   *
   * Two interleavings, both deterministic with no sleep:
   *
@@ -66,18 +65,21 @@ class EngineFifoSingleOwnerTest extends Test:
     /** The drivers under test, each paired with a close thunk that releases its resources. Both expose the same `submitEngineOp` FIFO (the
       * invariant under test), so the leaf body is identical across them.
       *
-      * The poller arm is built over a real epoll/kqueue backend (jvm-native always has one); its poll loop is never started (its engine FIFO is
-      * carrier-driven, not loop-driven), so poll() is never invoked and create() serves only to construct the driver. The io_uring arm is built
-      * over a REAL io_uring ring through a [[RecordingIoUringBindings]] spy with its reap loop started, because the io_uring engine FIFO drains only
-      * on the reap carrier; the ring has no registered fds, so the reap loop only bounded-waits and drains the engine queue. The io_uring arm is
-      * included only when a production-depth ring inits on this host: off Linux, or where the cgroup `io_uring.max` cap blocks it, only the
-      * cross-platform poller arm runs (the FIFO invariant is backend-independent, so the poller arm asserts it on every platform; the io_uring arm
-      * asserts it additionally on native Linux).
+      * The poller arm is built over a real epoll/kqueue backend (jvm-native always has one) with its poll loop started, because the poller engine
+      * FIFO drains only on the poll-loop carrier; the poller fd has no registered fds, so the poll loop only bounded-waits and drains the engine
+      * queue each cycle. The io_uring arm is built over a REAL io_uring ring through a [[RecordingIoUringBindings]] spy with its reap loop started,
+      * the same way (the io_uring engine FIFO drains only on the reap carrier). The io_uring arm is included only when a production-depth ring inits
+      * on this host: off Linux, or where the cgroup `io_uring.max` cap blocks it, only the cross-platform poller arm runs (the FIFO invariant is
+      * backend-independent, so the poller arm asserts it on every platform; the io_uring arm asserts it additionally on native Linux).
       */
     private def drivers(using Frame): List[(String, IoDriver[PosixHandle], () => Unit)] =
         val real     = PollerBackend.default()
         val pollerFd = real.create()
         val poller   = TestDrivers.forBackend(RecordingPollerBackend(real), pollerFd)
+        // The poller engine FIFO is now poll-loop-driven (submitEngineOp enqueues; drainEngineOps runs from drainFifos on the poll loop, mirroring how
+        // IoUringDriver drains its engine FIFO on the reap loop), so the reap-loop equivalent MUST run for an enqueued engine op to execute. Start the
+        // poll loop: it bounded-waits (~100ms) on the poller fd (no fds registered) and drains the engine queue each cycle; close() signals it to exit.
+        discard(poller.start())
         val pollerArm: List[(String, IoDriver[PosixHandle], () => Unit)] =
             List(("PollerIoDriver", poller, () => poller.close()))
         pollerArm ++ uringArm.toList
@@ -101,8 +103,8 @@ class EngineFifoSingleOwnerTest extends Test:
                 val uring     = TestDrivers.forBindings(recording, realRing)
                 // The io_uring engine FIFO drains only on the reap carrier (submitEngineOp enqueues; drainEngineOps runs from reapLoop), so the
                 // reap loop MUST run for an enqueued engine op to execute. It bounded-waits (~100ms) on an idle ring with no registered fds, draining
-                // the engine queue each cycle; close() signals it to exit. (The poller's engine FIFO is carrier-driven via the engineWorkerActive
-                // CAS, independent of its poll loop, so the poller arm is left unstarted.)
+                // the engine queue each cycle; close() signals it to exit. (The poller arm above starts its poll loop for the same reason: both
+                // drivers now drain the engine FIFO only on their always-running loop carrier.)
                 discard(uring.start())
                 Present(("IoUringDriver", uring, () => uring.close()))
             end if
