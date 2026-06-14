@@ -2,6 +2,7 @@ package kyo
 
 import kyo.*
 import scala.annotation.tailrec
+import scala.annotation.targetName
 
 /** Runtime structural description of Scala types, used for introspection, generic programming, and bridging to dynamic formats.
   *
@@ -29,7 +30,7 @@ object Structure:
       * @return
       *   the compile-time structural type descriptor for A
       */
-    inline def of[A]: Structure.Type = ${ kyo.internal.StructureMacro.deriveImpl[A] }
+    inline def of[A](using s: Schema[A]): Structure.Type = s.structure
 
     /** Converts a typed value to its untyped Structure.Value representation.
       *
@@ -68,7 +69,7 @@ object Structure:
       *   a TypedValue carrying the compile-time type descriptor and the runtime value tree
       */
     inline def typedValue[A](value: A)(using schema: Schema[A], frame: Frame): Structure.TypedValue =
-        Structure.TypedValue(Structure.of[A], schema.toStructureValue(value))
+        Structure.TypedValue(schema.structure, schema.toStructureValue(value))
 
     // --- Type hierarchy ---
 
@@ -77,7 +78,7 @@ object Structure:
       * Each variant captures the shape of one category of Scala type. The tree is produced at compile time by `Structure.of[A]` and can be
       * inspected at runtime to drive generic algorithms.
       */
-    sealed abstract class Type derives Schema:
+    sealed abstract class Type:
         def name: String
 
     /** The specific kind of a primitive (scalar) type.
@@ -194,6 +195,20 @@ object Structure:
             innerType: Structure.Type
         ) extends Type
 
+        /** Identity / open-shape projection: the carrying Schema accepts any wire shape and produces
+          * any wire shape. No fixed structural projection exists at compile time. Used by
+          * Schema[Structure.Value], Schema[Json.JsonSchema], and any future shape-dynamic Schema.
+          *
+          * Compatibility with another Open is determined by tag equality, not structural recursion.
+          * An Open type is never compatible with any non-Open type.
+          *
+          * @param tag
+          *   runtime tag for the open-shape type
+          */
+        case class Open(tag: Tag[Any]) extends Type:
+            def name: String = "Open"
+        end Open
+
         // --- Type structural checks ---
 
         /** Structural compatibility check -- true when both types have the same shape. */
@@ -210,6 +225,7 @@ object Structure:
             case (Collection(_, _, ea), Collection(_, _, eb))   => compatible(ea, eb)
             case (Optional(_, _, ia), Optional(_, _, ib))       => compatible(ia, ib)
             case (Mapping(_, _, ka, va), Mapping(_, _, kb, vb)) => compatible(ka, kb) && compatible(va, vb)
+            case (Open(ta), Open(tb))                           => ta =:= tb
             case _                                              => false
 
         /** Walk all nodes depth-first. */
@@ -222,6 +238,7 @@ object Structure:
                 case Optional(_, _, inner)     => fold(inner)(acc)(f)
                 case Mapping(_, _, k, v)       => fold(v)(fold(k)(acc)(f))(f)
                 case _: Primitive              => acc
+                case _: Open                   => acc
             end match
         end fold
 
@@ -235,16 +252,29 @@ object Structure:
                 }
             case _ => Chunk.empty
 
+        /** Schema instance for `Structure.Type`. Authors update this declaration when a new variant
+          * is added to the sum, ensuring the wire shape changes only with explicit code review.
+          *
+          * `Schema.derived` emits the sum-Schema for `Structure.Type` via the FocusMacro path. The
+          * explicit declaration ensures the wire shape changes only when authors update this given.
+          */
+        given Schema[Structure.Type] = Schema.derived
+
     end Type
 
     // --- Field, Variant, Value data types ---
 
     /** Descriptor for a single field in a product type.
       *
+      * The structural type of the field is held by-name so a recursive or indirectly-recursive
+      * type graph constructs without forcing the inner Schema's lazy structure mid-init.
+      *
+      * Read the field type through [[fieldType]]; the case-class-generated `productElement(1)`,
+      * `unapply`, and `copy` expose the underlying `_fieldType` thunk directly, which is the lazy
+      * `() => Structure.Type` and not the forced value.
+      *
       * @param name
       *   the field name as declared in the case class
-      * @param fieldType
-      *   the structural type of the field value
       * @param doc
       *   optional human-readable description
       * @param default
@@ -254,13 +284,146 @@ object Structure:
       */
     case class Field(
         name: String,
-        fieldType: Structure.Type,
+        private val _fieldType: () => Structure.Type,
         doc: Maybe[String],
         default: Maybe[Structure.Value],
         optional: Boolean
-    ) derives Schema
+    ):
+        def fieldType: Structure.Type = _fieldType()
 
-    object Field
+        // Equality forces `_fieldType` so two Fields built from identical structural data
+        // compare equal even though the by-name `apply` wraps each call's argument in a
+        // fresh `() => fieldType` lambda. The auto-generated case-class equals would
+        // otherwise compare function references and report `false` for structurally
+        // identical Fields. Structure.Type has no CanEqual; reach for `.equals` directly.
+        override def equals(other: Any): Boolean = other match
+            case that: Field =>
+                name == that.name &&
+                doc == that.doc &&
+                default == that.default &&
+                optional == that.optional &&
+                fieldType.equals(that.fieldType)
+            case _ => false
+
+        override def hashCode(): Int =
+            var h = name.hashCode
+            h = h * 31 + fieldType.hashCode
+            h = h * 31 + doc.hashCode
+            h = h * 31 + default.hashCode
+            h = h * 31 + optional.hashCode
+            h
+        end hashCode
+    end Field
+
+    object Field:
+
+        /** Constructs a Structure.Field with the structural type captured by-name.
+          *
+          * The `fieldType` parameter is by-name so a strict caller writes
+          * `Structure.Field("x", someStructure, ...)` and the macro emission writes
+          * `Structure.Field("x", summonInline[Schema[t]].structure, ...)`; both defer
+          * the structure's evaluation until the first `field.fieldType` read. The
+          * thunk is required for self-referential and indirectly-recursive
+          * `Structure.Type.Product` graphs to construct without forcing the inner
+          * Schema's `structure` lazy val mid-init.
+          */
+        @targetName("applyByName")
+        def apply(
+            name: String,
+            fieldType: => Structure.Type,
+            doc: Maybe[String] = Maybe.empty,
+            default: Maybe[Structure.Value] = Maybe.empty,
+            optional: Boolean = false
+        ): Field =
+            new Field(name, () => fieldType, doc, default, optional)
+
+        /** Hand-rolled Schema for Structure.Field.
+          *
+          * The wire shape is a 5-key object: `name, fieldType, doc, default, optional`. The
+          * Field roundtrip in StructureTest verifies the shape. An auto-derived Schema would
+          * walk the case-class fields and emit the storage member
+          * `_fieldType: Function0[Structure.Type]` as a wire field, which is wrong on two
+          * counts: the wire field name would be the storage name (not the public
+          * `fieldType`), and the wire field type would be `Function0[Structure.Type]` for
+          * which no Schema can be summoned. The hand-roll mirrors the public 5-key face and
+          * reads via the public `def fieldType` accessor; constructs via the by-name
+          * companion `apply`.
+          *
+          * The Reader loop uses the canonical Codec.Reader contract at `Codec.scala:63-130`:
+          * `hasNextField()` is the loop predicate (returns Boolean), `fieldParse()` advances
+          * the cursor past the field name (returns Unit), and `lastFieldName()` returns the
+          * just-parsed field name.
+          */
+        given structureFieldSchema: Schema[Field] =
+            new Schema[Field](Seq.empty):
+                import scala.annotation.publicInBinary
+                // Frame.internal: required here because maybeSchema carries `using Frame`
+                // but this given is a kyo-internal implementation with no user callsite frame.
+                private given frame: Frame = Frame.internal
+                @publicInBinary private[kyo] def serializeWrite(value: Field, writer: Codec.Writer): Unit =
+                    writer.objectStart("Field", 5)
+                    writer.field("name", 0); summon[Schema[String]].serializeWrite(value.name, writer)
+                    writer.field("fieldType", 1); summon[Schema[Structure.Type]].serializeWrite(value.fieldType, writer)
+                    writer.field("doc", 2); summon[Schema[Maybe[String]]].serializeWrite(value.doc, writer)
+                    writer.field("default", 3); summon[Schema[Maybe[Structure.Value]]].serializeWrite(value.default, writer)
+                    writer.field("optional", 4); summon[Schema[Boolean]].serializeWrite(value.optional, writer)
+                    writer.objectEnd()
+                end serializeWrite
+                @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Field =
+                    discard(reader.objectStart())
+                    var name: String                    = ""
+                    var fieldType: Structure.Type       = Structure.Type.Open(Tag[Any])
+                    var doc: Maybe[String]              = Maybe.empty
+                    var default: Maybe[Structure.Value] = Maybe.empty
+                    var optional: Boolean               = false
+                    while reader.hasNextField() do
+                        reader.fieldParse()
+                        reader.lastFieldName() match
+                            case "name"      => name = summon[Schema[String]].serializeRead(reader)
+                            case "fieldType" => fieldType = summon[Schema[Structure.Type]].serializeRead(reader)
+                            case "doc"       => doc = summon[Schema[Maybe[String]]].serializeRead(reader)
+                            case "default"   => default = summon[Schema[Maybe[Structure.Value]]].serializeRead(reader)
+                            case "optional"  => optional = summon[Schema[Boolean]].serializeRead(reader)
+                            case _           => reader.skip()
+                        end match
+                    end while
+                    reader.objectEnd()
+                    Field(name, fieldType, doc, default, optional)
+                end serializeRead
+                @publicInBinary private[kyo] def getter(value: Field): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def setter(value: Field, next: Any): Field =
+                    next match
+                        case f: Field => f
+                        case _        => value
+                private lazy val _structure: Structure.Type =
+                    Structure.Type.Product(
+                        "Field",
+                        Tag[Field].asInstanceOf[Tag[Any]],
+                        Chunk.empty,
+                        Chunk(
+                            Structure.Field("name", summon[Schema[String]].structure, Maybe.empty, Maybe.empty, optional = false),
+                            Structure.Field(
+                                "fieldType",
+                                summon[Schema[Structure.Type]].structure,
+                                Maybe.empty,
+                                Maybe.empty,
+                                optional = false
+                            ),
+                            Structure.Field("doc", summon[Schema[Maybe[String]]].structure, Maybe.empty, Maybe.empty, optional = true),
+                            Structure.Field(
+                                "default",
+                                summon[Schema[Maybe[Structure.Value]]].structure,
+                                Maybe.empty,
+                                Maybe.empty,
+                                optional = true
+                            ),
+                            Structure.Field("optional", summon[Schema[Boolean]].structure, Maybe.empty, Maybe.empty, optional = false)
+                        )
+                    )
+                override def structure: Structure.Type = _structure
+            end new
+        end structureFieldSchema
+    end Field
 
     /** Descriptor for a single variant (case) in a sum type.
       *
@@ -285,7 +448,7 @@ object Structure:
       *
       * Values are produced by `Structure.encode` or `Schema.toStructureValue` and consumed by `Structure.decode` or navigation via `Path`.
       */
-    enum Value derives CanEqual, Schema:
+    enum Value derives CanEqual:
         /** Named fields of a product/case class, ordered by declaration. */
         case Record(fields: Chunk[(String, Value)])
 
@@ -318,6 +481,44 @@ object Structure:
     end Value
 
     object Value:
+
+        /** Identity [[Schema]] for [[Value]]: writes shape-aware (Record -> object, Sequence -> array, scalars unwrapped) and reads via
+          * [[kyo.Codec.IntrospectingReader.readStructure]] which materializes the next wire value directly into the Value tree.
+          *
+          * The auto-derived enum-Schema would emit a tagged-union wrapper like `{"Record":{...}}` and refuse a plain JSON object like
+          * `{"path":"."}` (raising [[UnknownVariantException]] because "path" is not a known discriminator). That tagged form is an internal
+          * kyo-schema detail; Value is the universal "any-shape" type, so its Schema is the identity: writes preserve the shape Scala already
+          * has, reads accept whatever shape the wire carries. The override of `fromStructureValue` keeps top-level `Structure.decode[Value]`
+          * a zero-cost passthrough; `serializeRead` covers the case where Value is a field of an outer case class being decoded by the
+          * macro-generated reader.
+          *
+          * Reading requires a [[kyo.Codec.IntrospectingReader]] (JSON or Structure source). Binary codecs without per-value type
+          * tags cannot decode a `Value` and the type-mismatch is reported with a precise diagnostic instead of bubbling up as an
+          * `UnknownVariantException` from the auto-derived shape.
+          */
+        given valueSchema: Schema[Value] =
+            new Schema[Value](Seq.empty):
+                import scala.annotation.publicInBinary
+                @publicInBinary private[kyo] def serializeWrite(value: Value, writer: Codec.Writer): Unit =
+                    Schema.writeStructureValue(writer, value)
+                @publicInBinary private[kyo] def serializeRead(reader: Codec.Reader): Value =
+                    reader match
+                        case ir: Codec.IntrospectingReader => ir.readStructure()
+                        case other =>
+                            throw SchemaNotSerializableException(
+                                s"Schema[Structure.Value] requires a self-describing reader (JSON or Structure source); got ${other.getClass.getSimpleName}"
+                            )(using reader.frame)
+                @publicInBinary private[kyo] def getter(value: Value): Maybe[Any] = Maybe(value)
+                @publicInBinary private[kyo] def setter(value: Value, next: Any): Value =
+                    next match
+                        case sv: Value => sv
+                        case _         => value
+                private lazy val _structure: Structure.Type =
+                    Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
+                override def structure: Structure.Type = _structure
+                override private[kyo] def fromStructureValue(sv: Value)(using Frame): Result[DecodeException, Value] =
+                    Result.Success(sv)
+
         /** Creates a typed Value from a primitive Scala value.
           *
           * Dispatches via `Tag[A]` to select the correct Value variant based on the static type. Runtime pattern matching is unreliable on

@@ -76,7 +76,7 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
 
         "apply recursive type" in {
-            case class MTTree(value: Int, children: List[MTTree]) derives CanEqual
+            case class MTTree(value: Int, children: List[MTTree]) derives CanEqual, Schema
             val m                                                                              = Schema[MTTree]
             val _: Schema[MTTree] { type Focused = "value" ~ Int & "children" ~ List[MTTree] } = m
             succeed("type-resolution compile check: the type ascription above is the verification; no concrete runtime value to assert")
@@ -345,7 +345,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 .doc(_.ssn)("Social security number")
                 .deprecated(_.ssn)("Use taxId instead")
                 .drop("ssn")
-            // ssn is dropped, metadata removed — verify via field doc on remaining fields
+            // ssn is dropped, metadata removed; verify via field doc on remaining fields
             assert(s.focus(_.name).doc == Maybe.empty)
         }
 
@@ -731,7 +731,7 @@ class SchemaTest extends kyo.test.Test[Any]:
 
         "check snaps back to root type" in {
             val m = Schema[MTPerson].check(_.name)(_.nonEmpty, "name required")
-            // After check, we're back at root Schema — can focus on a different field
+            // After check, we're back at root Schema; can focus on a different field
             val m2     = m.check(_.age)(_ > 0, "age positive")
             val errors = m2.validate(person)
             assert(errors.isEmpty)
@@ -1074,7 +1074,7 @@ class SchemaTest extends kyo.test.Test[Any]:
         "check on Option field with None skips" in {
             val m = Schema[MTOptional]
                 .check(_.nickname)(_.nonEmpty, "nickname must be present")
-            // With None, the Option is empty — check predicate receives None which is !nonEmpty
+            // With None, the Option is empty; check predicate receives None which is !nonEmpty
             val errorsNone = m.validate(MTOptional("Alice", None))
             // With Some, the Option is non-empty
             val errorsSome = m.validate(MTOptional("Alice", Some("Ali")))
@@ -1573,25 +1573,25 @@ class SchemaTest extends kyo.test.Test[Any]:
 
         // --- Cross-platform regex audit ---
 
-        "pattern POSIX regex — email-like" in {
+        "pattern POSIX regex (email-like)" in {
             val schema = Schema[X].checkPattern(_.s)("^[a-z]+@[a-z]+$")
             assert(schema.validate(X("a@b")).isEmpty)
             assert(schema.validate(X("no-at")).nonEmpty)
         }
 
-        "pattern character class — digits with dash" in {
+        "pattern character class (digits with dash)" in {
             val schema = Schema[X].checkPattern(_.s)("""^\d{3}-\d{4}$""")
             assert(schema.validate(X("555-1234")).isEmpty)
             assert(schema.validate(X("abc-1234")).nonEmpty)
         }
 
-        "pattern alternation — animal names" in {
+        "pattern alternation (animal names)" in {
             val schema = Schema[X].checkPattern(_.s)("^(cat|dog|bird)$")
             assert(schema.validate(X("cat")).isEmpty)
             assert(schema.validate(X("fish")).nonEmpty)
         }
 
-        "pattern bounded quantifier — a{2,5}" in {
+        "pattern bounded quantifier (a{2,5})" in {
             val schema = Schema[X].checkPattern(_.s)("^a{2,5}$")
             assert(schema.validate(X("aa")).isEmpty)
             assert(schema.validate(X("aaaaa")).isEmpty)
@@ -1599,19 +1599,19 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(schema.validate(X("aaaaaa")).nonEmpty)
         }
 
-        "pattern anchors — word characters only" in {
+        "pattern anchors (word characters only)" in {
             val schema = Schema[X].checkPattern(_.s)("""^\w+$""")
             assert(schema.validate(X("hello")).isEmpty)
             assert(schema.validate(X("with space")).nonEmpty)
         }
 
-        "pattern escaped metacharacters — literal .+*" in {
+        "pattern escaped metacharacters (literal .+*)" in {
             val schema = Schema[X].checkPattern(_.s)("""^\.\+\*$""")
             assert(schema.validate(X(".+*")).isEmpty)
             assert(schema.validate(X("abc")).nonEmpty)
         }
 
-        "pattern possessive quantifier — documented platform limitation" in {
+        "pattern possessive quantifier (documented platform limitation)" in {
             import kyo.internal.Platform
             if Platform.isJVM then
                 val schema = Schema[X].checkPattern(_.s)("^(a)++$")
@@ -1756,7 +1756,7 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(result("size") == "5")
         }
 
-        // === fold edge cases (after rename/add) ===
+        // === fold with schema transformations (rename/add) ===
 
         "fold after rename" in {
             val m = Schema[MTPerson].rename("name", "fullName")
@@ -1946,7 +1946,7 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(result == Map("name" -> "Alice", "age" -> "30"))
         }
 
-        // === edge cases: empty and large case classes ===
+        // === boundary shapes: empty and large case classes ===
 
         "empty case class fold" in {
             val m = Schema[MTEmpty]
@@ -3626,8 +3626,9 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(decoded.name == user.name)
             assert(decoded.age == user.age)
             assert(decoded.email == user.email)
-            // ssn was dropped from serialization, so it gets its zero value on decode
-            assert(decoded.ssn == "")
+            // ssn was dropped from serialization, so it gets the JVM default for its declared type
+            // (`null` for `String`, `0` for `Int`, `false` for `Boolean`, etc.).
+            assert(decoded.ssn == null)
         }
 
         "schema.encode[Json] produces bytes" in {
@@ -3812,15 +3813,21 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(roundTrip(v) == v)
             }
 
-            "Structure.Value.VariantCase round-trip" in {
+            "Structure.Value.VariantCase round-trips through shape-aware Schema as a single-field Record" in {
+                // The identity Schema[Structure.Value] (kyo.Structure.Value.valueSchema) writes VariantCase as a
+                // single-field object whose key is the variant name. A shape-aware reader cannot distinguish that
+                // wire form from a Record containing one field, so the canonical round-trip materializes a Record.
                 val v = Structure.Value.VariantCase(
                     "Circle",
                     Structure.Value.Record(Chunk(("radius", Structure.Value.primitive(5.0))))
                 )
-                assert(roundTrip(v) == v)
+                val expected = Structure.Value.Record(
+                    Chunk(("Circle", Structure.Value.Record(Chunk(("radius", Structure.Value.primitive(5.0))))))
+                )
+                assert(roundTrip(v) == expected)
             }
 
-            "Structure.Value.MapEntries round-trip" in {
+            "Structure.Value.MapEntries round-trip preserves entries through the token codec" in {
                 val v = Structure.Value.MapEntries(
                     Chunk(
                         (Structure.Value.primitive("key1"), Structure.Value.primitive(10)),
@@ -4004,7 +4011,9 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(jsonRoundTrip(v) == v)
             }
 
-            "Structure.Value.VariantCase with whole-number Double fields round-trip" in {
+            "Structure.Value.VariantCase with whole-number Double fields canonicalizes to a Record on round-trip" in {
+                // Shape-aware identity: VariantCase serializes as a single-field object keyed by the variant name; the
+                // round-trip materializes a Record(((variantName, inner)) rather than restoring the VariantCase tag.
                 val v = Structure.Value.VariantCase(
                     "Point",
                     Structure.Value.Record(
@@ -4014,7 +4023,20 @@ class SchemaTest extends kyo.test.Test[Any]:
                         )
                     )
                 )
-                assert(roundTrip(v) == v)
+                val expected = Structure.Value.Record(
+                    Chunk(
+                        (
+                            "Point",
+                            Structure.Value.Record(
+                                Chunk(
+                                    ("x", Structure.Value.primitive(0.0)),
+                                    ("y", Structure.Value.primitive(-1.0))
+                                )
+                            )
+                        )
+                    )
+                )
+                assert(roundTrip(v) == expected)
             }
 
             // Structure.Field codec round-trips
@@ -4369,14 +4391,23 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(jsonRoundTrip(v) == v)
             }
 
-            "Structure.Value MapEntries JSON round-trip" in {
+            "Structure.Value MapEntries with String keys canonicalizes to a Record on JSON round-trip" in {
+                // JSON cannot distinguish a string-keyed map from a record; the universal shape-aware identity Schema
+                // emits both as `{"key":value}` and reads them back as Record. Round-tripping a MapEntries through JSON
+                // yields the equivalent Record.
                 val v = Structure.Value.MapEntries(
                     Chunk(
                         (Structure.Value.primitive("key1"), Structure.Value.primitive(10)),
                         (Structure.Value.primitive("key2"), Structure.Value.primitive(20))
                     )
                 )
-                assert(jsonRoundTrip(v) == v)
+                val expected = Structure.Value.Record(
+                    Chunk(
+                        ("key1", Structure.Value.primitive(10)),
+                        ("key2", Structure.Value.primitive(20))
+                    )
+                )
+                assert(jsonRoundTrip(v) == expected)
             }
         }
 
@@ -4409,14 +4440,14 @@ class SchemaTest extends kyo.test.Test[Any]:
 
             def captureFrameElsewhere()(using f: Frame): Frame = f
 
-            "Frame round-trip — implicit Frame" in {
+            "Frame round-trip (implicit Frame)" in {
                 val frame  = captureFrameHere()
                 val schema = summon[Schema[Frame]]
                 val back   = auditRoundTrip(frame)(using schema)
                 assert(frame.toString == back.toString)
             }
 
-            "Frame round-trip — different call site" in {
+            "Frame round-trip (different call site)" in {
                 val frame  = captureFrameElsewhere()
                 val schema = summon[Schema[Frame]]
                 val back   = auditJsonRoundTrip(frame)(using schema)
@@ -4425,7 +4456,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(back.callerName.nonEmpty)
             }
 
-            "Tag[Int] round-trip — static tag" in {
+            "Tag[Int] round-trip (static tag)" in {
                 val tag    = summon[Tag[Int]]
                 val schema = Schema.tagSchema[Int]
                 val back   = auditRoundTrip(tag)(using schema)
@@ -4433,7 +4464,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(tag =:= back)
             }
 
-            "Tag[String] round-trip — static tag" in {
+            "Tag[String] round-trip (static tag)" in {
                 val tag    = summon[Tag[String]]
                 val schema = Schema.tagSchema[String]
                 val back   = auditRoundTrip(tag)(using schema)
@@ -4441,7 +4472,7 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(tag =:= back)
             }
 
-            "Tag dynamic round-trip — decoding the show-string fails (documented limitation)" in {
+            "Tag dynamic round-trip: decoding the show-string fails (documented limitation)" in {
                 val tag    = dynamicListTagOf[Int]
                 val schema = Schema.tagSchema[List[Int]]
                 val w      = TestWriter()
@@ -4459,14 +4490,14 @@ class SchemaTest extends kyo.test.Test[Any]:
                 )
             }
 
-            "Dict[String, Int] empty round-trip — size 0" in {
+            "Dict[String, Int] empty round-trip (size 0)" in {
                 val v      = Dict.empty[String, Int]
                 val schema = Schema.stringDictSchema[Int]
                 val back   = auditRoundTrip(v)(using schema)
                 assert(back.size == 0)
             }
 
-            "Dict[String, Dict[String, Int]] nested round-trip — all 4 leaf values present" in {
+            "Dict[String, Dict[String, Int]] nested round-trip (all 4 leaf values present)" in {
                 given inner: Schema[Dict[String, Int]]               = Schema.stringDictSchema[Int]
                 given outer: Schema[Dict[String, Dict[String, Int]]] = Schema.stringDictSchema[Dict[String, Int]]
                 val v = Dict(
@@ -4481,28 +4512,28 @@ class SchemaTest extends kyo.test.Test[Any]:
                 assert(back.get("b").get.get("q") == Maybe(4))
             }
 
-            "Maybe[Maybe[Int]] — Absent round-trips as Absent" in {
+            "Maybe[Maybe[Int]]: Absent round-trips as Absent" in {
                 val v: Maybe[Maybe[Int]] = Maybe.empty[Maybe[Int]]
                 val schema               = summon[Schema[Maybe[Maybe[Int]]]]
                 val back                 = auditRoundTrip(v)(using schema)
                 assert(back == Maybe.empty[Maybe[Int]])
             }
 
-            "Maybe[Maybe[Int]] — standalone Present(Absent) is lossy" in {
+            "Maybe[Maybe[Int]]: standalone Present(Absent) is lossy" in {
                 val v: Maybe[Maybe[Int]] = Present(Maybe.empty[Int])
                 val schema               = summon[Schema[Maybe[Maybe[Int]]]]
                 val back                 = auditRoundTrip(v)(using schema)
                 assert(back == Maybe.empty[Maybe[Int]], s"Expected Absent (lossy) but got $back")
             }
 
-            "Chunk[Int] empty round-trip — size 0" in {
+            "Chunk[Int] empty round-trip (size 0)" in {
                 val v      = Chunk.empty[Int]
                 val schema = summon[Schema[Chunk[Int]]]
                 val back   = auditRoundTrip(v)(using schema)
                 assert(back.size == 0)
             }
 
-            "Chunk[Chunk[Int]] nested round-trip — all 4 elements present in correct positions" in {
+            "Chunk[Chunk[Int]] nested round-trip (all 4 elements present in correct positions)" in {
                 val v      = Chunk(Chunk(1, 2), Chunk(3, 4))
                 val schema = summon[Schema[Chunk[Chunk[Int]]]]
                 val back   = auditRoundTrip(v)(using schema)
@@ -5258,56 +5289,61 @@ class SchemaTest extends kyo.test.Test[Any]:
 
         "plain class" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpaque]")(
-                "requires a case class or sealed trait"
+                "not a case class or sealed trait"
             )
         }
 
         "open trait" in {
             typeCheckFailure("kyo.Schema.derived[kyo.MTOpenTrait]")(
-                "requires a case class or sealed trait"
+                "not a case class or sealed trait"
             )
         }
 
         "primitive" in {
             typeCheckFailure("kyo.Schema.derived[Int]")(
-                "requires a case class or sealed trait"
+                "not a case class or sealed trait"
             )
         }
 
+        // Generic-derivation diagnostics: `Schema.derived` resolves each field via
+        // `summonInline[Schema[ft]]`, so missing instances surface with the standard Scala 3
+        // `No given instance of type` message. The macro deliberately does not add any
+        // type-symbol-specific diagnostics on top, to honour the zero-specialization invariant.
+
         "field with non-derivable type" in {
             typeCheckFailure("kyo.Schema.derived[Tuple1[kyo.MTOpaque]]")(
-                "No given Schema[kyo.MTOpaque]"
+                "No given instance of type"
             )
         }
 
         "field with non-derivable list element" in {
             typeCheckFailure(
                 "case class T(items: List[kyo.MTOpaque]); kyo.Schema.derived[T]"
-            )("No given Schema[kyo.MTOpaque]")
+            )("No given instance of type")
         }
 
         "field with non-derivable option element" in {
             typeCheckFailure(
                 "case class T(o: Option[kyo.MTOpaque]); kyo.Schema.derived[T]"
-            )("No given Schema[kyo.MTOpaque]")
+            )("No given instance of type")
         }
 
         "field with non-derivable map value" in {
             typeCheckFailure(
                 "case class T(m: Map[String, kyo.MTOpaque]); kyo.Schema.derived[T]"
-            )("No given Schema[kyo.MTOpaque]")
+            )("No given instance of type")
         }
 
-        "error includes action hint" in {
+        "error names the missing Schema instance" in {
             typeCheckFailure("kyo.Schema.derived[Tuple1[kyo.MTOpaque]]")(
-                "provide a given Schema"
+                "kyo.Schema"
             )
         }
 
-        "error includes wrapper context for containers" in {
+        "error reports the unresolved field-element type" in {
             typeCheckFailure(
                 "case class T(items: List[kyo.MTOpaque]); kyo.Schema.derived[T]"
-            )("field type:")
+            )("MTOpaque")
         }
     }
 
@@ -6188,6 +6224,1025 @@ class SchemaTest extends kyo.test.Test[Any]:
             assert(decoded.age == user.age)
             assert(decoded.email == user.email)
             assert(decoded.ssn == user.ssn)
+        }
+
+    }
+
+    "structure default" - {
+        "Schema[String].structure equals Structure.of[String]" in {
+            val s = summon[Schema[String]]
+            assert(Structure.Type.compatible(s.structure, Structure.of[String]))
+        }
+        "Schema[Int].structure equals Structure.of[Int]" in {
+            val s = summon[Schema[Int]]
+            assert(Structure.Type.compatible(s.structure, Structure.of[Int]))
+        }
+        "Schema[List[String]].structure equals Structure.of[List[String]]" in {
+            val s = summon[Schema[List[String]]]
+            assert(Structure.Type.compatible(s.structure, Structure.of[List[String]]))
+        }
+        "Schema[Map[String, Int]].structure equals Structure.of[Map[String, Int]]" in {
+            val s = summon[Schema[Map[String, Int]]]
+            assert(Structure.Type.compatible(s.structure, Structure.of[Map[String, Int]]))
+        }
+    }
+
+    "primitive structure" - {
+        "stringSchema" in {
+            val s = summon[Schema[String]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]]))
+        }
+        "booleanSchema" in {
+            val s = summon[Schema[Boolean]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Boolean, Tag[Boolean].asInstanceOf[Tag[Any]]))
+        }
+        "intSchema" in {
+            val s = summon[Schema[Int]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]]))
+        }
+        "longSchema" in {
+            val s = summon[Schema[Long]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Long, Tag[Long].asInstanceOf[Tag[Any]]))
+        }
+        "floatSchema" in {
+            val s = summon[Schema[Float]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Float, Tag[Float].asInstanceOf[Tag[Any]]))
+        }
+        "doubleSchema" in {
+            val s = summon[Schema[Double]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Double, Tag[Double].asInstanceOf[Tag[Any]]))
+        }
+        "shortSchema" in {
+            val s = summon[Schema[Short]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Short, Tag[Short].asInstanceOf[Tag[Any]]))
+        }
+        "byteSchema" in {
+            val s = summon[Schema[Byte]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Byte, Tag[Byte].asInstanceOf[Tag[Any]]))
+        }
+        "charSchema" in {
+            val s = summon[Schema[Char]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Char, Tag[Char].asInstanceOf[Tag[Any]]))
+        }
+        "bigDecimalSchema" in {
+            val s = summon[Schema[BigDecimal]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.BigDecimal, Tag[BigDecimal].asInstanceOf[Tag[Any]]))
+        }
+        "bigIntSchema" in {
+            val s = summon[Schema[BigInt]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.BigInt, Tag[BigInt].asInstanceOf[Tag[Any]]))
+        }
+        "instantSchema" in {
+            val s = summon[Schema[java.time.Instant]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Instant].asInstanceOf[Tag[Any]]))
+        }
+        "durationSchema" in {
+            val s = summon[Schema[java.time.Duration]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.Duration].asInstanceOf[Tag[Any]]))
+        }
+        "spanByteSchema" in {
+            val s = summon[Schema[Span[Byte]]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]]))
+        }
+        "frameSchema" in {
+            val s = summon[Schema[Frame]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Frame].asInstanceOf[Tag[Any]]))
+        }
+        "tagSchema" in {
+            val s = summon[Schema[Tag[String]]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Tag[String]].asInstanceOf[Tag[Any]]))
+        }
+        "localDateSchema" in {
+            val s = summon[Schema[java.time.LocalDate]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalDate].asInstanceOf[Tag[Any]]))
+        }
+        "localTimeSchema" in {
+            val s = summon[Schema[java.time.LocalTime]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.time.LocalTime].asInstanceOf[Tag[Any]]))
+        }
+        "localDateTimeSchema" in {
+            val s = summon[Schema[java.time.LocalDateTime]]
+            s.structure match
+                case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                case other                                                       => fail(s"Expected Primitive(String, _) but got $other")
+        }
+        "uuidSchema" in {
+            val s = summon[Schema[java.util.UUID]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[java.util.UUID].asInstanceOf[Tag[Any]]))
+        }
+        "unitSchema" in {
+            val s = summon[Schema[Unit]]
+            assert(s.structure == Structure.Type.Primitive(Structure.PrimitiveKind.Unit, Tag[Unit].asInstanceOf[Tag[Any]]))
+        }
+    }
+
+    "primitive structure identity" - {
+        "Schema[String].structure returns same reference on repeated calls" in {
+            val s = summon[Schema[String]]
+            assert(s.structure eq s.structure)
+        }
+    }
+
+    "container structure" - {
+        "listSchema produces Collection structure with name List and inner reference eq" in {
+            val schema = summon[Schema[List[Int]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "List")
+                    assert(elementType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "vectorSchema produces Collection structure with name Vector and inner reference eq" in {
+            val schema = summon[Schema[Vector[String]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Vector")
+                    assert(elementType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "setSchema produces Collection structure with name Set and inner reference eq" in {
+            val schema = summon[Schema[Set[Boolean]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Set")
+                    assert(elementType eq summon[Schema[Boolean]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "chunkSchema produces Collection structure with name Chunk and inner reference eq" in {
+            val schema = summon[Schema[Chunk[Long]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Chunk")
+                    assert(elementType eq summon[Schema[Long]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "seqSchema produces Collection structure with name Seq and inner reference eq" in {
+            val schema = summon[Schema[Seq[Double]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Seq")
+                    assert(elementType eq summon[Schema[Double]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "spanSchema produces Collection structure with name Span and inner reference eq" in {
+            val schema = summon[Schema[Span[Int]]]
+            schema.structure match
+                case Structure.Type.Collection(name, _, elementType) =>
+                    assert(name == "Span")
+                    assert(elementType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Collection but got $other")
+            end match
+        }
+        "maybeSchema produces Optional structure with name Maybe and inner reference eq" in {
+            val schema = summon[Schema[Maybe[String]]]
+            schema.structure match
+                case Structure.Type.Optional(name, _, innerType) =>
+                    assert(name == "Maybe")
+                    assert(innerType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Optional but got $other")
+            end match
+        }
+        "optionSchema produces Optional structure with name Option and inner reference eq" in {
+            val schema = summon[Schema[Option[Int]]]
+            schema.structure match
+                case Structure.Type.Optional(name, _, innerType) =>
+                    assert(name == "Option")
+                    assert(innerType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Optional but got $other")
+            end match
+        }
+        "Schema[List[Int]].structure returns same reference on repeated calls" in {
+            val schema = summon[Schema[List[Int]]]
+            assert(schema.structure eq schema.structure)
+        }
+        "Schema[Maybe[String]].structure returns same reference on repeated calls" in {
+            val schema = summon[Schema[Maybe[String]]]
+            assert(schema.structure eq schema.structure)
+        }
+    }
+
+    "container Frame propagation" - {
+        "summon Schema[List[Int]] succeeds with Frame in scope and produces Collection structure" in {
+            val schema = summon[Schema[List[Int]]]
+            assert(schema.structure.isInstanceOf[Structure.Type.Collection])
+        }
+    }
+
+    "Result/Either structure" - {
+        "resultSchema produces Sum structure with name Result" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.name == "Result")
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema Sum has 3 variants: success, failure, panic" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants.size == 3)
+                    assert(s.variants(0).name == "success")
+                    assert(s.variants(1).name == "failure")
+                    assert(s.variants(2).name == "panic")
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema success variant structure is reference-eq to Schema[Int].structure" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(0).variantType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema failure variant structure is reference-eq to Schema[String].structure" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(1).variantType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema panic variant structure is Primitive(String)" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    s.variants(2).variantType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema typeParams has size 2" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.typeParams.size == 2)
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema typeParams(0) is reference-eq to Schema[String].structure (E)" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.typeParams(0) eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "resultSchema typeParams(1) is reference-eq to Schema[Int].structure (A)" in {
+            val schema = summon[Schema[Result[String, Int]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.typeParams(1) eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema produces Sum structure with name Either" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.name == "Either")
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema Sum has 2 variants: Left and Right" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants.size == 2)
+                    assert(s.variants(0).name == "Left")
+                    assert(s.variants(1).name == "Right")
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema Left variant structure is reference-eq to Schema[Int].structure" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(0).variantType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema Right variant structure is reference-eq to Schema[String].structure" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum =>
+                    assert(s.variants(1).variantType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema typeParams has size 2" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.typeParams.size == 2)
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+        "eitherSchema enumValues is empty" in {
+            val schema = summon[Schema[Either[Int, String]]]
+            schema.structure match
+                case s: Structure.Type.Sum => assert(s.enumValues.isEmpty)
+                case other                 => fail(s"Expected Sum but got $other")
+            end match
+        }
+    }
+
+    "Map/Dict structure" - {
+        "stringMapSchema produces Mapping structure with name Map" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            schema.structure match
+                case m: Structure.Type.Mapping => assert(m.name == "Map")
+                case other                     => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringMapSchema keyType is Primitive(String)" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringMapSchema valueType is reference-eq to Schema[Int].structure" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.valueType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringDictSchema produces Mapping structure with name Dict and Primitive(String) key" in {
+            val schema = summon[Schema[Dict[String, Boolean]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.name == "Dict")
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringDictSchema valueType is reference-eq to Schema[Boolean].structure" in {
+            val schema = summon[Schema[Dict[String, Boolean]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.valueType eq summon[Schema[Boolean]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "dictSchema produces Mapping structure with name Dict" in {
+            val schema = summon[Schema[Dict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping => assert(m.name == "Dict")
+                case other                     => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "dictSchema keyType is reference-eq to Schema[Int].structure (non-String key)" in {
+            val schema = summon[Schema[Dict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.keyType eq summon[Schema[Int]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "dictSchema valueType is reference-eq to Schema[String].structure" in {
+            val schema = summon[Schema[Dict[Int, String]]]
+            schema.structure match
+                case m: Structure.Type.Mapping =>
+                    assert(m.valueType eq summon[Schema[String]].structure)
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "stringDictSchema and dictSchema with String key use different givens" in {
+            // stringDictSchema: keyType is Primitive(String)
+            // dictSchema: keyType is Schema[String].structure (also Primitive(String) but distinct path)
+            val stringDictS = summon[Schema[Dict[String, Int]]]
+            stringDictS.structure match
+                case m: Structure.Type.Mapping =>
+                    m.keyType match
+                        case Structure.Type.Primitive(Structure.PrimitiveKind.String, _) => succeed
+                        case other => fail(s"Expected Primitive(String) but got $other")
+                    end match
+                case other => fail(s"Expected Mapping but got $other")
+            end match
+        }
+        "Schema[Map[String,Int]].structure returns same reference on repeated calls" in {
+            val schema = summon[Schema[Map[String, Int]]]
+            assert(schema.structure eq schema.structure)
+        }
+    }
+
+    // =========================================================================
+    // valueSchema identity wire shape
+    // =========================================================================
+
+    "valueSchema identity wire shape (top-level)" - {
+
+        "Str encodes as bare JSON string" in {
+            val v    = Structure.Value.Str("hello")
+            val json = Json.encode(v)
+            assert(json == "\"hello\"")
+        }
+
+        "Str round-trips through JSON" in {
+            val v       = Structure.Value.Str("hello")
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Integer encodes as bare JSON number" in {
+            val v    = Structure.Value.Integer(42L)
+            val json = Json.encode(v)
+            assert(json == "42")
+        }
+
+        "Integer round-trips through JSON" in {
+            val v       = Structure.Value.Integer(42L)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Decimal encodes as bare JSON number" in {
+            val v    = Structure.Value.Decimal(3.14)
+            val json = Json.encode(v)
+            assert(json.startsWith("3.14"))
+        }
+
+        "Decimal round-trips through JSON" in {
+            val v       = Structure.Value.Decimal(3.14)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Bool encodes as bare JSON boolean" in {
+            val v    = Structure.Value.Bool(true)
+            val json = Json.encode(v)
+            assert(json == "true")
+        }
+
+        "Bool round-trips through JSON" in {
+            val v       = Structure.Value.Bool(true)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Null encodes as bare JSON null" in {
+            val v    = Structure.Value.Null
+            val json = Json.encode(v)
+            assert(json == "null")
+        }
+
+        "Null round-trips through JSON" in {
+            val v       = Structure.Value.Null
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Record encodes as JSON object (not tagged-union)" in {
+            val v    = Structure.Value.Record(Chunk("path" -> Structure.Value.Str(".")))
+            val json = Json.encode(v)
+            assert(json.contains("\"path\""))
+            assert(json.contains("\".\""))
+            assert(!json.contains("\"Record\""))
+        }
+
+        "Record round-trips through JSON" in {
+            val v       = Structure.Value.Record(Chunk("path" -> Structure.Value.Str(".")))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Sequence encodes as JSON array (not tagged-union)" in {
+            val v = Structure.Value.Sequence(Chunk(Structure.Value.Integer(1L), Structure.Value.Integer(2L), Structure.Value.Integer(3L)))
+            val json = Json.encode(v)
+            assert(json == "[1,2,3]")
+            assert(!json.contains("\"Sequence\""))
+        }
+
+        "Sequence round-trips through JSON" in {
+            val v = Structure.Value.Sequence(Chunk(Structure.Value.Integer(1L), Structure.Value.Integer(2L), Structure.Value.Integer(3L)))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[Structure.Value](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Schema[Structure.Value].structure is Type.Open" in {
+            val schema = summon[Schema[Structure.Value]]
+            schema.structure match
+                case _: Structure.Type.Open => succeed
+                case other                  => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+    }
+
+    // =========================================================================
+    // jsonSchemaSchema Draft 2020-12
+    // =========================================================================
+
+    "jsonSchemaSchema Draft 2020-12 (top-level)" - {
+
+        "Obj(empty) encodes as JSON Schema object type" in {
+            val v    = JsonSchema.Obj(List.empty, List.empty)
+            val json = Json.encode(v)
+            assert(json.contains("\"type\""))
+            assert(json.contains("\"object\""))
+            assert(!json.contains("\"Obj\""))
+        }
+
+        "Obj round-trips through JSON" in {
+            val v       = JsonSchema.Obj(List.empty, List.empty)
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Str encodes as JSON Schema string type" in {
+            val v    = JsonSchema.Str()
+            val json = Json.encode(v)
+            assert(json.contains("\"string\""))
+            assert(!json.contains("\"Str\""))
+        }
+
+        "Str round-trips through JSON" in {
+            val v       = JsonSchema.Str()
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Integer encodes as JSON Schema integer type" in {
+            val v    = JsonSchema.Integer()
+            val json = Json.encode(v)
+            assert(json.contains("\"integer\""))
+            assert(!json.contains("\"Integer\""))
+        }
+
+        "Integer round-trips through JSON" in {
+            val v       = JsonSchema.Integer()
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Num encodes as JSON Schema number type" in {
+            val v    = JsonSchema.Num()
+            val json = Json.encode(v)
+            assert(json.contains("\"number\""))
+            assert(!json.contains("\"Num\""))
+        }
+
+        "Num round-trips through JSON" in {
+            val v       = JsonSchema.Num()
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Bool encodes as JSON Schema boolean type" in {
+            val v    = JsonSchema.Bool
+            val json = Json.encode(v)
+            assert(json.contains("\"boolean\""))
+            assert(!json.contains("\"Bool\""))
+        }
+
+        "Bool round-trips through JSON" in {
+            val v       = JsonSchema.Bool
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Null encodes as JSON Schema null type" in {
+            val v    = JsonSchema.Null
+            val json = Json.encode(v)
+            assert(json.contains("\"null\""))
+            assert(!json.contains("\"Null\""))
+        }
+
+        "Null round-trips through JSON" in {
+            val v       = JsonSchema.Null
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Arr encodes as JSON Schema array type" in {
+            val v    = JsonSchema.Arr(JsonSchema.Str())
+            val json = Json.encode(v)
+            assert(json.contains("\"array\""))
+            assert(!json.contains("\"Arr\""))
+        }
+
+        "Arr round-trips through JSON" in {
+            val v       = JsonSchema.Arr(JsonSchema.Str())
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Nullable encodes as oneOf with null (not tagged-union)" in {
+            val v    = JsonSchema.Nullable(JsonSchema.Str())
+            val json = Json.encode(v)
+            assert(json.contains("\"oneOf\""))
+            assert(!json.contains("\"Nullable\""))
+        }
+
+        "Nullable round-trips through JSON" in {
+            val v       = JsonSchema.Nullable(JsonSchema.Str())
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "OneOf encodes as JSON Schema oneOf (not tagged-union)" in {
+            val v    = JsonSchema.OneOf(List("variant" -> JsonSchema.Obj(List.empty, List.empty)))
+            val json = Json.encode(v)
+            assert(json.contains("\"oneOf\""))
+            assert(!json.contains("\"OneOf\""))
+        }
+
+        "OneOf round-trips through JSON" in {
+            val v       = JsonSchema.OneOf(List("variant" -> JsonSchema.Obj(List.empty, List.empty)))
+            val encoded = Json.encode(v)
+            val decoded = Json.decode[JsonSchema](encoded).getOrThrow
+            assert(decoded == v)
+        }
+
+        "Schema[JsonSchema].structure is Type.Open" in {
+            val schema = summon[Schema[JsonSchema]]
+            schema.structure match
+                case _: Structure.Type.Open => succeed
+                case other                  => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+    }
+
+    // =========================================================================
+    // structure variant direct check
+    // =========================================================================
+
+    "Schema[Structure.Value] and Schema[JsonSchema] structure variant" - {
+
+        "Schema[Structure.Value].structure is Type.Open (not Primitive, Product, or Sum)" in {
+            val schema = summon[Schema[Structure.Value]]
+            schema.structure match
+                case _: Structure.Type.Open      => succeed
+                case _: Structure.Type.Primitive => fail("Expected Type.Open but got Primitive")
+                case _: Structure.Type.Product   => fail("Expected Type.Open but got Product")
+                case _: Structure.Type.Sum       => fail("Expected Type.Open but got Sum")
+                case other                       => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Schema[Structure.Value].structure tag is compatible with Tag[Structure.Value]" in {
+            val schema = summon[Schema[Structure.Value]]
+            schema.structure match
+                case open: Structure.Type.Open =>
+                    assert(open.tag =:= Tag[Structure.Value].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Schema[JsonSchema].structure is Type.Open (not Primitive, Product, or Sum)" in {
+            val schema = summon[Schema[JsonSchema]]
+            schema.structure match
+                case _: Structure.Type.Open      => succeed
+                case _: Structure.Type.Primitive => fail("Expected Type.Open but got Primitive")
+                case _: Structure.Type.Product   => fail("Expected Type.Open but got Product")
+                case _: Structure.Type.Sum       => fail("Expected Type.Open but got Sum")
+                case other                       => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Schema[JsonSchema].structure tag is compatible with Tag[JsonSchema]" in {
+            val schema = summon[Schema[JsonSchema]]
+            schema.structure match
+                case open: Structure.Type.Open =>
+                    assert(open.tag =:= Tag[JsonSchema].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Type.Open but got $other")
+            end match
+        }
+
+        "Structure.Type.compatible returns true for same schema structure" in {
+            val schema = summon[Schema[Structure.Value]]
+            assert(Structure.Type.compatible(schema.structure, schema.structure))
+        }
+
+        "Structure.Type.compatible returns false for Structure.Value vs JsonSchema structures" in {
+            val valueS = summon[Schema[Structure.Value]]
+            val jsonS  = summon[Schema[JsonSchema]]
+            assert(!Structure.Type.compatible(valueS.structure, jsonS.structure))
+        }
+
+    }
+
+    // =========================================================================
+    // transform structure propagation
+    // =========================================================================
+
+    "transform structure propagation" - {
+
+        "longSchema.transform[Duration].structure is the same reference as longSchema.structure" in {
+            val source  = Schema.longSchema
+            val derived = source.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
+            assert(derived.structure.eq(source.structure))
+        }
+
+        "longSchema.transform[Duration].structure tag equals Tag[Long], not Tag[Duration]" in {
+            val source  = Schema.longSchema
+            val derived = source.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
+            derived.structure match
+                case p: Structure.Type.Primitive =>
+                    assert(p.tag =:= Tag[Long].asInstanceOf[Tag[Any]])
+                case other => fail(s"Expected Primitive structure but got $other")
+            end match
+        }
+
+        "instantSchema.transform[kyo.Instant].structure is the same reference as instantSchema.structure" in {
+            val source  = Schema.instantSchema
+            val derived = source.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
+            assert(derived.structure.eq(source.structure))
+        }
+
+        "instantSchema.transform[kyo.Instant].structure is Type.Primitive" in {
+            val source  = Schema.instantSchema
+            val derived = source.transform[kyo.Instant](kyo.Instant.fromJava)(_.toJava)
+            derived.structure match
+                case _: Structure.Type.Primitive => succeed
+                case other                       => fail(s"Expected Primitive structure but got $other")
+            end match
+        }
+
+        "kyoInstantSchema.structure is the same reference as instantSchema.structure" in {
+            assert(Schema.kyoInstantSchema.structure.eq(Schema.instantSchema.structure))
+        }
+
+        "kyoDurationSchema.structure is the same reference as longSchema.structure" in {
+            assert(Schema.kyoDurationSchema.structure.eq(Schema.longSchema.structure))
+        }
+
+    }
+
+    // =========================================================================
+    // transform Structure.compatible
+    // =========================================================================
+
+    "transform Structure.compatible" - {
+
+        "Structure.Type.compatible(longSchema.structure, kyoDurationSchema.structure) returns true" in {
+            assert(Structure.Type.compatible(Schema.longSchema.structure, Schema.kyoDurationSchema.structure))
+        }
+
+        "Structure.Type.compatible(instantSchema.structure, kyoInstantSchema.structure) returns true" in {
+            assert(Structure.Type.compatible(Schema.instantSchema.structure, Schema.kyoInstantSchema.structure))
+        }
+
+    }
+
+    // =========================================================================
+    // Suite: derived structure emission
+    // =========================================================================
+
+    // Test data types for derived structure tests
+    case class P08Person(name: String, age: Int) derives Schema
+    sealed trait P08Shape derives Schema
+    object P08Shape:
+        case class Circle(r: Double) extends P08Shape derives Schema
+        case class Square(s: Double) extends P08Shape derives Schema
+        case object Origin           extends P08Shape
+    end P08Shape
+    class P08NoSchemaMarker
+    case class P08Wrapper(inner: P08NoSchemaMarker)
+
+    "derived case-class structure" - {
+
+        "variant is Product" in {
+            val s = summon[Schema[P08Person]]
+            assert(s.structure.isInstanceOf[Structure.Type.Product])
+        }
+
+        "name is Person" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.name == "P08Person")
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields.size is 2" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.fields.size == 2)
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields(0).name is name" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.fields(0).name == "name")
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields(0).fieldType eq Schema[String].structure" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product =>
+                    assert(
+                        p.fields(0).fieldType eq summon[Schema[String]].structure,
+                        s"expected reference-eq to Schema[String].structure but got ${p.fields(0).fieldType}"
+                    )
+                case other => fail(s"Expected Product but got $other")
+        }
+
+        "fields(1).name is age" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product => assert(p.fields(1).name == "age")
+                case other                     => fail(s"Expected Product but got $other")
+        }
+
+        "fields(1).fieldType eq Schema[Int].structure" in {
+            summon[Schema[P08Person]].structure match
+                case p: Structure.Type.Product =>
+                    assert(
+                        p.fields(1).fieldType eq summon[Schema[Int]].structure,
+                        s"expected reference-eq to Schema[Int].structure but got ${p.fields(1).fieldType}"
+                    )
+                case other => fail(s"Expected Product but got $other")
+        }
+
+    }
+
+    "derived sealed-trait structure" - {
+
+        "variant is Sum" in {
+            assert(summon[Schema[P08Shape]].structure.isInstanceOf[Structure.Type.Sum])
+        }
+
+        "variants.size is 3" in {
+            summon[Schema[P08Shape]].structure match
+                case s: Structure.Type.Sum => assert(s.variants.size == 3)
+                case other                 => fail(s"Expected Sum but got $other")
+        }
+
+        "variant Circle.variantType compatible with Schema[Circle].structure" in {
+            summon[Schema[P08Shape]].structure match
+                case s: Structure.Type.Sum =>
+                    val circleVariant = s.variants.find(_.name == "Circle").getOrElse(fail("no Circle variant"))
+                    assert(
+                        Structure.Type.compatible(circleVariant.variantType, summon[Schema[P08Shape.Circle]].structure),
+                        s"Circle variantType=${circleVariant.variantType} incompatible with Schema[Circle].structure"
+                    )
+                case other => fail(s"Expected Sum but got $other")
+        }
+
+        "variant Square.variantType compatible with Schema[Square].structure" in {
+            summon[Schema[P08Shape]].structure match
+                case s: Structure.Type.Sum =>
+                    val sqVariant = s.variants.find(_.name == "Square").getOrElse(fail("no Square variant"))
+                    assert(
+                        Structure.Type.compatible(sqVariant.variantType, summon[Schema[P08Shape.Square]].structure),
+                        s"Square variantType=${sqVariant.variantType} incompatible with Schema[Square].structure"
+                    )
+                case other => fail(s"Expected Sum but got $other")
+        }
+
+    }
+
+    "missing Schema produces precise error" - {
+
+        "derives Schema on case class with a field type lacking Schema fails at compile time" in {
+            typeCheckFailure("kyo.Schema.derived[SchemaTest.this.P08Wrapper]")(
+                "P08NoSchemaMarker"
+            )
+        }
+
+    }
+
+    "internal builder preserves structure" - {
+
+        "check clone does not change structure" in {
+            // MTPerson is a top-level type where Focus navigation works correctly.
+            val base   = Schema[MTPerson]
+            val cloned = base.check(_.name)(_.nonEmpty, "required")
+            assert(
+                cloned.structure eq base.structure,
+                s"check clone changed structure: was ${base.structure}, got ${cloned.structure}"
+            )
+        }
+
+    }
+
+    "structural referential transparency for derived types" - {
+
+        "Schema[P08Person].structure eq Schema[P08Person].structure" in {
+            val s = summon[Schema[P08Person]]
+            assert(s.structure eq s.structure)
+        }
+
+    }
+
+    "Schema.structure abstract gate" - {
+
+        "fails to compile when structure is missing from Schema.init" in {
+            typeCheckFailure("""
+                Schema.init[String](
+                    writeFn = (v, w) => w.string(v),
+                    readFn = _.string()
+                )
+            """)("structure")
+        }
+
+    }
+
+    "localDateTimeSchema structure tag" - {
+
+        "localDateTimeSchema has Primitive(String, _) structure" in {
+            val s = summon[Schema[java.time.LocalDateTime]]
+            assert(s.structure.isInstanceOf[Structure.Type.Primitive])
+            val p = s.structure.asInstanceOf[Structure.Type.Primitive]
+            assert(p.kind == Structure.PrimitiveKind.String)
+        }
+
+    }
+
+    "macro consumers Schema-driven" - {
+
+        // Verifies that ExpandMacro classifies primitive, container, and optional fields uniformly
+        // through MacroSchemaClassifier, producing the same JSON round-trip shape as a case class
+        // with only primitive fields.
+        case class MacroClassifierRegressionFixture(
+            id: Int,
+            name: String,
+            tags: List[String],
+            maybeAge: Maybe[Int]
+        ) derives CanEqual
+
+        "JSON round-trip of a mixed primitive/container/optional case class" in {
+            val schema = summon[Schema[MacroClassifierRegressionFixture]]
+            val value  = MacroClassifierRegressionFixture(42, "Alice", List("admin", "user"), Maybe(30))
+            val w      = JsonWriter()
+            schema.writeTo(value, w)
+            val reader = JsonReader(w.resultString)
+            val result = schema.readFrom(reader)
+            assert(result == value)
+        }
+
+    }
+
+    "Schema derivation (SchemaDerivedMacro)" - {
+
+        "Self-recursive case class derives Schema without StackOverflow" in {
+            case class Tree(children: List[Tree]) derives Schema
+            val s  = summon[Schema[Tree]]
+            val st = s.structure
+            assert(st.isInstanceOf[Structure.Type.Product])
+            val prod = st.asInstanceOf[Structure.Type.Product]
+            assert(prod.name == "Tree")
+            val fieldType = prod.fields(0).fieldType
+            assert(fieldType.isInstanceOf[Structure.Type.Collection])
+            val coll = fieldType.asInstanceOf[Structure.Type.Collection]
+            // The element type is a Product(Tree,...) with the correct name.
+            // derives Schema uses a cycle-safe stub for the recursive element type
+            // (buildCaseClassStructureExpr uses deriveTypeFallback for recursive fields).
+            assert(coll.elementType.isInstanceOf[Structure.Type.Product])
+            assert(coll.elementType.asInstanceOf[Structure.Type.Product].name == "Tree")
+        }
+
+        "Maybe and Option fields are optional and primitive defaults use their Value variant" in {
+            case class Q(
+                a: Int = 42,
+                b: Maybe[String] = Maybe.empty,
+                c: Option[Boolean] = None,
+                d: BigDecimal = BigDecimal(1)
+            ) derives Schema
+            val s      = summon[Schema[Q]]
+            val fields = s.structure.asInstanceOf[Structure.Type.Product].fields
+            assert(fields(0).optional == false)
+            assert(fields(0).default == Maybe(Structure.Value.Integer(42L)))
+            assert(fields(1).optional == true)
+            assert(fields(2).optional == true)
+            assert(fields(3).optional == false)
+            assert(fields(3).default == Maybe(Structure.Value.BigNum(BigDecimal(1))))
+        }
+
+        "Derivation rejects case class with a private case-field" in {
+            val src      = "case class Bad(private val x: Int) derives kyo.Schema"
+            val compiles = scala.compiletime.testing.typeChecks(src)
+            assert(!compiles)
+            val errs = scala.compiletime.testing.typeCheckErrors(src)
+            assert(errs.nonEmpty)
+            assert(errs.head.message.contains("private") && errs.head.message.contains("x"))
         }
 
     }

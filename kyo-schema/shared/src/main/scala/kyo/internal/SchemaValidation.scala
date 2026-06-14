@@ -44,7 +44,8 @@ private[kyo] object SchemaValidation:
             fieldDeprecated = meta.fieldDeprecated,
             constraints = meta.constraints,
             fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+            discriminatorField = meta.discriminatorField,
+            structure = meta.structure
         )
     end fieldCheck
 
@@ -82,7 +83,8 @@ private[kyo] object SchemaValidation:
             fieldDeprecated = meta.fieldDeprecated,
             constraints = meta.constraints :+ constraint,
             fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+            discriminatorField = meta.discriminatorField,
+            structure = meta.structure
         )
     end fieldCheckWithConstraint
 
@@ -109,7 +111,8 @@ private[kyo] object SchemaValidation:
             fieldDeprecated = meta.fieldDeprecated,
             constraints = meta.constraints :+ constraint,
             fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+            discriminatorField = meta.discriminatorField,
+            structure = meta.structure
         )
     end fieldConstraintOnly
 
@@ -137,7 +140,8 @@ private[kyo] object SchemaValidation:
             fieldDeprecated = meta.fieldDeprecated,
             constraints = meta.constraints,
             fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+            discriminatorField = meta.discriminatorField,
+            structure = meta.structure
         )
     end withFieldDoc
 
@@ -165,7 +169,8 @@ private[kyo] object SchemaValidation:
             fieldDeprecated = meta.fieldDeprecated.updated(fieldPath, reason),
             constraints = meta.constraints,
             fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+            discriminatorField = meta.discriminatorField,
+            structure = meta.structure
         )
     end withFieldDeprecated
 

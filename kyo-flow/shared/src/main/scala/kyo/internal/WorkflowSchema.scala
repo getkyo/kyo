@@ -65,7 +65,7 @@ private[kyo] object WorkflowSchema:
         (Dict(tag -> e), Dict(name -> e))
 
     /** Build a schema by walking all AST nodes and collecting type entries. */
-    def of(flow: Flow[?, ?, ?]): WorkflowSchema =
+    def of(flow: Flow[?, ?, ?])(using Frame): WorkflowSchema =
         def loop(f: Flow[?, ?, ?]): Maps =
             f match
                 case n: Output[?, ?, ?, ?, ?] @unchecked =>

@@ -209,14 +209,41 @@ private[kyo] object SchemaSerializer:
                 elements.foreach(e => writeStructureValue(writer, e))
                 writer.arrayEnd()
             case Structure.Value.MapEntries(entries) =>
-                writer.mapStart(entries.size)
-                entries.foreach { (k, v) =>
-                    writeStructureValue(writer, k)
-                    writeStructureValue(writer, v)
+                // Shape-aware MapEntries:
+                //   * all-String keys -> JSON object with each key as a field; round-trips through the universal Record shape.
+                //   * mixed/non-String keys -> array-of-pairs; non-String keys are inexpressible as JSON field names.
+                val allStringKeys = entries.forall {
+                    case (Structure.Value.Str(_), _) => true
+                    case _                           => false
                 }
-                writer.mapEnd()
+                if allStringKeys then
+                    writer.mapStart(entries.size)
+                    entries.foreach { (k, v) =>
+                        k match
+                            case Structure.Value.Str(s) =>
+                                writer.fieldBytes(s.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                            case _ => () // unreachable; allStringKeys is true
+                        end match
+                        writeStructureValue(writer, v)
+                    }
+                    writer.mapEnd()
+                else
+                    writer.arrayStart(entries.size)
+                    entries.foreach { (k, v) =>
+                        writer.arrayStart(2)
+                        writeStructureValue(writer, k)
+                        writeStructureValue(writer, v)
+                        writer.arrayEnd()
+                    }
+                    writer.arrayEnd()
+                end if
             case Structure.Value.VariantCase(name, v) =>
+                // Shape-aware VariantCase: single-field object whose key is the variant name. Symmetric with reading a
+                // single-field object as a Record(name, value); the universal Structure.Value tree treats VariantCase
+                // and Record(<single field>) as the same wire shape; round-trips through the shape-aware identity
+                // Schema therefore canonicalize to Record on read.
                 writer.objectStart(name, 1)
+                writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                 writeStructureValue(writer, v)
                 writer.objectEnd()
             case Structure.Value.Str(s) => writer.string(s)
@@ -231,7 +258,7 @@ private[kyo] object SchemaSerializer:
     /** Returns a zero/default value for a dropped field so required-field null checks pass during decode.
       *
       * Uses the field's declared default if available. Otherwise derives a type-appropriate zero value from the field's tag. For reference
-      * types without a known zero, returns null — this is intentional because the macro-generated decoder uses `Array[AnyRef]` with JVM
+      * types without a known zero, returns null: this is intentional because the macro-generated decoder uses `Array[AnyRef]` with JVM
       * null checks (`values(idx) == null`) to detect missing required fields.
       */
     def zeroForField(field: Field[?, ?]): AnyRef =
@@ -248,7 +275,7 @@ private[kyo] object SchemaSerializer:
             else if show == "scala.Char" then java.lang.Character.valueOf('\u0000')
             else if field.tag <:< Tag[Option[Any]] then None.asInstanceOf[AnyRef]
             else if field.tag <:< Tag[Maybe[Any]] then Maybe.empty.asInstanceOf[AnyRef]
-            else null // JVM null for unknown reference types — required by macro null-check protocol
+            else null // JVM null for unknown reference types: required by macro null-check protocol
             end if
         end zeroFromTag
         field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])

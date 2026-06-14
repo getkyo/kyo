@@ -3461,30 +3461,42 @@ class HttpServerTest extends BaseHttpTest:
 
         "handler error after client disconnect does not crash".notNative in {
             val route = HttpRoute.getRaw("slow-fail").response(_.bodyText)
+            // handlerEntered: signals that the server handler has actually been invoked.
+            // Without this gate the 50ms client timeout can fire before the server has
+            // accepted the connection on a busy machine, leaving the handler never invoked
+            // and handlerDone never released.
             Latch.init(1).map { handlerDone =>
                 Promise.init[Unit, Any].map { clientDisconnected =>
-                    val ep = route.handler { _ =>
-                        // Wait for client to disconnect, then throw
-                        clientDisconnected.get.andThen {
-                            handlerDone.release.andThen {
-                                throw new RuntimeException("delayed boom")
-                                HttpResponse.ok("unreachable")
-                            }
-                        }
-                    }
-                    withServer(ep) { url =>
-                        // Send request, then disconnect before handler finishes via timeout
-                        Abort.run[Throwable] {
-                            Abort.catching[Throwable] {
-                                Async.timeout(50.millis) {
-                                    sendRaw(url, HttpMethod.GET, "/slow-fail")
+                    Promise.init[Unit, Any].map { handlerEntered =>
+                        val ep = route.handler { _ =>
+                            handlerEntered.complete(Result.succeed(())).andThen {
+                                // Wait for client to disconnect, then throw
+                                clientDisconnected.get.andThen {
+                                    handlerDone.release.andThen {
+                                        throw new RuntimeException("delayed boom")
+                                        HttpResponse.ok("unreachable")
+                                    }
                                 }
                             }
-                        }.map { _ =>
-                            // Signal handler that client has disconnected
-                            clientDisconnected.complete(Result.succeed(())).andThen {
-                                // Wait for handler to complete and potentially try to write to closed connection
-                                handlerDone.await.map(_ => succeed("handler completed after client disconnect without crashing"))
+                        }
+                        withServer(ep) { url =>
+                            // Fire the request in a fiber so we can wait for the handler to be
+                            // entered before tearing down the client connection.
+                            Fiber.initUnscoped(
+                                Abort.run[Throwable](Abort.catching[Throwable](sendRaw(url, HttpMethod.GET, "/slow-fail")))
+                            ).map { clientFib =>
+                                handlerEntered.get.andThen {
+                                    // Handler is running; tear down the client to simulate disconnect.
+                                    clientFib.interrupt.andThen {
+                                        // Signal handler that client has disconnected
+                                        clientDisconnected.complete(Result.succeed(())).andThen {
+                                            // Wait for handler to complete and potentially try to write to closed connection
+                                            handlerDone.await.map(_ =>
+                                                succeed("handler completed after client disconnect without crashing")
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

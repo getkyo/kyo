@@ -46,7 +46,7 @@ object FlagAdmin:
       */
     def routes(prefix: String = "flags", readOnly: Boolean = false)(using Frame): Seq[HttpHandler[?, ?, ?]] =
 
-        // GET /{prefix} — list all flags
+        // GET /{prefix}: list all flags
         val listRoute = HttpRoute.getRaw(prefix)
             .request(_.queryOpt[String]("filter"))
             .response(_.bodyText)
@@ -60,7 +60,7 @@ object FlagAdmin:
             jsonOk(Json.encode(infos)(using jsonFlagInfos))
         }
 
-        // GET /{prefix}/:name — single flag detail
+        // GET /{prefix}/:name: single flag detail
         val getRoute = HttpRoute.getRaw(prefix / Capture[String]("name"))
             .response(_.bodyText)
         val getHandler = getRoute.handler { req =>
@@ -73,7 +73,7 @@ object FlagAdmin:
             end match
         }
 
-        // PUT /{prefix}/:name — update dynamic flag expression (plain text body)
+        // PUT /{prefix}/:name: update dynamic flag expression (plain text body)
         val updateRoute = HttpRoute.putRaw(prefix / Capture[String]("name"))
             .request(_.bodyText)
             .response(_.bodyText)
@@ -107,7 +107,7 @@ object FlagAdmin:
                 end match
         }
 
-        // POST /{prefix}/:name/reload — reload dynamic flag from config source
+        // POST /{prefix}/:name/reload: reload dynamic flag from config source
         val reloadRoute = HttpRoute.postRaw(prefix / Capture[String]("name") / "reload")
             .response(_.bodyText)
         val reloadHandler = reloadRoute.handler { req =>
@@ -144,6 +144,24 @@ object FlagAdmin:
 
     // --- Response types ---
 
+    /** A single entry in a dynamic flag's update history. */
+    case class HistoryInfo(
+        timestamp: Long,
+        from: String,
+        to: String
+    ) derives Schema, CanEqual
+
+    // Explicit Schemas for Map[String, Long] and List[HistoryInfo] anchored at file scope so the
+    // FlagInfo `derives Schema` macro resolves them through direct given lookup. Without these
+    // anchors the deeply-nested container fields fail to derive at the macro call site.
+    private given _mapStringLongSchema: Schema[Map[String, Long]] =
+        given Frame = Frame.internal
+        Schema.stringMapSchema[Long]
+
+    private given _listHistoryInfoSchema: Schema[List[HistoryInfo]] =
+        given Frame = Frame.internal
+        Schema.listSchema[HistoryInfo]
+
     /** Flag details returned by the list and get endpoints. */
     case class FlagInfo(
         name: String,
@@ -154,13 +172,6 @@ object FlagAdmin:
         source: String,
         evaluations: Option[Map[String, Long]],
         history: Option[List[HistoryInfo]]
-    ) derives Schema, CanEqual
-
-    /** A single entry in a dynamic flag's update history. */
-    case class HistoryInfo(
-        timestamp: Long,
-        from: String,
-        to: String
     ) derives Schema, CanEqual
 
     /** Error response body for failed admin operations. */
@@ -187,10 +198,12 @@ object FlagAdmin:
                 case Absent     => false
         }
 
-    private val jsonFlagInfo: Schema[FlagInfo]        = summon[Schema[FlagInfo]]
-    private val jsonFlagInfos: Schema[List[FlagInfo]] = summon[Schema[List[FlagInfo]]]
-    private val jsonError: Schema[ErrorResponse]      = summon[Schema[ErrorResponse]]
-    private val jsonReload: Schema[ReloadResponse]    = summon[Schema[ReloadResponse]]
+    private val jsonFlagInfo: Schema[FlagInfo] = summon[Schema[FlagInfo]]
+    private val jsonFlagInfos: Schema[List[FlagInfo]] =
+        given Frame = Frame.internal
+        Schema.listSchema[FlagInfo]
+    private val jsonError: Schema[ErrorResponse]   = summon[Schema[ErrorResponse]]
+    private val jsonReload: Schema[ReloadResponse] = summon[Schema[ReloadResponse]]
 
     private def jsonOk(body: String): HttpResponse["body" ~ String] =
         HttpResponse(HttpStatus.OK, HttpHeaders.empty, Record.empty)
