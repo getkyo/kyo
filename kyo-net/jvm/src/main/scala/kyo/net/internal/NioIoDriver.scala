@@ -574,12 +574,30 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     private[net] def shouldRebuild(consecutiveZeroReturns: Int): Boolean =
         consecutiveZeroReturns >= NioIoDriver.SelectorRebuildThreshold
 
-    /** Rebuild the selector by snapshotting registered channels, closing the old selector, opening a new one,
-      * and re-registering every channel. Resets the zero-key counter.
-      *
-      * Called only from the select-loop carrier (single-carrier-confined).
+    /** Test-observability seam: the interest ops currently registered for `channel` on the live selector, or -1
+      * when `channel` has no valid key. After a selector rebuild this reflects the new selector, so a test can
+      * assert that an in-flight operation's armed interest survived the rebuild.
       */
-    private def rebuildSelector()(using AllowUnsafe, Frame): Unit =
+    private[net] def interestOpsFor(channel: java.nio.channels.SelectableChannel)(using AllowUnsafe): Int =
+        val key = channel.keyFor(selector)
+        if (key ne null) && key.isValid then key.interestOps() else -1
+
+    /** Rebuild the selector by snapshotting registered channels, opening a fresh selector, closing the old one,
+      * and re-registering every channel with its in-flight interest reconstructed from the pending-op maps.
+      * Resets the zero-key counter.
+      *
+      * The fresh selector is opened BEFORE the old one is closed: if `Selector.open()` fails (for example on
+      * file-descriptor exhaustion) the old selector stays live and the rebuild is skipped this cycle, rather
+      * than tearing down the only selector the driver has and stranding every channel.
+      *
+      * Interest is reconstructed from `pendingReads` / `pendingWritables` / `pendingConnects` / `pendingAccepts`,
+      * the source of truth for what is armed: a channel re-registered with interest 0 would never report
+      * readiness for an operation already pending at rebuild time, so that operation's promise would hang forever.
+      *
+      * `private[net]` so the rebuild path is directly exercisable by tests in `kyo.net.internal`. Called only
+      * from the select-loop carrier, or before that loop starts (single-carrier-confined either way).
+      */
+    private[net] def rebuildSelector()(using AllowUnsafe, Frame): Unit =
         // Snapshot channel references BEFORE closing the old selector (closing cancels all keys,
         // after which key.channel() may still work but the key set is no longer reliable).
         val channels = selector.keys().iterator().asScala
@@ -589,36 +607,52 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             }
             .toArray
 
-        try selector.close()
-        catch case _: IOException => ()
+        val opened: Maybe[Selector] =
+            try Present(Selector.open())
+            catch case _: IOException => Absent
 
-        val newSelector = Selector.open()
-        // Re-install the flat key set on the new selector if the original install succeeded.
-        installedKeySet match
-            case Present(flatSet) => installFlatSetInto(newSelector, flatSet)
-            case Absent           => ()
+        opened match
+            case Absent =>
+                // Open failed: keep the current selector and retry at the next threshold rather than
+                // leaving the driver with no selector at all.
+                zeroKeyReturns = 0
+                Log.live.unsafe.warn(s"$label selector rebuild skipped: Selector.open() failed, keeping the current selector")
+            case Present(newSelector) =>
+                try selector.close()
+                catch case _: IOException => ()
 
-        selector = newSelector
-        zeroKeyReturns = 0
+                // Re-install the flat key set on the new selector if the original install succeeded.
+                installedKeySet match
+                    case Present(flatSet) => installFlatSetInto(newSelector, flatSet)
+                    case Absent           => ()
 
-        // Re-register all channels on the new selector with interest-ops 0.
-        // Actual interest bits will be re-added by the next registerInterest call.
-        var i = 0
-        while i < channels.length do
-            val ch = channels(i)
-            i += 1
-            try
-                ch match
-                    case sc: SocketChannel =>
-                        discard(sc.register(newSelector, 0))
-                    case ssc: ServerSocketChannel =>
-                        discard(ssc.register(newSelector, 0))
-                    case _ => ()
-            catch
-                case _: java.nio.channels.ClosedChannelException  => ()
-                case _: java.nio.channels.ClosedSelectorException => ()
-            end try
-        end while
+                selector = newSelector
+                zeroKeyReturns = 0
+
+                // Re-register every channel on the new selector, restoring its armed interest from the
+                // pending-op maps so an in-flight read, write, connect, or accept survives the rebuild.
+                var i = 0
+                while i < channels.length do
+                    val ch = channels(i)
+                    i += 1
+                    try
+                        ch match
+                            case sc: SocketChannel =>
+                                var ops = 0
+                                if pendingReads.containsKey(sc) then ops = ops | SelectionKey.OP_READ
+                                if pendingWritables.containsKey(sc) then ops = ops | SelectionKey.OP_WRITE
+                                if pendingConnects.containsKey(sc) then ops = ops | SelectionKey.OP_CONNECT
+                                discard(sc.register(newSelector, ops))
+                            case ssc: ServerSocketChannel =>
+                                val ops = if pendingAccepts.containsKey(ssc) then SelectionKey.OP_ACCEPT else 0
+                                discard(ssc.register(newSelector, ops))
+                            case _ => ()
+                    catch
+                        case _: java.nio.channels.ClosedChannelException  => ()
+                        case _: java.nio.channels.ClosedSelectorException => ()
+                    end try
+                end while
+        end match
     end rebuildSelector
 
     /** Install `flatSet` into the `SelectorImpl.selectedKeys` and `SelectorImpl.publicSelectedKeys` fields of `sel`.

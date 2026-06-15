@@ -602,6 +602,79 @@ class NioIoDriverTest extends Test:
         end try
     }
 
+    "selectorRebuildPreservesArmedInterest" in {
+        // A selector rebuild must preserve each channel's armed interest. An operation pending when the rebuild
+        // fires (a read, write, connect, or accept already waiting) must keep its interest registered on the new
+        // selector, otherwise the selector never reports its readiness and the promise never completes. Arm
+        // interest, force a rebuild directly (before the loop starts, so the call is single-carrier-confined),
+        // then assert via interestOpsFor that the interest is still present on the new selector.
+        given Frame       = Frame.internal
+        val driver        = NioIoDriver.init()
+        val (client, sv)  = openLoopbackPair()
+        val handle        = NioHandle.init(client, 4096)
+        val serverChannel = ServerSocketChannel.open()
+        serverChannel.configureBlocking(false)
+        serverChannel.bind(new InetSocketAddress("127.0.0.1", 0))
+        try
+            driver.registerChannel(handle)
+            driver.registerServerChannel(serverChannel)
+
+            val pw = new IOPromise[Closed, Unit]
+            val pr = new IOPromise[Closed, Span[Byte]]
+            val pa = new IOPromise[Closed, Unit]
+            driver.awaitWritable(handle, pw.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+            driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+            driver.awaitAccept(serverChannel, pa.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+
+            // Precondition: the socket channel carries OP_READ and OP_WRITE, the server channel OP_ACCEPT.
+            assert((driver.interestOpsFor(client) & SelectionKey.OP_READ) != 0)
+            assert((driver.interestOpsFor(client) & SelectionKey.OP_WRITE) != 0)
+            assert((driver.interestOpsFor(serverChannel) & SelectionKey.OP_ACCEPT) != 0)
+
+            // Force the rebuild (no loop running yet: no race with a select carrier).
+            driver.rebuildSelector()
+
+            // The armed interest must still be present on the new selector after the rebuild.
+            assert((driver.interestOpsFor(client) & SelectionKey.OP_READ) != 0)
+            assert((driver.interestOpsFor(client) & SelectionKey.OP_WRITE) != 0)
+            assert((driver.interestOpsFor(serverChannel) & SelectionKey.OP_ACCEPT) != 0)
+            succeed
+        finally
+            driver.closeHandle(handle)
+            sv.close()
+            serverChannel.close()
+            driver.close()
+        end try
+    }
+
+    "selectorRebuildKeepsInFlightReadDeliverable" in {
+        // End-to-end companion to selectorRebuildPreservesArmedInterest: a read armed before a rebuild must still
+        // deliver real data once the loop runs on the new selector. A rebuild that did not preserve the read
+        // interest would leave this promise uncompleted until the suite timeout.
+        given Frame      = Frame.internal
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096)
+        driver.registerChannel(handle)
+
+        val pr = new IOPromise[Closed, Span[Byte]]
+        driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+
+        // Force the rebuild while the read is in flight (no loop running yet: no race), then start the loop.
+        driver.rebuildSelector()
+        discard(driver.start())
+
+        sv.write(ByteBuffer.wrap("after-rebuild".getBytes))
+
+        pr.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+            sv.close()
+            driver.closeHandle(handle)
+            driver.close()
+            assert(new String(result.toArray) == "after-rebuild")
+            succeed
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Wakeup guarded by an AtomicBoolean CAS
     // -----------------------------------------------------------------------
