@@ -3469,9 +3469,8 @@ object Tasty:
           * Returns an empty `Chunk` when no collisions occurred.
           */
         def collisionReport: Chunk[Classpath.FullNameCollision] =
-            indices.diagnostics.flatMap {
-                case c: Classpath.FullNameCollision => Chunk(c)
-                case _: Classpath.Diagnostic        => Chunk.empty
+            indices.diagnostics.collect {
+                case c: Classpath.FullNameCollision => c
             }
 
         /** Structural subtype check between two `Type` values.

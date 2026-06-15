@@ -3234,9 +3234,7 @@ object Browser:
                 val d = exWire.exceptionDetails
                 // CDP reports `text` as the bare "Uncaught" prefix and carries the real error message in
                 // `exception.description`; join them so the message is meaningful.
-                val text = d.exception.flatMap(_.description) match
-                    case Present(desc) => d.text + " " + desc
-                    case Absent        => d.text
+                val text = d.exception.flatMap(_.description).map(desc => d.text + " " + desc).getOrElse(d.text)
                 // Prefer the top-level `url:line`; fall back to the first stack frame when the throw carries no url.
                 val topFrame = d.stackTrace.flatMap(st => Maybe.fromOption(st.callFrames.headOption))
                 val location =

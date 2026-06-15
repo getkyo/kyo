@@ -145,7 +145,7 @@ Two related entry points exist for the cache, both also `(using AllowUnsafe)`:
 - `Ffi.warmLoad[T]` pre-warms the cache at startup so the first real call does not pay the reflection cost. It is idempotent.
 - `Ffi.unload[T]` evicts the cached impl so the next `Ffi.load[T]` re-instantiates. It is intended for test scenarios, not normal use.
 
-`Ffi.load[T]` throws subtypes of `FfiLoadError`: `LibraryNotFound` (native library not resolvable), `AbiMismatch` (generated-impl ABI vs runtime), `Unsupported` (32-bit host, browser Scala.js), `ImplNotFound` (no generated impl on the classpath). Callers that want a single catch handler use `catch { case e: FfiLoadError => ... }`. The legacy `FfiUnsupported`, `FfiAbiMismatch`, and `FfiKoffiVersionMismatch` types remain as deprecated aliases for the corresponding subtypes, so existing `catch FfiUnsupported` blocks continue to match.
+`Ffi.load[T]` throws subtypes of `FfiLoadError`: `LibraryNotFound` (native library not resolvable), `AbiMismatch` (generated-impl ABI vs runtime), `Unsupported` (32-bit host, browser Scala.js), `ImplNotFound` (no generated impl on the classpath). Callers that want a single catch handler use `catch { case e: FfiLoadError => ... }`.
 
 > **Note:** on the JVM only, `Ffi.load` also throws `java.lang.IllegalStateException` when the generated impl class lacks a public nullary constructor (regenerate with `sbt clean compile`). This exception escapes the `FfiLoadError` catch surface, so a handler that must cover every `Ffi.load` failure catches both. The typed-failure bridge for both is shown in "Errors and errno".
 
@@ -726,7 +726,7 @@ trait PrintBindings extends Ffi:
     def snprintf(buf: Buffer[Byte], size: Long, fmt: String, args: Any*)(using AllowUnsafe): Int
 ```
 
-Supported vararg runtime types: `Int`, `Long`, `Double`, `String`, `Buffer[A]`. Anything else raises `FfiUnsupported` at the call site.
+Supported vararg runtime types: `Int`, `Long`, `Double`, `String`, `Buffer[A]`. Anything else raises `FfiLoadError.Unsupported` at the call site.
 
 | Platform | Support |
 |----------|---------|
@@ -943,7 +943,7 @@ koffi ships prebuilt binaries for common platforms, so installing it needs no na
 
 > **Caution:** the Scala.js linker must emit a CommonJS module (`ModuleKind.CommonJSModule`) so Node's `require('koffi')` resolves at runtime. A JS consumer that leaves the linker at the default module kind gets a runtime failure when the first `Ffi.load` tries to load koffi.
 
-The first `Ffi.load` call on Scala.js runs an ABI probe that verifies `koffi.version` satisfies `^2.7` and that all required methods are exported. A failed probe throws `FfiKoffiVersionMismatch`. The probe runs once per Node session.
+The first `Ffi.load` call on Scala.js runs an ABI probe that verifies `koffi.version` satisfies `^2.7` and that all required methods are exported. A failed probe throws `FfiLoadError.Unsupported`. The probe runs once per Node session.
 
 ### Security
 
@@ -1098,7 +1098,7 @@ The generated code is on disk, navigable in IDEs, and shows up in stack traces.
 
 **Memory model.** `Buffer[A]` and `Handle[A]` are backed by `UnsafeBuffer` from kyo-data, an abstract class with platform subclasses: `JvmUnsafeBuffer` wrapping `MemorySegment`, `NativeUnsafeBuffer` wrapping `Ptr[Byte]`, and `JsUnsafeBuffer` wrapping a `Uint8Array` + `DataView` pair. This foundation is shared with kyo-offheap's `Memory[A]`. String parameters are encoded into a per-thread scratch arena (auto-growing from 64 KiB to 4 MiB) and freed when the call returns; array parameters are zero-copy for non-blocking calls and copied to scratch for blocking calls.
 
-**Error types at a glance.** `FfiLoadError` (and its `LibraryNotFound` / `AbiMismatch` / `Unsupported` / `ImplNotFound` leaves) is the catch surface for `Ffi.load`; `FfiNullPointer` is thrown when a bare `Handle[A]` receives NULL; `FfiErrno` is the errno exception you throw after inspecting `WithError.errorCode`; `FfiMalformedResult` is thrown by returned-struct readers on an unterminated `char*`; `BorrowRevoked` is thrown under checked-borrow mode; `FfiUnsupported` is raised on an unsupported variadic runtime type. `FfiInternalError` is a should-not-happen internal-invariant diagnostic (a checked cast site); it names the binding and method but prompts no user action.
+**Error types at a glance.** `FfiLoadError` (and its `LibraryNotFound` / `AbiMismatch` / `Unsupported` / `ImplNotFound` leaves) is the catch surface for `Ffi.load`; `FfiNullPointer` is thrown when a bare `Handle[A]` receives NULL; `FfiErrno` is the errno exception you throw after inspecting `WithError.errorCode`; `FfiMalformedResult` is thrown by returned-struct readers on an unterminated `char*`; `BorrowRevoked` is thrown under checked-borrow mode; `FfiLoadError.Unsupported` is raised on an unsupported variadic runtime type. `FfiInternalError` is a should-not-happen internal-invariant diagnostic (a checked cast site); it names the binding and method but prompts no user action.
 
 ### Performance tips
 

@@ -5,7 +5,7 @@ import kyo.ffi.internal.NativeLoader
 /** Validates the 32-bit-host fail-fast.
   *
   * kyo-ffi's codegen hardcodes 64-bit integer + pointer widths. Rather than silently misalign offsets on 32-bit hosts, `NativeLoader`
-  * rejects them with [[FfiUnsupported]] at first load. The live CI matrix is 64-bit everywhere, so we cannot flip the real word size
+  * rejects them with [[FfiLoadError.Unsupported]] at first load. The live CI matrix is 64-bit everywhere, so we cannot flip the real word size
   * mid-test, instead the `checkPlatform` helper is exposed so tests can pass a synthetic `isBit64` flag. `NativeLoader.detectIs64Bit` is
   * exercised on the live JVM and must report `true`.
   */
@@ -23,16 +23,16 @@ class JvmPlatformCheckTest extends Test:
         succeed
     }
 
-    "checkPlatform(false) throws FfiUnsupported" in {
+    "checkPlatform(false) throws FfiLoadError.Unsupported" in {
         // Simulated 32-bit host, the helper path tests would take on a real 32-bit JVM at first `load` call.
-        val ex = intercept[FfiUnsupported] {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         assert(ex.isInstanceOf[RuntimeException])
     }
 
     "the rejection message names the prefix, the 64-bit requirement, and an external reference" in {
-        val ex = intercept[FfiUnsupported] {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         val msg = ex.getMessage
@@ -47,7 +47,7 @@ class JvmPlatformCheckTest extends Test:
         // On Hotspot-derived JVMs `sun.arch.data.model` is always set. The check surface routes the property value through the message so
         // an operator can confirm the detection triggered on the right signal.
         val dm = sys.props.get("sun.arch.data.model").getOrElse("unknown")
-        val ex = intercept[FfiUnsupported] {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         assert(ex.getMessage.contains(s"data model: $dm"))

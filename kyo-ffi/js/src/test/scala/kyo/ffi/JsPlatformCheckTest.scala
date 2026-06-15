@@ -21,10 +21,10 @@ class JsPlatformCheckTest extends Test:
     }
 
     "checkPlatform rejects every known 32-bit arch name" in {
-        // Every 32-bit arch name Node has ever produced. All must throw FfiUnsupported.
+        // Every 32-bit arch name Node has ever produced. All must throw FfiLoadError.Unsupported.
         val thirtyTwo = Seq("ia32", "x32", "arm", "mips", "mipsel", "ppc", "s390")
         for arch <- thirtyTwo do
-            val ex = intercept[FfiUnsupported] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 NativeLoader.checkPlatform(arch)
             }
             assert(ex.getMessage.contains(s"process.arch = $arch"))
@@ -41,7 +41,7 @@ class JsPlatformCheckTest extends Test:
     }
 
     "the rejection exception hierarchy and message surface" in {
-        val ex = intercept[FfiUnsupported] {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform("ia32")
         }
         assert(ex.isInstanceOf[RuntimeException])

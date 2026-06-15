@@ -22,12 +22,6 @@ import kyo.kernel.internal.Safepoint
   */
 opaque type Sync <: Abort[Nothing] = Abort[Nothing]
 
-@deprecated("Will be removed in 1.0, Use `Sync` instead", "0.19.1")
-type IO = Sync
-
-@deprecated("Will be removed in 1.0. Use `Sync` instead", "1.0-RC")
-val IO = Sync
-
 object Sync:
 
     /** Suspends a potentially side-effecting computation in an Sync effect.

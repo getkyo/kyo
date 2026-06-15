@@ -360,11 +360,9 @@ class SymbolResolutionTest extends kyo.test.Test[Any]:
             )
             val _find: Maybe[Tasty.Symbol] =
                 Maybe.fromOption(symbol.declarationIds.flatMap(id => classpath.symbol(id).toChunk).find(_.simpleName == "anything"))
-            val _show: String               = classpath.show(symbol)
-            val _owner: Maybe[Tasty.Symbol] = classpath.owner(symbol)
-            val _parents: Chunk[Tasty.Symbol] = symbol match
-                case cl: Tasty.Symbol.ClassLike => classpath.parents(cl)
-                case other                      => fail(s"expected Symbol.ClassLike, got $other")
+            val _show: String                 = classpath.show(symbol)
+            val _owner: Maybe[Tasty.Symbol]   = classpath.owner(symbol)
+            val _parents: Chunk[Tasty.Symbol] = classpath.parents(symbol)
             assert(_show.nonEmpty)
         }
     }
