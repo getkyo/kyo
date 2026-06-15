@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Cross-platform union-feature spec.
@@ -15,8 +14,6 @@ import kyo.ffi.Ffi
   * either an int or a float and the bit pattern is preserved across the FFI boundary.
   */
 class ItUnionsTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     // IEEE-754 single-precision encoding of 42.0f is 0x42280000. Written as Int, read as Float should yield 42.0f.
     private val IntBitsOf42f: Int = 0x42280000
@@ -47,7 +44,7 @@ class ItUnionsTest extends ItTestBase:
         }
 
         // #248: a struct (case class) variant in a union parameter. JVM and Native write the struct's
-        // fields into the union scratch; before the fix JS threw FfiUnsupported at runtime. All three
+        // fields into the union scratch; before the fix JS threw FfiLoadError.Unsupported at runtime. All three
         // backends must now write the struct variant's fields into the union storage identically.
         "writes a struct variant's fields into a union parameter (Int | UnionPoint)" in {
             val b = Ffi.load[ItUnionsBindings]

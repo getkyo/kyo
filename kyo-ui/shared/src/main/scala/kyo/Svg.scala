@@ -160,13 +160,26 @@ object Svg:
         case ArcTo(rx: Double, ry: Double, xRot: Double, largeArc: Boolean, sweep: Boolean, x: Double, y: Double)
         case ArcBy(rx: Double, ry: Double, xRot: Double, largeArc: Boolean, sweep: Boolean, dx: Double, dy: Double)
         case Close
+
+        /** A pre-formatted `d` fragment emitted verbatim, the escape for embedding an external path (a
+          * brand mark, an icon-set glyph) whose command list would be impractical to transcribe. The
+          * counterpart to [[kyo.Selector.raw]] / [[kyo.Stylesheet.MediaQuery.raw]].
+          */
+        case Raw(d: String)
     end PathCommand
 
-    /** A typed path-command list backing the `d` attribute; no raw `d` string. */
+    /** A typed path-command list backing the `d` attribute. Prefer the typed builders; [[kyo.Svg.PathData.raw]]
+      * is the escape for embedding an external path string verbatim.
+      */
     opaque type PathData = Chunk[PathCommand]
     object PathData:
-        def from(x: Double, y: Double): PathData                   = Chunk(PathCommand.MoveTo(x, y))
-        def from(x: Int, y: Int): PathData                         = from(x.toDouble, y.toDouble)
+        def from(x: Double, y: Double): PathData = Chunk(PathCommand.MoveTo(x, y))
+        def from(x: Int, y: Int): PathData       = from(x.toDouble, y.toDouble)
+
+        /** A path whose `d` attribute is the given string verbatim, for embedding an external/standard path
+          * (a brand mark, an icon-set glyph) that the typed builders would be impractical to express.
+          */
+        def raw(d: String): PathData                               = Chunk(PathCommand.Raw(d))
         val empty: PathData                                        = Chunk.empty
         private[kyo] def commands(p: PathData): Chunk[PathCommand] = p
         given CanEqual[PathData, PathData]                         = CanEqual.derived
@@ -332,6 +345,14 @@ object Svg:
         case Translate, Scale, Rotate, SkewX, SkewY
     end TransformType
 
+    /** SMIL animation `fill`: what the animated attribute does once the animation ends. `Freeze`
+      * holds the final value (`fill="freeze"`); `Remove` reverts to the base value (`fill="remove"`,
+      * the SMIL default). Use `Freeze` for a draw-on-load effect that must stay drawn.
+      */
+    enum AnimFill derives CanEqual:
+        case Freeze, Remove
+    end AnimFill
+
     /** `animate` `calcMode`: the interpolation mode between keyframe values. Cases render to their lowercase SVG
       * tokens (`Discrete -> "discrete"`, `Spline -> "spline"`, ...). `Spline` is the mode that activates
       * `keySplines`.
@@ -364,6 +385,7 @@ object Svg:
         strokeDasharray: Maybe[Chunk[Double]] = Absent,
         strokeDashoffset: Maybe[SvgLength] = Absent,
         strokeMiterlimit: Maybe[Double] = Absent,
+        pathLength: Maybe[Double] = Absent,
         opacity: Maybe[Double] = Absent,
         transform: Chunk[Transform] = Chunk.empty,
         // geometry (coords are Double; an explicit SvgLength is stored boxed)
@@ -452,7 +474,8 @@ object Svg:
         animCalcMode: Maybe[String] = Absent,
         animKeyTimes: Maybe[String] = Absent,
         animKeySplines: Maybe[String] = Absent,
-        animType: Maybe[TransformType] = Absent
+        animType: Maybe[TransformType] = Absent,
+        animFill: Maybe[AnimFill] = Absent
     )
 
     /** A geometry value that is either a plain user-space `Double` or an `SvgLength`. */
@@ -733,10 +756,15 @@ object Svg:
     ) extends SvgElement with HasId with HasFill with HasStroke with HasOpacity with HasTransform with HasFilter
         with UI.Ast.SvgInteractiveNode:
         type Self = Path
-        def withAttrs(a: Attrs): Path          = copy(attrs = a)
-        def withSvg(s: SvgAttrs): Path         = copy(svgAttrs = s)
-        def apply(cs: ShapeChild*): Path       = copy(children = children ++ liftSvg(cs))
-        def d(data: PathData): Path            = withSvg(svgAttrs.copy(d = Present(data)))
+        def withAttrs(a: Attrs): Path    = copy(attrs = a)
+        def withSvg(s: SvgAttrs): Path   = copy(svgAttrs = s)
+        def apply(cs: ShapeChild*): Path = copy(children = children ++ liftSvg(cs))
+        def d(data: PathData): Path      = withSvg(svgAttrs.copy(d = Present(data)))
+        // `pathLength` reparameterizes the path so dash and offset values are read in `pathLength`
+        // units rather than user units. Setting it to 1 normalizes the geometry, so a CSS stroke-draw
+        // keyframe can tween `stroke-dashoffset` from 1 (hidden) to 0 (drawn) without knowing the real
+        // length. Used by the landing gap chart's scroll-revealed line draw.
+        def pathLength(v: Double): Path        = withSvg(svgAttrs.copy(pathLength = Present(v)))
         override def id(v: String): Path       = withSvg(svgAttrs.copy(defId = Present(v)))
         def markerStart(ref: Marker.Ref): Path = withSvg(svgAttrs.copy(markerStart = Present(ref.id)))
         def markerMid(ref: Marker.Ref): Path   = withSvg(svgAttrs.copy(markerMid = Present(ref.id)))
@@ -1122,6 +1150,7 @@ object Svg:
         def dur(v: String): Animate           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): Animate   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): Animate         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def fill(v: AnimFill): Animate        = withSvg(svgAttrs.copy(animFill = Present(v)))
 
         /** Sets the interpolation mode between keyframe values. `CalcMode.Spline` is the mode that activates
           * `keySplines`; the other modes ignore it.
@@ -1163,6 +1192,7 @@ object Svg:
         def dur(v: String): AnimateTransform           = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): AnimateTransform   = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
         def begin(v: String): AnimateTransform         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def fill(v: AnimFill): AnimateTransform        = withSvg(svgAttrs.copy(animFill = Present(v)))
     end AnimateTransform
 
     /** `<animateMotion>`: the SMIL element that moves its parent element along a motion path over time.
@@ -1183,6 +1213,7 @@ object Svg:
         def path(v: PathData): AnimateMotion      = withSvg(svgAttrs.copy(d = Present(v)))
         def dur(v: String): AnimateMotion         = withSvg(svgAttrs.copy(animDur = Present(v)))
         def repeatCount(v: String): AnimateMotion = withSvg(svgAttrs.copy(animRepeatCount = Present(v)))
+        def fill(v: AnimFill): AnimateMotion      = withSvg(svgAttrs.copy(animFill = Present(v)))
     end AnimateMotion
 
     /** `<set>`: the SMIL element that sets an attribute of its parent shape to a single value at a given time.
@@ -1203,6 +1234,7 @@ object Svg:
         def attributeName(v: String): SetAnim = withSvg(svgAttrs.copy(animAttributeName = Present(v)))
         def to(v: String): SetAnim            = withSvg(svgAttrs.copy(animTo = Present(v)))
         def begin(v: String): SetAnim         = withSvg(svgAttrs.copy(animBegin = Present(v)))
+        def fill(v: AnimFill): SetAnim        = withSvg(svgAttrs.copy(animFill = Present(v)))
     end SetAnim
 
     // ---- metadata ----

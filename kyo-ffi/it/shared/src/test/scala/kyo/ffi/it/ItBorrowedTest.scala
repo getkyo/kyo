@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Borrowed-return spec.
@@ -12,8 +11,6 @@ import kyo.ffi.Ffi
   * + read), not memory management. The test process's lifetime bounds the leak.
   */
 class ItBorrowedTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "kyoItMallocChunk" - {
         "returns a borrowed Buffer[Byte] filled with 0xAB at every byte" in {
@@ -48,7 +45,7 @@ class ItBorrowedTest extends ItTestBase:
             val b   = Ffi.load[ItBorrowedBindings]
             val n   = 16L
             val buf = b.kyoItMallocChunk(n).value
-            // close() must be allowed (Buffer extends AutoCloseable) and must not throw.
+            // close() must be allowed and must not throw.
             buf.close()
             succeed
         }

@@ -820,9 +820,9 @@ class YamlParserTest extends kyo.test.Test[Any]:
             assert(decoded.hex == 58)
             assert(decoded.leadingDot == 0.5)
             assert(decoded.positiveExponent == 12000.0)
-            assert(decoded.positiveInfinity.isPosInfinity)
-            assert(decoded.negativeInfinity.isNegInfinity)
-            assert(decoded.nan.isNaN)
+            assert(decoded.positiveInfinity.isPosInfinity == true)
+            assert(decoded.negativeInfinity.isNegInfinity == true)
+            assert(decoded.nan.isNaN == true)
         }
 
         "honors standard explicit scalar tags during schema decode" in {
@@ -839,8 +839,8 @@ class YamlParserTest extends kyo.test.Test[Any]:
 
             assert(decoded.stringValue == "true")
             assert(decoded.intValue == 58)
-            assert(!decoded.boolValue)
-            assert(decoded.floatValue.isPosInfinity)
+            assert(!decoded.boolValue == true)
+            assert(decoded.floatValue.isPosInfinity == true)
             assert(decoded.nullValue == None)
             assert(decoded.disabled == "12")
         }
@@ -893,9 +893,92 @@ class YamlParserTest extends kyo.test.Test[Any]:
             val decoded = Yaml.decode[Map[String, String]]("value: NO\n").getOrThrow
 
             assert(decoded == Map("value" -> "NO"))
-            assert(Yaml.decode[YamlLegacyTaggedScalars](yaml, config) == Result.succeed(
-                YamlLegacyTaggedScalars(8, false, 685230.15)
-            ))
+            assert(Yaml.decode[YamlLegacyTaggedScalars](yaml, config) == Result.succeed(YamlLegacyTaggedScalars(8, false, 685230.15)))
+        }
+    }
+
+    "YAML 1.1 extended scalar forms" - {
+
+        "decodes YAML 1.1 hex integers with 0x prefix" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("0xFF\n", config) == Result.succeed(255))
+        }
+
+        "decodes YAML 1.1 binary integers with 0b prefix" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("0b1010\n", config) == Result.succeed(10))
+        }
+
+        "decodes YAML 1.1 octal integers with leading zero" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("010\n", config) == Result.succeed(8))
+        }
+
+        "decodes YAML 1.1 signed positive integer" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("+42\n", config) == Result.succeed(42))
+        }
+
+        "decodes YAML 1.1 signed negative integer" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("-99\n", config) == Result.succeed(-99))
+        }
+
+        "decodes YAML 1.1 sexagesimal integer 1:30:00 as 5400" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("1:30:00\n", config) == Result.succeed(5400))
+        }
+
+        "decodes YAML 1.1 sexagesimal float 1:30.5 as 90.5" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            Yaml.decode[Double]("1:30.5\n", config) match
+                case Result.Success(v) => assert(math.abs(v - 90.5) < 0.0001)
+                case other             => fail(s"Expected Success, got $other")
+            end match
+        }
+
+        "decodes YAML 1.1 positive infinity special float" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            Yaml.decode[Double](".inf\n", config) match
+                case Result.Success(v) => assert(v.isPosInfinity)
+                case other             => fail(s"Expected positive infinity, got $other")
+            end match
+        }
+
+        "decodes YAML 1.1 negative infinity special float" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            Yaml.decode[Double]("-.inf\n", config) match
+                case Result.Success(v) => assert(v.isNegInfinity)
+                case other             => fail(s"Expected negative infinity, got $other")
+            end match
+        }
+
+        "decodes YAML 1.1 NaN special float" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            Yaml.decode[Double](".nan\n", config) match
+                case Result.Success(v) => assert(v.isNaN)
+                case other             => fail(s"Expected NaN, got $other")
+            end match
+        }
+
+        "decodes YAML 1.1 underscored integer" in {
+            val config = Yaml.ReaderConfig(yamlVersion = Yaml.SpecVersion.Yaml11)
+            assert(Yaml.decode[Int]("+1_000\n", config) == Result.succeed(1000))
+        }
+
+        "decodes YAML 1.2 hex integer" in {
+            assert(Yaml.decode[Int]("0x1F\n") == Result.succeed(31))
+        }
+
+        "decodes YAML 1.2 octal integer 0o prefix" in {
+            assert(Yaml.decode[Int]("0o10\n") == Result.succeed(8))
+        }
+
+        "decodes YAML 1.2 positive exponent float with leading dot" in {
+            Yaml.decode[Double](".5\n") match
+                case Result.Success(v) => assert(math.abs(v - 0.5) < 0.0001)
+                case other             => fail(s"Expected 0.5, got $other")
+            end match
         }
     }
 

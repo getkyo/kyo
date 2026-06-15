@@ -41,13 +41,12 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def needsInterrupt(): Boolean =
         !isPending()
 
-    // Wakes the BlockingMonitor for an immediate scan. If the worker thread is blocked
-    // (flat CPU time), Thread.interrupt() is dispatched once the monitor observes the
-    // interrupted promise.
-    final override def preInterrupt(): Boolean =
+    // Bumps the interrupt epoch and wakes the BlockingMonitor AFTER the promise CAS, so the
+    // worker rebuild and monitor scan it triggers already see needsInterrupt() and the runtime
+    // reset. The pre-CAS preInterrupt hook would let a worker spend its one gated rebuild
+    // before the reset exists, stranding the task at its stale key.
+    final override def onInterrupted(): Unit =
         Scheduler.get.notifyInterrupt()
-        true
-    end preInterrupt
 
     private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 

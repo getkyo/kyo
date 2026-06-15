@@ -362,12 +362,12 @@ The network is removed when the scope exits. Containers are removed first (they'
 For networks that outlive the creating scope, use `Network.initUnscoped` and call `Network.remove(id)` manually:
 
 ```scala doctest:expect=skipped
-Container.Network.initUnscoped(cfg)   // returns Id, no scope cleanup
-Container.Network.list                // all networks
-Container.Network.list(filters = ...)   // filtered listing
-Container.Network.inspect(id)         // full network info
-Container.Network.disconnect(net, c)  // detach a container
-Container.Network.prune               // remove unused networks
+Container.Network.initUnscoped(cfg) // returns Id, no scope cleanup
+Container.Network.list              // all networks
+Container.Network.list(filters = Dict("name" -> Chunk("backend"))) // filtered listing
+Container.Network.inspect(id)        // full network info
+Container.Network.disconnect(net, c) // detach a container
+Container.Network.prune              // remove unused networks
 ```
 
 Per-container convenience methods are also available directly on the handle:

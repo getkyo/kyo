@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 import kyo.ffi.FfiErrno
 

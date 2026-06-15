@@ -1,5 +1,6 @@
 package kyo.net.internal.util
 
+import kyo.AllowUnsafe
 import scala.annotation.tailrec
 
 /** A reusable growable byte buffer for connection-scoped serialization.
@@ -128,7 +129,7 @@ final private[kyo] class GrowableByteBuffer:
       *
       * Used by decryptAll (multi-record path) and appendPending (TLS write backpressure).
       */
-    def writeFromBuffer(src: kyo.ffi.Buffer[Byte], len: Int): Unit =
+    def writeFromBuffer(src: kyo.ffi.Buffer[Byte], len: Int)(using AllowUnsafe): Unit =
         ensureCapacity(len)
         var i = 0
         while i < len do

@@ -53,9 +53,20 @@ object UILocation:
                     val sameOrigin = a.host == dom.window.location.host
                     val noModifier = !me.ctrlKey && !me.metaKey && !me.shiftKey && !me.altKey && me.button == 0
                     val notBlank   = a.target != "_blank"
-                    if sameOrigin && noModifier && notBlank then
+                    // A same-document link (only the hash differs, e.g. a `#section` table-of-contents
+                    // or scroll anchor) must keep the browser's native in-page scrolling: intercepting
+                    // it would preventDefault the scroll and push a hash-less path, so the anchor would
+                    // appear dead. Only same-origin cross-document navigations are routed client-side.
+                    val sameDocument =
+                        a.pathname == dom.window.location.pathname && a.search == dom.window.location.search
+                    if sameOrigin && noModifier && notBlank && !sameDocument then
                         me.preventDefault()
-                        dom.window.history.pushState(null, "", a.pathname + a.search)
+                        // Preserve the anchor's hash so a cross-document link that targets a heading
+                        // (e.g. /docs/mod/#section from a search result) keeps the fragment in the URL.
+                        // The route signal stays pathname+search (readWindowPath drops the hash), so
+                        // route-keyed logic is unaffected; the app scrolls to the fragment after it
+                        // renders the new document's content.
+                        dom.window.history.pushState(null, "", a.pathname + a.search + a.hash)
                         currentRef.unsafe.set(readWindowPath())
                     end if
                 }
@@ -112,6 +123,16 @@ object UILocation:
         Sync.defer {
             ensureInit()
             dom.window.history.go(delta)
+        }
+
+    /** Hard browser navigation to `uri` via `window.location.assign`. Unlike [[push]] / [[replace]]
+      * (History-API client-side routing that keeps the SPA mounted), `assign` hands the route to a full
+      * browser navigation, used for off-tree routes the SPA cannot resolve client-side.
+      */
+    def assign(uri: String)(using Frame): Unit < Sync =
+        Sync.defer {
+            ensureInit()
+            dom.window.location.assign(uri)
         }
 
     private def readWindowPath(): String =

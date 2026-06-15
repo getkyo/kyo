@@ -567,7 +567,9 @@ final private[kyo] class HttpClientBackend private (
         url: HttpUrl,
         headers: HttpHeaders,
         config: HttpWebSocket.Config,
-        connectTimeout: Duration = Duration.Infinity
+        connectTimeout: Duration = Duration.Infinity,
+        clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop,
+        autoFilters: Boolean = true
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
@@ -588,7 +590,7 @@ final private[kyo] class HttpClientBackend private (
             else Async.timeout(connectTimeout)(connect)
         Abort.runWith[Closed | Timeout](timed) {
             case Result.Success(connection) =>
-                runWsSessionWith(connection, url, headers, config)(f)
+                runWsSessionWith(connection, url, headers, config, clientFilter, autoFilters)(f)
             case Result.Failure(_: Timeout) =>
                 Abort.fail(HttpConnectTimeoutException(eh, ep, connectTimeout))
             case Result.Failure(closed: Closed) =>
@@ -661,14 +663,10 @@ final private[kyo] class HttpClientBackend private (
             // Compute host header
             val isDefaultPort   = if url.ssl then url.port == 443 else url.port == 80
             val hostHeaderValue = if isDefaultPort || url.host.isEmpty then url.host else s"${url.host}:${url.port}"
-            // Build path with query string
-            val path = url.rawQuery match
-                case Present(q) => s"${url.path}?$q"
-                case Absent     => url.path
             // Send the HTTP request
             val responsePromise = http1.sendDirect(
                 method,
-                path,
+                url.pathWithQuery,
                 headers,
                 body,
                 hostHeaderValue,
@@ -729,7 +727,9 @@ final private[kyo] class HttpClientBackend private (
         connection: kyo.net.Connection,
         url: HttpUrl,
         headers: HttpHeaders,
-        config: HttpWebSocket.Config
+        config: HttpWebSocket.Config,
+        clientFilter: HttpFilter.Passthrough[Nothing],
+        autoFilters: Boolean
     )(
         f: HttpWebSocket => A < S
     )(using Frame): A < (S & Async & Abort[HttpException]) =
@@ -739,11 +739,49 @@ final private[kyo] class HttpClientBackend private (
                 connection.close()
             }
         } {
-            WebSocketCodec.requestUpgradeWith(transportStream, url.host, url.path, headers, config) { wsStream =>
-                serveWebSocketWith(transportStream, wsStream, config)(f)
-            }
+            val autoFilter =
+                if autoFilters then HttpFilter.Factory.composedClient
+                else HttpFilter.noop
+            val filter = autoFilter.andThen(clientFilter)
+            if filter.eq(HttpFilter.noop) then
+                WebSocketCodec.requestUpgradeWith(transportStream, url.host, url.pathWithQuery, headers, config) { wsStream =>
+                    serveWebSocketWith(transportStream, wsStream, config)(f)
+                }
+            else
+                val request = HttpRequest(HttpMethod.GET, url, headers, Record.empty)
+                handleWebSocketFilterResult(
+                    url,
+                    filter[Any, "body" ~ A, HttpException, S](
+                        request,
+                        (filteredReq: HttpRequest[Any]) =>
+                            WebSocketCodec.requestUpgradeWith(
+                                transportStream,
+                                filteredReq.url.host,
+                                filteredReq.url.pathWithQuery,
+                                filteredReq.headers,
+                                config
+                            ) { wsStream =>
+                                serveWebSocketWith(transportStream, wsStream, config)(f).map { result =>
+                                    HttpResponse(HttpStatus.SwitchingProtocols).addField("body", result)
+                                }
+                            }
+                    ).map(_.fields.body)
+                )
+            end if
         }
     end runWsSessionWith
+
+    private def handleWebSocketFilterResult[A, S](
+        url: HttpUrl,
+        v: A < (S & Async & Abort[HttpException | HttpResponse.Halt])
+    )(using Frame): A < (S & Async & Abort[HttpException]) =
+        Abort.run[HttpResponse.Halt](v).map {
+            case Result.Success(value) => value
+            case Result.Failure(halt) =>
+                Abort.fail(HttpStatusException(halt.response.status, HttpMethod.GET.name, url.baseUrl, halt.response.rawBody.getOrElse("")))
+            case Result.Panic(t) => throw t
+        }
+    end handleWebSocketFilterResult
 
     /** Three concurrent fibers: read loop, write loop, user handler.
       *
@@ -1005,7 +1043,10 @@ final private[kyo] class HttpClientBackend private (
         // Client-side filters (e.g. basicAuth, bearerAuth) are Passthrough, they transform the request
         // and forward next's result unchanged.
         // Auto-discovered filters (e.g. W3C trace context from kyo-stats-otlp) are composed first.
-        val clientFilter = HttpFilter.Factory.composedClient
+        val autoFilter =
+            if config.autoFilters then HttpFilter.Factory.composedClient
+            else HttpFilter.noop
+        val clientFilter = autoFilter.andThen(config.clientFilter)
         val routeFilter  = route.filter
         if (clientFilter eq HttpFilter.noop) && (routeFilter eq HttpFilter.noop) then
             // Fast path: no filters configured, call impl directly without filter closure
@@ -1013,7 +1054,7 @@ final private[kyo] class HttpClientBackend private (
         else
             val filter = clientFilter.andThen(routeFilter)
                 .asInstanceOf[HttpFilter[Any, In, Out, Out, Nothing]]
-            filter[In, Out, HttpException](
+            filter[In, Out, HttpException, Any](
                 request,
                 (filteredReq: HttpRequest[In]) =>
                     poolWithImpl(route, filteredReq, config)(f)

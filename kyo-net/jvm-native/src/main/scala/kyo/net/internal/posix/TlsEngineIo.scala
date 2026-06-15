@@ -220,7 +220,7 @@ private[posix] trait TlsEngineIo:
       * the tail on the first append. FIFO-worker-owned: the engine FIFO serializes every read and write engine op for this connection, so the
       * tail (also appended by the write path) is never mutated concurrently. Mirrors the driver write path's append onto the same field.
       */
-    private def appendReadProducedCiphertext(handle: PosixHandle, drain: Buffer[Byte], len: Int): Unit =
+    private def appendReadProducedCiphertext(handle: PosixHandle, drain: Buffer[Byte], len: Int)(using AllowUnsafe): Unit =
         val buf =
             handle.pendingCipher match
                 case Present(b) => b

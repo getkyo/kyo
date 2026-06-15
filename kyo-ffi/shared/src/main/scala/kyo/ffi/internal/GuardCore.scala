@@ -176,6 +176,8 @@ final private[ffi] class GuardCore(platformCloser: () => Unit, postCloseHook: ()
             val drained = drainInFlight(timeoutNanos)
             // Buffers close regardless of drain outcome, they are not read by retained callbacks.
             // Preserves the LIFO invariant from the old code.
+            // Unsafe: bridges to Buffer.close which requires AllowUnsafe at the public boundary; this is internal guard teardown.
+            import kyo.AllowUnsafe.embrace.danger
             val it = buffers.iterator().nn
             while it.hasNext do
                 try it.next().nn.close()

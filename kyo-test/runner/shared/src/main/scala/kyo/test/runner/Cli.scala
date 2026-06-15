@@ -22,7 +22,7 @@ final class SystemExitException(val code: Int)(using Frame) extends kyo.KyoExcep
   *
   * Exit codes:
   *   - `0`: all leaves passed (or no leaves ran, or no suites discovered)
-  *   - `1`: at least one leaf failed, was cancelled, or timed out
+  *   - `1`: at least one leaf failed or timed out (a cancelled leaf is a skipped precondition, not a failure)
   *   - `2`: argument parse error (unknown flag, malformed value, etc.)
   *
   * Invoke via:

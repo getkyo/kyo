@@ -619,7 +619,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     throw new IllegalStateException(s"union variant type $other is not supported (only primitives and structs)")
             end match
         }
-        buf += s"""  case __other => throw new kyo.ffi.FfiUnsupported(s"Union variant not supported: $${__other.getClass}")"""
+        buf += s"""  case __other => throw new kyo.ffi.FfiLoadError.Unsupported(s"Union variant not supported: $${__other.getClass}")"""
         buf += "}"
         buf.result()
     end emitJsUnionFieldObject
@@ -766,7 +766,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
         sb ++= emitTypeRegistrations(spec)
         // Struct ABI self-check. Compare the code-generator's expected byte size against koffi's runtime `sizeof` for each
         // registered struct. Runs after every struct has been registered above so nested struct references resolve. Mismatch throws
-        // `FfiAbiMismatch` before `Ffi.load[T]` returns.
+        // `FfiLoadError.AbiMismatch` before `Ffi.load[T]` returns.
         val checked = layoutRequiredStructs(spec, structsByName)
         spec.structs.foreach { s =>
             if checked.contains(s.fqcn) then
@@ -1148,7 +1148,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                     throw new IllegalStateException(s"union variant type $other is not supported (only primitives and structs)")
             end match
         }
-        buf += s"""    case __other => throw new kyo.ffi.FfiUnsupported(s"Union variant not supported: $${__other.getClass}")"""
+        buf += s"""    case __other => throw new kyo.ffi.FfiLoadError.Unsupported(s"Union variant not supported: $${__other.getClass}")"""
         buf.result()
     end emitJsUnionVariantMatch
 

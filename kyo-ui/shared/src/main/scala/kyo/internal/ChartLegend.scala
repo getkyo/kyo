@@ -414,7 +414,9 @@ private[kyo] object ChartLegend:
             case Style.Color.Hex(value)       => parseHex(value)
             case Style.Color.Rgb(r, g, b)     => (r, g, b)
             case Style.Color.Rgba(r, g, b, _) => (r, g, b)
-            case Style.Color.Transparent      => (128, 128, 128)
+            // Transparent and an unresolved CSS variable have no concrete RGB at this layer: fall back to neutral grey.
+            case Style.Color.Transparent => (128, 128, 128)
+            case Style.Color.Var(_)      => (128, 128, 128)
         end match
     end colorComponents
 

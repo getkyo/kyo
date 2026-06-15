@@ -112,6 +112,7 @@ final class SelfCheck(
     }
 }
 
-object SelfCheck extends App {
-    new SelfCheck().run()
+object SelfCheck {
+    def main(args: Array[String]): Unit =
+        new SelfCheck().run()
 }

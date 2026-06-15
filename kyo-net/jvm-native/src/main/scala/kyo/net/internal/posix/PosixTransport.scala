@@ -1080,7 +1080,7 @@ final private[net] class PosixTransport private[posix] (
     /** The non-blocking fcntl shim (loaded once), used to set client / accepted sockets non-blocking on every architecture (RI: variadic
       * fcntl is ABI-unsafe on arm64).
       */
-    private val shim = Ffi.load[PosixShimBindings]
+    private def shim(using AllowUnsafe): PosixShimBindings = Ffi.load[PosixShimBindings]
 
     /** Extract the value of an already-inline-completed `@Ffi.blocking` fiber via `poll()` (non-parking peek). Returns `Absent` only if the
       * fiber is still pending (not reachable on JVM/Native where this transport runs). Uses `poll()` rather than any parking call.

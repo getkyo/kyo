@@ -10,6 +10,26 @@ abstract class BasePodTest extends kyo.test.Test[Any]:
 
     override def timeout = 60.seconds
 
+    // A per-process random token folded into every generated test resource name.
+    //
+    // Container-runtime suites are forked once per runtime (`#podman` / `#docker`, pinned via
+    // KYO_POD_RUNTIME) and those forks run concurrently on one machine, sharing its `/tmp`. A bare
+    // per-JVM counter resets to the same sequence in each fork, so both would emit `prefix-1`,
+    // `prefix-2`, … and collide on the same host bind-mount directories (one fork's rootful-docker
+    // cleanup then leaves a root-owned dir the other fork cannot write to or remove). The token
+    // disambiguates the forks (and any concurrent CI job on the same runner) so names stay unique
+    // on the shared filesystem. Hex of a random Long keeps it valid for container/volume/network
+    // names and host paths alike.
+    private val runToken: String = java.lang.Long.toHexString(new java.util.Random().nextLong())
+
+    private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
+
+    /** A test resource name of the form `prefix-<process token>-<counter>`, unique within this JVM and across the concurrently-running
+      * per-runtime test forks that share this machine's filesystem.
+      */
+    def uniqueName(prefix: String): String =
+        s"$prefix-$runToken-${nameCounter.incrementAndGet()}"
+
     // Container ops contend on a single daemon, so leaves must run sequentially: the runBackends design (below)
     // assumes "<=1 in-flight container op per daemon", which only holds with sequential leaves. kyo-test defaults to
     // parallel leaves whereas the ScalaTest base ran them sequentially, so restore that. Without it, parallel leaves

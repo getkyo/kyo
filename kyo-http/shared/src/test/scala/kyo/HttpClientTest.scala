@@ -107,6 +107,8 @@ class HttpClientTest extends BaseHttpTest:
             assert(config.followRedirects == true)
             assert(config.maxRedirects == 10)
             assert(config.retrySchedule == Absent)
+            assert(config.autoFilters == true)
+            assert(config.clientFilter.eq(HttpFilter.noop))
         }
 
         "default retryOn checks server errors" in {
@@ -115,6 +117,52 @@ class HttpClientTest extends BaseHttpTest:
             assert(config.retryOn(HttpStatus.BadGateway) == true)
             assert(config.retryOn(HttpStatus.OK) == false)
             assert(config.retryOn(HttpStatus.BadRequest) == false)
+        }
+
+        "filter appends to clientFilter" in {
+            val filter = HttpFilter.client.addHeader("X-Test", "1")
+            val config = HttpClientConfig().filter(filter)
+            assert(!config.clientFilter.eq(HttpFilter.noop))
+        }
+
+        "filters appends multiple filters to clientFilter" in {
+            val config = HttpClientConfig().filters(Seq(
+                HttpFilter.client.addHeader("X-Test-1", "1"),
+                HttpFilter.client.addHeader("X-Test-2", "2")
+            ))
+            assert(!config.clientFilter.eq(HttpFilter.noop))
+        }
+
+        "clearFilters resets clientFilter" in {
+            val config = HttpClientConfig()
+                .filter(HttpFilter.client.addHeader("X-Test", "1"))
+                .clearFilters
+            assert(config.clientFilter.eq(HttpFilter.noop))
+        }
+
+        "withoutAutoFilters disables auto filters" in {
+            val config = HttpClientConfig()
+                .withoutAutoFilters
+            assert(config.autoFilters == false)
+        }
+
+        "current config and filter can be inspected" in {
+            HttpClient.withConfig(noTimeout.filter(HttpFilter.client.addHeader("X-Test", "1"))) {
+                HttpClient.useConfig { config =>
+                    assert(config.timeout == Duration.Infinity)
+                    assert(!config.clientFilter.eq(HttpFilter.noop))
+                }.andThen {
+                    HttpClient.useFilter { filter =>
+                        assert(!filter.eq(HttpFilter.noop))
+                    }
+                }.andThen {
+                    HttpClient.withoutAutoFilters {
+                        HttpClient.useAutoFilter { filter =>
+                            assert(filter.eq(HttpFilter.noop))
+                        }
+                    }
+                }
+            }
         }
 
         "negative maxRedirects throws" in {
@@ -1946,6 +1994,14 @@ class HttpClientTest extends BaseHttpTest:
 
     "client filters" - {
 
+        def appendHeader(name: String, value: String): HttpFilter.Passthrough[Nothing] =
+            new HttpFilter.Passthrough[Nothing]:
+                def apply[In, Out, E2, S](
+                    request: HttpRequest[In],
+                    next: HttpRequest[In] => HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt])
+                )(using Frame): HttpResponse[Out] < (S & Async & Abort[E2 | HttpResponse.Halt]) =
+                    next(request.addHeader(name, value))
+
         // Server endpoint that echoes back the Authorization header value
         def echoAuthEndpoint =
             val route = HttpRoute.getRaw("echo-auth")
@@ -1967,6 +2023,131 @@ class HttpClientTest extends BaseHttpTest:
                 HttpResponse.ok(s"X-Custom=$value")
             }
         end echoCustomHeaderEndpoint
+
+        "config filter applies to convenience methods" - {
+            runServer(echoCustomHeaderEndpoint) { url =>
+                HttpClient.withConfig(
+                    noTimeout.filter(HttpFilter.client.addHeader("X-Custom", "from-config"))
+                ) {
+                    HttpClient.getText(s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/echo-header").map { body =>
+                        assert(body == "X-Custom=from-config")
+                    }
+                }
+            }
+        }
+
+        "scoped filter applies only inside scope" - {
+            runServer(echoCustomHeaderEndpoint) { url =>
+                HttpClient.withConfig(noTimeout) {
+                    val target = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/echo-header"
+                    HttpClient.withFilter(HttpFilter.client.addHeader("X-Custom", "scoped")) {
+                        HttpClient.getText(target).map { body =>
+                            assert(body == "X-Custom=scoped")
+                        }
+                    }.andThen {
+                        HttpClient.getText(target).map { body =>
+                            assert(body == "X-Custom=none")
+                        }
+                    }
+                }
+            }
+        }
+
+        "withoutFilters disables nested filters and restores outer scope" - {
+            val route = HttpRoute.getRaw("echo-header-values")
+                .response(_.bodyText)
+            val ep = route.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Custom").mkString(","))
+            }
+            runServer(ep) { url =>
+                val target = s"${url.scheme.getOrElse("http")}://${url.host}:${url.port}/echo-header-values"
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Custom", "from-config"))) {
+                    HttpClient.withFilter(appendHeader("X-Custom", "scoped")) {
+                        HttpClient.withoutFilters {
+                            HttpClient.useFilter { filter =>
+                                assert(filter.eq(HttpFilter.noop))
+                            }.andThen {
+                                HttpClient.getText(target).map { body =>
+                                    assert(body == "")
+                                }
+                            }
+                        }.andThen {
+                            HttpClient.useFilter { filter =>
+                                assert(!filter.eq(HttpFilter.noop))
+                            }.andThen {
+                                HttpClient.getText(target).map { body =>
+                                    assert(body == "from-config,scoped")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "config scoped and route filters compose in order" - {
+            val route2 = HttpRoute.getRaw("echo-order")
+                .request(_.headerOpt[String]("x-order"))
+                .response(_.bodyText)
+            val ep = route2.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Order").mkString(","))
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Order", "config"))) {
+                    HttpClient.withFilter(appendHeader("X-Order", "scoped")) {
+                        withClient { c =>
+                            val route = HttpRoute.getRaw("echo-order").response(_.bodyText)
+                                .filter(appendHeader("X-Order", "route"))
+                            val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/echo-order", Absent))
+                            c.sendWith(route, request) { resp =>
+                                assert(resp.fields.body == "config,scoped,route")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "auto filters apply before configured and route filters" - {
+            val route2 = HttpRoute.getRaw("auto-client")
+                .request(_.headerOpt[String]("x-order"))
+                .response(_.bodyText)
+            val ep = route2.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Order").mkString(","))
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Order", "config"))) {
+                    withClient { c =>
+                        val route = HttpRoute.getRaw("auto-client").response(_.bodyText)
+                            .filter(appendHeader("X-Order", "route"))
+                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/auto-client", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body == "auto-client,config,route")
+                        }
+                    }
+                }
+            }
+        }
+
+        "withoutAutoFilters disables auto filters and preserves configured filters" - {
+            val route2 = HttpRoute.getRaw("auto-client")
+                .request(_.headerOpt[String]("x-order"))
+                .response(_.bodyText)
+            val ep = route2.handler { req =>
+                HttpResponse.ok(req.headers.getAll("X-Order").mkString(","))
+            }
+            runServer(ep) { url =>
+                HttpClient.withConfig(noTimeout.filter(appendHeader("X-Order", "config")).withoutAutoFilters) {
+                    withClient { c =>
+                        val route   = HttpRoute.getRaw("auto-client").response(_.bodyText)
+                        val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/auto-client", Absent))
+                        c.sendWith(route, request) { resp =>
+                            assert(resp.fields.body == "config")
+                        }
+                    }
+                }
+            }
+        }
 
         "basicAuth adds Authorization header" - {
             runServer(echoAuthEndpoint) { url =>

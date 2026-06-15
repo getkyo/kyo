@@ -1581,35 +1581,186 @@ object Browser:
             case v => v == "empty"
         }
 
-    /** Returns the bounding box of the first element matching `selector` in the top-level viewport coordinate system. Returns `Absent` when
-      * the selector matches nothing or the element has no box model (e.g. `display: none`).
+    /** Returns the settled bounding rectangle of the first element matching `selector`. Re-samples until the geometry stabilizes, then
+      * performs an authoritative `DOM.getBoxModel` CDP read for the final value. Returns `Absent` when the selector matches nothing or the
+      * element has no box model (`display:none`). Coordinates are CSS pixels in the page's top-level viewport coordinate system.
       *
-      * Uses CDP `DOM.getBoxModel` (not JS `getBoundingClientRect`) so coordinates are correct for elements inside cross-origin iframes and
-      * shadow DOM where JS-side reads return iframe-local coords.
+      * Uses `SettleRead.settle` to wait for layout stability before the CDP box-model read.
       */
-    def boundingBox(selector: Selector)(using Frame): Maybe[BoundingBox] < (Browser & Abort[BrowserReadException]) =
-        Resolver.resolveOne(selector).map {
-            case Absent => Maybe.empty[BoundingBox]
-            case Present(ref) =>
-                Env.use[BrowserTab] { tab =>
-                    Abort.recover[BrowserProtocolErrorException] { _ => Maybe.empty[BoundingBox] } {
-                        CdpBackend.getBoxModel(tab.session, GetBoxModelParams(backendNodeId = ref.backendNodeId)).map { bm =>
-                            val c = bm.model.content
-                            if c.size < 8 then Maybe.empty[BoundingBox]
-                            else
-                                val xs = Chunk(c(0), c(2), c(4), c(6))
-                                val ys = Chunk(c(1), c(3), c(5), c(7))
-                                val x  = xs.min
-                                val y  = ys.min
-                                val w  = xs.max - x
-                                val h  = ys.max - y
-                                Present(BoundingBox(x, y, w, h))
-                            end if
-                        }
+    def boundingRect(selector: Selector)(using Frame): Maybe[Browser.Bounds] < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val valueExpr =
+            s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const r = el.getBoundingClientRect(); return JSON.stringify({present:true, x:r.x, y:r.y, w:r.width, h:r.height}); })()"""
+        SettleRead.settle("boundingRect", valueExpr) { raw =>
+            Json.decode[PresentFlagWire](raw) match
+                case Result.Success(w) if !w.present => Maybe.empty[Browser.Bounds]
+                case Result.Success(_) =>
+                    Resolver.resolveOne(selector).map {
+                        case Absent => Maybe.empty[Browser.Bounds]
+                        case Present(ref) =>
+                            Env.use[BrowserTab] { tab =>
+                                Abort.recover[BrowserProtocolErrorException] { _ => Maybe.empty[Browser.Bounds] } {
+                                    CdpBackend.getBoxModel(tab.session, GetBoxModelParams(backendNodeId = ref.backendNodeId)).map { bm =>
+                                        val c = bm.model.content
+                                        if c.size < 8 then Maybe.empty[Browser.Bounds]
+                                        else
+                                            val xs = Chunk(c(0), c(2), c(4), c(6))
+                                            val ys = Chunk(c(1), c(3), c(5), c(7))
+                                            val x  = xs.min
+                                            val y  = ys.min
+                                            Present(Browser.Bounds(x, y, xs.max - x, ys.max - y))
+                                        end if
+                                    }
+                                }
+                            }
+                    }
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("boundingRect", raw))
+        }
+    end boundingRect
+
+    /** Returns the settled computed CSS values for the named `properties` on the element matching `selector`. Re-samples until the values
+      * stabilize. Aborts `BrowserElementNotFoundException` when no element matches (twin: `attribute`).
+      */
+    def computedStyles(selector: Selector, properties: Span[String])(using
+        Frame
+    ): Map[String, String] < (Browser & Abort[BrowserReadException]) =
+        val jsExpr    = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val propsJson = properties.map(p => "\"" + p.replace("\\", "\\\\").replace("\"", "\\\"") + "\"").mkString("[", ",", "]")
+        val valueExpr =
+            s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const cs = window.getComputedStyle(el); const vals = {}; const props = $propsJson; for (const p of props) vals[p] = cs.getPropertyValue(p); return JSON.stringify({present:true, vals}); })()"""
+        SettleRead.settle("computedStyles", valueExpr) { raw =>
+            Json.decode[ComputedStylesWire](raw) match
+                case Result.Success(w) if !w.present =>
+                    Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
+                case Result.Success(w) =>
+                    w.vals.getOrElse(Map.empty)
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("computedStyles", raw))
+        }
+    end computedStyles
+
+    /** Returns the settled computed CSS value for `property` on the element matching `selector`. Delegates to `computedStyles`. Aborts
+      * `BrowserElementNotFoundException` when no element matches.
+      */
+    def computedStyle(selector: Selector, property: String)(using Frame): String < (Browser & Abort[BrowserReadException]) =
+        computedStyles(selector, Span(property)).map(_(property))
+
+    /** Returns whether the element matching `selector` is currently in the visible viewport. Settled read: re-samples until the result
+      * stabilizes. Aborts `BrowserElementNotFoundException` when no element matches (twin: `isVisible`).
+      */
+    def inViewport(selector: Selector)(using Frame): Boolean < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        val valueExpr =
+            s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; const r = el.getBoundingClientRect(); const iv = r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight; return JSON.stringify({present:true, value:iv}); })()"""
+        SettleRead.settle("inViewport", valueExpr) { raw =>
+            Json.decode[PresentBoolWire](raw) match
+                case Result.Success(w) if !w.present =>
+                    Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
+                case Result.Success(w) =>
+                    w.value.getOrElse(false)
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("inViewport", raw))
+        }
+    end inViewport
+
+    /** Returns the current page scroll position (`window.scrollX` / `scrollY`, rounded to integers). Settled read: re-samples until the
+      * offset stabilizes (useful after scroll-snap or smooth-scroll finishes). Total read: no element needed, never aborts on absent.
+      */
+    def scrollPosition(using Frame): Browser.ScrollPosition < (Browser & Abort[BrowserReadException]) =
+        val valueExpr = "JSON.stringify({x: Math.round(window.scrollX), y: Math.round(window.scrollY)})"
+        SettleRead.settle("scrollPosition", valueExpr) { raw =>
+            Json.decode[Browser.ScrollPosition](raw) match
+                case Result.Success(sp) => sp
+                case _                  => Abort.fail(BrowserProtocolErrorException.decodeFailure("scrollPosition", raw))
+        }
+    end scrollPosition
+
+    /** Waits until the page DOM stops mutating for the configured quiescence window, then returns. Aborts `BrowserAssertionTimedOutException`
+      * when the DOM has not quiesced within `timeout`. Delegates to the strict `MutationSettlement.waitForStable` entry; the entire wait runs
+      * inside a single `awaitPromise=true` eval.
+      */
+    def waitForStable(timeout: Duration)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.waitForStable(timeout)
+
+    /** Returns the full DISCOVER snapshot for the element at page-document pixel `(x, y)` via `document.elementFromPoint`. Settled read:
+      * re-samples until stable. Returns `Absent` when no element occupies that point. Aborts `BrowserInvalidArgumentException` before any
+      * page eval when `x` or `y` is negative.
+      */
+    def elementAt(x: Int, y: Int)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        if x < 0 || y < 0 then Abort.fail(BrowserInvalidArgumentException("elementAt", "coordinates must be non-negative"))
+        else
+            installDiscover.andThen {
+                val valueExpr =
+                    s"""(() => { const el = document.elementFromPoint($x, $y); if (!el || el === document.documentElement || el === document.body) return '{"present":false}'; return JSON.stringify({present:true, info:window.__kyoDiscoverProbe(el)}); })()"""
+                SettleRead.settle("elementAt", valueExpr)(decodeElementInfoMaybe("elementAt"))
+            }
+    end elementAt
+
+    /** Returns the full DISCOVER snapshot for the first element matching `selector`. Settled read: re-samples until stable. Returns `Absent`
+      * when no element matches (twin: `boundingRect`).
+      */
+    def element(selector: Selector)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        installDiscover.andThen {
+            val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+            val valueExpr =
+                s"""(() => { const el = $jsExpr; if (!el) return '{"present":false}'; return JSON.stringify({present:true, info:window.__kyoDiscoverProbe(el)}); })()"""
+            SettleRead.settle("element", valueExpr)(decodeElementInfoMaybe("element"))
+        }
+    end element
+
+    /** Returns DISCOVER snapshots for all elements matching `selector` in document order. Empty fast-path: when `BrowserEval.locateCount`
+      * returns 0, returns `Chunk.empty` immediately without waiting for stability (twin: `textAll`). When elements are found, performs a
+      * settled read of the full array.
+      */
+    def elements(selector: Selector = Selector.all)(using Frame): Chunk[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.locateCount(selector).map { n =>
+            if n == 0 then Chunk.empty
+            else
+                installDiscover.andThen {
+                    val jsExpr    = SelectorJs.resolveAllElementsJs(Selector.toNode(selector))
+                    val valueExpr = s"JSON.stringify(($jsExpr).map(el => window.__kyoDiscoverProbe(el)))"
+                    SettleRead.settle("elements", valueExpr) { raw =>
+                        Json.decode[Seq[DiscoverJs.ElementInfoWire]](raw) match
+                            case Result.Success(ws) => Chunk.from(ws).map(toElementInfo)
+                            case _                  => Abort.fail(BrowserProtocolErrorException.decodeFailure("elements", raw))
                     }
                 }
         }
-    end boundingBox
+    end elements
+
+    /** Installs the in-page DISCOVER helper (`window.__kyoDiscoverProbe` / `window.__kyoUniqueSelector`) idempotently. The helper is gated by
+      * `window.__kyoDiscoverInstalled` so repeated calls are cheap.
+      */
+    private def installDiscover(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.evalJs(DiscoverJs.installJs).unit
+
+    /** Converts the JSON wire record for one element into the public `Browser.ElementInfo`. */
+    private def toElementInfo(w: DiscoverJs.ElementInfoWire): Browser.ElementInfo =
+        Browser.ElementInfo(
+            selector = w.selector,
+            tag = w.tag,
+            id = w.id,
+            classes = w.classes,
+            text = w.text,
+            bounds = Browser.Bounds(w.x, w.y, w.width, w.height),
+            visible = w.visible,
+            inViewport = w.inViewport,
+            topmost = w.topmost,
+            interactive = w.interactive,
+            role = w.role
+        )
+
+    /** Curried decoder for a settled element-info read. Returns `Absent` when the JS side returns `present:false`; decodes the wire object
+      * and converts to `Browser.ElementInfo` on the present path.
+      */
+    private def decodeElementInfoMaybe(
+        callee: String
+    )(raw: String)(using Frame): Maybe[Browser.ElementInfo] < (Browser & Abort[BrowserReadException]) =
+        Json.decode[ElementInfoEnvelope](raw) match
+            case Result.Success(env) if !env.present => Maybe.empty[Browser.ElementInfo]
+            case Result.Success(env) =>
+                env.info match
+                    case Present(w) => Present(toElementInfo(w))
+                    case Absent     => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
+            case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure(callee, raw))
 
     /** Returns the flat accessibility node list for the current page. Each entry captures the role, name, and properties for a node Chrome
       * considers exposed to assistive tech. The iframe context honoured is whatever [[withIFrame]] last set; absent that, the top-level
@@ -1757,34 +1908,100 @@ object Browser:
     def title(using Frame): String < (Browser & Abort[BrowserReadException]) =
         BrowserEval.evalJs(ProbesJs.titleJs)
 
-    /** Captures a screenshot of the current page and returns it as an Image. */
-    def screenshot(using Frame): Image < (Browser & Abort[BrowserReadException]) =
-        screenshot(width = 1280, height = 720)
-
-    /** Captures a `width × height` crop of the current page starting from `(0, 0)`.
-      *
-      * The page is rendered at its current viewport: `width` and `height` are the crop dimensions, NOT a render-size override. Use
-      * [[setViewport]] before calling this method when you need the page to render at a specific size (for example, exercising responsive
-      * design at a mobile viewport).
-      *
-      * `format` selects the encoding ([[ScreenshotFormat.Png]], [[ScreenshotFormat.Jpeg]], or [[ScreenshotFormat.Webp]]). `quality` is in
-      * the range `0..100` and applies only to lossy formats; Chrome ignores it for PNG.
+    /** Captures the live current viewport (whatever `setViewport` / `withViewport` last established, else the natural viewport). The legacy
+      * `1280x720` crop is dropped; this method no longer clips. Hold-still capture is the TARGET convention: animations are paused via a
+      * `data-kyo-internal` freeze stylesheet, fonts are awaited, and the capture loops until two consecutive frames are byte-identical or the
+      * `captureHoldStillTimeout` elapses.
       */
     def screenshot(
-        width: Int = 1280,
-        height: Int = 720,
         format: ScreenshotFormat = ScreenshotFormat.Png,
         quality: Int = 90
     )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
-        Env.use[BrowserTab] { tab =>
-            CdpBackend.captureScreenshot(
-                tab.session,
-                ScreenshotParams(
-                    format,
-                    screenshotQuality(format, quality),
-                    clip = Present(ScreenshotClip(0.0, 0.0, width.toDouble, height.toDouble, scale = 1.0))
-                )
-            ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+        HoldStill.withHoldStill {
+            Env.use[BrowserTab] { tab =>
+                CdpBackend.captureScreenshot(
+                    tab.session,
+                    ScreenshotParams(format, screenshotQuality(format, quality), clip = Absent)
+                ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+            }
+        }
+
+    /** Captures a `width x height` region at document offset `(x, y)`. `captureBeyondViewport = true` allows the region to lie below or
+      * beside the visible fold. Aborts `BrowserInvalidArgumentException` BEFORE any CDP call when `width <= 0` or `height <= 0`. Clip
+      * coordinates are CSS px (`scale = 1.0`); an active DPR scales the output raster only. Hold-still capture is the TARGET convention.
+      */
+    def screenshotRegion(
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        quality: Int = 90
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        if width <= 0 || height <= 0 then
+            Abort.fail(BrowserInvalidArgumentException("screenshotRegion", "width and height must be positive"))
+        else
+            HoldStill.withHoldStill {
+                Env.use[BrowserTab] { tab =>
+                    CdpBackend.captureScreenshot(
+                        tab.session,
+                        ScreenshotParams(
+                            format,
+                            screenshotQuality(format, quality),
+                            clip = Present(ScreenshotClip(x.toDouble, y.toDouble, width.toDouble, height.toDouble, scale = 1.0)),
+                            captureBeyondViewport = Present(true)
+                        )
+                    ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                }
+            }
+
+    /** Captures the entire scroll height as a `Chunk` of viewport-tall bands, top to bottom. Aborts
+      * `BrowserCaptureLimitExceededException` BEFORE any capture when the page needs more than `maxBands` bands. The freeze stylesheet is
+      * injected ONCE around the entire band loop so all bands reflect the same frozen animation state. Band coordinates are CSS px
+      * (DPR-independent).
+      */
+    def screenshotFullPage(
+        maxBands: Int = 50,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        quality: Int = 90
+    )(using Frame): Chunk[Image] < (Browser & Abort[BrowserReadException]) =
+        BrowserEval.evalJs(
+            "JSON.stringify({content: Math.ceil(document.documentElement.scrollHeight), viewport: Math.ceil(window.innerHeight), width: Math.ceil(window.innerWidth)})"
+        ).map { raw =>
+            Json.decode[FullPageDimsWire](raw) match
+                case Result.Success(d) =>
+                    val bandCount = math.ceil(d.content.toDouble / d.viewport.toDouble).toInt.max(1)
+                    if bandCount > maxBands then
+                        Abort.fail(BrowserCaptureLimitExceededException("screenshotFullPage", maxBands, bandCount))
+                    else
+                        // Freeze ONCE around the whole band loop so all bands are frozen consistently.
+                        HoldStill.withFrozenPage {
+                            Env.use[BrowserTab] { tab =>
+                                Kyo.foreach(Chunk.from(0 until bandCount)) { i =>
+                                    HoldStill.holdStillFrame {
+                                        CdpBackend.captureScreenshot(
+                                            tab.session,
+                                            ScreenshotParams(
+                                                format,
+                                                screenshotQuality(format, quality),
+                                                clip = Present(
+                                                    ScreenshotClip(
+                                                        0.0,
+                                                        (i * d.viewport).toDouble,
+                                                        d.width.toDouble,
+                                                        d.viewport.toDouble,
+                                                        scale = 1.0
+                                                    )
+                                                ),
+                                                captureBeyondViewport = Present(true)
+                                            )
+                                        ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                                    }
+                                }
+                            }
+                        }
+                    end if
+                case _ => Abort.fail(BrowserProtocolErrorException.decodeFailure("screenshotFullPage", raw))
         }
 
     /** Extracts the main readable text content from the page using a readability algorithm. */
@@ -1802,40 +2019,44 @@ object Browser:
             )
         }
 
-    /** Captures a screenshot of a specific element.
-      *
-      * `format` selects the encoding ([[ScreenshotFormat.Png]], [[ScreenshotFormat.Jpeg]], or [[ScreenshotFormat.Webp]]). `quality` is in
-      * the range `0..100` and applies only to lossy formats; Chrome ignores it for PNG.
+    /** Captures a screenshot of a specific element. AUTO-WAITS for the element via `Actionability.withRetry` (retry channel
+      * `BrowserElementException`, NEVER widened to `BrowserMutationException`); performs a box-stable check (two bounding-rect samples 16 ms
+      * apart must agree within 1 px) and scrolls the element into view before capturing. Gains `transparentBackground`: when true, sets CDP
+      * `Emulation.setDefaultBackgroundColorOverride` to fully transparent for the shot and restores it via `Scope.acquireRelease`. Hold-still
+      * capture is the TARGET convention. Returns `Image` and ABORTS `BrowserElementNotFoundException` when the element never appears within
+      * the configured `retrySchedule`; NOT changed to `Maybe`.
       */
     def screenshotElement(
         selector: Selector,
         format: ScreenshotFormat = ScreenshotFormat.Png,
-        quality: Int = 90
-    )(using
-        Frame
-    )
-        : Image < (Browser & Abort[BrowserReadException]) =
-        Actionability.requireResolved(selector) {
-            val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
-            BrowserEval.evalJs(s"""(() => {
-                const el = $jsExpr;
+        quality: Int = 90,
+        transparentBackground: Boolean = false
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
+        // AUTO-WAIT: the retry resolves the element and waits until its box is stable, returning the resolved clip box.
+        // The hold-still capture then runs ONCE outside the retry, threading that stable box through `.map`, so a capture
+        // failure never re-enters the retry channel.
+        Actionability.withRetry {
+            // Resolve, box-stable check (two samples ~16 ms apart, agree within 1 px), then scroll into view and re-read the post-scroll rect.
+            // found=false means the element does not exist (triggers BrowserElementNotFoundException for retry).
+            // ok=false with found=true means the element exists but its bounding rect is still moving (triggers NotActionable for retry).
+            BrowserEval.evalJsAwaiting(s"""(async () => {
+                const el = $jsExpr; if (!el) return JSON.stringify({found:false,ok:false});
+                const r1 = el.getBoundingClientRect();
+                await new Promise(res => setTimeout(res, 16));
+                const r2 = el.getBoundingClientRect();
+                if (Math.abs(r1.x - r2.x) > 1 || Math.abs(r1.y - r2.y) > 1 || Math.abs(r1.width - r2.width) > 1 || Math.abs(r1.height - r2.height) > 1)
+                    return JSON.stringify({found:true,ok:false});
+                el.scrollIntoViewIfNeeded ? el.scrollIntoViewIfNeeded(true) : el.scrollIntoView({block:'center'});
                 const r = el.getBoundingClientRect();
-                return JSON.stringify({x: r.x, y: r.y, width: r.width, height: r.height});
+                return JSON.stringify({found:true,ok:true, x:r.x, y:r.y, width:r.width, height:r.height});
             })()""").map { result =>
-                Json.decode[BoundingRectWire](result) match
-                    case Result.Success(r) =>
-                        Env.use[BrowserTab] { tab =>
-                            val clip = ScreenshotClip(r.x, r.y, r.width, r.height, scale = 1.0)
-                            CdpBackend.captureScreenshot(
-                                tab.session,
-                                ScreenshotParams(format, screenshotQuality(format, quality), clip = Present(clip))
-                            ).map { sr =>
-                                CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data)
-                            }
-                        }
+                Json.decode[ElementClipWire](result) match
+                    case Result.Success(w) if w.ok =>
+                        ScreenshotClip(w.x, w.y, w.width, w.height, scale = 1.0)
+                    case Result.Success(w) if !w.found =>
+                        Abort.fail(BrowserElementNotFoundException(selectorNodeDescription(Selector.toNode(selector))))
                     case _ =>
-                        // A malformed bounding-rect payload means the element yielded no usable geometry, semantically the same as a
-                        // zero-size element, so surface it as NotVisible(ZeroComputedSize).
                         Abort.fail(
                             BrowserElementNotActionableException(
                                 selectorNodeDescription(Selector.toNode(selector)),
@@ -1845,8 +2066,101 @@ object Browser:
                             )
                         )
             }
+        }.map { clip =>
+            // Capture ONCE with the resolved (actionable, ok) clip box, outside the retry.
+            withTransparentBackground(transparentBackground) {
+                HoldStill.withHoldStill {
+                    Env.use[BrowserTab] { tab =>
+                        CdpBackend.captureScreenshot(
+                            tab.session,
+                            ScreenshotParams(format, screenshotQuality(format, quality), clip = Present(clip))
+                        ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                    }
+                }
+            }
         }
     end screenshotElement
+
+    /** Captures the viewport with numbered badges overlaid at each element in `marks` (1-based, top-left corner). The overlay is one
+      * settlement-transparent `data-kyo-internal` subtree. Aborts `BrowserCaptureLimitExceededException` when `marks.size > maxMarks`. The
+      * settle gate runs BEFORE mark injection (via `HoldStill.withFrozenPage`) so the marks overlay mutation does not reset quiescence;
+      * marks are injected exactly once inside the frozen scope and removed via `Scope.acquireRelease`.
+      *
+      * The injected container carries a unique `data-kyo-token` minted by the inject eval, and the removal targets only the node bearing
+      * that token rather than a shared global slot, so concurrent same-tab captures each tear down exactly their own overlay.
+      */
+    def screenshotMarks(
+        marks: Chunk[Browser.ElementInfo],
+        maxMarks: Int = 100,
+        format: ScreenshotFormat = ScreenshotFormat.Png,
+        quality: Int = 90
+    )(using Frame): Image < (Browser & Abort[BrowserReadException]) =
+        if marks.size > maxMarks then Abort.fail(BrowserCaptureLimitExceededException("screenshotMarks", maxMarks, marks.size))
+        else
+            val badges = marks.zipWithIndex.map((m, i) => s"""{x:${m.bounds.x},y:${m.bounds.y},n:${i + 1}}""").mkString("[", ",", "]")
+            val injectJs = s"""(() => {
+                const root = document.createElement('div');
+                const token = String((window.__kyoOverlayToken = (window.__kyoOverlayToken || 0) + 1));
+                root.setAttribute('data-kyo-internal', 'marks');
+                root.setAttribute('data-kyo-token', token);
+                root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
+                for (const b of $badges) {
+                    const d = document.createElement('div');
+                    d.setAttribute('data-kyo-internal', 'mark');
+                    d.textContent = b.n;
+                    d.style.cssText = 'position:absolute;left:'+(b.x+2)+'px;top:'+(b.y+2)+'px;background:#d00;color:#fff;font:12px sans-serif;padding:1px 4px;border-radius:3px;';
+                    root.appendChild(d);
+                }
+                document.body.appendChild(root); return token;
+            })()"""
+            def removeJs(token: String) =
+                val escaped = JsStringUtil.escapeJsString(token)
+                s"""(() => { document.querySelectorAll('[data-kyo-token="$escaped"]').forEach(n => n.remove()); return 'unmarked'; })()"""
+            // Settle BEFORE injecting marks: withFrozenPage runs settleForCapture + fonts.ready + freeze injection before entering the body.
+            // Mark injection inside the frozen scope ensures the quiescence gate has already passed when the overlay mutation fires.
+            HoldStill.withFrozenPage {
+                Browser.use { tab =>
+                    Scope.run {
+                        Scope.acquireRelease(BrowserEval.evalJs(injectJs)) { token =>
+                            Browser.releaseHook(tab)(BrowserEval.evalJs(removeJs(token)).unit)
+                        }.andThen {
+                            HoldStill.holdStillFrame {
+                                CdpBackend.captureScreenshot(
+                                    tab.session,
+                                    ScreenshotParams(format, screenshotQuality(format, quality), clip = Absent)
+                                ).map(sr => CdpBase64Decode.decodeScreenshotImage("Page.captureScreenshot", sr.data))
+                            }
+                        }
+                    }
+                }
+            }
+
+    /** Applies a transparent default background for `body`'s duration when `enabled`. Sets
+      * `Emulation.setDefaultBackgroundColorOverride` to `{r:0,g:0,b:0,a:0}` on enter and clears it on exit (success, failure, or
+      * interruption) via `Scope.acquireRelease`. A no-op when `enabled` is false.
+      */
+    private def withTransparentBackground[A, S](enabled: Boolean)(
+        body: => A < (Browser & Abort[BrowserReadException] & S)
+    )(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
+        if !enabled then body
+        else
+            Env.use[BrowserTab] { tab =>
+                Scope.run {
+                    Scope.acquireRelease(
+                        CdpBackend.setDefaultBackgroundColorOverride(
+                            tab.session,
+                            SetDefaultBackgroundColorOverrideParams(Present(RgbaColor(0, 0, 0, Present(0.0))))
+                        )
+                    )(_ =>
+                        Browser.releaseHook(tab)(
+                            CdpBackend.setDefaultBackgroundColorOverride(
+                                tab.session,
+                                SetDefaultBackgroundColorOverrideParams(Absent)
+                            )
+                        )
+                    ).andThen(body)
+                }
+            }
 
     /** Derives the CDP `quality` field for a screenshot. PNG output is lossless and Chrome ignores the field entirely, so we drop it via
       * [[Absent]] / `None` rather than send a value the server discards. JPEG and WEBP both clamp the integer to the wire range `0..100`.
@@ -1858,11 +2172,13 @@ object Browser:
 
     // --- Viewport ---
 
-    /** Overrides the rendered viewport to `width × height` until [[resetViewport]] is called.
+    /** Overrides the rendered viewport to `width × height` (and `deviceScaleFactor` for the device pixel ratio) until [[resetViewport]] is
+      * called.
       *
-      * Forwards to `Emulation.setDeviceMetricsOverride` with `deviceScaleFactor = 1` and `mobile = false`. The override affects how the
-      * page renders: responsive media queries match the new viewport, and elements re-layout. It is sticky: subsequent operations on the
-      * same tab observe the overridden viewport until the caller invokes [[resetViewport]] (or the tab is closed).
+      * Forwards to `Emulation.setDeviceMetricsOverride` with `deviceScaleFactor` (default `1.0`) and `mobile = false`. The override affects
+      * how the page renders: responsive media queries match the new viewport, elements re-layout, and `window.devicePixelRatio` reflects the
+      * override. It is sticky: subsequent operations on the same tab observe the overridden viewport until the caller invokes
+      * [[resetViewport]] (or the tab is closed). Settles after via `MutationSettlement.afterAction` so the re-layout has quiesced on return.
       *
       * The override persists until [[resetViewport]] is called or the tab is closed; not scope-managed.
       *
@@ -1871,51 +2187,59 @@ object Browser:
       * `isolate.clone`. Each child tab starts with its own natural viewport; re-apply `setViewport` inside the child if you need the same
       * override there. For a snapshot-driven workflow consider invoking `setViewport` per-tab as part of the child's setup.
       */
-    private[kyo] def setViewport(width: Int, height: Int)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Env.use[BrowserTab] { tab =>
-            // Cache write FIRST, then issue the CDP call. If the CDP call fails, the cache reflects intent;
-            // the reverse order would risk a permanently-stale cache on a missed update following a successful CDP call.
-            tab.viewportOverride.set(Present((width, height))).andThen(
-                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height))
-            )
-        }
+    def setViewport(width: Int, height: Int, deviceScaleFactor: Double = 1.0)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            Env.use[BrowserTab] { tab =>
+                // Cache write FIRST, then issue the CDP call. If the CDP call fails, the cache reflects intent;
+                // the reverse order would risk a permanently-stale cache on a missed update following a successful CDP call.
+                tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
+                )
+            }
+        }(Absent)
 
     /** Removes any viewport override set by [[setViewport]], restoring the tab's natural viewport.
       *
-      * Forwards to `Emulation.clearDeviceMetricsOverride`. No-op when no override is currently active.
+      * Forwards to `Emulation.clearDeviceMetricsOverride`. No-op when no override is currently active. Settles after via
+      * `MutationSettlement.afterAction` so any re-layout from clearing the override has quiesced on return.
       */
-    private[kyo] def resetViewport(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
-        Env.use[BrowserTab] { tab =>
-            tab.viewportOverride.set(Absent).andThen(
-                CdpBackend.clearDeviceMetricsOverride(tab.session)
-            )
-        }
+    def resetViewport(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            Env.use[BrowserTab] { tab =>
+                tab.viewportOverride.set(Absent).andThen(
+                    CdpBackend.clearDeviceMetricsOverride(tab.session)
+                )
+            }
+        }(Absent)
 
-    /** Scoped form of [[setViewport]]: applies the `width × height` override for the duration of `body`, then clears the override on body
-      * exit (success, failure, or interruption).
+    /** Scoped form of [[setViewport]]: applies the `width x height` override (and `deviceScaleFactor` for the device pixel ratio) for the
+      * duration of `body`, then restores the prior override on body exit (success, failure, or interruption).
       *
       * Use this instead of `setViewport(w, h).andThen(...)` when you want the override bounded to a specific block. Composes naturally with
       * the rest of the API: viewport-dependent assertions inside `body` see the override, code after `body` does not.
       *
-      * The prior override (if any) is cached on the BrowserTab. On exit, the cache is consulted: if a prior `(w, h)` override was active
-      * at entry, it is re-applied via `setDeviceMetricsOverride`; otherwise the override is cleared via `clearDeviceMetricsOverride`. This
-      * lets nested `withViewport` calls compose correctly.
+      * The prior override (if any) is cached on the BrowserTab. On exit, the cache is consulted: if a prior override was active at entry, it
+      * is re-applied via `setDeviceMetricsOverride` carrying that prior override's own `deviceScaleFactor`; otherwise the override is cleared
+      * via `clearDeviceMetricsOverride`. This lets nested `withViewport` calls compose correctly in LIFO order. The apply settles via
+      * `MutationSettlement.afterAction` before `body` runs; the restore on teardown does not add settlement.
       */
-    def withViewport[A, S](width: Int, height: Int)(body: A < (Browser & S))(using
+    def withViewport[A, S](width: Int, height: Int, deviceScaleFactor: Double = 1.0)(body: A < (Browser & S))(using
         Frame
     ): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
             Scope.run {
                 tab.viewportOverride.get.map { prior =>
                     Scope.acquireRelease(
-                        tab.viewportOverride.set(Present((width, height))).andThen(
-                            CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height))
-                        )
+                        MutationSettlement.afterAction {
+                            tab.viewportOverride.set(Present(BrowserTab.ViewportOverride(width, height, deviceScaleFactor))).andThen(
+                                CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(width, height, deviceScaleFactor))
+                            )
+                        }(Absent)
                     ) { _ =>
                         tab.viewportOverride.set(prior).andThen(
                             prior match
-                                case Present((w, h)) =>
-                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(w, h))
+                                case Present(vo) =>
+                                    CdpBackend.setDeviceMetricsOverride(tab.session, ViewportParams(vo.width, vo.height, vo.dpr))
                                 case Absent =>
                                     CdpBackend.clearDeviceMetricsOverride(tab.session)
                         )
@@ -1923,6 +2247,147 @@ object Browser:
                 }
             }
         }
+
+    /** Scoped wrapper that applies emulated media features for the duration of `body`, then restores the prior state.
+      *
+      * Only the features the caller actually requests are sent in the single `Emulation.setEmulatedMedia` call: `media` selects the
+      * media type (`screen` / `print`) and is omitted when `Absent`; `colorScheme` sets `prefers-color-scheme` (`light` / `dark`, or
+      * the empty-string clear for [[Browser.ColorScheme.NoPreference]] since W3C dropped that value) and is omitted when `Absent`;
+      * `prefers-reduced-motion` is sent as `reduce` only when `reducedMotion = true` and is omitted otherwise. So a color-scheme-only
+      * call leaves the page's real `prefers-reduced-motion` untouched, and `reducedMotion = false` means "do not emulate reduced
+      * motion", not "force no-preference". The override is cached on the tab and re-applied on exit via `Scope.acquireRelease` inside
+      * an inner `Scope.run`, so nested calls compose in LIFO order and the restore fires on success, failure, AND interruption. When no
+      * prior override was active the restore clears all media emulation with an empty `Emulation.setEmulatedMedia` send, so the host's
+      * real media values return rather than a forced override. The apply settles via `MutationSettlement.afterAction` so any
+      * media-query re-layout has quiesced before `body` starts.
+      */
+    def withEmulation[A, S](
+        colorScheme: Maybe[Browser.ColorScheme] = Absent,
+        media: Maybe[Browser.MediaType] = Absent,
+        reducedMotion: Boolean = false
+    )(body: A < (Browser & S))(using Frame): A < (Browser & Abort[BrowserReadException] & S) =
+        Env.use[BrowserTab] { tab =>
+            val params = emulatedMediaParams(media.map(_.wire), colorScheme.map(_.wire), reducedMotion)
+            Scope.run {
+                tab.emulationOverride.get.map { prior =>
+                    Scope.acquireRelease(
+                        MutationSettlement.afterAction {
+                            tab.emulationOverride.set(Present(BrowserTab.EmulatedMediaState(
+                                colorScheme.map(_.wire),
+                                media.map(_.wire),
+                                reducedMotion
+                            ))).andThen(
+                                CdpBackend.setEmulatedMedia(tab.session, params)
+                            )
+                        }(Absent)
+                    ) { _ =>
+                        tab.emulationOverride.set(prior).andThen(
+                            prior match
+                                case Present(s) =>
+                                    CdpBackend.setEmulatedMedia(
+                                        tab.session,
+                                        emulatedMediaParams(s.media, s.colorScheme, s.reducedMotion)
+                                    )
+                                case Absent =>
+                                    // No prior override: clear all media emulation so the host's real values return. An empty
+                                    // features list with empty media drops every prefers-* override back to the environment value.
+                                    CdpBackend.setEmulatedMedia(tab.session, clearEmulatedMediaParams)
+                        )
+                    }.andThen(body)
+                }
+            }
+        }
+    end withEmulation
+
+    /** Composes a `SetEmulatedMediaParams` carrying only the features the caller requested.
+      *
+      * `media` becomes the top-level media-type override when `Present`, omitted otherwise. `colorScheme` (already a CDP wire string,
+      * `""` for the [[Browser.ColorScheme.NoPreference]] clear) contributes a `prefers-color-scheme` feature only when `Present`.
+      * `reducedMotion = true` contributes a `prefers-reduced-motion: reduce` feature; `false` contributes nothing, so an unrelated
+      * media feature is never perturbed. Used by both the apply path and the restore-to-a-prior-state path so the two stay in lockstep.
+      */
+    private[kyo] def emulatedMediaParams(
+        media: Maybe[String],
+        colorScheme: Maybe[String],
+        reducedMotion: Boolean
+    ): SetEmulatedMediaParams =
+        val features = Chunk(
+            colorScheme.map(cs => EmulatedMediaFeature("prefers-color-scheme", cs)),
+            if reducedMotion then Present(EmulatedMediaFeature("prefers-reduced-motion", "reduce")) else Absent
+        ).flatMap(_.toChunk)
+        SetEmulatedMediaParams(media, Present(features.toSeq))
+    end emulatedMediaParams
+
+    /** The `SetEmulatedMediaParams` that clears every media-feature override back to the host.
+      *
+      * Empty media plus an empty features list drops every `prefers-*` override back to the environment value, rather than enumerating
+      * each feature (which can silently miss one). Sent by the restore path when no prior override was active.
+      */
+    private[kyo] val clearEmulatedMediaParams: SetEmulatedMediaParams =
+        SetEmulatedMediaParams(Present(""), Present(Seq.empty))
+
+    /** Injects a settlement-transparent overlay (a dashed box per annotation, plus a label when one is provided) for the duration of
+      * `body`, then removes it on exit.
+      *
+      * The overlay is one container subtree tagged `data-kyo-internal`, so the mutation observer ignores both its insertion and its
+      * removal: the overlay does NOT arm the mutation gate, and a capture inside `body` sees the boxes while a settlement inside
+      * `body` stays transparent to them. Each annotation resolves its element via the same selector machinery the rest of the API
+      * uses; an annotation whose selector matches nothing is skipped. The inject eval completes before `body` runs, so screenshots
+      * taken inside `body` include the overlays. The container is removed via `Scope.acquireRelease` inside an inner `Scope.run`, so
+      * the removal fires on success, failure, AND interruption.
+      *
+      * Each invocation tags its container with a unique `data-kyo-token` minted by the inject eval (an in-page monotonic sequence) and
+      * removes ONLY the node carrying that token, never a shared global slot. Nested or interleaved `withHighlights` blocks therefore
+      * each tear down exactly their own overlay: an inner block's exit cannot make the outer block's removal a no-op.
+      */
+    def withHighlights[A, S](annotations: Span[Browser.Annotation])(body: A < (Browser & S))(using
+        Frame
+    ): A < (Browser & Abort[BrowserReadException] & S) =
+        val specs = annotations.map { a =>
+            val sel   = SelectorJs.resolveElementJs(Selector.toNode(a.selector))
+            val color = s""""${JsStringUtil.escapeJsString(a.color.getOrElse("#d00"))}""""
+            val label = s""""${JsStringUtil.escapeJsString(a.label.getOrElse(""))}""""
+            s"""{ sel: () => $sel, color: $color, label: $label }"""
+        }.mkString("[", ",", "]")
+        val injectJs = s"""(() => {
+            const root = document.createElement('div');
+            const token = String((window.__kyoOverlayToken = (window.__kyoOverlayToken || 0) + 1));
+            root.setAttribute('data-kyo-internal', 'highlights');
+            root.setAttribute('data-kyo-token', token);
+            root.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483646;';
+            for (const a of $specs) {
+                const el = a.sel(); if (!el) continue;
+                const r = el.getBoundingClientRect();
+                const box = document.createElement('div');
+                box.setAttribute('data-kyo-internal', 'highlight');
+                box.style.cssText = 'position:absolute;left:'+r.left+'px;top:'+r.top+'px;width:'+r.width+'px;height:'+r.height+'px;outline-width:2px;outline-style:dashed;outline-color:'+a.color+';';
+                if (a.label) {
+                    const b = document.createElement('div');
+                    b.setAttribute('data-kyo-internal', 'label');
+                    b.textContent = a.label;
+                    b.style.cssText = 'position:absolute;left:'+r.left+'px;top:'+(r.top-16)+'px;background:'+a.color+';color:#fff;font:11px sans-serif;padding:0 3px;';
+                    root.appendChild(b);
+                }
+                root.appendChild(box);
+            }
+            document.body.appendChild(root);
+            return token;
+        })()"""
+        def removeJs(token: String) =
+            val escaped = JsStringUtil.escapeJsString(token)
+            s"""(() => {
+            document.querySelectorAll('[data-kyo-token="$escaped"]').forEach(n => n.remove());
+            return 'unhighlighted';
+        })()"""
+        end removeJs
+        Env.use[BrowserTab] { tab =>
+            Scope.run {
+                Scope.acquireRelease(BrowserEval.evalJs(injectJs))(token =>
+                    releaseHook(tab)(BrowserEval.evalJs(removeJs(token)).unit)
+                ).andThen(body)
+            }
+        }
+    end withHighlights
 
     // --- Keyboard ---
 
@@ -1990,11 +2455,25 @@ object Browser:
 
     // --- Scrolling ---
 
-    /** Scrolls the page until the element matched by the selector is visible. */
-    def scrollTo(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+    /** Scrolls the window to the document coordinate `(x, y)` via `window.scrollTo`.
+      *
+      * Settles after via `MutationSettlement.afterAction` so any layout reaction to the scroll has quiesced on return.
+      */
+    def scrollTo(x: Int, y: Int)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        MutationSettlement.afterAction {
+            BrowserEval.evalJs(s"window.scrollTo($x, $y)").unit
+        }(Absent)
+
+    /** Scrolls the page until the element matched by the selector is visible.
+      *
+      * Auto-waits for the element via `Actionability.withRetry`: the read is retried over the configured `retrySchedule` until the element
+      * resolves, then `scrollIntoView` runs. The retry channel is `BrowserElementException` (never widened to `BrowserMutationException`).
+      * Aborts `BrowserElementNotFoundException` when the element never appears within the schedule. Settles after.
+      */
+    def scrollToElement(selector: Selector)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         val jsExpr = SelectorJs.resolveElementJs(Selector.toNode(selector))
-        configLocal.use { cfg =>
-            Retry[BrowserMutationException](cfg.retrySchedule) {
+        MutationSettlement.afterAction {
+            Actionability.withRetry {
                 Actionability.requireResolved(selector) {
                     BrowserEval.evalJs(s"""(() => {
                         const el = $jsExpr;
@@ -2003,8 +2482,8 @@ object Browser:
                     })()""").unit
                 }
             }
-        }
-    end scrollTo
+        }(Absent)
+    end scrollToElement
 
     /** Scrolls the page to the top. */
     def scrollToTop(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
@@ -2068,44 +2547,97 @@ object Browser:
 
     /** Returns all console messages captured since the last call (or since page load on the first call) and clears the buffer.
       *
-      * The `console.log`, `console.warn`, and `console.error` override is installed eagerly when the tab is attached, so messages emitted
-      * during page load are captured even before the first `consoleLogs` call. Each call drains and clears the buffer. Each entry carries a
-      * typed [[Browser.ConsoleLevel]], the original message, and the page-side `Date.now()` timestamp at emit time.
+      * The `console.debug` / `console.info` / `console.log` / `console.warn` / `console.error` override is installed eagerly when the tab is
+      * attached, so messages emitted during page load are captured even before the first `consoleLogs` call. Each call drains and clears the
+      * buffer. Each entry carries a typed [[Browser.ConsoleLevel]], the joined message text, and an `offsetMs` relative to the page-side
+      * capture baseline (`window.__kyoConsoleT0`, the `Date.now()` at install time).
       */
     def consoleLogs(using Frame): Chunk[Browser.ConsoleMessage] < (Browser & Abort[BrowserReadException]) =
-        BrowserEval.evalJs("""(() => {
-            const logs = window.__kyoConsoleLogs || [];
-            window.__kyoConsoleLogs = [];
-            return JSON.stringify(logs);
-        })()""").map { json =>
-            if json.isEmpty then Chunk.empty
-            else
-                Json.decode[Seq[ConsoleMessageWire]](json) match
-                    case Result.Success(list) =>
-                        Kyo.foreach(Chunk.from(list))(decodeConsoleMessage)
-                    case other =>
-                        Log.warn(s"consoleLogs: unexpected wire shape decoding Seq[ConsoleMessageWire]: $other; raw=$json")
-                            .andThen(Abort.fail(BrowserProtocolErrorException.decodeFailure("consoleLogs", s"$other; raw=$json")))
+        BrowserEval.evalJs("(window.__kyoConsoleT0 || 0)").map { t0Raw =>
+            val t0Ms = t0Raw.toLongOption.getOrElse(0L)
+            BrowserEval.evalJs("""(() => {
+                const logs = window.__kyoConsoleLogs || [];
+                window.__kyoConsoleLogs = [];
+                return JSON.stringify(logs);
+            })()""").map { json =>
+                if json.isEmpty then Chunk.empty
+                else
+                    Json.decode[Seq[ConsoleMessageWire]](json) match
+                        case Result.Success(list) =>
+                            Kyo.foreach(Chunk.from(list))(w => decodeConsoleMessage(w, t0Ms))
+                        case other =>
+                            Log.warn(s"consoleLogs: unexpected wire shape decoding Seq[ConsoleMessageWire]: $other; raw=$json")
+                                .andThen(Abort.fail(BrowserProtocolErrorException.decodeFailure("consoleLogs", s"$other; raw=$json")))
+            }
         }
 
     /** Filtering overload of [[consoleLogs]] that drains the buffer and returns only entries whose level equals `level`. */
     def consoleLogs(level: Browser.ConsoleLevel)(using Frame): Chunk[Browser.ConsoleMessage] < (Browser & Abort[BrowserReadException]) =
         consoleLogs.map(_.filter(_.level == level))
 
-    private def decodeConsoleMessage(wire: ConsoleMessageWire)(using
+    private[kyo] def decodeConsoleMessage(wire: ConsoleMessageWire, t0Ms: Long)(using
         Frame
     ): Browser.ConsoleMessage < Abort[BrowserReadException] =
         val levelE: Browser.ConsoleLevel < Abort[BrowserReadException] = wire.level match
             case "log"   => Browser.ConsoleLevel.Log
+            case "info"  => Browser.ConsoleLevel.Info
             case "warn"  => Browser.ConsoleLevel.Warn
             case "error" => Browser.ConsoleLevel.Error
+            case "debug" => Browser.ConsoleLevel.Debug
             case other =>
                 Abort.fail(BrowserProtocolErrorException.decodeFailure(
                     "consoleLogs",
-                    s"unknown level '$other' (expected log|warn|error)"
+                    s"unknown level '$other' (expected log|info|warn|error|debug)"
                 ))
-        levelE.map(lv => Browser.ConsoleMessage(lv, wire.message, Instant.fromJava(java.time.Instant.ofEpochMilli(wire.timestamp))))
+        levelE.map(lv => Browser.ConsoleMessage(lv, wire.message, Absent, wire.timestamp - t0Ms))
     end decodeConsoleMessage
+
+    /** Decodes a CDP `Runtime.consoleAPICalled` wire record into a typed [[Browser.ConsoleMessage]]. The 18 CDP `type` literals are mapped
+      * or aborted explicitly: the 10 non-structural types fold onto the five [[Browser.ConsoleLevel]] severities (`warning` maps to `Warn`,
+      * `trace` to `Debug`, `dir`/`dirxml`/`table` to `Log`, `assert` to `Error`), and the 8 structural types (`count`, `countReset`,
+      * `timeEnd`, `startGroup`, `startGroupCollapsed`, `endGroup`, `clear`, `profile`/`profileEnd`) abort
+      * [[BrowserProtocolErrorException.decodeFailure]] so a new CDP type surfaces as a typed protocol error rather than a silent `Log`.
+      *
+      * The CDP path knows `warning`, never the drain path's `warn` spelling; the two spellings never collide.
+      */
+    private[kyo] def decodeConsoleApiCalled(wire: ConsoleApiCalledWire, t0Ms: Long)(using
+        Frame
+    ): Browser.ConsoleMessage < Abort[BrowserReadException] =
+        val levelE: Browser.ConsoleLevel < Abort[BrowserReadException] = wire.`type` match
+            case "log"     => Browser.ConsoleLevel.Log
+            case "info"    => Browser.ConsoleLevel.Info
+            case "warning" => Browser.ConsoleLevel.Warn
+            case "error"   => Browser.ConsoleLevel.Error
+            case "debug"   => Browser.ConsoleLevel.Debug
+            case "trace"   => Browser.ConsoleLevel.Debug
+            case "dir"     => Browser.ConsoleLevel.Log
+            case "dirxml"  => Browser.ConsoleLevel.Log
+            case "table"   => Browser.ConsoleLevel.Log
+            case "assert"  => Browser.ConsoleLevel.Error
+            case structural @ ("count" | "countReset" | "timeEnd" | "startGroup" | "startGroupCollapsed" | "endGroup" | "clear" |
+                "profile" | "profileEnd") =>
+                Abort.fail(BrowserProtocolErrorException.decodeFailure(
+                    "recordConsole",
+                    s"unmapped structural console type '$structural'"
+                ))
+            case other =>
+                Abort.fail(BrowserProtocolErrorException.decodeFailure("recordConsole", s"unknown console type '$other'"))
+        levelE.map { lv =>
+            val text = wire.args.flatMap(a => a.value.orElse(a.description).toChunk).mkString(" ")
+            val location = wire.stackTrace.flatMap(st =>
+                Maybe.fromOption(st.callFrames.headOption).flatMap(cf => cf.url.map(u => u + ":" + cf.lineNumber.getOrElse(0)))
+            )
+            Browser.ConsoleMessage(lv, text, location, computeOffsetMs(wire.timestamp, t0Ms))
+        }
+    end decodeConsoleApiCalled
+
+    /** Converts a CDP event `timestamp` (milliseconds since epoch when present) into an offset relative to the recording baseline `t0Ms`.
+      * An absent timestamp yields `0L`.
+      */
+    private def computeOffsetMs(ts: Maybe[Double], t0Ms: Long): Long =
+        ts match
+            case Present(v) => math.round(v) - t0Ms
+            case Absent     => 0L
 
     /** Auto-handles JavaScript dialogs (alert, confirm, prompt, beforeunload) opened during the body's execution.
       *
@@ -2602,6 +3134,284 @@ object Browser:
             case _ => Absent
     end parseDownloadEvent
 
+    // --- Console recording ---
+
+    /** Bounded capacity for the per-tab console-event channel exposed via [[onConsole]] and [[recordConsole]]. Sized to ride out a short
+      * consumer stall without dropping events; the channel drops the oldest event on overflow.
+      */
+    private val consoleChannelCapacity: Int = 256
+
+    /** Subscribes `f` to every console message Chrome emits during `action`, mirroring [[onDownload]] in shape.
+      *
+      * Two CDP sources feed `f`: `Runtime.consoleAPICalled` (every `console.*` call) and `Runtime.exceptionThrown` (uncaught page errors,
+      * surfaced as a `ConsoleLevel.Error` message). A `consoleAPICalled` whose CDP `type` is one of the 8 structural variants aborts inside
+      * [[decodeConsoleApiCalled]]; that abort is recovered to a dropped event here so it never reaches the reader fiber. This recorder does
+      * NOT settle: it records the page exactly as it logs.
+      *
+      * Implementation: events flow from the CDP reader through a per-session dispatcher onto a bounded `Channel[ConsoleMessage]`; a forked
+      * drainer fiber takes events off the channel and applies `f`, isolating `f`'s effect row `S` from the dispatcher's `Sync`-only value
+      * type. The channel and drainer fiber are bound to an internal `Scope.run`, so teardown (dispatcher restore + channel close) fires when
+      * `action` completes (success, failure, OR interruption); the caller's effect row does NOT carry `Scope`. The handler is registered
+      * BEFORE `action` runs, so console output inside `action` is not missed.
+      */
+    def onConsole[A, S](f: Browser.ConsoleMessage => Unit < (Browser & S))(
+        action: A < (Browser & Async & Abort[BrowserReadException] & S)
+    )(using
+        Frame,
+        Isolate[S, Sync, S]
+    ): A < (Browser & Async & Abort[BrowserReadException] & S) =
+        Env.use[BrowserTab] { tab =>
+            val client = tab.client
+            val sidKey = tab.sessionId.value
+            Clock.now.map { t0 =>
+                val t0Ms = t0.toJava.toEpochMilli
+                // Bounded unscoped channel; closed explicitly via `Scope.ensure` inside the inner `Scope.run` so the effect row stays free
+                // of `Scope` while teardown is still bound to the body's lifetime.
+                Channel.initUnscoped[Browser.ConsoleMessage](consoleChannelCapacity).map { channel =>
+                    val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                        consoleEventToMessage(ev, t0Ms).map {
+                            case Present(msg) =>
+                                // Best-effort offer: a full channel (drainer slow) or a closed channel (scope tearing down) drops the
+                                // event rather than blocking the CDP reader fiber. Abort[Closed] is swallowed.
+                                Abort.run[Closed](channel.offer(msg)).unit
+                            case Absent => Kyo.unit
+                        }
+                    client.consoleEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                        val restoreDispatcher = client.consoleEventDispatchers.getAndUpdate { m =>
+                            previousMap.get(sidKey) match
+                                case Present(prev) => m.update(sidKey, prev)
+                                case Absent        => m.remove(sidKey)
+                        }.unit
+                        Scope.run {
+                            Scope.ensure(restoreDispatcher).andThen(Scope.ensure(channel.close.unit)).andThen {
+                                Fiber.init {
+                                    Abort.run[Closed](channel.stream().foreach(msg => Env.run(tab)(f(msg)))).unit
+                                }.andThen(action)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    end onConsole
+
+    /** Captures every [[ConsoleMessage]] Chrome emits during `body` into an in-memory [[Chunk]]. Returns a pair `(messages, result)` where
+      * `messages` is the arrival-ordered chunk of every console entry the page produced and `result` is the value `body` produced.
+      *
+      * Use this instead of [[onConsole]] when the test only needs to inspect the messages after the body completes; no manual `AtomicRef` or
+      * `Channel` bookkeeping is required. Implemented in terms of [[onConsole]] with a capture handler that appends each message to an
+      * internal `AtomicRef[Chunk]`; the drainer fiber inside [[onConsole]] is single-fiber per session, so arrival order is preserved.
+      */
+    def recordConsole[A, S](body: A < (Browser & Async & Abort[BrowserReadException] & S))(using
+        Frame,
+        Isolate[S, Sync, S]
+    ): (Chunk[Browser.ConsoleMessage], A) < (Browser & Async & Abort[BrowserReadException] & S) =
+        AtomicRef.init(Chunk.empty[Browser.ConsoleMessage]).map { collected =>
+            val captureHandler: Browser.ConsoleMessage => Unit < Sync =
+                msg => collected.updateAndGet(_.append(msg)).unit
+            onConsole(captureHandler)(body).map { result =>
+                collected.get.map(messages => (messages, result))
+            }
+        }
+    end recordConsole
+
+    /** Decodes a [[CdpEvent.Generic]] console event into a typed [[Browser.ConsoleMessage]] for the recorder handler. Reuses the wire-level
+      * [[kyo.internal.CdpClient.parseConsoleEvent]] decoder: a `Left` is a `Runtime.consoleAPICalled` mapped through
+      * [[decodeConsoleApiCalled]] (a structural-type abort recovers to `Absent` so the handler drops it), a `Right` is a
+      * `Runtime.exceptionThrown` surfaced as a `ConsoleLevel.Error` message at its `url:line`. Returns `Absent` for any non-console event or
+      * decode failure; never aborts.
+      */
+    private def consoleEventToMessage(ev: CdpEvent.Generic, t0Ms: Long)(using
+        Frame
+    ): Maybe[Browser.ConsoleMessage] < Sync =
+        CdpClient.parseConsoleEvent(ev) match
+            case Present(Left(consoleWire)) =>
+                Abort.run(decodeConsoleApiCalled(consoleWire, t0Ms)).map {
+                    case Result.Success(msg) => Present(msg)
+                    case _                   => Absent
+                }
+            case Present(Right(exWire)) =>
+                val d = exWire.exceptionDetails
+                // CDP reports `text` as the bare "Uncaught" prefix and carries the real error message in
+                // `exception.description`; join them so the message is meaningful.
+                val text = d.exception.flatMap(_.description).map(desc => d.text + " " + desc).getOrElse(d.text)
+                // Prefer the top-level `url:line`; fall back to the first stack frame when the throw carries no url.
+                val topFrame = d.stackTrace.flatMap(st => Maybe.fromOption(st.callFrames.headOption))
+                val location =
+                    d.url.map(u => u + ":" + d.lineNumber.getOrElse(0))
+                        .orElse(topFrame.flatMap(cf => cf.url.map(u => u + ":" + cf.lineNumber.getOrElse(0))))
+                Present(Browser.ConsoleMessage(
+                    Browser.ConsoleLevel.Error,
+                    text,
+                    location,
+                    computeOffsetMs(exWire.timestamp, t0Ms)
+                ))
+            case Absent => Absent
+    end consoleEventToMessage
+
+    // --- Screencast ---
+
+    /** Records a screencast of the page WHILE `body` runs. Drive an animation or transition inside `body` and get back the frames
+      * Chrome rendered while it ran, paired with the body's result: events-first `(Chunk[ScreenshotFrame], A)`, the canonical `record*`
+      * shape (twin [[recordDownloads]]). This method does NOT settle: it records the page exactly as it changes, so the caller is
+      * responsible for driving the visual change to record.
+      *
+      * Each frame carries its `Image`, an `offsetMs` relative to the cast start (from the screencast metadata `timestamp` when present,
+      * else a wall-clock fallback), and the page scroll offset at capture. Frames arrive in delivery order, so `offsetMs` is
+      * non-decreasing.
+      *
+      * Two bounds protect against an unbounded recording, checked frame-count-first: when the recorded frame count exceeds `maxFrames`,
+      * or the elapsed wall-clock time exceeds `maxDurationMs`, the cast is poisoned and the call aborts
+      * [[BrowserCaptureLimitExceededException]] after `body` returns. The exception's two numbers always share one unit: the frame cap
+      * reports `limit = maxFrames` against the frame count reached, and the duration cap reports `limit = maxDurationMs` against the
+      * elapsed milliseconds reached. `Webp` has no screencast codec, so it maps to the `jpeg` codec (CDP screencast supports `jpeg`
+      * and `png` only); the call still succeeds.
+      *
+      * Implementation: a per-session dispatcher is registered on `screencastEventDispatchers` BEFORE the cast starts. The dispatcher
+      * decodes each `Page.screencastFrame`, issues the per-frame `Page.screencastFrameAck` from inside the handler (a detached fiber so
+      * the CDP reader stays `Sync`-only and Chrome keeps delivering), appends the frame, and sets the poison flag on a cap. The dispatcher
+      * restore and `Page.stopScreencast` are bound to an inner `Scope.run`, so teardown fires on success, failure, OR interruption; the
+      * caller's effect row does NOT carry `Scope`. The body's effect row `S` is isolated from the dispatcher's `Sync`-only value type via
+      * `Isolate[S, Sync, S]`, exactly as [[recordDownloads]].
+      */
+    def screenshotFrames[A, S](
+        maxDurationMs: Long = 8000L,
+        maxFrames: Int = 240,
+        format: Browser.ScreenshotFormat = Browser.ScreenshotFormat.Jpeg,
+        quality: Int = 80
+    )(body: A < (Browser & Async & Abort[BrowserReadException] & S))(using
+        Frame,
+        Isolate[S, Sync, S]
+    ): (Chunk[Browser.ScreenshotFrame], A) < (Browser & Async & Abort[BrowserReadException] & S) =
+        Env.use[BrowserTab] { tab =>
+            val client  = tab.client
+            val session = tab.session
+            val sidKey  = tab.sessionId.value
+            val wireFormat = format match
+                case Browser.ScreenshotFormat.Png  => "png"
+                case Browser.ScreenshotFormat.Jpeg => "jpeg"
+                case Browser.ScreenshotFormat.Webp => "jpeg"
+            Clock.now.map { t0 =>
+                AtomicRef.init(Chunk.empty[Browser.ScreenshotFrame]).map { collected =>
+                    // The poison cell, when set, carries the exact `(limit, reached)` pair for the abort, computed at the
+                    // moment the cap is hit so both numbers share one unit: frame counts for the frame cap, milliseconds for
+                    // the duration cap. The first cap to trip wins (the dispatcher only sets the cell when it is still Absent).
+                    AtomicRef.init(Maybe.empty[(Int, Int)]).map { poisoned =>
+                        // The dispatcher decodes each frame, acks it from a detached fiber so the reader fiber stays < Sync (the ack
+                        // carries Async; Chrome keeps delivering once it sees the ack), appends to `collected`, then checks the caps
+                        // frame-count-first: `cur.size > maxFrames` poisons on the frame bound (limit = maxFrames, reached = frame
+                        // count); otherwise the elapsed-time check poisons on the duration bound (limit = maxDurationMs, reached =
+                        // elapsed ms), so the two reported numbers always share the same unit.
+                        val handler: CdpEvent.Generic => Unit < Sync = ev =>
+                            parseScreencastFrame(ev, t0).map {
+                                case Present((frame, sessionId)) =>
+                                    Fiber.initUnscoped(using Isolate.derive[Any, Sync, Any])(
+                                        Abort.run[BrowserReadException](
+                                            CdpBackend.screencastFrameAck(session, ScreencastFrameAckParams(sessionId))
+                                        ).unit
+                                    ).andThen(collected.updateAndGet(_.append(frame))).map { cur =>
+                                        def poison(cap: (Int, Int)): Unit < Sync =
+                                            poisoned.updateAndGet(prev => if prev.isDefined then prev else Present(cap)).unit
+                                        if cur.size > maxFrames then poison((maxFrames, cur.size))
+                                        else
+                                            Clock.now.map { now =>
+                                                val elapsedMs = now.toJava.toEpochMilli - t0.toJava.toEpochMilli
+                                                if elapsedMs > maxDurationMs then poison((maxDurationMs.toInt, elapsedMs.toInt))
+                                                else Kyo.unit
+                                            }
+                                        end if
+                                    }
+                                case Absent => Kyo.unit
+                            }
+                        client.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                            val restore = client.screencastEventDispatchers.getAndUpdate { m =>
+                                previousMap.get(sidKey) match
+                                    case Present(prev) => m.update(sidKey, prev)
+                                    case Absent        => m.remove(sidKey)
+                            }.unit
+                            // Best-effort stop on teardown: await the send so the cast is actually ended on normal completion,
+                            // but swallow any read failure so a connection already tearing down (interruption) does not re-raise
+                            // into the finalizer. The send's own request timeout bounds a silent Chrome, so this never hangs.
+                            val stop = Abort.run[BrowserReadException](CdpBackend.stopScreencast(session)).unit
+                            Scope.run {
+                                // Scope finalizers run sequentially in reverse registration order, so the two cleanups
+                                // must not be registered independently: that would always run `stop` before `restore`,
+                                // gating the local dispatcher removal behind a network round-trip bounded only by the
+                                // request timeout. On normal completion stop Chrome first so no in-flight frame is
+                                // orphaned to the bounded event channel, then drop the dispatcher. On failure or
+                                // interruption drop the dispatcher first so local cleanup is prompt and independent of
+                                // the best-effort stop (the connection is tearing down anyway).
+                                Scope.ensure {
+                                    case Absent     => stop.andThen(restore)
+                                    case Present(_) => restore.andThen(stop)
+                                }.andThen {
+                                    CdpBackend.startScreencast(
+                                        session,
+                                        StartScreencastParams(Present(wireFormat), screenshotQuality(format, quality))
+                                    ).andThen {
+                                        body.map { result =>
+                                            poisoned.get.map { cap =>
+                                                collected.get.map { frames =>
+                                                    cap match
+                                                        case Present((limit, reached)) =>
+                                                            Abort.fail(BrowserCaptureLimitExceededException(
+                                                                "screenshotFrames",
+                                                                limit,
+                                                                reached
+                                                            ))
+                                                        case Absent => (frames, result)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    end screenshotFrames
+
+    /** Decodes a `Page.screencastFrame` event into a `(ScreenshotFrame, sessionId)` pair. Returns `Absent` on a wrong-method event or any
+      * decode failure (never aborts). `offsetMs` is `round(timestamp * 1000) - t0` when the metadata carries a `timestamp`, else the
+      * wall-clock fallback `now - t0`. Distinct from the routing-layer `CdpClient.parseScreencastFrame`, which decodes only the wire
+      * record; this variant materialises the `Image` and the public `ScreenshotFrame`.
+      */
+    private def parseScreencastFrame(ev: CdpEvent.Generic, t0: Instant)(using
+        Frame
+    )
+        : Maybe[(Browser.ScreenshotFrame, Int)] < Sync =
+        ev.method match
+            case "Page.screencastFrame" =>
+                Json.decode[CdpEventParams[ScreencastFrameWire]](ev.paramsJson) match
+                    case Result.Success(env) =>
+                        val w = env.params
+                        Abort.run(CdpBase64Decode.decodeScreenshotImage("Page.screencastFrame", w.data)).map {
+                            case Result.Success(img) =>
+                                val t0Ms = t0.toJava.toEpochMilli
+                                Clock.now.map { now =>
+                                    val offsetMs = w.metadata.timestamp match
+                                        case Present(ts) => math.round(ts * 1000) - t0Ms
+                                        case Absent      => now.toJava.toEpochMilli - t0Ms
+                                    Present((
+                                        Browser.ScreenshotFrame(
+                                            img,
+                                            offsetMs,
+                                            Browser.ScrollPosition(
+                                                math.round(w.metadata.scrollOffsetX).toInt,
+                                                math.round(w.metadata.scrollOffsetY).toInt
+                                            )
+                                        ),
+                                        w.sessionId
+                                    ))
+                                }
+                            case _ => (Absent: Maybe[(Browser.ScreenshotFrame, Int)])
+                        }
+                    case _ => Absent
+            case _ => Absent
+    end parseScreencastFrame
+
     // --- Cookies ---
 
     /** Returns all cookies for the current page.
@@ -2974,15 +3784,96 @@ object Browser:
         def current: NavigationEntry = entries(currentIndex)
     end NavigationHistory
 
-    /** A rectangle in the page's top-level viewport coordinate system. Used by [[boundingBox]] to report an element's geometry. Coordinates
-      * may be negative or exceed viewport size if the element is off-screen.
+    /** Geometry artifact returned by [[boundingRect]]. Fields are CSS pixels relative to the page document. `right`, `bottom`, and `area`
+      * are derived accessors (pure, total, no `Frame`).
       */
-    final case class BoundingBox(
-        x: Double,
-        y: Double,
-        width: Double,
-        height: Double
-    ) derives Schema, CanEqual
+    final case class Bounds(x: Double, y: Double, width: Double, height: Double) derives Schema, CanEqual:
+        def right: Double  = x + width
+        def bottom: Double = y + height
+        def area: Double   = width * height
+    end Bounds
+
+    /** Page scroll offset (`window.scrollX` / `scrollY`, rounded to integers). Returned by [[scrollPosition]] and carried by
+      * `ScreenshotFrame`.
+      */
+    final case class ScrollPosition(x: Int, y: Int) derives Schema, CanEqual
+
+    /** One frame recorded by [[screenshotFrames]]. `image` is the captured frame; `offsetMs` is `round(timestamp * 1000) - t0` from the
+      * screencast metadata (with a wall-clock fallback), relative to the cast start; `scrollOffset` is the page scroll at capture. Carries
+      * an `Image`, so derives only `CanEqual`.
+      */
+    final case class ScreenshotFrame(image: Image, offsetMs: Long, scrollOffset: Browser.ScrollPosition) derives CanEqual
+
+    /** Emulated `prefers-color-scheme` value for [[withEmulation]].
+      *
+      * [[NoPreference]] clears the override: the W3C dropped `no-preference` as a settable value for this feature, so it maps to the
+      * empty-string clear sent to `Emulation.setEmulatedMedia`.
+      */
+    enum ColorScheme derives CanEqual:
+        case Light, Dark, NoPreference
+
+    object ColorScheme:
+        /** CDP wire form for the `prefers-color-scheme` feature: `"light"` / `"dark"` / `""` (cleared). */
+        extension (c: ColorScheme)
+            private[kyo] def wire: String = c match
+                case Light        => "light"
+                case Dark         => "dark"
+                case NoPreference => ""
+        end extension
+    end ColorScheme
+
+    /** Emulated media type for [[withEmulation]]. */
+    enum MediaType derives CanEqual:
+        case Screen, Print
+
+    object MediaType:
+        /** CDP wire form for the emulated media type: `"screen"` / `"print"`. */
+        extension (m: MediaType)
+            private[kyo] def wire: String = m match
+                case Screen => "screen"
+                case Print  => "print"
+        end extension
+    end MediaType
+
+    /** Input to [[withHighlights]]: a dashed box drawn over the element matched by `selector`, with an optional `label` and `color`.
+      *
+      * `label` and `color` default to `Absent`; `color` is a CSS color string (defaulting to a red when absent). Carries a
+      * [[Selector]] (an opaque type), so it derives only `CanEqual`.
+      */
+    final case class Annotation(
+        selector: Selector,
+        label: Maybe[String] = Absent,
+        color: Maybe[String] = Absent
+    ) derives CanEqual
+
+    /** DISCOVER artifact: a resolved element snapshot. Optional fields (`id` / `text` / `role`) are `Maybe`, never null; `classes` is a
+      * `Chunk`; `selector` is the generated stable unique CSS path. The companion holds the pure `leaves` filter. `area` delegates to
+      * `bounds.area`.
+      */
+    final case class ElementInfo(
+        selector: String,
+        tag: String,
+        id: Maybe[String],
+        classes: Chunk[String],
+        text: Maybe[String],
+        bounds: Browser.Bounds,
+        visible: Boolean,
+        inViewport: Boolean,
+        topmost: Boolean,
+        interactive: Boolean,
+        role: Maybe[String]
+    ) derives Schema, CanEqual:
+        def area: Double = bounds.area
+    end ElementInfo
+
+    object ElementInfo:
+        /** Pure leaf filter: keeps elements that are NOT an ancestor of any other element in `elems`. Ancestry is determined from the unique
+          * `selector` path: A is an ancestor of B when B's `selector` starts with A's `selector + " > "`. Total function; no `Frame`, no
+          * effect row.
+          */
+        def leaves(elems: Chunk[Browser.ElementInfo]): Chunk[Browser.ElementInfo] =
+            elems.filter(a => !elems.exists(b => b.selector != a.selector && b.selector.startsWith(a.selector + " > ")))
+    end ElementInfo
 
     /** Accessibility-tree node: what a screen reader sees. Returned by [[accessibilityNodes]] and probed by [[role]] / [[accessibleName]] /
       * [[assertRole]] / [[assertAccessibleName]].
@@ -3000,21 +3891,25 @@ object Browser:
         properties: Dict[String, String]
     ) derives Schema, CanEqual
 
-    /** A single entry captured by the page-side `console.log` / `console.warn` / `console.error` override and returned by
-      * [[Browser.consoleLogs]].
+    /** A single console entry captured during a [[Browser.recordConsole]] body or drained by [[Browser.consoleLogs]].
       *
-      * `level` distinguishes log / warn / error without resorting to prefix smuggling in the message; `timestamp` is wall-clock at emit time
-      * (derived from page-side `Date.now()`).
+      * `level` distinguishes the five console severities without prefix smuggling in the text; `text` is the joined argument string;
+      * `location` is the originating `url:line` when the source carried a stack frame, else `Absent`; `offsetMs` is the milliseconds from
+      * the recording start (or buffer baseline for the drain path) to the moment the entry was emitted.
       */
     final case class ConsoleMessage(
         level: ConsoleLevel,
-        message: String,
-        timestamp: Instant
+        text: String,
+        location: Maybe[String],
+        offsetMs: Long
     ) derives Schema, CanEqual
 
-    /** Level enum for [[ConsoleMessage]]. Mirrors the three `console.*` overrides installed by [[kyo.internal.BrowserTabSetup]]. */
+    /** Level enum for [[ConsoleMessage]]. The five severities mirror the `console.*` overrides installed by
+      * [[kyo.internal.BrowserTabSetup]] (`debug`, `info`, `log`, `warn`, `error`) and the CDP `Runtime.consoleAPICalled` types folded onto
+      * them.
+      */
     enum ConsoleLevel derives Schema, CanEqual:
-        case Log, Warn, Error
+        case Log, Info, Warn, Error, Debug
 
     /** A single JavaScript dialog event captured by [[Browser.withDialogs.recorded]].
       *
@@ -3249,7 +4144,9 @@ object Browser:
             navigationGraceWindow = 300.millis,
             stabilitySampleInterval = 4.millis,
             defaultActionTimeout = 8.seconds,
-            defaultAssertionTimeout = 8.seconds
+            defaultAssertionTimeout = 8.seconds,
+            captureHoldStillTimeout = 1.second,
+            captureHoldStillInterval = 50.millis
         )
 
     end SessionConfig
@@ -3282,6 +4179,11 @@ object Browser:
       *   [[retrySchedule]].
       * @param defaultAssertionTimeout
       *   total time budget for a single assertion. Defaults to 8 seconds, the `maxDuration` of the default [[retrySchedule]].
+      * @param captureHoldStillTimeout
+      *   total best-effort bound for the two-identical-frames hold-still loop per capture. On timeout the last frame is returned; the loop
+      *   never aborts. Default 1 second.
+      * @param captureHoldStillInterval
+      *   inter-capture pacing delay in the two-identical-frames hold-still loop. Default 50 milliseconds.
       *
       * @see
       *   [[Browser.withConfig]]: install a session config for a scope
@@ -3302,7 +4204,9 @@ object Browser:
         navigationGraceWindow: Duration,
         stabilitySampleInterval: Duration,
         defaultActionTimeout: Duration,
-        defaultAssertionTimeout: Duration
+        defaultAssertionTimeout: Duration,
+        captureHoldStillTimeout: Duration,
+        captureHoldStillInterval: Duration
     ):
         /** Returns a copy with the [[retrySchedule]] set to `v`. */
         def retrySchedule(v: Schedule): SessionConfig = copy(retrySchedule = v)
@@ -3345,6 +4249,12 @@ object Browser:
 
         /** Returns a copy with the [[defaultAssertionTimeout]] set to `v`. */
         def defaultAssertionTimeout(v: Duration): SessionConfig = copy(defaultAssertionTimeout = v)
+
+        /** Returns a copy with the [[captureHoldStillTimeout]] set to `v` (total best-effort hold-still bound per capture). */
+        def captureHoldStillTimeout(v: Duration): SessionConfig = copy(captureHoldStillTimeout = v)
+
+        /** Returns a copy with the [[captureHoldStillInterval]] set to `v` (inter-capture pacing in the two-identical-frames loop). */
+        def captureHoldStillInterval(v: Duration): SessionConfig = copy(captureHoldStillInterval = v)
     end SessionConfig
 
     // CanEqual on SessionConfig powers the "explicit non-default session overrides; default inherits outer Local" gate inside
@@ -3512,3 +4422,17 @@ end Browser
   * Scala side decodes a `Seq[ConsoleMessageWire]` and maps to `Chunk[Browser.ConsoleMessage]`, parsing `level` via a small `match`.
   */
 final private[kyo] case class ConsoleMessageWire(level: String, message: String, timestamp: Long) derives Schema
+
+/** Wire record for reads whose JS probe returns `{present: Boolean, x?, y?, w?, h?}`. Used by `boundingRect` to detect a settled-absent
+  * element (when `present` is false) before the authoritative `DOM.getBoxModel` CDP read.
+  */
+final private[kyo] case class PresentFlagWire(present: Boolean, x: Double = 0, y: Double = 0, w: Double = 0, h: Double = 0) derives Schema
+
+/** Wire record for `computedStyles`: `{present: Boolean, vals?: {prop: value, ...}}`. `vals` is `Absent` on the absent-element path. */
+final private[kyo] case class ComputedStylesWire(present: Boolean, vals: Maybe[Map[String, String]] = Absent) derives Schema
+
+/** Wire record for `inViewport`: `{present: Boolean, value?: Boolean}`. `value` carries the boolean result on the present path. */
+final private[kyo] case class PresentBoolWire(present: Boolean, value: Maybe[Boolean] = Absent) derives Schema
+
+/** Wire envelope for a single-element DISCOVER read (`element` / `elementAt`): `{present: Boolean, info?: ElementInfoWire}`. */
+final private[kyo] case class ElementInfoEnvelope(present: Boolean, info: Maybe[DiscoverJs.ElementInfoWire] = Absent) derives Schema

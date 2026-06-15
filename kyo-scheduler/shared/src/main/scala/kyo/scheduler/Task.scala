@@ -9,6 +9,11 @@ trait Task {
         val s = this.state
         if (!s.preempting)
             this.state = s.preempt
+        // Same re-assert as addRuntime: with every RMW writer re-asserting, the last write to an
+        // interrupted task's state is always the reset, without atomics. The preempt bit is
+        // redundant once interrupted (eval stops on the completed promise), so losing it is fine.
+        if (needsInterrupt())
+            resetRuntime()
     }
 
     protected def shouldPreempt(): Boolean =
@@ -26,8 +31,13 @@ trait Task {
     private[scheduler] def runtime(): Int =
         state.runtime
 
-    def addRuntime(v: Int) =
+    def addRuntime(v: Int) = {
         this.state = state.addRuntime(v)
+        // This non-atomic RMW can erase a concurrent interrupt resetRuntime, stranding the task at a
+        // stale runtime where load starves it. Re-assert after the write (program order) to close it.
+        if (needsInterrupt())
+            resetRuntime()
+    }
 
     /** Drops accumulated runtime to the minimum so this task is scheduled ahead of tasks that have
       * run longer. Used when a fiber is interrupted: it must run promptly to observe the interrupt
@@ -46,10 +56,12 @@ object Task {
       *   - **bit 31 (sign)**: preempting — set by `preempt` (a bit-set, not a negation, so it is valid even at runtime 0) to signal the
       *     task should yield at the next effect boundary so the worker can serve other queued tasks (time-slice fairness)
       *
-      * `state` is mutated by non-atomic read-modify-writes from two threads — the worker (addRuntime) and the coordinator (doPreempt, via
-      * Worker.checkStalling). A lost update can only drop a best-effort time-slice preemption (retried on the next checkStalling pass) or a
-      * runtime increment (a priority heuristic), so plain @volatile is sufficient. Fiber interruption is intentionally NOT tracked here: it
-      * is observed from IOPromise's CAS-updated state, so no cross-thread interrupt write exists to be lost.
+      * `state` is mutated by non-atomic read-modify-writes from multiple threads — the worker (addRuntime), the coordinator (doPreempt, via
+      * Worker.checkStalling), and an interrupter (resetRuntime, via IOTask.onComplete). A lost preemption or runtime increment is benign,
+      * but a lost interrupt-priority reset would let load starve an interrupted task, so it is protected without atomics: every RMW writer
+      * (addRuntime, doPreempt) re-asserts the reset after its own write, and Worker.run never requeues a task whose promise is already
+      * complete. Fiber interruption
+      * itself is observed from IOPromise's CAS-updated state, never from this field.
       */
     private[scheduler] type State = Int
 

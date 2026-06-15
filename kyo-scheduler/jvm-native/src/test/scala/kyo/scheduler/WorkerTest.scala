@@ -202,6 +202,44 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             )
         }
 
+        "a task interrupted during its slice is re-run immediately, never requeued behind queued load" in {
+            // The mount-boundary race: the interrupt lands while the task is running, so its runtime
+            // key is untrustworthy at requeue time (the reset races addRuntime/doPreempt RMWs). The
+            // worker must re-run the task instead of requeueing it, or queued load starves it.
+            val worker = createWorker()
+            val order  = new ConcurrentLinkedQueue[String]()
+
+            def late(name: String): TestTask = TestTask(_run = () => { order.add(name); Done })
+            val late1                        = late("late1")
+            val late2                        = late("late2")
+
+            lazy val victim: TestTask = TestTask(_run = () => {
+                if (!victim.interrupted) {
+                    order.add("victim")
+                    // Fresh low-runtime arrivals land while the victim runs; the interrupt then
+                    // lands mid-slice, before the worker decides whether to requeue.
+                    worker.enqueue(late1)
+                    worker.enqueue(late2)
+                    victim.interrupted = true
+                    Preempted
+                } else {
+                    // An IOTask whose promise is complete finalizes and returns Done when re-run.
+                    order.add("victim-final")
+                    Done
+                }
+            })
+            victim.addRuntime(1000000) // accumulated slice runtime: a stale key if requeued
+
+            worker.enqueue(victim)
+            worker.run()
+
+            val l = order.toArray.toList.map(_.toString)
+            assert(
+                l == List("victim", "victim-final", "late1", "late2"),
+                s"interrupted task was requeued instead of re-run immediately: $l"
+            )
+        }
+
         "repeated epoch advances within one frozen tick fire at most one rebuild (bounded under storm)" in {
             // Every busy task advances the epoch (an interrupt storm), but the frozen test clock keeps
             // now - lastRebuildMs at 0 after the first rebuild, so the minInterval gate fires exactly one
@@ -416,6 +454,25 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             assert(worker.load() == 0)
             assert(task.preemptions == 10)
             assert(task.executions == 11)
+        }
+
+        "a preempted task with an empty local queue steals stranded work instead of resuming it (wedge fix)" in {
+            // Models the scheduler wedge: a worker is pinned on a task that keeps yielding (Preempted)
+            // and cannot complete until other work runs, while its own queue is empty and the work that
+            // would unblock it is stranded on another (blocked) worker. The pinned worker must preempt
+            // and steal that stranded work rather than re-running its own task forever.
+            val strandedRan = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val stranded    = TestTask(_run = () => { strandedRan.set(true); Task.Done })
+            val handedOut   = new java.util.concurrent.atomic.AtomicBoolean(false)
+            // The victim hands out the stranded task exactly once, modelling a successful steal.
+            val worker = createWorker(stealTask = _ => if (handedOut.compareAndSet(false, true)) stranded else null)
+            // `pinned` yields (Preempted) every slice until the stranded task has run, then completes.
+            val pinned = TestTask(_run = () => if (strandedRan.get()) Task.Done else Task.Preempted)
+            worker.enqueue(pinned)
+            worker.run()
+            assert(strandedRan.get())
+            assert(stranded.executions == 1)
+            assert(worker.load() == 0)
         }
 
         "sets worker local" in {
@@ -687,7 +744,12 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
                 assert(preempted)
             }
         }
-        "doesn't preempt long-running task if queue is empty" in withWorker { worker =>
+        "preempts a long-running task even when the queue is empty (so run() can attempt a steal)" in withWorker { worker =>
+            // Replaces the original "doesn't preempt ... if queue is empty". A worker pinned on a long
+            // task with an empty local queue must still be preempted, so run() can steal work stranded
+            // on another (blocked) worker's queue (the scheduler-wedge fix: the pinned worker is the
+            // only one that can make progress, but with an empty queue it had no reason to yield).
+            // The task here exits once preempted.
             var preempted = false
             val longRunningTask = TestTask(
                 _run = () => {
@@ -698,8 +760,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions with Eventually 
             )
             worker.enqueue(longRunningTask)
             eventually {
-                assert(!worker.checkAvailability(System.currentTimeMillis()))
-                assert(!preempted)
+                worker.checkAvailability(System.currentTimeMillis())
+                assert(preempted)
             }
         }
         "drains queue only once when transitioning to stalled state" in withWorker { worker =>

@@ -103,9 +103,9 @@ import kyo.scheduler.Task
 case class Request(userId: String, payload: Array[Byte])
 
 class HashRequest(req: Request) extends Task:
-    private var i: Int   = 0
-    private var sum: Int = 0
-    private val n: Int   = req.payload.length
+    private var i   = 0
+    private var sum = 0
+    private val n   = req.payload.length
 
     def run(startMillis: Long, clock: InternalClock, deadline: Long): Task.Result =
         while i < n do

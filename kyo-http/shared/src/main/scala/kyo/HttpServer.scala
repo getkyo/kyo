@@ -112,6 +112,12 @@ object HttpServer:
                 }
             case Absent =>
                 handlers
+        val serverFilter =
+            if config.autoFilters then HttpFilter.Factory.composedServer
+            else HttpFilter.noop
+        val filteredHandlers =
+            if serverFilter eq HttpFilter.noop then allHandlers
+            else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
             // Reuse the process-global shared transport for the default config (no per-server resources). When the config customizes
             // transport tuning, build and OWN a per-config transport so handshakeTimeout (the slowloris-handshake DoS guard) and the
@@ -121,7 +127,7 @@ object HttpServer:
             val transport =
                 if ownsTransport then kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
                 else HttpPlatformTransport.transport
-            val listenFiber = Unsafe.init(transport, config, allHandlers, ownsTransport)
+            val listenFiber = Unsafe.init(transport, config, filteredHandlers, ownsTransport)
             Abort.run[Closed](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(closed) =>

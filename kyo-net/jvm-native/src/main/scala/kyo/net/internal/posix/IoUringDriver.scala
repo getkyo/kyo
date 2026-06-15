@@ -73,7 +73,7 @@ private[net] enum PendingOp(val handle: PosixHandle):
       * handle, freed only in `freeResources`); closing it here would be a use-after-free because the next flush refills the same buffer.
       * So [[TlsWrite]] is intentionally a no-op: the mirror survives the reap and is reused by the next flush.
       */
-    def releaseBuffer(): Unit =
+    def releaseBuffer()(using AllowUnsafe): Unit =
         this match
             case Write(_, buf, _, _)     => buf.close()
             case TlsWrite(_, _, _)       => () // per-handle reused mirror; freed only in freeResources, never on reap
@@ -113,8 +113,9 @@ end PendingOp
   * Buffers use the shared arena (`Buffer.alloc` / `Buffer.fromArray`), never `allocConfined`: submission and reaping run on different
   * scheduler carriers, so a confined arena would throw on the cross-carrier reap.
   */
-final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)
-    extends IoDriver[PosixHandle], TlsEngineIo:
+final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using
+    AllowUnsafe
+) extends IoDriver[PosixHandle], TlsEngineIo:
 
     // Unsafe: the driver's atomic flags and counters are created at construction with no ambient AllowUnsafe; the danger bridge builds each here
     // and every access runs under the caller's AllowUnsafe.
@@ -539,7 +540,7 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
       * Uses [[GrowableByteBuffer.writeFromBuffer]] for a zero-intermediate-allocation copy from the off-heap drain buffer (direct off-heap
       * to heap copy, no intermediate Array).
       */
-    private def appendPending(handle: PosixHandle, drain: Buffer[Byte], len: Int): Unit =
+    private def appendPending(handle: PosixHandle, drain: Buffer[Byte], len: Int)(using AllowUnsafe): Unit =
         val buf =
             handle.pendingCipher match
                 case Present(b) => b

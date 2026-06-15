@@ -21,6 +21,19 @@ private[kyo] object DomBackend:
         }
     end mount
 
+    /** Injects a rendered stylesheet CSS string into the live document.
+      *
+      * The base reset is injected first (idempotently) so it precedes the authored CSS in document
+      * order, matching the SSG page head where `baseCss` is emitted before `head.css`. The reset is a
+      * foundational layer authored stylesheets are meant to override (e.g. `body { font-family }`); if
+      * it were appended AFTER the sheet (as happens when an app calls `runStylesheet` before `runMount`,
+      * which injects the reset), its equal-specificity `body` rule would win on document order and clobber
+      * the app's own `body` font, producing a fallback-font flash. Injecting the reset first here makes the
+      * cascade order independent of which entry point runs first.
+      */
+    private[kyo] def injectStylesheet(sheet: Stylesheet)(using Frame): Unit < Sync =
+        DomStyleSheet.injectBase().andThen(Sync.defer(DomStyleSheet.injectStylesheet(sheet.render)))
+
     private def mountInto(ui: UI, container: dom.Element)(using Frame): Unit < (Async & Scope) =
         for
             _    <- DomStyleSheet.injectBase()
@@ -54,26 +67,82 @@ private[kyo] object DomBackend:
 
         def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
             HtmlRenderer.render(ui, path).map { html =>
-                // In SVG context an empty reactive zone needs a <g> placeholder (a <span> is invalid
-                // inside <svg>); the non-empty branch already carries the correct tags from HtmlRenderer.
-                val tag = if svgContextAt(path) then "g" else "span"
-                val finalHtml =
-                    if html.isEmpty then
-                        s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive></$tag>"""
-                    else html
-                val pathAttr = path.mkString(".")
+                // Always wrap the rendered html in the reactive boundary element so the node carrying
+                // data-kyo-path=path survives subsequent replacements. A Fragment, Text, or RawHtml value
+                // renders without a path-carrying root, so an unwrapped replace would drop the marker and
+                // the next update could not locate the node. In SVG context the boundary is a <g> (a <span>
+                // is invalid inside <svg>); otherwise a <span> (CSS sets `display: contents` so it is layout-
+                // transparent).
+                val tag       = if svgContextAt(path) then "g" else "span"
+                val pathAttr  = path.mkString(".")
+                val finalHtml = s"""<$tag data-kyo-path="$pathAttr" data-kyo-reactive>$html</$tag>"""
                 Sync.defer {
                     val el = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                     if el != null && el.outerHTML != finalHtml then
+                        // Capture focus and caret of the active element inside the replaced region,
+                        // keyed on data-kyo-path identity (mirrors HtmlRenderer.clientJs:576-583 on
+                        // the JS DOM API). Plain DOM inside the already-suspended Sync.defer; no new
+                        // AllowUnsafe crossing.
+                        val ae = document.activeElement
+                        val insideRegion = ae != null && (ae ne document.body) &&
+                            (ae.getAttribute("data-kyo-path") == pathAttr || el.contains(ae))
+                        // Use the active element's own data-kyo-path when it carries one (nested
+                        // reactive region), otherwise fall back to pathAttr so the region wrapper
+                        // itself is queried (common case: value-bound input inside the region has
+                        // no data-kyo-path of its own).
+                        val activePath =
+                            if insideRegion then
+                                if ae.hasAttribute("data-kyo-path") then ae.getAttribute("data-kyo-path")
+                                else pathAttr
+                            else null
+                        val (selStart, selEnd) = if insideRegion then readSelection(ae) else (Absent, Absent)
                         el.outerHTML = finalHtml
                         val updated = document.querySelector(s"""[data-kyo-path="$pathAttr"]""")
                         if updated != null then
                             applyJsPropsSync(updated)
                             beginAnimationsSync(updated)
+                        if activePath != null then
+                            restoreFocus(activePath, selStart, selEnd)
                     end if
                 }
             }
     end LocalExchange
+
+    private def readSelection(el: dom.Element): (Maybe[Int], Maybe[Int]) =
+        val dyn = el.asInstanceOf[scalajs.js.Dynamic]
+        def asInt(v: scalajs.js.Dynamic): Maybe[Int] =
+            if scalajs.js.typeOf(v) == "number" then Present(v.asInstanceOf[Int]) else Absent
+        (asInt(dyn.selectionStart), asInt(dyn.selectionEnd))
+    end readSelection
+
+    private def restoreFocus(capturedPath: String, selStart: Maybe[Int], selEnd: Maybe[Int]): Unit =
+        val located = document.querySelector(s"""[data-kyo-path="$capturedPath"]""")
+        if located != null then
+            val focusTarget =
+                if located.hasAttribute("data-kyo-reactive") then
+                    val inner = located.querySelector("input,textarea,select,[contenteditable]")
+                    if inner != null then inner else located
+                else located
+            val _ = focusTarget.asInstanceOf[scalajs.js.Dynamic].focus()
+            (selStart, selEnd) match
+                case (Present(s), Present(e)) =>
+                    val dyn = focusTarget.asInstanceOf[scalajs.js.Dynamic]
+                    if scalajs.js.typeOf(dyn.setSelectionRange) == "function" then
+                        try
+                            val _ = dyn.setSelectionRange(s, e)
+                        catch
+                            // setSelectionRange throws InvalidStateError on input types that do not
+                            // support text selection (e.g. email, number). Mirrors HtmlRenderer.clientJs:583:
+                            // `catch(e){if(e.name!=='InvalidStateError')throw e;}`. Re-throw any other
+                            // JS exception so genuine failures are not silently dropped.
+                            case ex: scalajs.js.JavaScriptException
+                                if ex.exception.asInstanceOf[scalajs.js.Dynamic].name.asInstanceOf[String] == "InvalidStateError" =>
+                                ()
+                    end if
+                case _ => ()
+            end match
+        end if
+    end restoreFocus
 
     // Bridge a Kyo Async computation from a JS callback boundary by offering it to the page-scoped drain
     // channel. The single AllowUnsafe site narrows to the offer crossing (the JS callback has no Kyo
@@ -94,9 +163,12 @@ private[kyo] object DomBackend:
 
     private def applyJsPropsSync(root: dom.Element): Unit =
         val propPrefix = "data-kyo-prop-"
-        val elements   = root.querySelectorAll(s"[$propPrefix*]")
+        // CSS has no attribute-name-prefix selector, so `[data-kyo-prop-*]` is not a valid selector and
+        // throws SyntaxError. Collect the root plus every descendant and keep those carrying any
+        // data-kyo-prop-* attribute; the apply loop reads the prop name off each attribute.
+        val elements = root.querySelectorAll("*")
         val self =
-            if root.hasAttribute(s"${propPrefix}indeterminate") || hasAnyKyoProp(root) then
+            if hasAnyKyoProp(root) then
                 Seq(root)
             else
                 Seq.empty
@@ -156,8 +228,12 @@ private[kyo] object DomBackend:
                             modifiers = UI.Modifiers(me.ctrlKey, me.altKey, me.shiftKey, me.metaKey),
                             targetId = targetId
                         )
-                        // Speculatively prevent navigation on anchor elements with a kyo handler
-                        if target.tagName.toLowerCase == "a" then e.preventDefault()
+                        // Prevent the browser's default navigation only when the anchor carries a kyo
+                        // click handler (so the handler, not the href, drives the action). A plain href
+                        // keeps native behavior: an in-page `#anchor` scrolls, and a cross-document route
+                        // is handled by UILocation's interceptor. Prevent-defaulting every anchor here
+                        // would also kill those.
+                        if target.tagName.toLowerCase == "a" && evTypes.contains("click") then e.preventDefault()
                         Present(UIEvent.Click(path, mouse))
                     else if t == "input" && evTypes.contains("input") then
                         Present(UIEvent.Input(path, e.target.asInstanceOf[dom.html.Input].value))

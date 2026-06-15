@@ -6,11 +6,6 @@ class ContainerItTest extends BasePodTest:
         .command("sh", "-c", "trap 'exit 0' TERM; sleep infinity & wait")
         .stopTimeout(0.seconds)
 
-    private val nameCounter = new java.util.concurrent.atomic.AtomicLong(0L)
-
-    def uniqueName(prefix: String) =
-        s"$prefix-${nameCounter.incrementAndGet()}"
-
     // Pinging a container by DNS name on a freshly created network is racy: the network
     // alias may not be registered yet when ping resolves it, and a lone ICMP packet can
     // drop. Retry the whole exec — each attempt re-resolves DNS and sends fresh packets.

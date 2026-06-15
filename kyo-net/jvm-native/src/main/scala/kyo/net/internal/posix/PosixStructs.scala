@@ -63,29 +63,29 @@ private[net] object EpollEvent:
     val size: Int = if isX86_64 then 12 else 16
 
     /** Write `event` into `buf` at `offset` using the host layout (little-endian: `events` at `offset`, `data` at `offset + dataOffset`). */
-    def encode(buf: Buffer[Byte], offset: Int, event: EpollEvent): Unit =
+    def encode(buf: Buffer[Byte], offset: Int, event: EpollEvent)(using AllowUnsafe): Unit =
         putIntLe(buf, offset, event.events)
         putLongLe(buf, offset + dataOffset, event.data)
 
     /** Read the `struct epoll_event` at `offset` from `buf` using the host layout. */
-    def decode(buf: Buffer[Byte], offset: Int): EpollEvent =
+    def decode(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): EpollEvent =
         EpollEvent(getIntLe(buf, offset), getLongLe(buf, offset + dataOffset))
 
-    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int): Unit =
+    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int)(using AllowUnsafe): Unit =
         var i = 0
         while i < 4 do
             buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
             i += 1
     end putIntLe
 
-    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long): Unit =
+    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long)(using AllowUnsafe): Unit =
         var i = 0
         while i < 8 do
             buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
             i += 1
     end putLongLe
 
-    private def getIntLe(buf: Buffer[Byte], offset: Int): Int =
+    private def getIntLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Int =
         var v = 0
         var i = 0
         while i < 4 do
@@ -94,7 +94,7 @@ private[net] object EpollEvent:
         v
     end getIntLe
 
-    private def getLongLe(buf: Buffer[Byte], offset: Int): Long =
+    private def getLongLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Long =
         var v = 0L
         var i = 0
         while i < 8 do
@@ -139,7 +139,7 @@ private[net] object KEvent:
     /** Write the changelist entry for `fd` at element 0 of `buf`: `ident`/`udata` = fd, the given `filter`/`flags`, and `fflags`/`data` = 0.
       * Used by the kqueue arm path (register / deregister) in place of `Buffer[KEvent].set(0, KEvent(...))`, which would box the Long fields.
       */
-    def encodeChange(buf: Buffer[Byte], fd: Int, filter: Short, flags: Short): Unit =
+    def encodeChange(buf: Buffer[Byte], fd: Int, filter: Short, flags: Short)(using AllowUnsafe): Unit =
         putLongLe(buf, 0, fd.toLong)  // ident
         putShortLe(buf, 8, filter)    // filter
         putShortLe(buf, 10, flags)    // flags
@@ -152,7 +152,7 @@ private[net] object KEvent:
       * single-element overload but writes at the given slot for changelist batching: `drainChanges` encodes multiple changes at
       * consecutive slots in `KqueuePollData.changelistBuf` before passing the batch to `kevent` alongside the poll wait.
       */
-    def encodeChange(buf: Buffer[Byte], slot: Int, fd: Int, filter: Short, flags: Short): Unit =
+    def encodeChange(buf: Buffer[Byte], slot: Int, fd: Int, filter: Short, flags: Short)(using AllowUnsafe): Unit =
         val base = slot * size
         putLongLe(buf, base + 0, fd.toLong)  // ident
         putShortLe(buf, base + 8, filter)    // filter
@@ -167,7 +167,7 @@ private[net] object KEvent:
       * `ident` is a fixed wakeup key (not an fd), distinct from any socket fd so its delivered event is recognized and consumed by the poll loop
       * rather than dispatched to a connection. Identical layout to [[encodeChange]] except `filter` is `EVFILT_USER` and `fflags` is settable.
       */
-    def encodeUser(buf: Buffer[Byte], ident: Long, flags: Short, fflags: Int): Unit =
+    def encodeUser(buf: Buffer[Byte], ident: Long, flags: Short, fflags: Int)(using AllowUnsafe): Unit =
         putLongLe(buf, 0, ident)                       // ident (fixed wakeup key)
         putShortLe(buf, 8, PosixConstants.EVFILT_USER) // filter
         putShortLe(buf, 10, flags)                     // flags
@@ -177,21 +177,21 @@ private[net] object KEvent:
     end encodeUser
 
     /** Read the `ident` (watched fd as `uintptr_t`) of the event at element `i`. */
-    def ident(buf: Buffer[Byte], i: Int): Long = getLongLe(buf, i * size + 0)
+    def ident(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 0)
 
     /** Read the `filter` (e.g. `EVFILT_READ` / `EVFILT_WRITE`) of the event at element `i`. */
-    def filter(buf: Buffer[Byte], i: Int): Short = getShortLe(buf, i * size + 8)
+    def filter(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Short = getShortLe(buf, i * size + 8)
 
     /** Read the `flags` (e.g. `EV_ERROR` / `EV_EOF`) of the event at element `i`. */
-    def flags(buf: Buffer[Byte], i: Int): Short = getShortLe(buf, i * size + 10)
+    def flags(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Short = getShortLe(buf, i * size + 10)
 
     /** Read the `data` (bytes available / errno) of the event at element `i`. */
-    def data(buf: Buffer[Byte], i: Int): Long = getLongLe(buf, i * size + 16)
+    def data(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 16)
 
     /** Decode the whole `struct kevent` at element `i`. Used by the binding integration test's round-trip assertion; the poll hot path uses
       * the per-field readers instead so it never allocates a `KEvent`.
       */
-    def decode(buf: Buffer[Byte], i: Int): KEvent =
+    def decode(buf: Buffer[Byte], i: Int)(using AllowUnsafe): KEvent =
         val base = i * size
         KEvent(
             ident = getLongLe(buf, base + 0),
@@ -203,28 +203,28 @@ private[net] object KEvent:
         )
     end decode
 
-    private def putShortLe(buf: Buffer[Byte], offset: Int, value: Short): Unit =
+    private def putShortLe(buf: Buffer[Byte], offset: Int, value: Short)(using AllowUnsafe): Unit =
         buf.set(offset, (value & 0xff).toByte)
         buf.set(offset + 1, ((value >> 8) & 0xff).toByte)
 
-    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int): Unit =
+    private def putIntLe(buf: Buffer[Byte], offset: Int, value: Int)(using AllowUnsafe): Unit =
         var i = 0
         while i < 4 do
             buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
             i += 1
     end putIntLe
 
-    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long): Unit =
+    private def putLongLe(buf: Buffer[Byte], offset: Int, value: Long)(using AllowUnsafe): Unit =
         var i = 0
         while i < 8 do
             buf.set(offset + i, ((value >> (i * 8)) & 0xff).toByte)
             i += 1
     end putLongLe
 
-    private def getShortLe(buf: Buffer[Byte], offset: Int): Short =
+    private def getShortLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Short =
         ((buf.get(offset) & 0xff) | ((buf.get(offset + 1) & 0xff) << 8)).toShort
 
-    private def getIntLe(buf: Buffer[Byte], offset: Int): Int =
+    private def getIntLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Int =
         var v = 0
         var i = 0
         while i < 4 do
@@ -233,7 +233,7 @@ private[net] object KEvent:
         v
     end getIntLe
 
-    private def getLongLe(buf: Buffer[Byte], offset: Int): Long =
+    private def getLongLe(buf: Buffer[Byte], offset: Int)(using AllowUnsafe): Long =
         var v = 0L
         var i = 0
         while i < 8 do
@@ -370,7 +370,7 @@ private[net] object SockAddr:
         end if
     end encodeUnix
 
-    private def zero(buf: Buffer[Byte], n: Int): Unit =
+    private def zero(buf: Buffer[Byte], n: Int)(using AllowUnsafe): Unit =
         var i = 0
         while i < n do
             buf.set(i, 0.toByte)
@@ -380,12 +380,12 @@ private[net] object SockAddr:
     /** Write the address family into the first 2 bytes in host byte order. The socket API treats `sa_family_t` as host-order, unlike the
       * port and address which are network-order.
       */
-    private def putFamily(buf: Buffer[Byte], family: Int): Unit =
+    private def putFamily(buf: Buffer[Byte], family: Int)(using AllowUnsafe): Unit =
         buf.set(0, (family & 0xff).toByte)
         buf.set(1, ((family >> 8) & 0xff).toByte)
 
     /** Write a 16-bit port in network byte order (big-endian) at `offset`. */
-    private def putPortNetOrder(buf: Buffer[Byte], offset: Int, port: Int): Unit =
+    private def putPortNetOrder(buf: Buffer[Byte], offset: Int, port: Int)(using AllowUnsafe): Unit =
         buf.set(offset, ((port >> 8) & 0xff).toByte)
         buf.set(offset + 1, (port & 0xff).toByte)
 
@@ -500,7 +500,7 @@ private[net] object PosixStat:
     /** Read `st_mode` (the file-type and permission bits) from a `fstat`-filled buffer using the host layout. macOS stores it in 2 bytes,
       * Linux in 4; both are read little-endian and the file-type bits the probe needs live in the low 16 bits either way.
       */
-    def stMode(buf: Buffer[Byte]): Int =
+    def stMode(buf: Buffer[Byte])(using AllowUnsafe): Int =
         if PosixConstants.isMacOrBsd then
             (buf.get(modeOffset) & 0xff) | ((buf.get(modeOffset + 1) & 0xff) << 8)
         else

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.*
 
-/** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, and base URL resolution.
+/** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, client filters, and base URL resolution.
   *
   * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config, nested
   * `withConfig` calls stack rather than replace each other, so each layer only overrides the fields it changes. To discard the current
@@ -39,6 +39,9 @@ import kyo.*
   * @param tls
   *   TLS settings applied to HTTPS connections made by this client. See [[HttpTlsConfig]]. Per-request TLS overrides can be set via
   *   `HttpClientConfig` on [[HttpClient.init]].
+  * @param transportConfig
+  *   Transport-level tuning applied to connections this client opens (connect/handshake timeouts, buffer sizes). See
+  *   [[HttpTransportConfig]].
   * @param maxResponseLength
   *   Hard cap, in bytes, on a BUFFERED response body the client accumulates in memory. A server (malicious or buggy) that streams an
   *   unbounded chunked or connection-close-framed body, or declares an enormous `Content-Length`, would otherwise grow the client's buffer
@@ -46,6 +49,11 @@ import kyo.*
   *   [[HttpPayloadTooLargeException]] instead. Defaults to 100 MiB: a safety ceiling, not a functional limit, large enough for realistic
   *   buffered JSON/HTML/file responses. Responses larger than this should use the streaming API (`getStreamBytes`, `getSseJson`, etc.),
   *   which is NOT subject to this cap (the caller controls consumption). Must be positive.
+  * @param autoFilters
+  *   Whether ServiceLoader-discovered client filters are applied. Defaults to true.
+  * @param clientFilter
+  *   Programmatic client filter applied to outgoing HTTP requests and WebSocket upgrade handshakes after auto filters and before route
+  *   filters.
   *
   * @see
   *   [[kyo.HttpClient.withConfig]] Applies this config to a block of code
@@ -62,8 +70,11 @@ case class HttpClientConfig(
     maxRedirects: Int = 10,
     retrySchedule: Maybe[Schedule] = Absent,
     retryOn: HttpStatus => Boolean = _.isServerError,
+    transportConfig: HttpTransportConfig = HttpTransportConfig.default,
     tls: HttpTlsConfig = HttpTlsConfig.default,
-    maxResponseLength: Int = 100 * 1024 * 1024
+    maxResponseLength: Int = 100 * 1024 * 1024,
+    autoFilters: Boolean = true,
+    clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
 ):
     require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
     require(maxResponseLength > 0, s"maxResponseLength must be positive: $maxResponseLength")
@@ -73,14 +84,23 @@ case class HttpClientConfig(
         s"connectTimeout must be positive or Infinity: $connectTimeout"
     )
 
-    def baseUrl(url: String)(using Frame): HttpClientConfig = copy(baseUrl = Present(HttpUrl.parse(url).getOrThrow))
-    def baseUrl(url: HttpUrl): HttpClientConfig             = copy(baseUrl = Present(url))
-    def timeout(d: Duration): HttpClientConfig              = copy(timeout = d)
-    def connectTimeout(d: Duration): HttpClientConfig       = copy(connectTimeout = d)
-    def followRedirects(v: Boolean): HttpClientConfig       = copy(followRedirects = v)
-    def maxRedirects(v: Int): HttpClientConfig              = copy(maxRedirects = v)
-    def retry(schedule: Schedule): HttpClientConfig         = copy(retrySchedule = Present(schedule))
-    def retryOn(f: HttpStatus => Boolean): HttpClientConfig = copy(retryOn = f)
-    def tls(config: HttpTlsConfig): HttpClientConfig        = copy(tls = config)
-    def maxResponseLength(v: Int): HttpClientConfig         = copy(maxResponseLength = v)
+    def baseUrl(url: String)(using Frame): HttpClientConfig       = copy(baseUrl = Present(HttpUrl.parse(url).getOrThrow))
+    def baseUrl(url: HttpUrl): HttpClientConfig                   = copy(baseUrl = Present(url))
+    def timeout(d: Duration): HttpClientConfig                    = copy(timeout = d)
+    def connectTimeout(d: Duration): HttpClientConfig             = copy(connectTimeout = d)
+    def followRedirects(v: Boolean): HttpClientConfig             = copy(followRedirects = v)
+    def maxRedirects(v: Int): HttpClientConfig                    = copy(maxRedirects = v)
+    def retry(schedule: Schedule): HttpClientConfig               = copy(retrySchedule = Present(schedule))
+    def retryOn(f: HttpStatus => Boolean): HttpClientConfig       = copy(retryOn = f)
+    def transportConfig(v: HttpTransportConfig): HttpClientConfig = copy(transportConfig = v)
+    def tls(config: HttpTlsConfig): HttpClientConfig              = copy(tls = config)
+    def maxResponseLength(v: Int): HttpClientConfig               = copy(maxResponseLength = v)
+    def autoFilters(v: Boolean): HttpClientConfig                 = copy(autoFilters = v)
+    def withoutAutoFilters: HttpClientConfig                      = autoFilters(false)
+    def filter(f: HttpFilter.Passthrough[Nothing]): HttpClientConfig =
+        copy(clientFilter = clientFilter.andThen(f))
+    def filters(fs: Seq[HttpFilter.Passthrough[Nothing]]): HttpClientConfig =
+        copy(clientFilter = fs.foldLeft(clientFilter)(_.andThen(_)))
+    def clearFilters: HttpClientConfig =
+        copy(clientFilter = HttpFilter.noop)
 end HttpClientConfig

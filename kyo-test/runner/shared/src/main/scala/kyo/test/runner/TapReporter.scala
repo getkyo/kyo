@@ -67,8 +67,9 @@ final class TapReporter(out: PrintStream) extends TestReporter:
                 val yamlBlock = buildFailureYaml(diagram)
                 s"not ok $n - $testName\n$yamlBlock"
             case TestResult.Cancelled(reason, _) =>
-                val yamlBlock = buildMessageYaml(s"cancelled: $reason")
-                s"not ok $n - $testName\n$yamlBlock"
+                // Cancelled is a deliberate skip (an unmet `assume`/`cancel` precondition), not a failure:
+                // a TAP SKIP directive on an `ok` line, like pending/ignored/skipped, never `not ok`.
+                s"ok $n - $testName # SKIP cancelled: $reason"
             case TestResult.TimedOut(limit) =>
                 val yamlBlock = buildMessageYaml(s"timed out after $limit")
                 s"not ok $n - $testName\n$yamlBlock"

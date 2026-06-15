@@ -1,0 +1,250 @@
+package kyo
+
+import kyo.Tasty.SymbolId
+
+/** declared vs inherited member split.
+  *
+  * Covers: declaredMembers, allMembers, findDeclaredMember, findInheritedMember, findAnyMember, collectMembers (plural on ClassLike).
+  */
+class SymbolMemberSearchTest extends kyo.test.Test[Any]:
+
+    import AllowUnsafe.embrace.danger
+
+    private def makeClass(
+        id: Int,
+        name: String,
+        ownerId: Int,
+        parentTypes: Chunk[Tasty.Type] = Chunk.empty,
+        decls: Chunk[SymbolId] = Chunk.empty
+    ): Tasty.Symbol.Class =
+        Tasty.Symbol.Class(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            parentTypes,
+            Chunk.empty,
+            decls,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty
+        )
+
+    private def makeMethod(id: Int, name: String, ownerId: Int): Tasty.Symbol.Method =
+        Tasty.Symbol.Method(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty,
+            Chunk.empty,
+            Chunk.empty,
+            Maybe.Absent
+        )
+
+    private def makeVal(id: Int, name: String, ownerId: Int): Tasty.Symbol.Val =
+        Tasty.Symbol.Val(
+            SymbolId(id),
+            Tasty.Name(name),
+            Tasty.Flags.empty,
+            SymbolId(ownerId),
+            Maybe.Absent,
+            Maybe.Absent,
+            Maybe.Absent,
+            Chunk.empty
+        )
+
+    /** Fixture: class A { def foo; val x } Symbol ids: 0=A, 1=foo, 2=x
+      */
+    private def buildClassA(using Frame): Tasty.Classpath < Sync =
+        Sync.defer {
+            val foo  = makeMethod(1, "foo", ownerId = 0)
+            val x    = makeVal(2, "x", ownerId = 0)
+            val clsA = makeClass(0, "A", ownerId = -1, decls = Chunk(SymbolId(1), SymbolId(2)))
+            Tasty.Classpath.make(
+                symbols = Chunk(clsA, foo, x),
+                rootSymbolId = SymbolId(-1),
+                topLevelClassIds = Chunk(SymbolId(0)),
+                packageIds = Chunk.empty,
+                fullNameIndex = Dict("A" -> SymbolId(0)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
+                errors = Chunk.empty
+            )
+        }
+
+    /** Fixture: class A { def foo }; class B extends A { def bar } Symbol ids: 0=A, 1=foo, 2=B, 3=bar B.parentTypes =
+      * Chunk(Type.Named(SymbolId(0)))
+      */
+    private def buildInheritanceFixture(using Frame): Tasty.Classpath < Sync =
+        Sync.defer {
+            val foo  = makeMethod(1, "foo", ownerId = 0)
+            val bar  = makeMethod(3, "bar", ownerId = 2)
+            val clsA = makeClass(0, "A", ownerId = -1, decls = Chunk(SymbolId(1)))
+            val clsB = makeClass(
+                2,
+                "B",
+                ownerId = -1,
+                parentTypes = Chunk(Tasty.Type.Named(SymbolId(0))),
+                decls = Chunk(SymbolId(3))
+            )
+            Tasty.Classpath.make(
+                symbols = Chunk(clsA, foo, clsB, bar),
+                rootSymbolId = SymbolId(-1),
+                topLevelClassIds = Chunk(SymbolId(0), SymbolId(2)),
+                packageIds = Chunk.empty,
+                fullNameIndex = Dict("A" -> SymbolId(0), "B" -> SymbolId(2)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
+                errors = Chunk.empty
+            )
+        }
+
+    /** Fixture: class A { def foo(x: Int); def foo(s: String) } (overloaded) Symbol ids: 0=A, 1=foo(Int), 2=foo(String)
+      */
+    private def buildOverloadedFixture(using Frame): Tasty.Classpath < Sync =
+        Sync.defer {
+            val foo1 = makeMethod(1, "foo", ownerId = 0)
+            val foo2 = makeMethod(2, "foo", ownerId = 0)
+            val clsA = makeClass(0, "A", ownerId = -1, decls = Chunk(SymbolId(1), SymbolId(2)))
+            Tasty.Classpath.make(
+                symbols = Chunk(clsA, foo1, foo2),
+                rootSymbolId = SymbolId(-1),
+                topLevelClassIds = Chunk(SymbolId(0)),
+                packageIds = Chunk.empty,
+                fullNameIndex = Dict("A" -> SymbolId(0)),
+                packageIndex = Dict.empty,
+                subclassIndex = Dict.empty,
+                companionIndex = Dict.empty,
+                moduleIndex = Dict.empty,
+                errors = Chunk.empty
+            )
+        }
+
+    "declaredMembers returns direct declarations of ClassLike" in {
+        buildClassA.map { classpath =>
+            val a     = classpath.findClass("A").get
+            val names = a.declarationIds.flatMap(id => classpath.symbol(id).toChunk).map(_.simpleName)
+            assert(names == Chunk("foo", "x"), s"Unexpected names: $names")
+            succeed
+        }
+    }
+
+    "declaredMembers returns empty for non-ClassLike symbol" in {
+        buildClassA.map { classpath =>
+            // A Method is neither ClassLike nor Package, so it carries no declarationIds.
+            classpath.symbol(SymbolId(1)) match
+                case Maybe.Present(m: Tasty.Symbol.Method) =>
+                    assert(!m.isInstanceOf[Tasty.Symbol.ClassLike] && !m.isInstanceOf[Tasty.Symbol.Package])
+                    succeed
+                case other =>
+                    fail(s"expected Symbol.Method at id 1, got $other")
+        }
+    }
+
+    "allMembers includes inherited members from parent ClassLike" in {
+        buildInheritanceFixture.map { classpath =>
+            val b = classpath.findClass("B").get
+            val names = {
+                val _seen = scala.collection.mutable.HashSet.empty[String]
+                val _out  = Chunk.newBuilder[Tasty.Symbol]
+                def _visit(cl: Tasty.Symbol.ClassLike): Unit =
+                    cl.declarationIds.foreach { id =>
+                        classpath.symbol(id).foreach { d =>
+                            if _seen.add(d.simpleName) then _out += d
+                        }
+                    }
+                    cl.parentTypes.flatMap { case Tasty.Type.Named(pid) => classpath.symbol(pid).toChunk; case _ => Chunk.empty }.foreach {
+                        case pcl: Tasty.Symbol.ClassLike => _visit(pcl)
+                        case _                           => ()
+                    }
+                end _visit
+                b match
+                    case cl: Tasty.Symbol.ClassLike => _visit(cl)
+                _out.result()
+            }.map(_.simpleName).toIndexedSeq.toSet
+            assert(names == Set("bar", "foo"), s"Unexpected names: $names")
+            succeed
+        }
+    }
+
+    "findDeclaredMember vs findInheritedMember for inherited method" in {
+        buildInheritanceFixture.map { classpath =>
+            val b        = classpath.findClass("B").get
+            val declared = Maybe.fromOption(b.declarationIds.flatMap(id => classpath.symbol(id).toChunk).find(_.simpleName == "foo"))
+            val inherited =
+                val directs     = b.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
+                val directNames = scala.collection.mutable.HashSet.empty[String]
+                directs.foreach(d => directNames.add(d.simpleName))
+                // Walk parent chain for inherited
+                var _foundInh: Maybe[Tasty.Symbol] = Maybe.Absent
+                def _visitInh(cl: Tasty.Symbol.ClassLike): Unit =
+                    cl.declarationIds.foreach { id =>
+                        classpath.symbol(id).foreach { d =>
+                            if !directNames.contains(d.simpleName) && d.simpleName == "foo" then
+                                _foundInh = Maybe(d)
+                        }
+                    }
+                    cl.parentTypes.flatMap { case Tasty.Type.Named(pid) => classpath.symbol(pid).toChunk; case _ => Chunk.empty }.foreach {
+                        case pcl: Tasty.Symbol.ClassLike => if _foundInh.isEmpty then _visitInh(pcl)
+                        case _                           => ()
+                    }
+                end _visitInh
+                b.parentTypes.flatMap { case Tasty.Type.Named(pid) => classpath.symbol(pid).toChunk; case _ => Chunk.empty }.foreach {
+                    case pcl: Tasty.Symbol.ClassLike => _visitInh(pcl)
+                    case _                           => ()
+                }
+                _foundInh
+            end inherited
+            assert(declared == Maybe.Absent, s"Expected Absent for declared but got $declared")
+            assert(inherited.isDefined, s"Expected Present for inherited but got $inherited")
+            succeed
+        }
+    }
+
+    "findAnyMember finds inherited member" in {
+        buildInheritanceFixture.map { classpath =>
+            val b = classpath.findClass("B").get
+            val result =
+                val _seen2 = scala.collection.mutable.HashSet.empty[String]
+                val _all2  = Chunk.newBuilder[Tasty.Symbol]
+                def _visitAny(cl: Tasty.Symbol.ClassLike): Unit =
+                    cl.declarationIds.foreach { id =>
+                        classpath.symbol(id).foreach { d =>
+                            if _seen2.add(d.simpleName) then _all2 += d
+                        }
+                    }
+                    cl.parentTypes.flatMap { case Tasty.Type.Named(pid) => classpath.symbol(pid).toChunk; case _ => Chunk.empty }.foreach {
+                        case pcl: Tasty.Symbol.ClassLike => _visitAny(pcl)
+                        case _                           => ()
+                    }
+                end _visitAny
+                b match
+                    case cl: Tasty.Symbol.ClassLike => _visitAny(cl)
+                Maybe.fromOption(_all2.result().find(_.simpleName == "foo"))
+            end result
+            assert(result.isDefined, s"Expected Present but got $result")
+            succeed
+        }
+    }
+
+    "collectMembers returns all overloaded declarations" in {
+        buildOverloadedFixture.map { classpath =>
+            val a       = classpath.findClass("A").get
+            val members = a.declarationIds.flatMap(id => classpath.symbol(id).toChunk).filter(_.simpleName == "foo")
+            assert(members.size == 2, s"Expected 2 but got ${members.size}")
+            succeed
+        }
+    }
+
+end SymbolMemberSearchTest

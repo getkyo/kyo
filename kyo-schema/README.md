@@ -31,13 +31,13 @@ Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
 
 Everything flows from `Schema[A]`, the central type that captures a type's structure at compile time. It's the single source of truth that powers serialization, validation, navigation, and conversion.
 
-The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)` and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
+The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)`, `Ion.encode(value)`, and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
 
 These are the top-level entry points:
 
 | Entry point | Purpose |
 |-------------|---------|
-| `Json` / `Yaml` / `Protobuf` | Serialize to JSON strings, YAML documents, or Protocol Buffers bytes |
+| `Json` / `Ion` / `Yaml` / `Protobuf` | Serialize to JSON strings, Ion text, YAML documents, or Protocol Buffers bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -170,6 +170,40 @@ Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
 Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+
+### Ion
+
+`Ion.encode` converts a value to Amazon Ion text. Case classes become structs, collections become lists, `Map[String, V]` becomes a struct, and `Span[Byte]` becomes an Ion blob:
+
+```scala
+val ion: String = Ion.encode(alice)
+// {id:1,name:"Alice",email:"alice@example.com",password:"secret",address:{city:"Portland",zip:"97201"}}
+
+Ion.decode[User](ion)
+// Result.Success(alice)
+
+Ion.encode(Span.from("hello".getBytes("UTF-8")))
+// {{aGVsbG8=}}
+```
+
+The reader accepts the Ion text features most useful for schema-shaped data: unquoted or quoted field names, comments, annotations, typed nulls, blobs, long strings, and symbol values decoded as strings:
+
+```scala
+Ion.decode[User](
+    """user::{
+      |  id: 1,
+      |  name: "Alice",
+      |  email: "alice@example.com",
+      |  password: "secret",
+      |  address: {city: Portland, zip: "97201"},
+      |}""".stripMargin
+)
+// Result.Success(alice)
+```
+
+Ion type annotations are accepted as input syntax and ignored as metadata during schema decoding. They are not preserved by `Ion.decode` or emitted by `Ion.encode`.
+
+`Ion.decode` and `Ion.decodeBytes` accept the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
 
 ### YAML
 
@@ -316,6 +350,94 @@ val rendered =
 
 assert(rendered == Result.succeed("name: Alice\nage: 30\n"))
 ```
+
+#### YAML CST
+
+`Yaml.cst` is an opt-in concrete syntax tree for structural YAML tools. It keeps source text, comments, whitespace, node syntax, anchors, tags, and source marks so unchanged documents render from the original source, and edits can preserve nearby comments and trivia while changed regions render canonically. Schema decode and encode remain the fast paths for typed values.
+
+```scala
+val source =
+    """# service owner
+      |name: Alice # current
+      |active: true
+      |""".stripMargin
+
+val replacement =
+    Yaml.Cst.from("Bob").getOrThrow.root.get
+
+val edited =
+    Yaml.cst(source).getOrThrow
+        .replace(Yaml.Cst.Path.root / "name", replacement)
+        .getOrThrow
+
+assert(
+    edited.render(using Yaml.WriterConfig.Default) ==
+        """# service owner
+          |name: Bob # current
+          |active: true
+          |""".stripMargin
+)
+```
+
+The assertion shows that the `name` value changed while the owner comment, inline comment, and `active` entry stayed in place.
+
+Pipeline CST helpers use the same event middleware as `decode` and `render`. With no middleware, `Yaml.pipeline.cst(input)` delegates to source-backed CST parsing. With middleware, the pipeline materializes transformed events into a canonical CST, which is useful for structural tooling that wants transformed YAML without schema decoding or building a `Yaml.Node` tree.
+
+```scala
+val renameFullName =
+    Yaml.Events.Processor.mapScalars[DecodeException] { (value, meta) =>
+        val next =
+            if value == "fullName" then "name"
+            else value
+        Result.succeed((next, meta))
+    }
+
+val doc =
+    Yaml.pipeline
+        .through(renameFullName)
+        .cst("fullName: Alice\n")
+        .getOrThrow
+
+assert(doc.source.isEmpty)
+assert(doc.render(using Yaml.WriterConfig.Default) == "name: Alice\n")
+```
+
+The empty source proves the CST came from transformed events rather than the original bytes, and the render assertion proves the scalar rename happened.
+
+A CST document can also serve as the decode source directly. `Yaml.decode[A](doc)` reads the CST's event stream through the schema without re-parsing YAML text. `throughCst` composes a structural edit as a pipeline stage so the same pipeline can both decode the edited values and render the result with comments preserved:
+
+```scala
+val cfgSource =
+    """# deployment
+      |services:
+      |  api:
+      |    image: app:v1
+      |""".stripMargin
+
+// Decode straight from a CST document
+val cfgDoc = Yaml.cst(cfgSource).getOrThrow
+val cfgDecoded =
+    Yaml.decode[Map[String, Map[String, Map[String, String]]]](cfgDoc)
+assert(cfgDecoded.isSuccess)
+
+// Edit via throughCst (comments preserved), then render the result
+val imageV2 = Yaml.Cst.from("app:v2").getOrThrow.root.get
+val bumped =
+    Yaml.pipeline
+        .throughCst(
+            _.replace(
+                Yaml.Cst.Path.root / "services" / "api" / "image",
+                imageV2
+            )
+        )
+        .render(cfgSource)
+        .getOrThrow
+
+assert(bumped.contains("app:v2"))
+assert(bumped.contains("# deployment"))
+```
+
+The comment assertion holds because `throughCst` builds a source-backed CST from the input, applies the structural edit, and renders through the trivia-aware renderer. Nodes that were not edited retain their original text, so the leading `# deployment` comment survives.
 
 For richer examples, including an anchor audit that finds undeclared aliases and unused anchors, direct pipeline decode of case classes and ADTs, and a complete node-builder with a custom error hierarchy, see [YamlEventsTest.scala](shared/src/test/scala/kyo/YamlEventsTest.scala) and [YamlPipelineTest.scala](shared/src/test/scala/kyo/YamlPipelineTest.scala). When callers do want a tree, `Yaml.parse` builds one explicitly.
 
@@ -1011,7 +1133,7 @@ The `Structure.Type` tree ships with a small set of operations for runtime inspe
 
 ## Custom Formats
 
-`Json` and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
+`Json`, `Ion`, `Yaml`, and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
 
 ### The Codec trait
 
@@ -1077,7 +1199,7 @@ Schema[User].encode(alice)(using Lines) // Span[Byte] in the Lines format
 Schema[User].decode(bytes)(using Lines) // Result[DecodeException, User]
 ```
 
-For a complete example, read `JsonWriter` and `JsonReader` (or their Protobuf counterparts) in the same package: they implement the full contract.
+For a complete example, read `JsonWriter` and `JsonReader`, `IonWriter` and `IonReader`, or their Protobuf counterparts in the same package: they implement the full contract.
 
 When writing a custom schema for an opaque or wrapper type, you can also construct a `Schema` instance directly using the public factories `Schema.init` (for plain schemas) and `Schema.initFocused` (when you need to track the focused type member). Both take inlined `writeFn` and `readFn` lambdas, plus an optional `getterFn`/`setterFn` pair for lens support. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
 

@@ -527,7 +527,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       * Uses [[GrowableByteBuffer.writeFromBuffer]] for a zero-intermediate-allocation copy from the off-heap drain buffer (direct off-heap
       * to heap copy, no intermediate Array).
       */
-    private def appendPending(handle: PosixHandle, drain: Buffer[Byte], len: Int): Unit =
+    private def appendPending(handle: PosixHandle, drain: Buffer[Byte], len: Int)(using AllowUnsafe): Unit =
         val buf =
             handle.pendingCipher match
                 case Present(b) => b

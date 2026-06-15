@@ -17,7 +17,7 @@ import kyo.ffi.Ffi
   */
 private[net] object SystemResolver:
 
-    private val bindings = Ffi.load[ResolveBindings]
+    private def bindings(using AllowUnsafe): ResolveBindings = Ffi.load[ResolveBindings]
 
     /** Resolve `host` for `familyHint` to `(family, rawAddrBytes)` or fail `Closed`. Spawns the `@Ffi.blocking kyo_net_resolve` shim on a
       * dedicated carrier via `Fiber.Unsafe.init`; on Native the shim completes inline (BlockingBridge runs the call synchronously), so the

@@ -4,7 +4,6 @@ import kyo.*
 import kyo.discard
 import kyo.ffi.Ffi
 import kyo.ffi.FfiLoadError
-import kyo.ffi.FfiUnsupported
 import kyo.ffi.Test
 import scala.scalajs.js as sjs
 
@@ -12,8 +11,8 @@ import scala.scalajs.js as sjs
   *
   * [[NativeLoader.detectBrowser]] returns true when neither `process` nor `require` is defined on the JS global. On that outcome:
   *
-  *   - [[NativeLoader.load]] throws [[FfiUnsupported]] directly.
-  *   - [[FfiReflect.instantiate]] throws [[FfiUnsupported]] before attempting any `scalajs-reflect` lookup, so `Ffi.load[T]` surfaces the
+  *   - [[NativeLoader.load]] throws [[FfiLoadError.Unsupported]] directly.
+  *   - [[FfiReflect.instantiate]] throws [[FfiLoadError.Unsupported]] before attempting any `scalajs-reflect` lookup, so `Ffi.load[T]` surfaces the
   *     gate with the same exception type.
   *
   * The test simulates a browser by temporarily deleting `process` and `require` from `sjs.Dynamic.global`, runs the checks, then restores
@@ -88,27 +87,27 @@ class BrowserDetectionTest extends Test:
     }
 
     "NativeLoader.load" - {
-        "throws FfiUnsupported in a simulated browser" in {
+        "throws FfiLoadError.Unsupported in a simulated browser" in {
             deleteGlobal("process")
             deleteGlobal("require")
-            val ex = intercept[FfiUnsupported] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 discard(NativeLoader.load("any_lib"))
             }
             assert(ex.getMessage.contains("browser"))
         }
 
         "does not throw in Node (process defined)" in {
-            // Just confirm no FfiUnsupported is raised, actual path resolution is covered by NativeLoaderJsSpec.
+            // Just confirm no FfiLoadError.Unsupported is raised, actual path resolution is covered by NativeLoaderJsSpec.
             discard(NativeLoader.load("any_lib_id"))
             succeed
         }
     }
 
     "FfiReflect.instantiate" - {
-        "throws FfiUnsupported in a simulated browser" in {
+        "throws FfiLoadError.Unsupported in a simulated browser" in {
             deleteGlobal("process")
             deleteGlobal("require")
-            val ex = intercept[FfiUnsupported] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 discard(FfiReflect.instantiate(
                     "kyo.ffi.internal.BrowserDetectionTest$DoesNotExist",
                     "kyo.ffi.internal.BrowserDetectionTest.DoesNotExist"
@@ -119,23 +118,23 @@ class BrowserDetectionTest extends Test:
     }
 
     "Ffi.load" - {
-        "throws FfiUnsupported in a simulated browser before any reflection is attempted" in {
+        "throws FfiLoadError.Unsupported in a simulated browser before any reflection is attempted" in {
             deleteGlobal("process")
             deleteGlobal("require")
             // Evict any stale cache entry so the load actually reaches instantiate.
             Ffi.unload[BrowserDetectionTest.FakeBinding]
-            val ex = intercept[FfiUnsupported] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 discard(Ffi.load[BrowserDetectionTest.FakeBinding])
             }
             assert(ex.getMessage.contains("browser"))
         }
 
-        "no longer throws FfiUnsupported once process is restored" in {
+        "no longer throws FfiLoadError.Unsupported once process is restored" in {
             // First, ensure the cache is empty.
             Ffi.unload[BrowserDetectionTest.FakeBinding]
             // With process+require present, the browser gate passes; we expect the scalajs-reflect lookup to then fail with
             // FfiLoadError.ImplNotFound because `FakeBindingImpl` does not exist (and is not annotated). The key assertion is that the
-            // exception is NOT FfiUnsupported.
+            // exception is NOT FfiLoadError.Unsupported.
             val ex = intercept[Exception] {
                 discard(Ffi.load[BrowserDetectionTest.FakeBinding])
             }

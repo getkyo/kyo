@@ -140,6 +140,40 @@ class FrameAssemblerTest extends kyo.BasePodTest:
             val (c1, c2) = full.splitAt(9)  // header + 1 byte of '→'
             runPipe(span(c1), span(c2)).map(r => assert(r == Chunk(("→", LogEntry.Source.Stdout))))
         }
+
+        // --- raw (non-multiplexed) stream fallback ---
+        // A first byte outside 0..2 means the stream has no frame headers (TTY output, or podman's
+        // compat API responding raw). It must surface as stdout, not be misparsed as a frame header
+        // whose bogus payload size silently swallows the whole output.
+
+        "raw stream is emitted as stdout instead of being dropped" in {
+            val raw = "from-host-12345\n".getBytes("UTF-8")
+            runPipe(span(raw)).map(r => assert(r == Chunk(("from-host-12345\n", LogEntry.Source.Stdout))))
+        }
+
+        "raw mode is sticky: a later poll starting with a header-like byte stays raw" in {
+            val c1 = "raw text".getBytes("UTF-8")
+            val c2 = Array[Byte](1, 0, 0, 0) // would look like a stdout frame header in multiplexed mode
+            // Two separate stream emissions, so the pipe sees two polls: the mode decided on the
+            // first poll must carry over, never re-deciding on the second poll's first byte.
+            Stream.init(Seq(span(c1))).concat(Stream.init(Seq(span(c2)))).into(FrameAssembler.pipe).run.map { r =>
+                assert(r.size == 2)
+                assert(r(0) == ("raw text", LogEntry.Source.Stdout))
+                assert(r(1) == (new String(c2, "UTF-8"), LogEntry.Source.Stdout))
+            }
+        }
+
+        "empty leading chunk defers the mode decision to the first non-empty bytes" in {
+            val raw = "still raw".getBytes("UTF-8")
+            runPipe(span(Array.empty[Byte]), span(raw)).map { r =>
+                assert(r == Chunk(("still raw", LogEntry.Source.Stdout)))
+            }
+        }
+
+        "multiplexed stream whose payload starts with a printable byte is still parsed as frames" in {
+            // Only the FIRST byte of the stream decides the mode; payload bytes never re-decide.
+            runPipe(span(stdoutFrame("from-host"))).map(r => assert(r == Chunk(("from-host", LogEntry.Source.Stdout))))
+        }
     }
 
 end FrameAssemblerTest

@@ -24,6 +24,32 @@ class LengthTest extends kyo.test.Test[Any]:
         assert(Length.resolve(Auto, 150) == 150)
     }
 
+    "Vh resolves as a percentage of the parent dimension" in {
+        assert(Length.resolve(Vh(50), 200) == 100)
+    }
+
+    "Calc resolves to the parent dimension (opaque expression)" in {
+        assert(Length.resolve(Calc("100vh - 60px"), 150) == 150)
+    }
+
+    "int extension .vh creates Vh" in {
+        assert((100.vh) == Vh(100.0))
+    }
+
+    "double extension .vh creates Vh" in {
+        assert((33.5.vh) == Vh(33.5))
+    }
+
+    "Vh equality" in {
+        assert(Vh(100) == Vh(100))
+        assert(Vh(100) != Vh(50))
+    }
+
+    "Calc equality" in {
+        assert(Calc("100vh - 60px") == Calc("100vh - 60px"))
+        assert(Calc("100vh - 60px") != Calc("100vh"))
+    }
+
     "resolveOrAuto on Px returns Present" in {
         assert(Length.resolveOrAuto(Px(10), 100) == kyo.Present(10))
     }

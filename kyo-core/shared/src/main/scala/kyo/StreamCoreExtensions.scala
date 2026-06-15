@@ -613,8 +613,12 @@ object StreamCoreExtensions:
                         val handleEmit = ArrowEffect.handleLoop(t1, stream.emit)(
                             handle = [C] =>
                                 (input, cont) =>
-                                    // Transform chunk in background, publishing fiber to channelOut
-                                    semaphore.run(Fiber.initUnscoped(f(input))).map: chunkFiber =>
+                                    // Transform chunk in background, publishing fiber to channelOut. The outer
+                                    // `semaphore.run` backpressures the handler loop; the inner one bounds the actual
+                                    // transformation work to `parallel`. Without the inner gate the permit would only
+                                    // span the fork (which returns immediately), leaving every chunk to transform
+                                    // concurrently regardless of `parallel`.
+                                    semaphore.run(Fiber.initUnscoped(semaphore.run(f(input)))).map: chunkFiber =>
                                         channelOut.put(chunkFiber).andThen(Loop.continue(cont(())))
                         )
 
@@ -726,10 +730,13 @@ object StreamCoreExtensions:
                                 handle = [C] =>
                                     (input, cont) =>
                                         // Transform chunks and publish to channelOut in background fiber, placing
-                                        // fiber in channelPar to ensure completion/interruption
+                                        // fiber in channelPar to ensure completion/interruption. The outer
+                                        // `semaphore.run` backpressures the handler loop; the inner one bounds the
+                                        // actual transformation work to `parallel`. Without the inner gate the permit
+                                        // would only span the fork (which returns immediately), leaving every chunk to
+                                        // transform concurrently regardless of `parallel`.
                                         semaphore.run(Fiber.initUnscoped(
-                                            f(input).map: chunk =>
-                                                channelOut.put(chunk).unit
+                                            semaphore.run(f(input).map(chunk => channelOut.put(chunk).unit))
                                         )).map: fiber =>
                                             channelPar.put(fiber).andThen(Loop.continue(cont(())))
                             ).andThen(channelPar.closeAwaitEmpty.unit)

@@ -340,7 +340,7 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         // The CFuncPtr val wraps the top-level trampoline (NOT the user callback directly, Scala Native's fromScalaFunction rejects
         // closures over local state). Eta-expansion keeps the trampoline reference non-capturing.
         assert(src.contains(
-            "val cmpPtr: CFuncPtr2[CInt, CInt, CInt] = CFuncPtr2.fromScalaFunction(kyo.ffi.internal.CallbackRegistry.trampolineT_II_I _)"
+            "val cmpPtr: CFuncPtr2[CInt, CInt, CInt] = CFuncPtr2.fromScalaFunction(kyo.ffi.internal.CallbackRegistry.trampolineT_II_I)"
         ))
         // The user callback is pushed on the per-shape transient stack before the FFI call and popped in a finally afterwards.
         assert(src.contains("""kyo.ffi.internal.CallbackRegistry.pushTransient_II_I("kyo.example.Sort", "qsort", cmp)"""))
@@ -485,7 +485,7 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val src = NativeEmitter.emit(spec)
         assert(src.contains(
-            "val cbPtr: CFuncPtr0[Unit] = CFuncPtr0.fromScalaFunction(kyo.ffi.internal.CallbackRegistry.trampolineT_V_U _)"
+            "val cbPtr: CFuncPtr0[Unit] = CFuncPtr0.fromScalaFunction(kyo.ffi.internal.CallbackRegistry.trampolineT_V_U)"
         ))
         assert(src.contains("def run_cb(cb: CFuncPtr0[Unit]): Unit = extern"))
     }

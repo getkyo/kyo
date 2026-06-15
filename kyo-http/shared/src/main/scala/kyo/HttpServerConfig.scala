@@ -41,6 +41,8 @@ import kyo.*
   *   Low-level I/O tuning: read buffer size, channel capacity, I/O pool size. See [[HttpTransportConfig]].
   * @param idleTimeout
   *   Duration after which idle keep-alive connections are closed. Defaults to 60 seconds. Set to `Duration.Infinity` to disable.
+  * @param autoFilters
+  *   Whether ServiceLoader-discovered server filters are applied. Defaults to true.
   *
   * @see
   *   [[kyo.HttpServer.init]] Uses this config to bind a server
@@ -63,7 +65,8 @@ case class HttpServerConfig(
     tls: Maybe[HttpTlsConfig],
     unixSocket: Maybe[String] = Absent,
     transportConfig: HttpTransportConfig = HttpTransportConfig.default,
-    idleTimeout: Duration = 60.seconds
+    idleTimeout: Duration = 60.seconds,
+    autoFilters: Boolean = true
 ) derives CanEqual:
     def port(p: Int): HttpServerConfig                            = copy(port = p)
     def host(h: String): HttpServerConfig                         = copy(host = h)
@@ -78,6 +81,8 @@ case class HttpServerConfig(
     def unixSocket(path: String): HttpServerConfig                = copy(unixSocket = Present(path))
     def transportConfig(v: HttpTransportConfig): HttpServerConfig = copy(transportConfig = v)
     def idleTimeout(v: Duration): HttpServerConfig                = copy(idleTimeout = v)
+    def autoFilters(v: Boolean): HttpServerConfig                 = copy(autoFilters = v)
+    def withoutAutoFilters: HttpServerConfig                      = autoFilters(false)
     def openApi(
         path: String = "/openapi.json",
         title: String = "API",
@@ -104,7 +109,8 @@ object HttpServerConfig:
             tls = Absent,
             unixSocket = Absent,
             transportConfig = HttpTransportConfig.default,
-            idleTimeout = 60.seconds
+            idleTimeout = 60.seconds,
+            autoFilters = true
         )
 
     case class OpenApiEndpoint(

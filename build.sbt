@@ -54,6 +54,15 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
 
+// Serialize scaladoc generation. Scala 3 dottydoc runs in-process (the `doc` task is not
+// forked) and is not safe to run concurrently within one sbt JVM: parallel per-module `doc`
+// runs intermittently corrupt shared compiler state and crash with a null
+// SignatureBuilder.content() NPE while rendering method signatures. That surfaced as flaky
+// `ci-release` failures on main (the per-module Native javadoc step). Every project tags its
+// `Compile / doc` with DocTag (see kyo-settings) and concurrentRestrictions caps it at 1, so
+// docs build one module at a time while compilation and tests stay parallel.
+lazy val DocTag = Tags.Tag("doc")
+
 // CI concurrency controls:
 // - SBT_TASK_LIMIT: serialize ALL tasks (for OOM prevention on memory-constrained runners)
 // - SBT_UPDATE_LIMIT: serialize only dependency resolution (for Windows file lock avoidance)
@@ -88,7 +97,10 @@ Global / concurrentRestrictions := {
         // `+=` in globalSettings, but our `:=` above replaces
         // concurrentRestrictions wholesale, so we restate it here. See
         // KyoDoctestPlugin.scala for the tag's role.
-        Tags.limit(DoctestTag, 2)
+        Tags.limit(DoctestTag, 2),
+        // Serialize scaladoc: dottydoc shares mutable compiler state across concurrent in-JVM
+        // `doc` runs and NPEs intermittently under parallelism. See DocTag above.
+        Tags.limit(DocTag, 1)
     )
 }
 
@@ -99,7 +111,13 @@ lazy val `kyo-settings` = Seq(
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     scalafmtOnCompile := true,
+    // Tag the doc task so concurrentRestrictions can serialize scaladoc across modules; dottydoc
+    // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
+    Compile / doc := (Compile / doc).tag(DocTag).value,
     scalacOptions += compilerOptionFailDiscard,
+    // Treat compiler warnings as errors on the Scala 3 series. The Scala 2.13 cross-builds (the kyo-scheduler
+    // family) carry a different, noisier warning set that is out of scope, so the flag is gated on Scala 3.
+    scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Werror") else Nil),
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -250,6 +268,8 @@ lazy val kyoJVM: Project = project
         `kyo-pod`.jvm,
         `kyo-examples`.jvm,
         `kyo-actor`.jvm,
+        `kyo-tasty`.jvm,
+        `kyo-tasty-fixtures-internal`.jvm,
         `kyo-compat-future`.jvm,
         `kyo-compat-kyo`.jvm,
         `kyo-compat-zio`.jvm,
@@ -295,6 +315,8 @@ lazy val kyoJS = project
         `kyo-combinators`.js,
         `kyo-case-app`.js,
         `kyo-actor`.js,
+        `kyo-tasty`.js,
+        `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
@@ -336,6 +358,8 @@ lazy val kyoNative = project
         `kyo-case-app`.native,
         `kyo-reactive-streams`.native,
         `kyo-actor`.native,
+        `kyo-tasty`.native,
+        `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
@@ -395,7 +419,9 @@ lazy val kyoWasm = project
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
-        `kyo-test-snapshot`.wasm
+        `kyo-test-snapshot`.wasm,
+        `kyo-tasty`.wasm,
+        `kyo-tasty-fixtures-internal`.wasm
     )
 
 lazy val `kyo-scheduler` =
@@ -575,12 +601,13 @@ lazy val `kyo-schema` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data` % "test->test;compile->compile")
+        .dependsOn(`kyo-core` % "test->compile")
         .in(file("kyo-schema"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
+        .jsSettings(`js-settings`, Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-core` =
@@ -937,6 +964,59 @@ lazy val `kyo-actor` =
         .crossType(CrossType.Full)
         .in(file("kyo-actor"))
         .dependsOn(`kyo-core`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-tasty` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tasty"))
+        .dependsOn(`kyo-core`, `kyo-schema`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*")
+        )
+        .jvmSettings(
+            mimaCheck(false),
+            // TypeKey.structuralEquals and computeHash are iterative (work-list) to prevent
+            // StackOverflowError under scoverage instrumentation.
+            coverageMinimumStmtTotal := 75.3,
+            coverageFailOnMinimum    := true,
+            // Differential testing against tasty-query 1.7.0. JVM-only because
+            // tasty-query's ClasspathLoaders requires java.nio.
+            libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
+            // Real-world classpath fidelity targets. Each jar is intransitive to avoid
+            // downloading large transitive closures (Spark: ~5 GB; Play: ~500 MB). kyo-tasty
+            // loads only .tasty files in the jar; missing transitive deps produce
+            // Symbol.Unresolved stubs (not TastyError entries), so errors.isEmpty holds.
+            libraryDependencies += "com.typesafe.akka"  % "akka-actor_3"    % "2.6.20"  % Test intransitive (),
+            libraryDependencies += "org.typelevel"     %% "cats-effect"     % "3.7.0"   % Test intransitive (),
+            libraryDependencies += "org.http4s"        %% "http4s-core"     % "0.23.28" % Test intransitive (),
+            libraryDependencies += "org.apache.pekko"  %% "pekko-actor"     % "1.1.3"   % Test intransitive (),
+            libraryDependencies += "org.playframework" %% "play"            % "3.0.2"   % Test intransitive (),
+            libraryDependencies += "org.apache.spark"   % "spark-core_2.13" % "3.5.1"   % Test intransitive (),
+            libraryDependencies += "org.typelevel"     %% "spire"           % "0.18.0"  % Test intransitive (),
+            libraryDependencies += "dev.zio"           %% "zio"             % "2.0.15"  % Test intransitive ()
+        )
+        .nativeSettings(`native-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .wasmSettings(`wasm-settings`)
+        .dependsOn(`kyo-tasty-fixtures-internal` % Test)
+
+lazy val `kyo-tasty-fixtures-internal` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tasty/fixtures"))
         .withKyoTest
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))

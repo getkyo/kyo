@@ -298,7 +298,9 @@ class SignalTest extends kyo.test.Test[Any]:
                 inner <- Signal.initRef(10)
                 sm = outer.switchMap(_ => inner)
                 f <- Fiber.initUnscoped(sm.next)
-                _ <- assertEventually(outer.waiters.map(_ == 1))
+                // sm.next subscribes to BOTH outer and inner (awaitAny). Sync on both so the inner
+                // subscription is registered before inner.set, otherwise the set is missed and f.get hangs.
+                _ <- assertEventually(Kyo.zip(outer.waiters, inner.waiters).map { case (o, i) => o == 1 && i == 1 })
                 _ <- inner.set(99)
                 v <- f.get
             yield assert(v == 99)
@@ -372,7 +374,9 @@ class SignalTest extends kyo.test.Test[Any]:
                     callCount += 1; innerRef
                 }
                 f <- Fiber.initUnscoped(sm.next)
-                _ <- assertEventually(outerRef.waiters.map(_ == 1))
+                // Same as "inner change is propagated": sm.next subscribes to both signals, so sync on
+                // both before setting inner, otherwise the set races the inner subscription and f.get hangs.
+                _ <- assertEventually(Kyo.zip(outerRef.waiters, innerRef.waiters).map { case (o, i) => o == 1 && i == 1 })
                 _ <- innerRef.set(1)
                 _ <- f.get
             yield assert(callCount == 1, s"f called $callCount times, expected 1")
@@ -424,8 +428,11 @@ class SignalTest extends kyo.test.Test[Any]:
                 refA <- Signal.initRef(0)
                 refB <- Signal.initRef(0)
                 z = refA.zip(refB)
-                f      <- Fiber.initUnscoped(z.next)
-                _      <- assertEventually(refA.waiters.map(_ == 1))
+                f <- Fiber.initUnscoped(z.next)
+                // z.next races refA.next and refB.next, arming their waiters independently. Wait for both
+                // before firing: this leaf changes refB first, so syncing only on refA can let refB's
+                // subscriber be unregistered when set(1) lands, dropping the change and the zip never emits.
+                _      <- assertEventually(Kyo.zip(refA.waiters, refB.waiters).map { case (a, b) => a == 1 && b == 1 })
                 _      <- refB.set(1)
                 _      <- refA.set(1)
                 result <- Abort.run[Timeout](Async.timeout(2.seconds)(f.get))

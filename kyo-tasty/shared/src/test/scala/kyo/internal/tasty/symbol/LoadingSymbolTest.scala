@@ -1,0 +1,61 @@
+package kyo.internal.tasty.symbol
+
+import kyo.*
+
+/** Tests for `LoadingSymbol` ADT: the internal loading-phase symbol representation.
+  *
+  * Covers:
+  *   LoadingSymbol is private[kyo]; user code cannot access it.
+  *   Materialising.id holds the assigned value; structural equality on id.
+  *   LoadingSymbol.Placeholder is not on the surface.
+  */
+class LoadingSymbolTest extends kyo.test.Test[Any]:
+
+    // loadingSymbolInaccessibleFromUserCode
+    //       internal type (private[kyo]) not re-exported from object Tasty.
+    "loadingSymbolInaccessibleFromUserCode: LoadingSymbol is not accessible through the public Tasty API" in {
+        // kyo.Tasty does not expose LoadingSymbol: accessing it via Tasty.LoadingSymbol fails.
+        val notOnTastySurface = compiletime.testing.typeCheckErrors(
+            "(??? : kyo.Tasty.LoadingSymbol)"
+        )
+        assert(notOnTastySurface.nonEmpty, "LoadingSymbol must not be exposed on the Tasty public surface")
+        succeed
+    }
+
+    // materialisingHoldsId
+    "materialisingHoldsId: Materialising.id holds the assigned value" in {
+        import AllowUnsafe.embrace.danger
+        val m1 = LoadingSymbol.Materialising(
+            id = 42,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("X")
+        )
+        assert(m1.id == 42, s"Expected id 42 but got ${m1.id}")
+        // Verify id is the first field (structural; the id is the identity of a Materialising in the pipeline).
+        val m2 = LoadingSymbol.Materialising(
+            id = 42,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("X")
+        )
+        assert(m1.id == m2.id, "Two Materialising instances with the same id should have equal id fields")
+        val m3 = LoadingSymbol.Materialising(
+            id = 99,
+            kind = SymbolKind.Class,
+            flags = Tasty.Flags.empty,
+            name = Tasty.Name("X")
+        )
+        assert(m1.id != m3.id, "Two Materialising instances with different ids should have different id fields")
+        succeed
+    }
+
+    "LoadingSymbol.Placeholder does not exist" in {
+        val noPlaceholder = compiletime.testing.typeCheckErrors(
+            "(??? : kyo.internal.tasty.symbol.LoadingSymbol.Placeholder)"
+        )
+        assert(noPlaceholder.nonEmpty, "LoadingSymbol.Placeholder must not exist")
+        succeed
+    }
+
+end LoadingSymbolTest

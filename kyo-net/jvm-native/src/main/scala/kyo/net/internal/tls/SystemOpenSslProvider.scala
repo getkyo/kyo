@@ -1,5 +1,6 @@
 package kyo.net.internal.tls
 
+import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** The system-OpenSSL TLS provider (priority 20), the Native fallback below BoringSSL (priority 30). Lives in the `jvm-native` shared source
@@ -17,6 +18,6 @@ private[net] object SystemOpenSslProvider extends SslLibProvider:
 
     def priority = 20
 
-    private[tls] def lib: SslLibBindings = Ffi.load[OpenSslBindings]
+    private[tls] def lib(using AllowUnsafe): SslLibBindings = Ffi.load[OpenSslBindings]
 
 end SystemOpenSslProvider

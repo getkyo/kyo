@@ -471,7 +471,7 @@ object CallbackShapesGen {
         chunks.foreach { case (range, chunkIdx) =>
             sb.append(s"    private def initPtrs_$chunkIdx(arr: Array[${s.cFuncPtrType}]): Unit =\n")
             range.foreach { i =>
-                sb.append(s"        arr($i) = ${s.cFuncPtrCompanion}.fromScalaFunction(trampR_$i _)\n")
+                sb.append(s"        arr($i) = ${s.cFuncPtrCompanion}.fromScalaFunction(trampR_$i)\n")
             }
             sb.append(s"    end initPtrs_$chunkIdx\n")
         }

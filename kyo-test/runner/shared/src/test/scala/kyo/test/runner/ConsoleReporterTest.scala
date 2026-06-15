@@ -51,6 +51,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         }
         assert(out.contains("[FAIL]"))
         assert(out.contains("x == 5"))
+        assert(out.contains("*** FAILED ***"))
     }
 
     "onLeafComplete with TimedOut prints [TIMEOUT]" in {
@@ -59,6 +60,21 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         }
         assert(out.contains("[TIMEOUT]"))
         assert(out.contains("100ms"))
+        assert(out.contains("*** FAILED ***"))
+    }
+
+    "onLeafComplete appends the ScalaTest failure marker on failures only" in {
+        def lineFor(result: TestResult): String =
+            capture() { r => r.onLeafComplete(leaf("x"), result) }
+        // Failures carry the ScalaTest-compatible marker so log-grepping tooling can locate them.
+        assert(lineFor(TestResult.Failed("d", Maybe.empty, 1L.millis)).contains("*** FAILED ***"))
+        assert(lineFor(TestResult.TimedOut(1L.millis)).contains("*** FAILED ***"))
+        // Deliberate non-runs and passes never carry it.
+        assert(!lineFor(TestResult.Passed(1L.millis)).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Cancelled("r", 1L.millis)).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Skipped("r")).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Pending("r")).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Ignored("")).contains("*** FAILED ***"))
     }
 
     "onLeafHeartbeat prints [STUCK] with the leaf path and elapsed" in {
@@ -243,7 +259,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         assert(!out.contains(s"line${ConsoleReporter.MaxDiagramLines + 1}"), s"Expected line beyond cap to be absent:\n$out"): Unit
     }
 
-    "phase10-suite-4: TimedOut and Cancelled leaves in suite FAILURES block; Pending and Ignored do not appear" in {
+    "phase10-suite-4: only TimedOut/Failed are failures; Cancelled, Pending, Ignored are not in the FAILURES block" in {
         val suiteInfo = SuiteInfo("MixSuite", "my.MixSuite", Maybe.empty)
         val report = SuiteReport(
             "MixSuite",
@@ -258,13 +274,15 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         val out = capture(useColors = false) { r =>
             r.onSuiteComplete(suiteInfo, report)
         }
-        assert(out.contains("FAILURES (2)"), s"Expected FAILURES (2) in:\n$out"): Unit
+        // Only the timeout is a real failure. The cancelled, pending, and ignored leaves are
+        // deliberate non-runs: they are reported as counts on the suite line, never in FAILURES.
+        assert(out.contains("FAILURES (1)"), s"Expected FAILURES (1) in:\n$out"): Unit
         assert(out.contains("[TIMEOUT]"), s"Expected [TIMEOUT] in:\n$out"): Unit
-        assert(out.contains("[CANCELLED]"), s"Expected [CANCELLED] in:\n$out"): Unit
         assert(out.contains("MixSuite > tout"), s"Expected TimedOut path in:\n$out"): Unit
-        assert(out.contains("MixSuite > canc"), s"Expected Cancelled path in:\n$out"): Unit
+        assert(!out.contains("MixSuite > canc"), s"Cancelled must not appear in FAILURES block:\n$out"): Unit
         assert(!out.contains("MixSuite > pend"), s"Pending must not appear in FAILURES block:\n$out"): Unit
         assert(!out.contains("MixSuite > ignrd"), s"Ignored must not appear in FAILURES block:\n$out"): Unit
+        assert(out.contains("1 cancelled"), s"Expected '1 cancelled' count on the suite line in:\n$out"): Unit
     }
 
     // ── ConsoleReporter.autoDetect ──────────────────────────────────────────────────────────────────

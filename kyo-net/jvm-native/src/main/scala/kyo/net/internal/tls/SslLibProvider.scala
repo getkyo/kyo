@@ -16,7 +16,7 @@ import kyo.net.NetTlsConfig
 abstract private[net] class SslLibProvider extends TlsEngineProvider:
 
     /** The backing TLS library binding (BoringSSL or system OpenSSL). */
-    private[tls] def lib: SslLibBindings
+    private[tls] def lib(using AllowUnsafe): SslLibBindings
 
     // Memoized: the probe builds and frees an SSL_CTX, and the result (does the backend load on this host) is host-static. Running it on every
     // TLS connect/listen meant many concurrent SSL_CTX_new/SSL_CTX_free calls across scheduler carriers, multiplying the surface for any

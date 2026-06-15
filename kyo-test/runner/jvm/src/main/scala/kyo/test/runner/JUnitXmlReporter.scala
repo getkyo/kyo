@@ -60,11 +60,12 @@ final class JUnitXmlReporter(outputDir: Path) extends TestReporter:
         val sb    = new StringBuilder()
         val tests = leaves.size
         val failures = leaves.count(_._2 match
-            case _: TestResult.Failed | _: TestResult.Cancelled | _: TestResult.TimedOut => true
-            case _                                                                       => false)
+            case _: TestResult.Failed | _: TestResult.TimedOut => true
+            case _                                             => false)
+        // Cancelled is a deliberate skip (an unmet `assume`/`cancel` precondition), not a failure.
         val skipped = leaves.count(_._2 match
-            case _: TestResult.Pending | _: TestResult.Ignored | _: TestResult.Skipped => true
-            case _                                                                     => false)
+            case _: TestResult.Pending | _: TestResult.Ignored | _: TestResult.Skipped | _: TestResult.Cancelled => true
+            case _                                                                                               => false)
 
         val totalMillis = leaves.foldLeft(0L) { case (acc, (_, result)) =>
             acc + leafDurationMillis(result)
@@ -96,9 +97,8 @@ final class JUnitXmlReporter(outputDir: Path) extends TestReporter:
                     )
                     sb.append("\n")
                 case TestResult.Cancelled(reason, _) =>
-                    sb.append(
-                        s"""    <failure message="${xmlEscape(reason)}" type="Cancelled">${xmlEscape(reason)}</failure>"""
-                    )
+                    // A cancelled leaf is a skipped precondition, not a failure: emit <skipped>, not <failure>.
+                    sb.append(s"""    <skipped message="${xmlEscape(reason)}"/>""")
                     sb.append("\n")
                 case TestResult.TimedOut(limit) =>
                     val msg = s"timed out after $limit"

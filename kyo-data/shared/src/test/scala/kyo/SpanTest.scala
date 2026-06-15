@@ -1867,4 +1867,37 @@ class SpanTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Span.hash" - {
+        "empty Span has hash 1" in {
+            val s = Span.empty[Byte]
+            assert(s.hash == 1)
+        }
+
+        "single-element Span" in {
+            val s = Span[Byte](42.toByte)
+            // h = 31 * 1 + 42 = 73
+            assert(s.hash == 73)
+        }
+
+        "multi-element Byte Span" in {
+            val s = Span[Byte](1.toByte, 2.toByte, 3.toByte)
+            // h=1 -> 31+1=32 -> 31*32+2=994 -> 31*994+3=30817
+            assert(s.hash == 30817)
+        }
+
+        "two equal Spans have equal hashes" in {
+            val a = Span[Byte](10.toByte, 20.toByte, 30.toByte)
+            val b = Span[Byte](10.toByte, 20.toByte, 30.toByte)
+            assert(a.is(b))
+            assert(a.hash == b.hash)
+        }
+
+        "different Spans have different hashes" in {
+            val a = Span[Int](1, 2, 3)
+            val b = Span[Int](3, 2, 1)
+            assert(!a.is(b))
+            assert(a.hash != b.hash)
+        }
+    }
+
 end SpanTest

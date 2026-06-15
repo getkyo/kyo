@@ -17,19 +17,13 @@ private[kyo] object DomStyleSheet:
         el
     end styleElement
 
-    private val baseCss =
-        """*, *::before, *::after { box-sizing: border-box; }
-          |body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; }
-          |div, section, main, header, footer, form, article, aside, p, ul, ol, pre, code, h1, h2, h3, h4, h5, h6, label { display: flex; flex-direction: column; }
-          |nav, li, span, button, a { display: flex; flex-direction: row; align-items: center; }
-          |[data-kyo-reactive] { display: contents; }
-          |ul, ol { list-style: none; padding: 0; margin: 0; }
-          |h1, h2, h3, h4, h5, h6, p { margin: 0; }
-          |a { color: inherit; text-decoration: none; }
-          |table { border-collapse: collapse; width: 100%; }
-          |""".stripMargin
+    private val baseCss = HtmlRenderer.baseCss
 
     private var baseInjected = false
+
+    // Tracks CSS strings already injected via injectStylesheet to avoid duplicate appends.
+    // The browser is single-threaded so a plain mutable Set is safe here.
+    private val injectedSheets = scala.collection.mutable.Set.empty[String]
 
     /** Injects the base CSS reset once. Idempotent: the first call appends the reset rules; later calls are no-ops.
       * (kyo-ui is JS-only and the browser is single-threaded, so a plain flag is sufficient.)
@@ -86,6 +80,16 @@ private[kyo] object DomStyleSheet:
             end if
         end if
     end apply
+
+    /** Appends a CSS string to the kyo-ui document stylesheet if it has not been appended
+      * before. Idempotent: a second call with the same CSS text is a no-op. Reuses the same
+      * injection point as the per-element auto-class mechanism, so authored stylesheet rules
+      * and per-element pseudo-state rules share one `<style>` element.
+      */
+    private[kyo] def injectStylesheet(css: String): Unit =
+        if !injectedSheets.contains(css) then
+            val _ = injectedSheets.add(css)
+            inject(css)
 
     private def nextClass(using Frame): String < Sync =
         ids.incrementAndGet.map(n => s"kyo-s$n")

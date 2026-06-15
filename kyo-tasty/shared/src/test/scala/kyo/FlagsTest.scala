@@ -1,0 +1,144 @@
+package kyo
+
+import kyo.internal.tasty.reader.TastyFormat
+import kyo.internal.tasty.symbol.Flags as InternalFlags
+
+/** Tests for Flag bit layout and fromTastyModifierTag.
+  */
+class FlagsTest extends kyo.test.Test[Any]:
+
+    "Flag.Inline encodes a non-empty single-flag Flags value" in {
+        val f = Tasty.Flags(Tasty.Flag.Inline)
+        // Stronger assertion than "non-empty": the Flags value must equal exactly the single-flag
+        // representation built from Flag.Inline.
+        assert(f == Tasty.Flags(Tasty.Flag.Inline), s"Expected Flags(Inline) to equal itself but got $f")
+        assert(f.contains(Tasty.Flag.Inline))
+        assert(!f.contains(Tasty.Flag.Private))
+        succeed
+    }
+
+    "Flags.empty.contains(Flag.Inline) is false" in {
+        assert(!Tasty.Flags.empty.contains(Tasty.Flag.Inline))
+        succeed
+    }
+
+    "Flags(Inline, Private) contains both Flag.Inline and Flag.Private" in {
+        val flags = Tasty.Flags(Tasty.Flag.Inline, Tasty.Flag.Private)
+        assert(flags.contains(Tasty.Flag.Private))
+        assert(flags.contains(Tasty.Flag.Inline))
+        succeed
+    }
+
+    "fromTastyModifierTag(PRIVATE=6) maps to Flags containing Flag.Private" in {
+        val flags = InternalFlags.fromTastyModifierTag(TastyFormat.PRIVATE)
+        assert(flags.contains(Tasty.Flag.Private))
+        succeed
+    }
+
+    "fromTastyModifierTag(INLINE=17) maps to Flags containing Flag.Inline" in {
+        val flags = InternalFlags.fromTastyModifierTag(TastyFormat.INLINE)
+        assert(flags.contains(Tasty.Flag.Inline))
+        succeed
+    }
+
+    "all declared Flag values are pairwise distinct" in {
+        val allFlags = List(
+            Tasty.Flag.Inline,
+            Tasty.Flag.Private,
+            Tasty.Flag.Protected,
+            Tasty.Flag.Public,
+            Tasty.Flag.Final,
+            Tasty.Flag.Sealed,
+            Tasty.Flag.Abstract,
+            Tasty.Flag.Given,
+            Tasty.Flag.Implicit,
+            Tasty.Flag.Opaque,
+            Tasty.Flag.Case,
+            Tasty.Flag.Module,
+            Tasty.Flag.Synthetic,
+            Tasty.Flag.JavaDefined,
+            Tasty.Flag.Enum,
+            Tasty.Flag.JavaRecord,
+            Tasty.Flag.Open,
+            Tasty.Flag.ParamAccessor,
+            Tasty.Flag.Lazy,
+            Tasty.Flag.Override,
+            Tasty.Flag.Mutable,
+            Tasty.Flag.Erased,
+            Tasty.Flag.Tracked,
+            Tasty.Flag.Tailrec,
+            Tasty.Flag.Infix,
+            Tasty.Flag.Transparent,
+            Tasty.Flag.Trait,
+            Tasty.Flag.CaseAccessor,
+            Tasty.Flag.FieldAccessor,
+            Tasty.Flag.Macro,
+            Tasty.Flag.InlineProxy,
+            Tasty.Flag.Extension,
+            Tasty.Flag.Exported,
+            Tasty.Flag.Covariant,
+            Tasty.Flag.Contravariant,
+            Tasty.Flag.HasDefault,
+            Tasty.Flag.Stable,
+            Tasty.Flag.Local,
+            Tasty.Flag.Artifact,
+            Tasty.Flag.Invisible,
+            Tasty.Flag.Into,
+            Tasty.Flag.ParamSetter,
+            Tasty.Flag.ParamAlias,
+            Tasty.Flag.Static,
+            Tasty.Flag.Scala2
+        )
+        // Each single-flag Flags value must contain exactly the flag it was built from and no other.
+        // If two flags shared an encoding, Flags(f).contains(g) would be true for distinct f, g.
+        val collisions: List[(Tasty.Flag, Tasty.Flag)] =
+            allFlags.flatMap { f =>
+                val fOnly = Tasty.Flags(f)
+                if !fOnly.contains(f) then List((f, f))
+                else
+                    allFlags.flatMap { g =>
+                        if f.toString != g.toString && fOnly.contains(g) then List((f, g))
+                        else Nil
+                    }
+                end if
+            }
+        assert(
+            collisions.isEmpty,
+            s"Encoding collisions: ${collisions.map { case (f, g) => s"${f.toString}->${g.toString}" }.mkString(", ")}"
+        )
+        // Names must also be distinct.
+        val names = allFlags.map(_.toString)
+        assert(names.distinct.size == names.size, s"Duplicate flag name: ${names.diff(names.distinct).mkString(", ")}")
+        succeed
+    }
+
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_ABSTRACT (0x0401) sets Flag.Abstract, not Flag.Trait" in {
+        // 0x0001 = ACC_PUBLIC, 0x0400 = ACC_ABSTRACT
+        val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0400)
+        assert(flags.contains(Tasty.Flag.Abstract), "Expected Flag.Abstract for ACC_ABSTRACT class")
+        assert(!flags.contains(Tasty.Flag.Trait), "Expected Flag.Trait NOT set for non-interface abstract class")
+        succeed
+    }
+
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_INTERFACE|ACC_ABSTRACT (0x0601) sets both Flag.Trait and Flag.Abstract" in {
+        // Typical interface access_flags per JVMS: ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+        // 0x0001 = ACC_PUBLIC, 0x0200 = ACC_INTERFACE, 0x0400 = ACC_ABSTRACT
+        val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0200 | 0x0400)
+        assert(flags.contains(Tasty.Flag.Trait), "Expected Flag.Trait for ACC_INTERFACE")
+        assert(flags.contains(Tasty.Flag.Abstract), "Expected Flag.Abstract for ACC_ABSTRACT")
+        succeed
+    }
+
+    "fromJvmAccessFlags: ACC_PUBLIC|ACC_STATIC (0x0009) sets Flag.Static but not Flag.JavaDefined" in {
+        // Flag.JavaDefined is set unconditionally by ClassfileUnpickler, not here.
+        // ACC_STATIC (0x0008) should map only to Flag.Static.
+        val flags = InternalFlags.fromJvmAccessFlags(0x0001 | 0x0008)
+        assert(flags.contains(Tasty.Flag.Static), "Expected Flag.Static for ACC_STATIC")
+        assert(
+            !flags.contains(Tasty.Flag.JavaDefined),
+            "Flag.JavaDefined must NOT be set by fromJvmAccessFlags (set by ClassfileUnpickler)"
+        )
+        succeed
+    }
+
+end FlagsTest

@@ -272,8 +272,8 @@ class TestBaseTest extends AsyncFreeSpec with NonImplicitAssertions:
         val t = new HookReader
         assert(t.readName == "HookReader")
         assert(!t.readRandomize)
-        // config folds in the overridable per-test timeout: 60s by default, Infinity under a debugger.
-        val expectedTimeout = if kyo.internal.Platform.isDebugEnabled then Duration.Infinity else 60.seconds
+        // config folds in the overridable per-test timeout: 120s by default, Infinity under a debugger.
+        val expectedTimeout = if kyo.internal.Platform.isDebugEnabled then Duration.Infinity else 120.seconds
         assert(t.readConfig == RunConfig.default.copy(timeout = expectedTimeout))
         succeed
     }

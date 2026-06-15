@@ -12,9 +12,6 @@ import kyo.Chunk
   *   - [[FfiLoadError.Unsupported]] for runtime-level refusals unrelated to ABI: 32-bit hosts and browser Scala.js targets.
   *   - [[FfiLoadError.ImplNotFound]] when reflective lookup cannot find the generated impl class, the code generator did not run, its
   *     output is not on the runtime classpath, or (on Scala.js / Native) the linker erased the annotation. Exposes `traitFqcn`.
-  *
-  * The legacy types [[FfiUnsupported]], [[FfiAbiMismatch]], and [[FfiKoffiVersionMismatch]] remain as `@deprecated` subclasses so existing
-  * `catch FfiUnsupported` blocks continue to compile and match.
   */
 sealed abstract class FfiLoadError(msg: String, cause: Throwable | Null)
     extends RuntimeException(msg, cause)
@@ -33,24 +30,23 @@ object FfiLoadError:
             this(libraryId, candidates, s"Library '$libraryId' not found. Tried: ${candidates.mkString(", ")}", cause)
     end LibraryNotFound
 
-    /** The generated impl's ABI expectation does not match the runtime, packed-struct layout disagreement, koffi version out of range,
-      * etc.
+    /** The generated impl's ABI expectation does not match the runtime, packed-struct layout disagreement, koffi version out of range, etc.
       *
-      * Non-final so legacy [[FfiAbiMismatch]] / [[FfiKoffiVersionMismatch]] shim subclasses can inherit.
+      * Exposes the `expected` and `actual` sizes/versions as strings; the message carries the full diagnostic (binding, struct, sizes, and
+      * remediation hint for the struct-layout case).
       */
-    class AbiMismatch(
+    final class AbiMismatch(
         val expected: String,
-        val actual: String
-    ) extends FfiLoadError(
-            s"ABI mismatch: expected $expected, got $actual",
-            null
-        )
+        val actual: String,
+        msg: String
+    ) extends FfiLoadError(msg, null):
+        /** Convenience constructor using the default `"ABI mismatch: expected <expected>, got <actual>"` message. */
+        def this(expected: String, actual: String) =
+            this(expected, actual, s"ABI mismatch: expected $expected, got $actual")
+    end AbiMismatch
 
-    /** The current runtime refuses to load, 32-bit host, or a browser-only Scala.js target without Node / Bun / Deno globals.
-      *
-      * Non-final so the legacy [[FfiUnsupported]] shim subclass can inherit.
-      */
-    class Unsupported(val reason: String)
+    /** The current runtime refuses to load, 32-bit host, or a browser-only Scala.js target without Node / Bun / Deno globals. */
+    final class Unsupported(val reason: String)
         extends FfiLoadError(reason, null)
 
     /** Reflective instantiation could not find the generated `{T}Impl` class for the binding trait. Regenerate with `sbt clean compile`. */
