@@ -95,7 +95,7 @@ class EngineFifoSingleOwnerTest extends Test:
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-            if rc.value != 0 then
+            if rc != 0 then
                 realRing.close()
                 Absent
             else

@@ -368,7 +368,7 @@ object PosixTestSockets:
                     // io_uring_queue_init returns 0 on success or -errno on failure and does NOT set the global errno
                     // (liburing returns the negated errno directly). Read the return value, not the captured errno: a
                     // stale errno left by a prior syscall would spuriously report io_uring unavailable here (#258).
-                    if rc.value != 0 then
+                    if rc != 0 then
                         ring.close()
                         false
                     else

@@ -48,9 +48,9 @@ class IoUringDriverNegativeLengthTest extends Test:
         val uring = Ffi.load[IoUringBindings]
         val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
         val rc    = uring.io_uring_queue_init(math.max(256, kyo.net.TransportConfig.default.ioPoolSize * 64), ring, 0)
-        if rc.value != 0 then
+        if rc != 0 then
             ring.close()
-            throw Closed("IoUringDriverNegativeLengthTest", summon[Frame], s"queue_init failed: rc=${rc.value}")
+            throw Closed("IoUringDriverNegativeLengthTest", summon[Frame], s"queue_init failed: rc=$rc")
         try body(uring, ring)
         finally
             uring.io_uring_queue_exit(ring)
@@ -118,9 +118,9 @@ class IoUringDriverNegativeLengthTest extends Test:
             val realUring = Ffi.load[IoUringBindings]
             val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
             val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-            if rc.value != 0 then
+            if rc != 0 then
                 realRing.close()
-                throw Closed("RecvRejectingUring", summon[Frame], s"queue_init failed: rc=${rc.value}")
+                throw Closed("RecvRejectingUring", summon[Frame], s"queue_init failed: rc=$rc")
             val recording = new RecvRejectingUring(realUring, realRing)
             val driver    = TestDrivers.forBindings(recording, realRing)
             discard(driver.start())

@@ -167,9 +167,9 @@ class PosixHandleWriteTailBoundTest extends Test:
                     val realUring = Ffi.load[IoUringBindings]
                     val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
                     val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-                    if rc.value != 0 then
+                    if rc != 0 then
                         realRing.close()
-                        throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=${rc.value}")
+                        throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
                     val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
                     discard(driver.start())
@@ -196,9 +196,9 @@ class PosixHandleWriteTailBoundTest extends Test:
                     val realUring = Ffi.load[IoUringBindings]
                     val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
                     val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-                    if rc.value != 0 then
+                    if rc != 0 then
                         realRing.close()
-                        throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=${rc.value}")
+                        throw Closed("PosixHandleWriteTailBoundTest", summon[Frame], s"queue_init failed: rc=$rc")
                     val driver = TestDrivers.forBindings(RecordingIoUringBindings(realUring, realRing), realRing)
                     val handle = PosixHandle.socket(writeFd, PosixHandle.DefaultReadBufferSize, Absent)
                     handle.tls = Present(clientEngine)

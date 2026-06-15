@@ -40,15 +40,29 @@ class IoUringProbeDepthTest extends Test:
         def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit                              = ()
         def kyo_uring_wait_cqe_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
             AllowUnsafe
-        ): Fiber.Unsafe[Ffi.WithError[Int], Any] = Fiber.Unsafe.fromResult(Result.succeed(new Ffi.WithError(0, 0)))
-        def kyo_uring_peek_cqe(ring: Buffer[Byte], cqePtr: Buffer[Long])(using AllowUnsafe): Int = 0
-        def kyo_uring_cqe_get_data64(cqe: Long)(using AllowUnsafe): Long                         = 0L
-        def kyo_uring_cqe_res(cqe: Long)(using AllowUnsafe): Int                                 = 0
-        def kyo_uring_cqe_seen(ring: Buffer[Byte], cqe: Long)(using AllowUnsafe): Unit           = ()
-        def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Ffi.WithError[Int] =
-            new Ffi.WithError(0, 0)
-        def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit           = ()
-        def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int] = new Ffi.WithError(0, 0)
+        ): Fiber.Unsafe[Int, Any] = Fiber.Unsafe.fromResult(Result.succeed(0))
+        def kyo_uring_submit_and_wait_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
+            AllowUnsafe
+        ): Fiber.Unsafe[Int, Any] = Fiber.Unsafe.fromResult(Result.succeed(0))
+        def kyo_uring_kernel_version()(using AllowUnsafe): Int = 0
+        def kyo_uring_prep_multishot_accept(
+            sqe: Ffi.Handle[IoUringSqe],
+            fd: Int,
+            addr: Buffer[Byte],
+            addrlen: Buffer[Int],
+            flags: Int
+        )(using
+            AllowUnsafe
+        ): Unit = ()
+        def kyo_uring_cqe_get_flags(cqe: Long)(using AllowUnsafe): Int                                = 0
+        def kyo_uring_recv_multishot_flag()(using AllowUnsafe): Int                                   = 0
+        def kyo_uring_peek_cqe(ring: Buffer[Byte], cqePtr: Buffer[Long])(using AllowUnsafe): Int      = 0
+        def kyo_uring_cqe_get_data64(cqe: Long)(using AllowUnsafe): Long                              = 0L
+        def kyo_uring_cqe_res(cqe: Long)(using AllowUnsafe): Int                                      = 0
+        def kyo_uring_cqe_seen(ring: Buffer[Byte], cqe: Long)(using AllowUnsafe): Unit                = ()
+        def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Int = 0
+        def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit                          = ()
+        def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Int                               = 0
         def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean =
             lastDepth.set(depth)
             true

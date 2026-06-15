@@ -38,15 +38,17 @@ private[net] trait IoUringBindings extends Ffi:
     // --- real liburing exports, bound directly (no shim) ---
 
     /** `int io_uring_queue_init(unsigned entries, struct io_uring* ring, unsigned flags)`. Sets up the ring in the caller's `Buffer[Byte]`.
-      * 0 on success, `-errno` on failure.
+      * Returns 0 on success, `-errno` on failure. Raw signed rc, not clamped to -1.
       */
-    def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Int
 
     /** `void io_uring_queue_exit(struct io_uring* ring)`. Tears the ring down. */
     def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit
 
-    /** `int io_uring_submit(struct io_uring* ring)`. Submits all prepared SQEs. Returns the number submitted, `-errno` on failure. */
-    def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int]
+    /** `int io_uring_submit(struct io_uring* ring)`. Submits all prepared SQEs. Returns the number submitted, `-errno` on failure.
+      * Raw signed rc, not clamped to -1.
+      */
+    def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Int
 
     // --- kyo_uring.c shim wrappers over the static-inline liburing helpers ---
 
@@ -91,12 +93,44 @@ private[net] trait IoUringBindings extends Ffi:
 
     /** Bounded wait: wraps `io_uring_wait_cqes` with a `__kernel_timespec` so the carrier is returned each `timeoutNs` cycle. The
       * ready CQE pointer is written into the 1-element `cqePtr` buffer. Returns 0 on a ready CQE, `-ETIME` on timeout, `-errno` otherwise.
+      * Raw signed rc, not clamped to -1 (the raw `-ETIME` must reach `isTimeout` unchanged so the reap loop treats empty turns as non-fatal).
       * Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await.
       */
     @Ffi.blocking
     def kyo_uring_wait_cqe_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
         AllowUnsafe
-    ): Fiber.Unsafe[Ffi.WithError[Int], Any]
+    ): Fiber.Unsafe[Int, Any]
+
+    /** Fused submit-and-wait: one `io_uring_enter` both submits prepared SQEs and waits for the next CQE. The ready CQE pointer
+      * is written into the 1-element `cqePtr` buffer. Returns 0 on a ready CQE, `-ETIME` on timeout, `-errno` otherwise.
+      * Raw signed rc, not clamped to -1. Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await.
+      */
+    @Ffi.blocking
+    def kyo_uring_submit_and_wait_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
+        AllowUnsafe
+    ): Fiber.Unsafe[Int, Any]
+
+    /** Kernel release as a packed `major*1000+minor` int (e.g. 6.1 -> 6001), via `uname(2)` in the C shim. Returns 0 on non-Linux or
+      * `uname` failure. Used by the SETUP-flag tier selector to pick the flag set that is safe on the running kernel.
+      */
+    def kyo_uring_kernel_version()(using AllowUnsafe): Int
+
+    /** Multishot accept: `IORING_OP_ACCEPT | IORING_ACCEPT_MULTISHOT`. One submission re-fires an accept CQE for each incoming connection
+      * until a completion arrives without `IORING_CQE_F_MORE`, at which point the key is removed and re-armed.
+      */
+    def kyo_uring_prep_multishot_accept(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int], flags: Int)(using
+        AllowUnsafe
+    ): Unit
+
+    /** CQE flags reader: the `IORING_CQE_F_MORE` bit (= 2) signals that more completions are coming on this key without re-arming.
+      * Returns 0 when the `cqe` pointer is 0.
+      */
+    def kyo_uring_cqe_get_flags(cqe: Long)(using AllowUnsafe): Int
+
+    /** `IORING_RECV_MULTISHOT` flag value. Reserved for a future multishot recv; not currently used. The recv path is single-shot, because a
+      * multishot recv must receive into a registered provided-buffer ring rather than a single per-op buffer, which is not yet implemented.
+      */
+    def kyo_uring_recv_multishot_flag()(using AllowUnsafe): Int
 
     /** `io_uring_peek_cqe`. Drains the next already-ready CQE into `cqePtr` without blocking. Returns 0 when one was placed, nonzero when the
       * completion queue is empty.

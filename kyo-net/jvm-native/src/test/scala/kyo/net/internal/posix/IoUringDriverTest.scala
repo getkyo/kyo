@@ -52,9 +52,9 @@ class IoUringDriverTest extends Test:
         // io_uring_queue_init returns 0 on success / -errno on failure and does NOT set the global errno; read the return
         // value, never the captured (possibly stale) errno (#258). In a container, queue_init legitimately succeeds while
         // leaving errno=2 from its internal feature probing, so reading rc.errorCode here would spuriously fail every leaf.
-        if rc.value != 0 then
+        if rc != 0 then
             realRing.close()
-            throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=${rc.value}")
+            throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
@@ -154,10 +154,10 @@ class IoUringDriverTest extends Test:
         // ---- io_uring gate diagnosis leaves ----
 
         // Probes io_uring_queue_init at depths 2, 32, and 256. Linux-only; NOT gated by assumeUring so it runs even on
-        // cgroup-limited hosts where depth-256 init fails. The success/failure signal is the RETURN value (rc.value): 0 on
-        // success, -errno on failure. The captured errno (rc.errorCode) is NOT read here because io_uring_queue_init does not
-        // set the global errno and can legitimately leave a stale non-zero errno after a successful init (#258). On native
-        // Linux (no cgroup cap) all three depths return 0; on a restricted host depth-256 returns a negative -errno.
+        // cgroup-limited hosts where depth-256 init fails. The success/failure signal is the RETURN value (rc): 0 on
+        // success, -errno on failure. Plain Int, not clamped: io_uring_queue_init does not set the global errno and can
+        // legitimately leave a stale non-zero errno after a successful init (#258). On native Linux (no cgroup cap) all
+        // three depths return 0; on a restricted host depth-256 returns a negative -errno.
         "depth-{2,32,256} init measurement: asserting concrete per-depth return value" in {
             if !PosixConstants.isLinux then cancel("io_uring is Linux-only")
             val uring  = Ffi.load[IoUringBindings]
@@ -165,10 +165,10 @@ class IoUringDriverTest extends Test:
             val results = depths.map { depth =>
                 val ring = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt)
                 val rc   = uring.io_uring_queue_init(depth, ring, 0)
-                if rc.value == 0 then
+                if rc == 0 then
                     uring.io_uring_queue_exit(ring)
                 ring.close()
-                (depth, rc.value)
+                (depth, rc)
             }
             val d2   = results.find(_._1 == 2).map(_._2).getOrElse(fail("depth 2 not probed"))
             val d256 = results.find(_._1 == 256).map(_._2).getOrElse(fail("depth 256 not probed"))
@@ -644,9 +644,9 @@ class IoUringDriverTest extends Test:
                 val realUring = Ffi.load[IoUringBindings]
                 val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
                 val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-                if rc.value != 0 then
+                if rc != 0 then
                     realRing.close()
-                    throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=${rc.value}")
+                    throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=$rc")
                 // SendErrorInjectingUring delegates every ring op to the real ring and the kernel completes them, EXCEPT it forces exactly one
                 // CQE's res to -104 (ECONNRESET): the single authorized injection that exercises the send-error-discard branch on a real ring.
                 val recording = new SendErrorInjectingUring(realUring, realRing)

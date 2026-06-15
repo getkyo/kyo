@@ -25,7 +25,9 @@
 #include <liburing.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/socket.h>
+#include <sys/utsname.h>
 
 /* ---- ring sizing ---- */
 
@@ -81,6 +83,49 @@ int kyo_uring_prep_send(struct io_uring_sqe* sqe, int fd, void* buf, long len, i
 
 void kyo_uring_prep_accept(struct io_uring_sqe* sqe, int fd, void* addr, void* addrlen, int flags) {
     io_uring_prep_accept(sqe, fd, (struct sockaddr*)addr, (socklen_t*)addrlen, flags);
+}
+
+/* Multishot accept: IORING_OP_ACCEPT with IORING_ACCEPT_MULTISHOT. One submission re-fires an accept CQE per incoming connection. */
+void kyo_uring_prep_multishot_accept(struct io_uring_sqe* sqe, int fd, void* addr, void* addrlen, int flags) {
+    io_uring_prep_multishot_accept(sqe, fd, (struct sockaddr*)addr, (socklen_t*)addrlen, flags);
+}
+
+/* Kernel version as major*1000+minor (e.g. 6.1 -> 6001) via uname(2). Returns 0 on failure. */
+int kyo_uring_kernel_version(void) {
+    struct utsname u;
+    if (uname(&u) != 0) return 0;
+    int major = 0, minor = 0;
+    if (sscanf(u.release, "%d.%d", &major, &minor) != 2) return 0;
+    return major * 1000 + minor;
+}
+
+/* CQE flags word. IORING_CQE_F_MORE (= 2) set means more completions are coming on this key before it is removed. */
+int kyo_uring_cqe_get_flags(long cqe) {
+    return ((struct io_uring_cqe*)(intptr_t)cqe)->flags;
+}
+
+/* IORING_RECV_MULTISHOT flag value for kyo_uring_prep_recv's flags argument. */
+int kyo_uring_recv_multishot_flag(void) {
+    return IORING_RECV_MULTISHOT;
+}
+
+/*
+ * Fused submit-and-wait: one io_uring_enter both submits prepared SQEs and waits for the next CQE.
+ * Returns 0 on a ready CQE, -ETIME on timeout, -errno otherwise.
+ *
+ * liburing's io_uring_submit_and_wait_timeout returns the count of SQEs submitted (>= 0) on success
+ * (with wait_nr=1 guaranteeing at least one CQE ready), -ETIME on timeout, or -errno on failure.
+ * We normalize: any non-negative ret means "CQE ready" and we return 0. Negative ret passes through
+ * unchanged so -ETIME and real errors are still distinguishable.
+ */
+int kyo_uring_submit_and_wait_timeout(struct io_uring* ring, void* cqePtr, long timeoutNs) {
+    struct __kernel_timespec ts;
+    ts.tv_sec  = (long long)(timeoutNs / 1000000000L);
+    ts.tv_nsec = (long long)(timeoutNs % 1000000000L);
+    struct io_uring_cqe* cqe = NULL;
+    int ret = io_uring_submit_and_wait_timeout(ring, &cqe, 1, &ts, NULL);
+    *((struct io_uring_cqe**)cqePtr) = cqe;
+    return ret >= 0 ? 0 : ret;
 }
 
 void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* addr, int addrlen) {

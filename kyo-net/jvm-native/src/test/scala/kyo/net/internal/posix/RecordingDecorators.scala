@@ -242,13 +242,13 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
         p
     end awaitReap
 
-    def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+    def io_uring_queue_init(entries: Int, ring: Buffer[Byte], flags: Int)(using AllowUnsafe): Int =
         real.io_uring_queue_init(entries, realRing, flags)
 
     def io_uring_queue_exit(ring: Buffer[Byte])(using AllowUnsafe): Unit =
         real.io_uring_queue_exit(realRing)
 
-    def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int] =
+    def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Int =
         real.io_uring_submit(realRing)
 
     def kyo_uring_sizeof()(using AllowUnsafe): Long =
@@ -290,7 +290,7 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
 
     def kyo_uring_wait_cqe_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
         AllowUnsafe
-    ): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+    ): Fiber.Unsafe[Int, Any] =
         waitCqePtrs.add(cqePtr)
         lastWaitTimeoutNs = timeoutNs
         val turns = waitCount.incrementAndGet()
@@ -298,6 +298,31 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
         if turns >= 2 then secondWait.completeDiscard(Result.succeed(()))
         real.kyo_uring_wait_cqe_timeout(realRing, cqePtr, timeoutNs)
     end kyo_uring_wait_cqe_timeout
+
+    def kyo_uring_submit_and_wait_timeout(ring: Buffer[Byte], cqePtr: Buffer[Long], timeoutNs: Long)(using
+        AllowUnsafe
+    ): Fiber.Unsafe[Int, Any] =
+        waitCqePtrs.add(cqePtr)
+        lastWaitTimeoutNs = timeoutNs
+        val turns = waitCount.incrementAndGet()
+        if turns >= 1 then firstWait.completeDiscard(Result.succeed(()))
+        if turns >= 2 then secondWait.completeDiscard(Result.succeed(()))
+        real.kyo_uring_submit_and_wait_timeout(realRing, cqePtr, timeoutNs)
+    end kyo_uring_submit_and_wait_timeout
+
+    def kyo_uring_kernel_version()(using AllowUnsafe): Int =
+        real.kyo_uring_kernel_version()
+
+    def kyo_uring_prep_multishot_accept(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int], flags: Int)(using
+        AllowUnsafe
+    ): Unit =
+        real.kyo_uring_prep_multishot_accept(sqe, fd, addr, addrlen, flags)
+
+    def kyo_uring_cqe_get_flags(cqe: Long)(using AllowUnsafe): Int =
+        real.kyo_uring_cqe_get_flags(cqe)
+
+    def kyo_uring_recv_multishot_flag()(using AllowUnsafe): Int =
+        real.kyo_uring_recv_multishot_flag()
 
     def kyo_uring_peek_cqe(ring: Buffer[Byte], cqePtr: Buffer[Long])(using AllowUnsafe): Int =
         peekCqePtrs.add(cqePtr)

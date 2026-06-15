@@ -37,9 +37,9 @@ class IoUringBindingsTest extends Test:
             assert(ringSize > 0L)
             val ring = Buffer.alloc[Byte](ringSize.toInt)
             try
-                // io_uring_queue_init returns 0 on success or -errno; the return value is the success signal.
+                // io_uring_queue_init returns 0 on success or -errno; the return value is the success signal. Plain Int.
                 val init = b.io_uring_queue_init(8, ring, 0)
-                assert(init.value == 0, s"io_uring_queue_init returned ${init.value}")
+                assert(init == 0, s"io_uring_queue_init returned $init")
                 try
                     val sqe = b.kyo_uring_get_sqe(ring)
                     assert(sqe.isDefined, "get_sqe returned NULL on a fresh ring")

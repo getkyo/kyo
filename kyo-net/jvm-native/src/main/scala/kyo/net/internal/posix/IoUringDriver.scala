@@ -18,7 +18,9 @@ import kyo.net.internal.util.GrowableByteBuffer
   * requested send `len`, so a partial send (`res < len`) can re-submit the unsent `[offset + res, offset + len)` tail; a [[TlsWrite]] pins
   * the per-send ciphertext `Buffer` the same way and carries the requested send length so a partial send can be re-submitted; a [[Connect]]
   * carries only the promise to complete (its `sockaddr` is pinned by the handle's `connectTarget`); an [[Accept]] pins the addr/addrlen
-  * placeholder buffers that `kyo_uring_prep_accept` requires to stay alive until the accept CQE is reaped.
+  * placeholder buffers that `kyo_uring_prep_accept` requires to stay alive until the single-shot accept CQE is reaped.
+  * Each accepted connection uses one SQE and one CQE; the accept loop calls [[IoUringDriver.awaitAccept]] with a fresh promise
+  * after each CQE to arm the next connection. The buffers are released via `releaseBuffer` when the CQE is processed.
   *
   * Every variant carries its [[handle]] so [[IoUringDriver.cancel]] can find every in-flight op for a handle, and the per-handle
   * in-flight count can be decremented when the CQE is reaped.
@@ -88,12 +90,11 @@ end PendingOp
   *
   * #### Bounded reap loop
   *
-  * The reap loop runs on a dedicated carrier spawned by `start()` via `Fiber.Unsafe.init`. Each cycle flushes any accumulated SQEs with
-  * one `io_uring_submit`, does a BOUNDED ~100ms `kyo_uring_wait_cqe_timeout` (never an indefinite `io_uring_wait_cqe`), then drains
-  * every already-ready CQE with `kyo_uring_peek_cqe`. On JVM/Native the wait fiber completes synchronously and the loop continues via
-  * the `while` body without growing the stack. On JS the wait fiber is genuinely pending; the loop exits the `while`, registers an
-  * `onComplete` callback, and re-enters via a fresh `Fiber.Unsafe.init` on the next event-loop tick. A timeout with no CQE is a normal
-  * empty turn, not an error.
+  * The reap loop runs on a dedicated carrier spawned by `start()` via `Fiber.Unsafe.init`. Each cycle uses `kyo_uring_submit_and_wait_timeout`
+  * to flush accumulated SQEs AND wait for the next CQE in a single `io_uring_enter` syscall (bounded to ~100ms), then drains every
+  * already-ready CQE with `kyo_uring_peek_cqe`. On JVM/Native the wait fiber completes synchronously and the loop continues via the `while`
+  * body without growing the stack. On JS the wait fiber is genuinely pending; the loop exits the `while`, registers an `onComplete` callback,
+  * and re-enters via a fresh `Fiber.Unsafe.init` on the next event-loop tick. A timeout with no CQE is a normal empty turn, not an error.
   *
   * #### UAF-safe close
   *
@@ -118,8 +119,8 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
     // Unsafe: the driver's atomic flags and counters are created at construction with no ambient AllowUnsafe; the danger bridge builds each here
     // and every access runs under the caller's AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-    // The ring and cqePtr are touched by the reap carrier inside its in-flight kyo_uring_wait_cqe_timeout (which holds both segments for up
-    // to ReapTimeoutNs) and by user carriers in kyo_uring_get_sqe. Their teardown must therefore be SINGLE-OWNER: when the reap loop was
+    // The ring and cqePtr are touched by the reap carrier inside its in-flight kyo_uring_submit_and_wait_timeout (which holds both segments for
+    // up to ReapTimeoutNs) and by user carriers in kyo_uring_get_sqe. Their teardown must therefore be SINGLE-OWNER: when the reap loop was
     // started, only the reap carrier (on its own exit, after the wait has returned) frees them; close() then merely signals via closedFlag.
     // `started` records whether a reap carrier exists to own that teardown; `teardownDone` makes the actual free idempotent across the two
     // paths (reap-loop exit when started, close() inline when never started). See #177.
@@ -226,6 +227,8 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
                     // rejection (fail the read promise with Closed) rather than letting a bad value pass or dropping the SQE silently (a dropped SQE
                     // would leave this promise waiting on a CQE that never arrives, a hang). readBufferSize is always positive today, so this guards
                     // only a future signedness bug at the boundary.
+                    // flags=0: single-shot recv. IORING_RECV_MULTISHOT requires provided buffer rings (IORING_OP_PROVIDE_BUFFERS) to be set up
+                    // before submission, or the kernel returns -EINVAL. Provided buffer rings are deferred; each recv re-arms after its CQE.
                     if uring.kyo_uring_prep_recv(sqe, handle.readFd, recvTarget, handle.readBufferSize.toLong, 0) != 0 then
                         unregister(key)
                         promise.completeDiscard(Result.fail(Closed(
@@ -322,9 +325,10 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
         submitEngineOp(() => submitAccept(promise, handle, noAddr, noLen))
     end awaitAccept
 
-    /** Submit one accept SQE for `promise` over the supplied (already-allocated) addr/len placeholder buffers. The public [[awaitAccept]] enters via
-      * the engine queue; [[reArmStalledSubmits]] re-enters here directly after a CQE batch freed a slot. On a full SQ the accept parks in
-      * [[stalledSubmits]] keeping its buffers (re-armed later), never failed, so a transient SQ-full cannot wedge the listener's accept loop.
+    /** Submit one accept SQE for `promise` over the supplied (already-allocated) addr/len placeholder buffers. The public [[awaitAccept]]
+      * enters via the engine queue; [[reArmStalledSubmits]] re-enters here directly after a CQE batch freed a slot. On a full SQ the accept
+      * parks in [[stalledSubmits]] keeping its buffers (re-armed later), never failed, so a transient SQ-full cannot wedge the listener's
+      * accept loop.
       */
     private def submitAccept(
         promise: Promise.Unsafe[Int, Abort[Closed]],
@@ -860,7 +864,7 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
-            // Single-owner teardown (#177): the reap carrier may be parked inside kyo_uring_wait_cqe_timeout, holding the ring and cqePtr
+            // Single-owner teardown (#177): the reap carrier may be parked inside kyo_uring_submit_and_wait_timeout, holding the ring and cqePtr
             // segments for up to ReapTimeoutNs. Freeing them here, on a different carrier, while that wait is in flight is a use-after-free
             // ("Session is acquired by 1 clients" at cqePtr.close on JVM; SIGSEGV in kyo_uring_get_sqe on Native). So when a reap carrier
             // exists, only SIGNAL: it observes closedFlag, exits its loop after the current wait returns, and tears the ring down on its own
@@ -928,10 +932,13 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
 
     private val ReapTimeoutNs = 100_000_000L // 100ms bounded wait; a timeout with no CQE is a normal empty turn, not an error
 
-    /** Run the reap loop on the current carrier. Flushes accumulated SQEs, waits at most ~100ms for a CQE, then drains every ready CQE
-      * and completes the keyed promises. On JVM/Native the wait fiber is already done() on return; the while loop continues inline
-      * without stack growth. On JS the wait fiber is genuinely pending: the while loop exits, an onComplete callback re-enters via
-      * a fresh `Fiber.Unsafe.init`. The `cqePtr` buffer is the driver field allocated once at construction; it is safe because
+    // IORING_CQE_F_MORE = (1U << 1) = 2. When set on a CQE, the submission is still live and will fire more CQEs (multishot lifecycle).
+    private val CqeFMore = 2
+
+    /** Run the reap loop on the current carrier. Submits accumulated SQEs and waits at most ~100ms for a CQE via the fused submit-and-wait
+      * enter, then drains every ready CQE and completes the keyed promises. On JVM/Native the wait fiber is already done() on return; the while
+      * loop continues inline without stack growth. On JS the wait fiber is genuinely pending: the while loop exits, an onComplete callback
+      * re-enters via a fresh `Fiber.Unsafe.init`. The `cqePtr` buffer is the driver field allocated once at construction; it is safe because
       * reapLoop and drainReady run sequentially on the same carrier (drainReady is called inline before the next wait).
       */
     private def reapLoop()(using AllowUnsafe, Frame): Unit =
@@ -940,21 +947,25 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
         // separates that case from a true stop so the single-owner ring teardown below runs only when the loop is actually done.
         var reenter = false
         while running do
-            // Single-producer SQ: prepare every queued SQE (reads/writes/connects/accepts + TLS engine ops) on THIS carrier, then flush, then
-            // wait. Because the wait (`io_uring_wait_cqes`) also submits and reads the SQ tail, no other carrier may touch the SQ; the engine
-            // queue is the cross-carrier handoff and this drain is its only consumer.
+            // Single-producer SQ: prepare every queued SQE (reads/writes/connects/accepts + TLS engine ops) on THIS carrier, then fuse
+            // submit+wait in one io_uring_enter syscall. Because the fused enter submits AND reads the SQ tail, no other carrier may
+            // touch the SQ; the engine queue is the cross-carrier handoff and this drain is its only consumer.
             drainEngineOps()
-            flushSubmits()
-            val waitFiber = uring.kyo_uring_wait_cqe_timeout(ring, cqePtr, ReapTimeoutNs) // sanctioned bounded park
+            // kyo_uring_submit_and_wait_timeout submits accumulated SQEs AND waits for a CQE in one io_uring_enter syscall.
+            // The pendingSubmits counter is consumed here implicitly: the fused enter submits everything in the SQ ring at the time of the call.
+            // We reset pendingSubmits so the count stays consistent for the submitPrepared short-count retry path.
+            discard(pendingSubmits.getAndSet(0L))
+            val waitFiber = uring.kyo_uring_submit_and_wait_timeout(ring, cqePtr, ReapTimeoutNs) // sanctioned bounded park
             if waitFiber.done() then
                 // JVM/Native inline-completion path: extract result and continue the while loop without growing the stack.
+                // rc is a raw signed Int; isTimeout operates on the raw negative -ETIME (a POSIX-clamped -1 would lose the errno identity).
                 waitFiber.poll() match
                     case Present(Result.Success(w)) =>
-                        val we = w.eval
-                        if we.value != 0 && !isTimeout(we.value) then running = false
+                        val rc = w.eval
+                        if rc != 0 && !isTimeout(rc) then running = false
                         else
-                            if we.value == 0 then drainReady(cqePtr.get(0))
-                            // Re-arm parked ops every turn (a CQE arrived, or -ETIME: an empty turn). flushSubmits + the wait freed the SQ slots,
+                            if rc == 0 then drainReady(cqePtr.get(0))
+                            // Re-arm parked ops every turn (a CQE arrived, or -ETIME: an empty turn). The fused submit+wait freed the SQ slots,
                             // so a recv/accept/connect/send parked on SQ-full re-arms now rather than stranding until some other CQE arrives.
                             reArmStalled()
                         end if
@@ -969,9 +980,9 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
                 reenter = true
                 waitFiber.onComplete {
                     case Result.Success(w) =>
-                        val we = w.eval
-                        if we.value == 0 || isTimeout(we.value) then
-                            if we.value == 0 then drainReady(cqePtr.get(0))
+                        val rc = w.eval
+                        if rc == 0 || isTimeout(rc) then
+                            if rc == 0 then drainReady(cqePtr.get(0))
                             // Re-arm parked ops every turn (CQE or -ETIME), as in the inline path: SQ space is freed by submit, not by reaping.
                             reArmStalled()
                             if !closedFlag.get() then discard(Fiber.Unsafe.init { reapLoop() })
@@ -1004,18 +1015,22 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
         while cqe != 0L do
             val key = uring.kyo_uring_cqe_get_data64(cqe)
             val res = uring.kyo_uring_cqe_res(cqe)
-            complete(key, res)
+            // IORING_CQE_F_MORE (= 2) set means the submission is still live and will fire more CQEs.
+            // Read flags before cqe_seen (which may invalidate the pointer on some kernel versions).
+            val flags = uring.kyo_uring_cqe_get_flags(cqe)
+            val more  = (flags & CqeFMore) != 0
+            completeMultishot(key, res, more)
             uring.kyo_uring_cqe_seen(ring, cqe)
             cqe = if uring.kyo_uring_peek_cqe(ring, cqePtr) == 0 then cqePtr.get(0) else 0L
         end while
     end drainReady
 
     /** Re-arm every operation that parked on a full submission queue: raw sends in [[stalledRaw]] and recv/accept/connect in [[stalledSubmits]].
-      * Called once per reap turn from [[reapLoop]] AFTER `flushSubmits` and the bounded wait have submitted the turn's accumulated SQEs to the
-      * kernel and freed the SQ ring slots, so a parked op sees space and re-arms. Runs on EVERY turn (whether a CQE arrived OR the wait timed out
-      * with none): SQ space is freed by SUBMIT, not by reaping CQEs, so a parked op on an otherwise-idle ring (its only in-flight op stalled, no
-      * unrelated traffic) must not wait for some other connection's CQE to be un-stranded. One attempt per turn, so SQ-full backpressures rather
-      * than busy-spinning (a re-arm that hits SQ-full again re-parks for the next turn).
+      * Called once per reap turn from [[reapLoop]] AFTER the fused submit-and-wait has submitted the turn's accumulated SQEs to the kernel and
+      * freed the SQ ring slots, so a parked op sees space and re-arms. Runs on EVERY turn (whether a CQE arrived OR the wait timed out with none):
+      * SQ space is freed by SUBMIT, not by reaping CQEs, so a parked op on an otherwise-idle ring (its only in-flight op stalled, no unrelated
+      * traffic) must not wait for some other connection's CQE to be un-stranded. One attempt per turn, so SQ-full backpressures rather than
+      * busy-spinning (a re-arm that hits SQ-full again re-parks for the next turn).
       */
     private def reArmStalled()(using AllowUnsafe, Frame): Unit =
         reflushStalledRaw()
@@ -1179,6 +1194,21 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
         end match
     end complete
 
+    /** Complete a CQE, respecting the IORING_CQE_F_MORE flag. Both accept and recv use single-shot submissions (flags=0), so `more` is
+      * always false in normal operation. The guard exists to handle unexpected F_MORE (e.g. a future kernel or a misconfigured op): treat it
+      * as single-shot and remove the entry rather than accumulating a stale key. The kernel should not set F_MORE for single-shot ops.
+      */
+    private def completeMultishot(key: Long, res: Int, more: Boolean)(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
+        if more then
+            // Single-shot accept and recv do not set F_MORE. If the kernel sets it unexpectedly (future op or kernel behavior change),
+            // treat the CQE as single-shot: complete and remove the entry so no stale pending key accumulates.
+            Log.live.unsafe.warn(s"$label unexpected IORING_CQE_F_MORE for key=$key res=$res; treating as single-shot")
+            complete(key, res)
+        else complete(key, res)
+        end if
+    end completeMultishot
+
     /** Register a pending op: store it under `key` and increment its handle's in-flight count (the count the close handshake drains). */
     private def register(key: Long, op: PendingOp)(using AllowUnsafe): Unit =
         discard(pending.put(key, op))
@@ -1215,7 +1245,8 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
       */
     @scala.annotation.tailrec
     private def submitPrepared(remaining: Long, attempt: Int)(using AllowUnsafe, Frame): Unit =
-        val submitted = uring.io_uring_submit(ring).value
+        // io_uring_submit returns the count of submitted SQEs, or -errno on failure. Raw signed Int, not clamped.
+        val submitted = uring.io_uring_submit(ring)
         if submitted < 0 then
             discard(pendingSubmits.addAndGet(remaining))
             Log.live.unsafe.warn(
@@ -1260,8 +1291,8 @@ final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, r
     end drainEngineOps
 
     /** Whether a wait result is the benign "timed out, no CQE" signal (`-ETIME`), a normal empty turn rather than a failure. The
-      * argument is `kyo_uring_wait_cqe_timeout`'s RETURN value (0 ready / -ETIME timeout / -errno error), not the captured errno: like
-      * every liburing call it returns the result directly and does not reliably set the global errno, so a stale errno must never
+      * argument is the return value of the fused submit-and-wait enter (0 ready / -ETIME timeout / -errno error), not the captured errno:
+      * like every liburing call it returns the result directly and does not reliably set the global errno, so a stale errno must never
       * decide whether a ready CQE gets drained or the reap loop stops (#258). The `+ETIME` arm is defensive for any platform whose
       * wrapper surfaces the timeout as a positive code.
       */
@@ -1319,25 +1350,49 @@ end IoUringDriver
 private[net] object IoUringDriver:
 
     /** Build a driver over a freshly initialized io_uring ring. The ring lives in a caller-owned `Buffer[Byte]` of `kyo_uring_sizeof()` bytes
-      * (the SQ/CQ mmaps are owned internally by liburing). Throws `Closed` if `io_uring_queue_init` fails (e.g. the kernel is too old).
+      * (the SQ/CQ mmaps are owned internally by liburing). Throws `Closed` if `io_uring_queue_init` fails (e.g. the kernel is too old or
+      * the process is sandboxed from io_uring at the production ring depth).
       */
     def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): IoUringDriver =
         val uring = Ffi.load[IoUringBindings]
         val depth = math.max(256, config.ioPoolSize * 64)
         val ring  = Buffer.alloc[Byte](uring.kyo_uring_sizeof().toInt) // sizeof(struct io_uring), via the shim
-        val rc    = uring.io_uring_queue_init(depth, ring, 0)
-        // io_uring_queue_init returns 0 on success / -errno on failure and does NOT set the global errno (liburing returns the
-        // negated errno directly). Read the RETURN value, never the captured errno: a stale errno left by ANY prior syscall (an
-        // accept that returned EAGAIN, a connect that returned EINPROGRESS, ...) is the steady state of a running program, and
-        // reading it here aborted a successful init. That silently dropped io_uring to the epoll fallback and, worse, took the
-        // branch below that frees this LIVE ring's Buffer without io_uring_queue_exit, leaving the kernel a ring over freed memory
-        // (heap corruption, SIGSEGV in a later kyo_uring_get_sqe). On a genuine failure (rc.value < 0) the ring was not set up, so
-        // ring.close() alone is correct (liburing cleaned up internally; no queue_exit is owed). See #258.
-        if rc.value != 0 then
+        // Probe the kernel version via the uname FFI shim and select the SETUP-flag tier. The probe is mandatory because flag
+        // availability varies by kernel version; see selectRingFlags for the tier breakdown and the rationale for which flags
+        // are excluded (SINGLE_ISSUER and DEFER_TASKRUN enforce a per-thread ring constraint that breaks the cross-carrier model).
+        val flags = selectRingFlags(uring.kyo_uring_kernel_version())
+        // io_uring_queue_init returns 0 on success / -errno on failure and does NOT set the global errno (liburing returns the negated
+        // errno directly). Read the RETURN VALUE, not the captured errno: a stale errno left by any prior syscall (an accept that returned
+        // EAGAIN, a connect that returned EINPROGRESS, ...) is the steady state of a running program, and reading it here aborts a
+        // successful init. That would silently drop io_uring to the epoll fallback and, worse, take the failure branch below that frees
+        // the live ring Buffer without io_uring_queue_exit, leaving the kernel a ring over freed memory (heap corruption, SIGSEGV in a
+        // later kyo_uring_get_sqe). On a genuine failure (rc < 0) the ring was not set up, so ring.close() alone is correct (liburing
+        // cleaned up internally; no queue_exit is owed). See #258.
+        val rc = uring.io_uring_queue_init(depth, ring, flags)
+        if rc != 0 then
             ring.close()
-            throw Closed("IoUringDriver", summon[Frame], s"queue_init failed: rc=${rc.value}")
+            throw Closed("IoUringDriver", summon[Frame], s"queue_init failed: rc=$rc flags=$flags")
         // io_uring has no prep_close SQE, so the connection-close fd shutdown/close goes through SocketBindings (the same library the poller uses).
         new IoUringDriver(uring, ring, Ffi.load[SocketBindings])
     end init
+
+    /** Pure SETUP-flag tier selector: maps a packed kernel version (major*1000+minor, e.g. 5.19 -> 5019) to the io_uring SETUP-flag set the
+      * kernel supports. Kernel >= 5.19 gets COOP_TASKRUN|TASKRUN_FLAG; below 5.19 gets 0 (no task-run flags). Extracted as a pure function
+      * so the tier logic can be exercised with real representative version inputs without a live FFI probe; `init` calls it with the real
+      * `kyo_uring_kernel_version()` result.
+      *
+      * IORING_SETUP_SINGLE_ISSUER and IORING_SETUP_DEFER_TASKRUN are intentionally excluded. Both flags constrain io_uring_enter to the
+      * same OS thread that called io_uring_setup. The driver creates the ring in `init()` on one carrier thread and runs the reap loop
+      * on a different carrier spawned by `Fiber.Unsafe.init`. On kernels with SINGLE_ISSUER, the reap carrier's io_uring_enter calls
+      * are rejected with -EEXIST, causing the reap loop to exit immediately and `closedFlag` to be set before any write is attempted.
+      */
+    private[posix] def selectRingFlags(kernelVersion: Int): Int =
+        if kernelVersion >= 5019 then SetupCoopTaskrun | SetupTaskrunFlag
+        else 0
+    end selectRingFlags
+
+    // io_uring SETUP flag values (liburing, stable). Used only after the kernel-version probe confirms support.
+    private val SetupCoopTaskrun: Int = 1 << 8 // IORING_SETUP_COOP_TASKRUN  (5.19)
+    private val SetupTaskrunFlag: Int = 1 << 9 // IORING_SETUP_TASKRUN_FLAG  (5.19)
 
 end IoUringDriver

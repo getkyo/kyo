@@ -58,9 +58,9 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
         val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
         // io_uring_queue_init returns 0 / -errno and does NOT set the global errno; read the return value, not the stale
         // captured errno (a prior call's leftover errno would spuriously fail this, #258).
-        if rc.value != 0 then
+        if rc != 0 then
             realRing.close()
-            throw Closed("IoUringHandshakeTimeoutOrderingTest", summon[Frame], s"queue_init rc=${rc.value}")
+            throw Closed("IoUringHandshakeTimeoutOrderingTest", summon[Frame], s"queue_init rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())

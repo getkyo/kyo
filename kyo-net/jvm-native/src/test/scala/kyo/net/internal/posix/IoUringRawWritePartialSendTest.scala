@@ -46,9 +46,9 @@ class IoUringRawWritePartialSendTest extends Test:
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
         val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-        if rc.value != 0 then
+        if rc != 0 then
             realRing.close()
-            throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=${rc.value}")
+            throw Closed("RecordingIoUringBindings", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = RecordingIoUringBindings(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())

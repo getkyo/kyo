@@ -51,8 +51,8 @@ class IoUringDriverShortSubmitTest extends Test:
         /** Arm the one-shot short-submit override: the next io_uring_submit reports `shortCount` without flushing the prepared SQE. */
         def armShortSubmit(): Unit = injectPending.set(true)
 
-        override def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int] =
-            if injectPending.compareAndSet(true, false) then new Ffi.WithError(shortCount, 0)
+        override def io_uring_submit(ring: Buffer[Byte])(using AllowUnsafe): Int =
+            if injectPending.compareAndSet(true, false) then shortCount
             else real.io_uring_submit(realRing)
         end io_uring_submit
     end ShortSubmitInjectingUring
@@ -67,9 +67,9 @@ class IoUringDriverShortSubmitTest extends Test:
         val realUring = Ffi.load[IoUringBindings]
         val realRing  = Buffer.alloc[Byte](realUring.kyo_uring_sizeof().toInt)
         val rc        = realUring.io_uring_queue_init(depth, realRing, 0)
-        if rc.value != 0 then
+        if rc != 0 then
             realRing.close()
-            throw Closed("ShortSubmitInjectingUring", summon[Frame], s"queue_init failed: rc=${rc.value}")
+            throw Closed("ShortSubmitInjectingUring", summon[Frame], s"queue_init failed: rc=$rc")
         val recording = new ShortSubmitInjectingUring(realUring, realRing)
         val driver    = TestDrivers.forBindings(recording, realRing)
         discard(driver.start())
