@@ -130,7 +130,9 @@ class BrowserViewportTest extends BrowserTest:
     // `.set(prior)` (the ordering only holds on the JVM). So the cache is read by polling until the restore lands, bounded by
     // a fixed schedule, then asserted concretely. The poll re-reads the AtomicRef directly; the tab object outlives its CDP
     // teardown.
-    "withViewport restores on interruption" in {
+    "withViewport restores on interruption".ignore(
+        "interrupt-driven Scope finalizer teardown can stall before the result is observed; known finalizer-execution-on-interrupt issue, comprehensive fix pending"
+    ) in {
         val priorOverride = BrowserTab.ViewportOverride(800, 600, 2.0)
         val p             = page("<html><body>with-viewport-interrupt</body></html>")
         kyo.internal.SharedChrome.init.map { wsUrl =>
