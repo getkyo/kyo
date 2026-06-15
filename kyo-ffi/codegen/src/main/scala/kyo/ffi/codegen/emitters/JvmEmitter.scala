@@ -895,7 +895,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     throw new IllegalStateException(s"union variant type $other is not supported (only primitives and structs)")
             end match
         }
-        buf += s"""    case __other => throw new kyo.ffi.FfiUnsupported(s"Union variant not supported: $${__other.getClass}")"""
+        buf += s"""    case __other => throw new kyo.ffi.FfiLoadError.Unsupported(s"Union variant not supported: $${__other.getClass}")"""
         buf.result()
     end emitUnionVariantMatch
 

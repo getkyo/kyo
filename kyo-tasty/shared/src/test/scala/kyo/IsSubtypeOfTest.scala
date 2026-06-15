@@ -176,6 +176,10 @@ class IsSubtypeOfTest extends kyo.test.Test[Any]:
             case TastyError.UnknownTagInPosition(_, _)         => "UnknownTagInPosition"
             case TastyError.InvalidFullName(_, _)              => "InvalidFullName"
             case TastyError.DigestMismatch(_, _)               => "DigestMismatch"
+            case TastyError.InvalidUuid(_)                     => "InvalidUuid"
+            case TastyError.UnresolvedReference(_, _)          => "UnresolvedReference"
+            case TastyError.UnknownType(_, _, _)               => "UnknownType"
+            case TastyError.MissingDeclaredType(_, _)          => "MissingDeclaredType"
             case TastyError.UnhandledSubtypingCase(_, _, _, _) => "UnhandledSubtypingCase"
         assert(label == "UnhandledSubtypingCase", s"Expected UnhandledSubtypingCase label but got $label")
         succeed

@@ -11,7 +11,7 @@ class FfiLoadErrorTest extends Test:
     "Ffi.load failure message names both the binding trait and the impl class" in {
         val ex = intercept[Throwable](Ffi.load[FfiLoadErrorTest.MissingBindings])
         // The exception type differs slightly per platform (IllegalStateException everywhere; on JS in browsers
-        // it'd be FfiUnsupported but tests don't run in browsers). What matters: the binding trait FQN appears.
+        // it'd be FfiLoadError.Unsupported but tests don't run in browsers). What matters: the binding trait FQN appears.
         val msg = ex.getMessage
         assert(msg != null)
         // The fix introduces an explicit `for binding ...` (or equivalent) phrase that names the trait's

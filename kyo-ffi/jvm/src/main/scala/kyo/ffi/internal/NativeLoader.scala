@@ -16,7 +16,7 @@ import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 
 /** JVM native library loader. Detects OS/arch, extracts bundled libraries with content-hash naming and advisory locking, falls back to
   * system-path lookup. Cached after first call per `libraryId`.
@@ -60,12 +60,12 @@ object NativeLoader:
         end match
     end detectIs64Bit
 
-    /** Throw [[kyo.ffi.FfiUnsupported]] if not 64-bit. Exposed for unit tests. */
+    /** Throw [[kyo.ffi.FfiLoadError.Unsupported]] if not 64-bit. Exposed for unit tests. */
     def checkPlatform(isBit64: Boolean): Unit =
         if !isBit64 then
             val dm  = sys.props.get("sun.arch.data.model").getOrElse("unknown")
             val msg = FfiPlatformErrors.unsupported32BitHost(s"data model: $dm")
-            throw new FfiUnsupported(msg)
+            throw new FfiLoadError.Unsupported(msg)
         end if
     end checkPlatform
 

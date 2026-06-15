@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 import scala.scalanative.unsafe.*
 
 /** Stub NativeLoader for Scala Native, libraries are linked at build time, not loaded at runtime. Exists for API surface compatibility. */
@@ -34,12 +34,12 @@ private[ffi] object NativeLoader:
     def detectIs64Bit(): Boolean =
         sizeof[Ptr[Byte]].toLong == 8L
 
-    /** Throw [[kyo.ffi.FfiUnsupported]] if not 64-bit. Exposed for unit tests. */
+    /** Throw [[kyo.ffi.FfiLoadError.Unsupported]] if not 64-bit. Exposed for unit tests. */
     def checkPlatform(isBit64: Boolean): Unit =
         if !isBit64 then
             val ptrBytes = sizeof[Ptr[Byte]].toLong
             val msg      = FfiPlatformErrors.unsupported32BitHost(s"sizeof(Ptr[Byte]) = $ptrBytes")
-            throw new FfiUnsupported(msg)
+            throw new FfiLoadError.Unsupported(msg)
         end if
     end checkPlatform
 end NativeLoader

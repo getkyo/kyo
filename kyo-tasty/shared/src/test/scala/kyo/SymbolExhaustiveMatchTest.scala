@@ -11,6 +11,7 @@ class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
             case _: Tasty.Symbol.Class        => "Class"
             case _: Tasty.Symbol.Trait        => "Trait"
             case _: Tasty.Symbol.Object       => "Object"
+            case _: Tasty.Symbol.EnumCase     => "EnumCase"
             case _: Tasty.Symbol.Method       => "Method"
             case _: Tasty.Symbol.Val          => "Val"
             case _: Tasty.Symbol.Var          => "Var"
@@ -27,11 +28,12 @@ class SymbolExhaustiveMatchTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    "exhaustive 3-case match on Symbol.ClassLike compiles cleanly" in {
+    "exhaustive 4-case match on Symbol.ClassLike compiles cleanly" in {
         def cl(c: Tasty.Symbol.ClassLike): String = c match
-            case _: Tasty.Symbol.Class  => "C"
-            case _: Tasty.Symbol.Trait  => "T"
-            case _: Tasty.Symbol.Object => "O"
+            case _: Tasty.Symbol.Class    => "C"
+            case _: Tasty.Symbol.Trait    => "T"
+            case _: Tasty.Symbol.Object   => "O"
+            case _: Tasty.Symbol.EnumCase => "E"
 
         val obj: Tasty.Symbol.ClassLike = Tasty.Symbol.Object(
             id = SymbolId(1),

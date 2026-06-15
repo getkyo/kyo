@@ -21,15 +21,15 @@ class NativePlatformCheckTest extends Test:
         succeed
     }
 
-    "checkPlatform(false) throws FfiUnsupported" in {
-        val ex = intercept[FfiUnsupported] {
+    "checkPlatform(false) throws FfiLoadError.Unsupported" in {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         assert(ex.isInstanceOf[RuntimeException])
     }
 
     "the rejection message names the prefix, 64-bit requirement, and sizeof(Ptr[Byte])" in {
-        val ex = intercept[FfiUnsupported] {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         val msg = ex.getMessage

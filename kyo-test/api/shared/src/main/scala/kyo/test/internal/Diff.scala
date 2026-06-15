@@ -164,21 +164,19 @@ object Diff:
         buf.append("  actual vs expected (line diff):\n")
 
         (0 until maxLen).foreach { i =>
-            val a = if i < actLines.length then Maybe(actLines(i)) else Maybe.empty
-            val e = if i < expLines.length then Maybe(expLines(i)) else Maybe.empty
-            (a, e) match
-                case (Maybe.Present(al), Maybe.Present(el)) if al == el =>
-                    buf.append(s"    $al\n")
-                case (Maybe.Present(al), Maybe.Present(el)) =>
+            val aIn = i < actLines.length
+            val eIn = i < expLines.length
+            if aIn && eIn then
+                val al = actLines(i)
+                val el = expLines(i)
+                if al == el then buf.append(s"    $al\n")
+                else
                     buf.append(s"  - $al\n")
                     buf.append(s"  + $el\n")
-                case (Maybe.Present(al), Maybe.Absent) =>
-                    buf.append(s"  - $al\n")
-                case (Maybe.Absent, Maybe.Present(el)) =>
-                    buf.append(s"  + $el\n")
-                case (Maybe.Absent, Maybe.Absent) =>
-                    ()
-            end match
+                end if
+            else if aIn then buf.append(s"  - ${actLines(i)}\n")
+            else if eIn then buf.append(s"  + ${expLines(i)}\n")
+            end if
         }
 
         buf.toString().stripTrailing()

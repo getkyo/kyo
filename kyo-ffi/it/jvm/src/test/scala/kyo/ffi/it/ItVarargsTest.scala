@@ -5,14 +5,14 @@ import kyo.ffi.Ffi
 
 /** Variadic (`Any*`) function IT coverage, JVM.
   *
-  * Extends [[ItVarargsSharedTest]] (4 common cases) and adds the JVM-only `FfiUnsupported` error path test that exercises the
+  * Extends [[ItVarargsSharedTest]] (4 common cases) and adds the JVM-only `FfiLoadError.Unsupported` error path test that exercises the
   * `VariadicMarshaller`'s rejection of an unsupported runtime class.
   */
 class ItVarargsTest extends ItVarargsSharedTest:
 
-    "unsupported runtime class surfaces a clear FfiUnsupported" in {
+    "unsupported runtime class surfaces a clear FfiLoadError.Unsupported" in {
         val b = Ffi.load[ItVarargsBindings]
-        val ex = intercept[kyo.ffi.FfiUnsupported] {
+        val ex = intercept[kyo.ffi.FfiLoadError.Unsupported] {
             discard(b.kyoItSumVarargs(1, List(1, 2, 3)))
         }
         assert(ex.getMessage.contains("kyo.ffi.it.ItVarargsBindings.kyoItSumVarargs"))
