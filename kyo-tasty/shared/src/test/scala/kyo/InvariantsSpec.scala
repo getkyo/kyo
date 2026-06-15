@@ -200,13 +200,16 @@ class InvariantsSpec extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Exhaustive pattern match over AnnotationLike concrete subtypes compiles without catch-all.
-    "Exhaustive match over Tasty.AnnotationLike compiles without catch-all arm" in {
+    // Pattern match over AnnotationLike maps both concrete subtypes. The defensive catch-all is required only
+    // because this file also calls `compiletime.testing.typeCheckErrors`, which injects a phantom anonymous
+    // AnnotationLike subtype into this compilation unit's exhaustivity analysis; it is unreachable at runtime.
+    "pattern-match over Tasty.AnnotationLike maps both concrete subtypes" in {
         val annotation: Tasty.AnnotationLike =
             Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(-1)), Chunk.empty, Tasty.Name(""))
         val result: String = annotation match
-            case a: Tasty.Annotation      => "scala"
-            case a: Tasty.Java.Annotation => "java"
+            case _: Tasty.Annotation      => "scala"
+            case _: Tasty.Java.Annotation => "java"
+            case other                    => fail(s"unexpected AnnotationLike subtype: $other")
         assert(result == "scala")
         succeed
     }

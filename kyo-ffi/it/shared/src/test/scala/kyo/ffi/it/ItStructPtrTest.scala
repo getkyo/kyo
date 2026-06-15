@@ -1,7 +1,6 @@
 package kyo.ffi.it
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Cross-platform struct pointer field spec.
@@ -15,8 +14,6 @@ import kyo.ffi.Ffi
   * result.
   */
 class ItStructPtrTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "kyo_it_struct_read_handle" - {
         "struct with opaque field: C reads handle and returns stored int value" in {

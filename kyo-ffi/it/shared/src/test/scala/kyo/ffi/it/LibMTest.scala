@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Cross-platform libm spec. Exercises the `library = "m"` resolution on JVM, Native, and JS.
@@ -12,8 +11,6 @@ import kyo.ffi.Ffi
   * once so every assertion crosses the FFI boundary.
   */
 class LibMTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     // absolute tolerance for inexact IEEE-754 results; libm functions are
     // correctly rounded to last ULP on common platforms, but chaining two

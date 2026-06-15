@@ -84,12 +84,12 @@ object Subtyping:
                 // T <: OrType(L, R): Sub if either side is Sub; NotSub only if both are NotSub; else Indeterminate
                 case Tasty.Type.OrType(supLeft, supRight) =>
                     isSubtype(sub, supLeft, classpath, budget) match
-                        case f: Result.Failure[TastyError] => f
+                        case f: Result.Failure[TastyError] @unchecked => f
                         case Result.Success(leftVerdict) =>
                             if leftVerdict == Sub then Result.Success(Sub)
                             else
                                 isSubtype(sub, supRight, classpath, budget) match
-                                    case f: Result.Failure[TastyError] => f
+                                    case f: Result.Failure[TastyError] @unchecked => f
                                     case Result.Success(rightVerdict) =>
                                         if rightVerdict == Sub then Result.Success(Sub)
                                         else if leftVerdict == NotSub && rightVerdict == NotSub then Result.Success(NotSub)
@@ -138,7 +138,7 @@ object Subtyping:
                             sup match
                                 case Tasty.Type.Applied(supBase, supArgs) =>
                                     isSubtype(subBase, supBase, classpath, budget) match
-                                        case f: Result.Failure[TastyError] => f
+                                        case f: Result.Failure[TastyError] @unchecked => f
                                         case Result.Success(baseVerdict) =>
                                             if baseVerdict != Sub then
                                                 Result.Success(if baseVerdict == Indeterminate then Indeterminate else NotSub)
@@ -179,12 +179,12 @@ object Subtyping:
                         // AndType(L, R) <: T: Sub if either side is Sub; NotSub only if both are NotSub; else Indeterminate
                         case Tasty.Type.AndType(left, right) =>
                             isSubtype(left, sup, classpath, budget) match
-                                case f: Result.Failure[TastyError] => f
+                                case f: Result.Failure[TastyError] @unchecked => f
                                 case Result.Success(leftVerdict) =>
                                     if leftVerdict == Sub then Result.Success(Sub)
                                     else
                                         isSubtype(right, sup, classpath, budget) match
-                                            case f: Result.Failure[TastyError] => f
+                                            case f: Result.Failure[TastyError] @unchecked => f
                                             case Result.Success(rightVerdict) =>
                                                 if rightVerdict == Sub then Result.Success(Sub)
                                                 else if leftVerdict == NotSub && rightVerdict == NotSub then Result.Success(NotSub)
@@ -221,10 +221,10 @@ object Subtyping:
                                 case Tasty.Type.Wildcard(supLo, supHi) =>
                                     // Contravariant lower, covariant upper
                                     isSubtype(supLo, subLo, classpath, budget) match
-                                        case f: Result.Failure[TastyError] => f
+                                        case f: Result.Failure[TastyError] @unchecked => f
                                         case Result.Success(loVerdict) =>
                                             isSubtype(subHi, supHi, classpath, budget) match
-                                                case f: Result.Failure[TastyError] => f
+                                                case f: Result.Failure[TastyError] @unchecked => f
                                                 case Result.Success(hiVerdict) =>
                                                     Result.Success(combineAnd(loVerdict, hiVerdict))
                                 case _: Tasty.Type.Named | _: Tasty.Type.TermRef | _: Tasty.Type.Applied |
@@ -342,9 +342,9 @@ object Subtyping:
                         // cannot prove the relation. Continue with the remaining parents; if none establish
                         // Sub, the unresolved parent leaves the verdict Indeterminate, never a false NotSub.
                         checkParents(remaining, supId, classpath, budget) match
-                            case f: Result.Failure[TastyError] => f
-                            case Result.Success(Sub)           => Result.Success(Sub)
-                            case Result.Success(_)             => Result.Success(Indeterminate)
+                            case f: Result.Failure[TastyError] @unchecked => f
+                            case Result.Success(Sub)                      => Result.Success(Sub)
+                            case Result.Success(_)                        => Result.Success(Indeterminate)
             case other =>
                 // Unhandled parent shape: fail on first occurrence with a structured diagnostic.
                 Result.Failure(TastyError.UnhandledSubtypingCase(
@@ -362,12 +362,12 @@ object Subtyping:
         budget: Int
     ): Result[TastyError, SubtypeVerdict] =
         isNamedSubNamed(parentId, supId, classpath, budget) match
-            case f: Result.Failure[TastyError] => f
+            case f: Result.Failure[TastyError] @unchecked => f
             case Result.Success(transitiveVerdict) =>
                 if transitiveVerdict == Sub then Result.Success(Sub)
                 else
                     checkParents(remaining, supId, classpath, budget) match
-                        case f: Result.Failure[TastyError] => f
+                        case f: Result.Failure[TastyError] @unchecked => f
                         case Result.Success(tailVerdict) =>
                             if tailVerdict == Sub then Result.Success(Sub)
                             else if transitiveVerdict == Indeterminate || tailVerdict == Indeterminate then
@@ -427,32 +427,32 @@ object Subtyping:
             if variance == 1 then
                 // covariant
                 isSubtype(subArg, supArg, classpath, budget) match
-                    case f: Result.Failure[TastyError] => f
-                    case Result.Success(Sub)           => checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget)
-                    case Result.Success(NotSub)        => Result.Success(NotSub)
+                    case f: Result.Failure[TastyError] @unchecked => f
+                    case Result.Success(Sub)    => checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget)
+                    case Result.Success(NotSub) => Result.Success(NotSub)
                     case Result.Success(Indeterminate) =>
                         checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget) match
-                            case f: Result.Failure[TastyError] => f
+                            case f: Result.Failure[TastyError] @unchecked => f
                             case Result.Success(restVerdict) =>
                                 Result.Success(if restVerdict == NotSub then NotSub else Indeterminate)
             else if variance == -1 then
                 // contravariant
                 isSubtype(supArg, subArg, classpath, budget) match
-                    case f: Result.Failure[TastyError] => f
-                    case Result.Success(Sub)           => checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget)
-                    case Result.Success(NotSub)        => Result.Success(NotSub)
+                    case f: Result.Failure[TastyError] @unchecked => f
+                    case Result.Success(Sub)    => checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget)
+                    case Result.Success(NotSub) => Result.Success(NotSub)
                     case Result.Success(Indeterminate) =>
                         checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget) match
-                            case f: Result.Failure[TastyError] => f
+                            case f: Result.Failure[TastyError] @unchecked => f
                             case Result.Success(restVerdict) =>
                                 Result.Success(if restVerdict == NotSub then NotSub else Indeterminate)
             else
                 // invariant: both directions
                 isSubtype(subArg, supArg, classpath, budget) match
-                    case f: Result.Failure[TastyError] => f
+                    case f: Result.Failure[TastyError] @unchecked => f
                     case Result.Success(fwdVerdict) =>
                         isSubtype(supArg, subArg, classpath, budget) match
-                            case f: Result.Failure[TastyError] => f
+                            case f: Result.Failure[TastyError] @unchecked => f
                             case Result.Success(bwdVerdict) =>
                                 val argVerdict = combineAnd(fwdVerdict, bwdVerdict)
                                 argVerdict match
@@ -462,7 +462,7 @@ object Subtyping:
                                         Result.Success(NotSub)
                                     case Indeterminate =>
                                         checkArgPairs(subArgs, supArgs, typeParamsOpt, idx + 1, classpath, budget) match
-                                            case f: Result.Failure[TastyError] => f
+                                            case f: Result.Failure[TastyError] @unchecked => f
                                             case Result.Success(restVerdict) =>
                                                 Result.Success(if restVerdict == NotSub then NotSub else Indeterminate)
                                 end match
@@ -516,11 +516,11 @@ object Subtyping:
         (t1, t2) match
             case (Tasty.Type.Named(s1), Tasty.Type.Named(s2)) =>
                 // Either both are bound params at same position, or both are the same external SymbolId
-                (idx1.get(s1), idx2.get(s2)) match
-                    case (Maybe.Present(i), Maybe.Present(j)) => i == j
-                    case (Maybe.Absent, Maybe.Absent)         => s1 == s2
-                    case (Maybe.Present(_), Maybe.Absent)     => false
-                    case (Maybe.Absent, Maybe.Present(_))     => false
+                val pos1 = idx1.get(s1)
+                val pos2 = idx2.get(s2)
+                if pos1.isDefined && pos2.isDefined then pos1.get == pos2.get
+                else if pos1.isEmpty && pos2.isEmpty then s1 == s2
+                else false
             case (Tasty.Type.Applied(b1, a1), Tasty.Type.Applied(b2, a2)) =>
                 typeEquivAlpha(b1, b2, idx1, idx2) &&
                 a1.length == a2.length &&

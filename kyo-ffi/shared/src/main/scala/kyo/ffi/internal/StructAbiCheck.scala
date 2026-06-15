@@ -1,18 +1,18 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiAbiMismatch
+import kyo.ffi.FfiLoadError
 
-/** Struct byte-size self-check emitted at each generated impl's static initialization. Throws [[kyo.ffi.FfiAbiMismatch]] on mismatch. */
+/** Struct byte-size self-check emitted at each generated impl's static initialization. Throws [[kyo.ffi.FfiLoadError.AbiMismatch]] on
+  * mismatch.
+  */
 object StructAbiCheck:
 
-    /** Throw [[kyo.ffi.FfiAbiMismatch]] if `actualSize` != `expectedSize` for the given struct and binding. */
+    /** Throw [[kyo.ffi.FfiLoadError.AbiMismatch]] if `actualSize` != `expectedSize` for the given struct and binding. */
     def verifyByteSize(traitFqn: String, structName: String, expectedSize: Long, actualSize: Long): Unit =
         if expectedSize != actualSize then
-            throw new FfiAbiMismatch(
-                traitFqn,
-                structName,
-                expectedSize,
-                actualSize,
+            throw new FfiLoadError.AbiMismatch(
+                expectedSize.toString,
+                actualSize.toString,
                 FfiErrors.structAbiMismatch(traitFqn, structName, expectedSize, actualSize)
             )
     end verifyByteSize

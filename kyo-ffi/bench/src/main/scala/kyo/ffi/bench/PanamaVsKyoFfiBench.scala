@@ -5,6 +5,7 @@ import java.lang.foreign.Linker
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout
 import java.lang.invoke.MethodHandle
+import kyo.AllowUnsafe.embrace.danger
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import org.openjdk.jmh.annotations.*

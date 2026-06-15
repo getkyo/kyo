@@ -16,8 +16,6 @@ import kyo.ffi.Ffi
   */
 class EpollTest extends ItTestBase:
 
-    import AllowUnsafe.embrace.danger
-
     private val isLinux: Boolean =
         java.lang.System.getProperty("os.name", "").toLowerCase.contains("linux")
 

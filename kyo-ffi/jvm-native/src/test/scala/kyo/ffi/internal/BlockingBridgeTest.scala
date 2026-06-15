@@ -16,8 +16,6 @@ import kyo.ffi.Test
   */
 class BlockingBridgeTest extends Test:
 
-    import AllowUnsafe.embrace.danger
-
     private def deadline(after: Duration = Duration.fromJava(java.time.Duration.ofSeconds(5))): Clock.Deadline.Unsafe =
         Clock.live.unsafe.deadline(after)
 

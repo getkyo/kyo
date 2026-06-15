@@ -115,6 +115,9 @@ lazy val `kyo-settings` = Seq(
     // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
     Compile / doc := (Compile / doc).tag(DocTag).value,
     scalacOptions += compilerOptionFailDiscard,
+    // Treat compiler warnings as errors on the Scala 3 series. The Scala 2.13 cross-builds (the kyo-scheduler
+    // family) carry a different, noisier warning set that is out of scope, so the flag is gated on Scala 3.
+    scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Werror") else Nil),
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",

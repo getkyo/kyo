@@ -3,7 +3,6 @@ package kyo.ffi.it
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.AllowUnsafe
 import kyo.discard
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
@@ -20,8 +19,6 @@ class ItCallbackExceptionTest extends ItTestBase:
     // Touches process-global state (global stderr/system property, or the shared CallbackRegistry pool/hooks) and so
     // must run alone: under the default parallel leaf execution a sibling leaf observes or mutates the same global.
     override def config = super.config.sequential
-
-    import AllowUnsafe.embrace.danger
 
     /** Run [[body]] with `System.err` redirected to a buffer; return the captured stderr as a String. */
     private def captureStderr(body: => Any): String =

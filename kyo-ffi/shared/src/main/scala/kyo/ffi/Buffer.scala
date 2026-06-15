@@ -26,7 +26,7 @@ final class Buffer[A] private[ffi] (
     private[ffi] val layout: UnsafeLayout[A],
     private val core: internal.BufferCore,
     private val rawHandle: Buffer.Raw
-) extends AutoCloseable:
+):
 
     /** Number of elements the buffer can hold. */
     def size: Int = core.size
@@ -40,32 +40,26 @@ final class Buffer[A] private[ffi] (
     /** Read the element at `i`. Throws [[java.lang.IndexOutOfBoundsException]] if `i` is out of range, or
       * [[java.lang.IllegalStateException]] if the buffer is closed.
       */
-    def get(i: Int): A =
+    def get(i: Int)(using AllowUnsafe): A =
         core.checkOpen()
         core.checkIndex(i)
-        // Unsafe: raw off-heap read against the pinned buffer; open + index pre-checked above by BufferCore.
-        import AllowUnsafe.embrace.danger
         layout.read(underlying, i.toLong * layout.size)
     end get
 
     /** Write `v` at index `i`. Throws [[java.lang.IndexOutOfBoundsException]] if `i` is out of range, or
       * [[java.lang.IllegalStateException]] if the buffer is closed.
       */
-    def set(i: Int, v: A): Unit =
+    def set(i: Int, v: A)(using AllowUnsafe): Unit =
         core.checkOpen()
         core.checkIndex(i)
-        // Unsafe: raw off-heap write against the pinned buffer; open + index pre-checked above by BufferCore.
-        import AllowUnsafe.embrace.danger
         layout.write(underlying, i.toLong * layout.size, v)
     end set
 
     /** Release the underlying memory. Idempotent -- subsequent calls are no-ops. */
-    def close(): Unit =
+    def close()(using AllowUnsafe): Unit =
         // For borrowed buffers `close` must be a true no-op -- including not flipping the closed flag --
         // so that post-close reads continue to succeed.
         if core.owned && core.beginClose() then
-            // Unsafe: release the owned off-heap arena exactly once; beginClose() won the close CAS.
-            import AllowUnsafe.embrace.danger
             underlying.close()
 
     /** Opaque platform-specific handle. Internal and generated-code use only. */
@@ -78,16 +72,16 @@ object Buffer:
 
     /** Allocate a fresh thread-safe buffer of `size` elements. Caller must [[Buffer.close]] (or use [[use]]) to release.
       */
-    def alloc[A](size: Int)(using l: UnsafeLayout[A]): Buffer[A] =
+    def alloc[A](size: Int)(using l: UnsafeLayout[A], allow: AllowUnsafe): Buffer[A] =
         internal.BufferFactory.alloc[A](size, l)
 
     /** Allocate a single-thread confined buffer of `size` elements. Caller must [[Buffer.close]] (or use [[confinedUse]]) to release. */
-    def allocConfined[A](size: Int)(using l: UnsafeLayout[A]): Buffer[A] =
+    def allocConfined[A](size: Int)(using l: UnsafeLayout[A], allow: AllowUnsafe): Buffer[A] =
         internal.BufferFactory.allocConfined[A](size, l)
 
     /** Allocate, run `f`, and close the buffer -- even if `f` throws. The primary user-facing lifetime pattern.
       */
-    inline def use[A, R](size: Int)(inline f: Buffer[A] => R)(using UnsafeLayout[A]): R =
+    inline def use[A, R](size: Int)(inline f: Buffer[A] => R)(using UnsafeLayout[A], AllowUnsafe): R =
         val b = alloc[A](size)
         try f(b)
         finally b.close()
@@ -96,31 +90,31 @@ object Buffer:
     /** Like [[use]] but backed by a single-thread confined arena on JVM for faster allocation. Do not pass the buffer across threads or
       * suspend a fiber inside the block. On Native and JS this is identical to [[use]].
       */
-    inline def confinedUse[A, R](size: Int)(inline f: Buffer[A] => R)(using UnsafeLayout[A]): R =
+    inline def confinedUse[A, R](size: Int)(inline f: Buffer[A] => R)(using UnsafeLayout[A], AllowUnsafe): R =
         val b = allocConfined[A](size)
         try f(b)
         finally b.close()
     end confinedUse
 
     /** Copy the contents of an on-heap [[scala.Array]] into a freshly allocated buffer. */
-    def fromArray[A](a: Array[A])(using l: UnsafeLayout[A]): Buffer[A] =
+    def fromArray[A](a: Array[A])(using l: UnsafeLayout[A], allow: AllowUnsafe): Buffer[A] =
         internal.BufferFactory.fromArray[A](a, l)
 
     /** Copy an [[scala.Array]] into a buffer, run `f`, and close the buffer -- even if `f` throws. Combines [[fromArray]] with scoped
       * lifetime.
       */
-    inline def useArray[A, R](arr: Array[A])(inline f: Buffer[A] => R)(using UnsafeLayout[A]): R =
+    inline def useArray[A, R](arr: Array[A])(inline f: Buffer[A] => R)(using UnsafeLayout[A], AllowUnsafe): R =
         val b = fromArray(arr)
         try f(b)
         finally b.close()
     end useArray
 
     /** Copy a range `[from, from + len)` of `b` into a freshly allocated on-heap [[scala.Array]]. */
-    def copyToArray[A: scala.reflect.ClassTag](b: Buffer[A], from: Int, len: Int): Array[A] =
+    def copyToArray[A: scala.reflect.ClassTag](b: Buffer[A], from: Int, len: Int)(using AllowUnsafe): Array[A] =
         internal.BufferFactory.copyToArray[A](b, from, len)
 
     /** Encode `s` as UTF-8 and store it null-terminated in a freshly allocated [[Buffer]] of [[Byte]]. */
-    def fromUtf8(s: String): Buffer[Byte] =
+    def fromUtf8(s: String)(using AllowUnsafe): Buffer[Byte] =
         internal.BufferFactory.fromUtf8(s)
 
     /** Memory-map a file as a read-only `Buffer[Byte]`.
@@ -141,7 +135,7 @@ object Buffer:
       * @throws IllegalArgumentException
       *   if file size exceeds 2 GB on JVM
       */
-    def mmapReadOnly(path: String, offset: Long = 0L, size: Long = -1L): Buffer[Byte] =
+    def mmapReadOnly(path: String, offset: Long = 0L, size: Long = -1L)(using AllowUnsafe): Buffer[Byte] =
         internal.BufferFactory.mmapReadOnly(path, offset, size)
 
     /** Memory-map a file as a read-write `Buffer[Byte]`.
@@ -160,7 +154,7 @@ object Buffer:
       * @throws IllegalArgumentException
       *   if file size exceeds 2 GB on JVM
       */
-    def mmapReadWrite(path: String, offset: Long = 0L, size: Long = -1L): Buffer[Byte] =
+    def mmapReadWrite(path: String, offset: Long = 0L, size: Long = -1L)(using AllowUnsafe): Buffer[Byte] =
         internal.BufferFactory.mmapReadWrite(path, offset, size)
 
     // --- Nested Types ---
@@ -186,7 +180,7 @@ object Buffer:
           * The C side retains ownership; `Buffer.close()` is a no-op. Lifetime is whatever the C callee guarantees -- keeping the buffer
           * past that is a use-after-free. For opt-in lifetime validation use [[wrapBorrowedChecked]].
           */
-        def wrapBorrowed[A](raw: AnyRef, size: Int)(using l: UnsafeLayout[A]): Buffer[A] =
+        def wrapBorrowed[A](raw: AnyRef, size: Int)(using l: UnsafeLayout[A], allow: AllowUnsafe): Buffer[A] =
             internal.BufferFactory.wrapBorrowed[A](Buffer.Raw.wrap(raw), size, l)
 
         /** Wrap a platform-specific raw handle in a **checked** borrowed [[Buffer]].
@@ -194,7 +188,7 @@ object Buffer:
           * Like [[wrapBorrowed]] but every `get`/`set` first verifies `owner.isValid`; throws [[BorrowRevoked]] if revoked. Enable via
           * `-Dkyo.ffi.checkedBorrows=true` or `Ffi.Config.checkedBorrows`.
           */
-        def wrapBorrowedChecked[A](raw: AnyRef, size: Int, owner: BorrowOwner)(using l: UnsafeLayout[A]): Buffer[A] =
+        def wrapBorrowedChecked[A](raw: AnyRef, size: Int, owner: BorrowOwner)(using l: UnsafeLayout[A], allow: AllowUnsafe): Buffer[A] =
             internal.BufferFactory.wrapBorrowedChecked[A](Buffer.Raw.wrap(raw), size, owner, l)
     end Unsafe
 end Buffer

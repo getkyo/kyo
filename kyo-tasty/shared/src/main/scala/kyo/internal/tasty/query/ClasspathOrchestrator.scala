@@ -2091,7 +2091,7 @@ object ClasspathOrchestrator:
                                     case Maybe.Absent => ()
                                 end match
                                 fr
-                            case _: Result.Failure[TastyError] | _: Result.Panic => fr
+                            case _: Result.Failure[TastyError] @unchecked | _: Result.Panic => fr
                         }
                 }
             case Result.Failure(err: TastyError) =>

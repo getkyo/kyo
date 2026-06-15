@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 import scala.scalajs.js
 import scala.scalajs.js.annotation.*
 
@@ -180,7 +180,7 @@ object KoffiFacade:
     def load(libPath: String, fns: Seq[KoffiFn]): js.Dynamic =
         /* koffi-correctness verified in scripted integration tests */
         // Validate the koffi package ABI once per process before any downcall is wired. Fails fast with
-        // FfiKoffiVersionMismatch when the installed koffi is too old, too new, or missing an expected method.
+        // FfiLoadError.Unsupported when the installed koffi is too old, too new, or missing an expected method.
         KoffiAbiProbe.probeOnce()
         val lib = Koffi.load(libPath)
         val bag = js.Dynamic.literal()
@@ -347,7 +347,7 @@ end KoffiFacade
   *   - `String` → `"string"` (koffi auto-marshals JS strings to `const char*`)
   *   - `Buffer[A]` → `"void*"` (unwrap the raw Uint8Array)
   *
-  * Any other runtime type raises [[FfiUnsupported]] naming the binding + method.
+  * Any other runtime type raises [[FfiLoadError.Unsupported]] naming the binding + method.
   */
 object JsVariadicMarshaller:
 
@@ -369,7 +369,7 @@ object JsVariadicMarshaller:
 
     private def classify(v: Any, bindingFqn: String, methodName: String): (js.Any, js.Any) =
         if v.asInstanceOf[AnyRef] eq null then
-            throw new FfiUnsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, "null"))
+            throw new FfiLoadError.Unsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, "null"))
         else
             v match
                 case i: Int =>
@@ -391,7 +391,7 @@ object JsVariadicMarshaller:
                     )
                     ("void*".asInstanceOf[js.Any], seg.u8a.asInstanceOf[js.Any])
                 case other =>
-                    throw new FfiUnsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, other.getClass.getName))
+                    throw new FfiLoadError.Unsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, other.getClass.getName))
             end match
         end if
     end classify

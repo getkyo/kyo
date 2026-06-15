@@ -288,6 +288,26 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
 
                 Choice.run(test).unit
             }
+
+            "limits concurrent chunk transformations to `parallel`" in {
+                val parallel = 2
+                val stream   = (1 to 12).map(i => Stream.init(Seq(i))).reduce(_.concat(_))
+                for
+                    inflight <- AtomicInt.init(0)
+                    maxSeen  <- AtomicInt.init(0)
+                    s2 = stream.mapChunkPar(parallel)(c =>
+                        for
+                            n <- inflight.incrementAndGet
+                            _ <- maxSeen.updateAndGet(m => math.max(m, n))
+                            _ <- Async.sleep(20.millis)
+                            _ <- inflight.decrementAndGet
+                        yield c
+                    )
+                    _   <- s2.run
+                    max <- maxSeen.get
+                yield assert(max <= parallel, s"observed $max concurrent chunk transforms, expected <= $parallel")
+                end for
+            }
         }
 
         "mapChunkParUnordered" - {
@@ -342,6 +362,26 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
                 end test
 
                 Choice.run(test).unit
+            }
+
+            "limits concurrent chunk transformations to `parallel`" in {
+                val parallel = 2
+                val stream   = (1 to 12).map(i => Stream.init(Seq(i))).reduce(_.concat(_))
+                for
+                    inflight <- AtomicInt.init(0)
+                    maxSeen  <- AtomicInt.init(0)
+                    s2 = stream.mapChunkParUnordered(parallel)(c =>
+                        for
+                            n <- inflight.incrementAndGet
+                            _ <- maxSeen.updateAndGet(m => math.max(m, n))
+                            _ <- Async.sleep(20.millis)
+                            _ <- inflight.decrementAndGet
+                        yield c
+                    )
+                    _   <- s2.run
+                    max <- maxSeen.get
+                yield assert(max <= parallel, s"observed $max concurrent chunk transforms, expected <= $parallel")
+                end for
             }
         }
 

@@ -1,5 +1,6 @@
 package kyo.ffi
 
+import kyo.AllowUnsafe
 import kyo.Chunk
 import kyo.Maybe
 import kyo.Maybe.Absent
@@ -309,15 +310,15 @@ object Ffi:
       *   on the JVM when the generated impl class lacks a public nullary constructor: the ISE thrown inside `FfiReflect.instantiate`
       *   escapes `Ffi.load` uncaught (`computeIfAbsent` propagates it; only the class-not-found case is wrapped into `ImplNotFound`).
       */
-    inline def load[T <: Ffi](using ct: scala.reflect.ClassTag[T]): T =
+    inline def load[T <: Ffi](using ct: scala.reflect.ClassTag[T], allow: AllowUnsafe): T =
         cache.computeIfAbsent(ct.runtimeClass, c => instantiate(c)).asInstanceOf[T]
 
     /** Pre-warm the [[load]] cache for `T`. Idempotent. Useful during startup to amortize first-call reflection cost. */
-    inline def warmLoad[T <: Ffi](using ct: scala.reflect.ClassTag[T]): Unit =
+    inline def warmLoad[T <: Ffi](using ct: scala.reflect.ClassTag[T], allow: AllowUnsafe): Unit =
         discard(load[T])
 
     /** Evict the cached impl for `T` so the next [[load]] call re-instantiates. Intended for test scenarios, not normal use. */
-    def unload[T <: Ffi](using ct: scala.reflect.ClassTag[T]): Unit =
+    def unload[T <: Ffi](using ct: scala.reflect.ClassTag[T], allow: AllowUnsafe): Unit =
         discard(cache.remove(ct.runtimeClass))
 
     // ---- internals ----

@@ -5,8 +5,6 @@ import kyo.ffi.*
 
 class ItOpaqueTest extends ItTestBase:
 
-    import AllowUnsafe.embrace.danger
-
     private lazy val bindings = Ffi.load[ItOpaqueBindings]
 
     "create handle returns non-null (bare Handle)" in {
