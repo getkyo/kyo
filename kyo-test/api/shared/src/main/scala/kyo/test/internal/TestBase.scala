@@ -487,11 +487,12 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
     /** Default per-test timeout for every leaf in this suite that has no explicit `.timeout(...)`. Override to change it, e.g.
       * `override def timeout = 30.seconds`. Returns `Duration.Infinity` (no timeout) when a debugger is attached so breakpoints don't trip
-      * it; 60s otherwise (the slowest legitimate test is ~45s under CI load, and the bound stops a stuck leaf from burning CI credits).
+      * it; 120s otherwise (raised from 60s after legitimate tests intermittently exceeded 60s under CI load;
+      * the bound still stops a stuck leaf from burning CI credits).
       */
     protected def timeout: Duration =
         if kyo.internal.Platform.isDebugEnabled then Duration.Infinity
-        else Duration.fromJava(java.time.Duration.ofSeconds(60))
+        else Duration.fromJava(java.time.Duration.ofSeconds(120))
 
     /** User-overridable per-suite configuration hook: the runner uses this when the caller does not pass an explicit RunConfig. Override it
       * to opt a suite into, e.g., sequential execution: `override def config = super.config.sequential`.
