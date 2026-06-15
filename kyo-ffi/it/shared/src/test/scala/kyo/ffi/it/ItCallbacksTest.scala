@@ -1,7 +1,6 @@
 package kyo.ffi.it
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.AllowUnsafe
 import kyo.discard
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
@@ -26,8 +25,6 @@ class ItCallbacksTest extends ItTestBase:
     // sequentially so concurrent leaves do not collide on registry slots (which corrupts the comparator/listener a C
     // call dispatches to).
     override def config = super.config.sequential
-
-    import AllowUnsafe.embrace.danger
 
     "kyoItSortInts" - {
         "transient callback: ascending sort via (a, b) => a - b" in {

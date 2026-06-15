@@ -1,5 +1,6 @@
 package kyo.ffi.bench
 
+import kyo.AllowUnsafe.embrace.danger
 import kyo.ffi.Ffi
 import org.openjdk.jmh.annotations.*
 

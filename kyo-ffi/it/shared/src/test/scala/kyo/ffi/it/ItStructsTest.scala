@@ -19,8 +19,6 @@ import kyo.ffi.Ffi
   */
 class ItStructsTest extends ItTestBase:
 
-    import AllowUnsafe.embrace.danger
-
     private val pi = 3.141592653589793
 
     "kyoItCircleArea" - {

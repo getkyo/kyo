@@ -1,6 +1,5 @@
 package kyo.ffi.it
 
-import kyo.AllowUnsafe
 import kyo.ffi.Ffi
 
 /** Cross-platform coverage for the non-variadic `kyoItSumFixed3` binding.
@@ -11,8 +10,6 @@ import kyo.ffi.Ffi
   * ([[kyo.ffi.it.ItVarargsSpec]] lives under `{jvm,js}/src/test`).
   */
 class ItSumFixedTest extends ItTestBase:
-
-    import AllowUnsafe.embrace.danger
 
     "kyoItSumFixed3" - {
         "1 + 2 + 3 = 6" in {
