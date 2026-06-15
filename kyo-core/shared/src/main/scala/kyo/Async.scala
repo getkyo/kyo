@@ -46,7 +46,7 @@ import scala.util.control.NonFatal
   */
 opaque type Async <: (Sync & Async.Join) = Async.Join & Sync
 
-object Async extends KyoOps[Sync], AsyncPlatformSpecific:
+object Async extends AsyncPlatformSpecific:
 
     /** Default concurrency level for collection operations.
       *
