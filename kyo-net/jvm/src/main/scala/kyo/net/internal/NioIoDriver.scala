@@ -1,6 +1,7 @@
 package kyo.net.internal
 
 import java.io.IOException
+import java.lang.reflect.Field
 import java.nio.ByteBuffer
 import java.nio.channels.CancelledKeyException
 import java.nio.channels.SelectionKey
@@ -12,6 +13,7 @@ import kyo.*
 import kyo.net.internal.transport.*
 import kyo.net.internal.util.*
 import scala.annotation.tailrec
+import scala.jdk.CollectionConverters.*
 
 /** JVM I/O driver backed by a single `java.nio.channels.Selector`.
   *
@@ -27,12 +29,26 @@ import scala.annotation.tailrec
   * from the last handshake record or a coalesced TCP segment). Without this, the selector may never fire again because the kernel buffer is
   * empty even though decrypted bytes are available.
   */
-final private[kyo] class NioIoDriver private (private val selector: Selector)
+final private[kyo] class NioIoDriver private (private var selector: Selector)
     extends IoDriver[NioHandle]:
 
     // Unsafe: created at driver construction with no ambient AllowUnsafe; the danger bridge builds it here and every get/compareAndSet runs
     // under the caller's AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    // Unsafe: mirrors closedFlag pattern. Guards selector.wakeup() so it fires only on the false->true transition; the
+    // post-select re-check in pollOnce closes the race window where a wakeup request arrives while select() is returning.
+    // private[net] so tests in kyo.net.internal can observe the flag state directly.
+    private[net] val wakeupPending = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+
+    // Count of consecutive selector.select() calls returning zero keys on the select-loop carrier.
+    // Read and written only from pollOnce() on the single select-loop fiber (single-carrier-confined).
+    private var zeroKeyReturns: Int = 0
+
+    // Flat array-backed key set installed via reflection; Absent when InaccessibleObjectException blocks the install.
+    private val installedKeySet: Maybe[SelectedSelectionKeySet] =
+        // Unsafe: reflection install runs at construction under the danger bridge (same pattern as closedFlag).
+        installSelectedKeySet(selector)(using AllowUnsafe.embrace.danger)
 
     // Concurrent-collection audit: the four pending-op maps below are raw java.util.concurrent.ConcurrentHashMap. kyo has no
     // concurrent-map type, and its effect-based collections cannot back this driver's non-parking selector path (these maps are read/written on
@@ -275,7 +291,9 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
             val key = handle.channel.keyFor(selector)
             if (key ne null) && key.isValid then
                 key.cancel()
-                discard(selector.wakeup())
+                if wakeupPending.compareAndSet(false, true) then
+                    discard(selector.wakeup())
+            end if
         catch
             case _: CancelledKeyException => ()
         end try
@@ -333,7 +351,8 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
     /** Register a channel with this driver's selector. Must be called before awaitRead/awaitWritable. */
     def registerChannel(handle: NioHandle)(using AllowUnsafe): Boolean =
         try
-            discard(selector.wakeup())
+            if wakeupPending.compareAndSet(false, true) then
+                discard(selector.wakeup())
             discard(handle.channel.register(selector, 0))
             given Frame = Frame.internal
             Log.live.unsafe.debug(s"$label registerChannel ${handleLabel(handle)}")
@@ -356,7 +375,8 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
                 def retry(attemptsLeft: Int): Boolean =
                     if attemptsLeft <= 0 then false
                     else
-                        discard(selector.wakeup())
+                        if wakeupPending.compareAndSet(false, true) then
+                            discard(selector.wakeup())
                         // Unsafe: sanctioned bounded driver-carrier wait (1ms). Backs off the cancelled-key retry
                         // so the polling thread can flush the selector's cancelled-key set before the next
                         // register() attempt. This is a JVM-NIO driver-internal backoff against a selector
@@ -382,7 +402,8 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
     /** Register a server channel for accept operations. */
     def registerServerChannel(serverChannel: ServerSocketChannel)(using AllowUnsafe): Boolean =
         try
-            discard(selector.wakeup())
+            if wakeupPending.compareAndSet(false, true) then
+                discard(selector.wakeup())
             discard(serverChannel.register(selector, 0))
             true
         catch
@@ -404,9 +425,13 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
         try
             val key = channel.keyFor(selector)
             if (key ne null) && key.isValid then
-                val newOps = key.interestOps() | ops
-                discard(key.interestOps(newOps))
-                discard(selector.wakeup())
+                val current = key.interestOps()
+                val newOps  = current | ops
+                if newOps != current then
+                    discard(key.interestOps(newOps))
+                    if wakeupPending.compareAndSet(false, true) then
+                        discard(selector.wakeup())
+                end if
                 given Frame = Frame.internal
                 Log.live.unsafe.debug(
                     s"$label registerServerInterest channel=${channel.hashCode()} ops=${opsToString(ops)} newOps=${opsToString(newOps)}"
@@ -422,9 +447,13 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
         try
             val key = channel.keyFor(selector)
             if (key ne null) && key.isValid then
-                val newOps = key.interestOps() | ops
-                discard(key.interestOps(newOps))
-                discard(selector.wakeup())
+                val current = key.interestOps()
+                val newOps  = current | ops
+                if newOps != current then
+                    discard(key.interestOps(newOps))
+                    if wakeupPending.compareAndSet(false, true) then
+                        discard(selector.wakeup())
+                end if
                 given Frame = Frame.internal
                 Log.live.unsafe.debug(
                     s"$label registerInterest channel=${channel.hashCode()} ops=${opsToString(ops)} newOps=${opsToString(newOps)}"
@@ -438,20 +467,70 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
 
     private def pollOnce()(using AllowUnsafe): Boolean =
         try
-            val n        = selector.select()
-            val keyCount = selector.selectedKeys().size()
-            if keyCount > 0 then
+            val n = selector.select()
+            // Post-select re-check: clear the pending flag now that select() has returned. Any interest
+            // registration that set the flag while select() was returning is already reflected in the
+            // ready-key set this cycle; the next select() will pick up any newly added interest.
+            discard(wakeupPending.compareAndSet(true, false))
+            if n > 0 then
+                zeroKeyReturns = 0
                 given Frame = Frame.internal
-                Log.live.unsafe.debug(s"$label select returned $keyCount ready keys")
-            dispatchReadyKeys()
+                Log.live.unsafe.debug(s"$label select returned $n ready keys")
+                dispatchReadyKeys()
+            else
+                zeroKeyReturns += 1
+                if shouldRebuild(zeroKeyReturns) then
+                    given Frame = Frame.internal
+                    Log.live.unsafe.debug(s"$label selector spin detected ($zeroKeyReturns zero-key returns), rebuilding selector")
+                    rebuildSelector()
+                end if
+            end if
             true
         catch
             case _: java.nio.channels.ClosedSelectorException => false
 
     private def dispatchReadyKeys()(using AllowUnsafe): Unit =
-        val keys = selector.selectedKeys()
-        val iter = keys.iterator()
-        dispatchKeysLoop(iter)
+        installedKeySet match
+            case Present(flatSet) =>
+                val arr   = flatSet.filledKeys
+                val total = flatSet.size()
+                var i     = 0
+                while i < total do
+                    val key = arr(i)
+                    i += 1
+                    if key ne null then
+                        try
+                            if key.isValid then
+                                val ready = key.readyOps()
+                                if (ready & SelectionKey.OP_ACCEPT) != 0 then
+                                    discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_ACCEPT))
+                                    dispatchAccept(key.channel().asInstanceOf[ServerSocketChannel])
+                                else
+                                    val channel = key.channel().asInstanceOf[SocketChannel]
+                                    if (ready & SelectionKey.OP_CONNECT) != 0 then
+                                        discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT))
+                                        dispatchConnect(channel)
+                                    end if
+                                    if (ready & SelectionKey.OP_READ) != 0 then
+                                        discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_READ))
+                                        dispatchRead(channel)
+                                    end if
+                                    if (ready & SelectionKey.OP_WRITE) != 0 then
+                                        discard(key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE))
+                                        dispatchWritable(channel)
+                                    end if
+                                end if
+                            end if
+                        catch
+                            case _: CancelledKeyException => ()
+                        end try
+                    end if
+                end while
+                flatSet.reset()
+            case Absent =>
+                val keys = selector.selectedKeys()
+                val iter = keys.iterator()
+                dispatchKeysLoop(iter)
     end dispatchReadyKeys
 
     @tailrec
@@ -487,6 +566,101 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
             dispatchKeysLoop(iter)
         end if
     end dispatchKeysLoop
+
+    /** Pure predicate: true when the accumulated consecutive zero-key returns exceed the rebuild threshold.
+      *
+      * `private[net]` so tests in `kyo.net.internal` can call it directly with concrete inputs.
+      */
+    private[net] def shouldRebuild(consecutiveZeroReturns: Int): Boolean =
+        consecutiveZeroReturns >= NioIoDriver.SelectorRebuildThreshold
+
+    /** Rebuild the selector by snapshotting registered channels, closing the old selector, opening a new one,
+      * and re-registering every channel. Resets the zero-key counter.
+      *
+      * Called only from the select-loop carrier (single-carrier-confined).
+      */
+    private def rebuildSelector()(using AllowUnsafe, Frame): Unit =
+        // Snapshot channel references BEFORE closing the old selector (closing cancels all keys,
+        // after which key.channel() may still work but the key set is no longer reliable).
+        val channels = selector.keys().iterator().asScala
+            .flatMap { k =>
+                val ch = k.channel()
+                if ch.isOpen then Some(ch) else None
+            }
+            .toArray
+
+        try selector.close()
+        catch case _: IOException => ()
+
+        val newSelector = Selector.open()
+        // Re-install the flat key set on the new selector if the original install succeeded.
+        installedKeySet match
+            case Present(flatSet) => installFlatSetInto(newSelector, flatSet)
+            case Absent           => ()
+
+        selector = newSelector
+        zeroKeyReturns = 0
+
+        // Re-register all channels on the new selector with interest-ops 0.
+        // Actual interest bits will be re-added by the next registerInterest call.
+        var i = 0
+        while i < channels.length do
+            val ch = channels(i)
+            i += 1
+            try
+                ch match
+                    case sc: SocketChannel =>
+                        discard(sc.register(newSelector, 0))
+                    case ssc: ServerSocketChannel =>
+                        discard(ssc.register(newSelector, 0))
+                    case _ => ()
+            catch
+                case _: java.nio.channels.ClosedChannelException  => ()
+                case _: java.nio.channels.ClosedSelectorException => ()
+            end try
+        end while
+    end rebuildSelector
+
+    /** Install `flatSet` into the `SelectorImpl.selectedKeys` and `SelectorImpl.publicSelectedKeys` fields of `sel`.
+      * Used both at initial construction and when rebuilding the selector.
+      */
+    private def installFlatSetInto(sel: Selector, flatSet: SelectedSelectionKeySet)(using AllowUnsafe): Unit =
+        try
+            val implClass = Class.forName("sun.nio.ch.SelectorImpl")
+            val skField   = implClass.getDeclaredField("selectedKeys")
+            skField.setAccessible(true)
+            val pskField = implClass.getDeclaredField("publicSelectedKeys")
+            pskField.setAccessible(true)
+            skField.set(sel, flatSet)
+            pskField.set(sel, flatSet)
+        catch
+            // InaccessibleObjectException (JDK 9+) extends RuntimeException, not ReflectiveOperationException.
+            case _: ReflectiveOperationException                  => () // graceful: no-op if reflection fails on the new selector
+            case _: java.lang.reflect.InaccessibleObjectException => ()
+
+    /** Try to install a flat `SelectedSelectionKeySet` into `selector` via reflection.
+      *
+      * Returns `Present(set)` when the reflection succeeds; returns `Absent` when an `InaccessibleObjectException` or any other reflection
+      * failure is thrown. Callers must treat `Absent` as a graceful fallback to the default `HashSet`-backed path.
+      *
+      * `--add-opens java.base/sun.nio.ch=ALL-UNNAMED` is required for the reflection to succeed on JDK 17+. The build's test JVM options
+      * include that flag; production JVMs may not, so the `Absent` path must remain fully functional.
+      */
+    private def installSelectedKeySet(sel: Selector)(using AllowUnsafe): Maybe[SelectedSelectionKeySet] =
+        try
+            val implClass = Class.forName("sun.nio.ch.SelectorImpl")
+            val skField   = implClass.getDeclaredField("selectedKeys")
+            skField.setAccessible(true)
+            val pskField = implClass.getDeclaredField("publicSelectedKeys")
+            pskField.setAccessible(true)
+            val flatSet = new SelectedSelectionKeySet()
+            skField.set(sel, flatSet)
+            pskField.set(sel, flatSet)
+            Present(flatSet)
+        catch
+            // InaccessibleObjectException (JDK 9+) extends RuntimeException, not ReflectiveOperationException.
+            case _: ReflectiveOperationException                  => Absent
+            case _: java.lang.reflect.InaccessibleObjectException => Absent
 
     private def dispatchRead(channel: SocketChannel)(using AllowUnsafe): Unit =
         Maybe(pendingReads.remove(channel)) match
@@ -706,8 +880,12 @@ final private[kyo] class NioIoDriver private (private val selector: Selector)
 
 end NioIoDriver
 
-/** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
 private[kyo] object NioIoDriver:
+
+    /** Number of consecutive zero-key `select()` returns that trigger a selector rebuild. */
+    private[net] val SelectorRebuildThreshold: Int = 512
+
+    /** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
     def init()(using AllowUnsafe): NioIoDriver =
         new NioIoDriver(Selector.open())
 end NioIoDriver
