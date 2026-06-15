@@ -8,7 +8,7 @@ import java.lang.foreign.SymbolLookup
 import java.lang.foreign.ValueLayout.*
 import java.lang.invoke.MethodHandle
 import kyo.ffi.Buffer
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 
 /** Runtime support for variadic FFI downcalls on JVM.
   *
@@ -23,7 +23,7 @@ import kyo.ffi.FfiUnsupported
   *   - `String` → UTF-8 [[MemorySegment]] allocated in the supplied scratch
   *   - `Buffer[A]` → the buffer's backing `MemorySegment` (zero-copy borrow)
   *
-  * Any other runtime type raises [[FfiUnsupported]] naming the binding + method + runtime class; the user either casts to a supported boxed
+  * Any other runtime type raises [[FfiLoadError.Unsupported]] naming the binding + method + runtime class; the user either casts to a supported boxed
   * type or wraps the value in a `Buffer[A]`.
   *
   * Fidelity rationale: C's default-argument-promotion rules promote `float` to `double`, `short`/`char` to `int`, and `Boolean` is not a
@@ -114,7 +114,7 @@ object VariadicMarshaller:
         methodName: String
     ): (MemoryLayout, Any) =
         if v.asInstanceOf[AnyRef] eq null then
-            throw new FfiUnsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, "null"))
+            throw new FfiLoadError.Unsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, "null"))
         else
             v match
                 case i: java.lang.Integer => (JAVA_INT, i)
@@ -134,7 +134,7 @@ object VariadicMarshaller:
                     )
                     (ADDRESS, seg)
                 case other =>
-                    throw new FfiUnsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, other.getClass.getName))
+                    throw new FfiLoadError.Unsupported(FfiGenErrors.unsupportedVararg(bindingFqn, methodName, other.getClass.getName))
             end match
         end if
     end classify

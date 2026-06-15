@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 import scala.scalajs.js
 import scala.util.Try
 
@@ -10,7 +10,7 @@ object NativeLoader:
 
     def load(libraryId: String): String =
         if detectBrowser() then
-            throw new FfiUnsupported(FfiPlatformErrors.BrowserUnsupportedLoader)
+            throw new FfiLoadError.Unsupported(FfiPlatformErrors.BrowserUnsupportedLoader)
         end if
         jsResolve(libraryId)
     end load
@@ -148,14 +148,14 @@ object NativeLoader:
         if js.isUndefined(a) || a == null then "" else a.asInstanceOf[String]
     end detectArchString
 
-    /** Throw [[kyo.ffi.FfiUnsupported]] if `arch` identifies a 32-bit Node target. Exposed for unit tests. */
+    /** Throw [[kyo.ffi.FfiLoadError.Unsupported]] if `arch` identifies a 32-bit Node target. Exposed for unit tests. */
     def checkPlatform(arch: String): Unit =
         val is32Bit = arch match
             case "ia32" | "x32" | "arm" | "mips" | "mipsel" | "ppc" | "s390" => true
             case _                                                           => false
         if is32Bit then
             val msg = FfiPlatformErrors.unsupported32BitHost(s"process.arch = $arch")
-            throw new FfiUnsupported(msg)
+            throw new FfiLoadError.Unsupported(msg)
         end if
     end checkPlatform
 end NativeLoader

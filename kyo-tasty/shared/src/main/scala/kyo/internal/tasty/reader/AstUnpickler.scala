@@ -527,9 +527,7 @@ object AstUnpickler:
                         ownerBySymbol(symbol.id.toLong) = owner
                         addrMap(nodeAddr) = symbol
                         allSymbols += symbol
-                        typeLevelTpe match
-                            case Present(t) => typeBySymbol(symbol.id.toLong) = t
-                            case Absent     => ()
+                        typeLevelTpe.foreach(t => typeBySymbol(symbol.id.toLong) = t)
                         if typeAnns.nonEmpty then
                             val typeAnnBuf =
                                 annotationsBySymbol.getOrElseUpdate(symbol.id.toLong, new mutable.ArrayBuffer[Tasty.Annotation]())

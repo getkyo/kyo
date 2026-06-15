@@ -171,7 +171,6 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
                 end _visit
                 b match
                     case cl: Tasty.Symbol.ClassLike => _visit(cl)
-                    case _                          => ()
                 _out.result()
             }.map(_.simpleName).toIndexedSeq.toSet
             assert(names == Set("bar", "foo"), s"Unexpected names: $names")
@@ -232,7 +231,6 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
                 end _visitAny
                 b match
                     case cl: Tasty.Symbol.ClassLike => _visitAny(cl)
-                    case _                          => ()
                 Maybe.fromOption(_all2.result().find(_.simpleName == "foo"))
             end result
             assert(result.isDefined, s"Expected Present but got $result")

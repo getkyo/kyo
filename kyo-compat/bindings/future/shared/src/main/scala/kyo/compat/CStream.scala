@@ -32,7 +32,7 @@ object CStream:
 
     /** Stream emitting the elements produced by the effectful sequence. */
     inline def init[A](inline c: CIO[Seq[A]]): CStream[A] =
-        ctx => c.lower(using ctx).map(seq => seqToRepr(seq.iterator))(parasiticEc)
+        ctx => c.lower(using ctx).map(seq => seqToRepr(seq.iterator))(using parasiticEc)
 
     /** Stream emitting the elements of the given sequence. */
     inline def init[A](inline seq: Seq[A]): CStream[A] =
@@ -48,7 +48,7 @@ object CStream:
             f(acc).lower(using ctx).map {
                 case Some((a, s)) => Cons(a, unfold(s)(f))
                 case None         => Empty
-            }(parasiticEc)
+            }(using parasiticEc)
 
     /** Wraps a native stream as a `CStream`. Identity — the binding's native stream type is the carrier itself. */
     inline def lift[A](inline native: CStream[A]): CStream[A] = native
@@ -64,7 +64,7 @@ object CStream:
                 self(ctx).flatMap {
                     case _: Empty.type => other(ctx)
                     case Cons(h, t)    => Future.successful(Cons(h, t.concat(other)))
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Maps each element with a pure function. */
         def mapPure[B](f: A => B): CStream[B] =
@@ -72,15 +72,15 @@ object CStream:
                 self(ctx).map {
                     case _: Empty.type => Empty
                     case Cons(h, t)    => Cons(f(h), t.mapPure(f))
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Maps each element with an effectful function. */
         def map[B](f: A => CIO[B]): CStream[B] =
             ctx =>
                 self(ctx).flatMap {
                     case _: Empty.type => emptyFuture
-                    case Cons(h, t)    => f(h).lower(using ctx).map(b => Cons(b, t.map(f)))(parasiticEc)
-                }(parasiticEc)
+                    case Cons(h, t)    => f(h).lower(using ctx).map(b => Cons(b, t.map(f)))(using parasiticEc)
+                }(using parasiticEc)
 
         /** Flat-maps each element to another stream and concatenates the results. */
         def flatMap[B](f: A => CStream[B]): CStream[B] =
@@ -88,15 +88,15 @@ object CStream:
                 self(ctx).flatMap {
                     case _: Empty.type => emptyFuture
                     case Cons(h, t)    => f(h).concat(t.flatMap(f))(ctx)
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Runs `f` for its effect on each element, passing the element through unchanged. */
         def tap(f: A => CIO[Any]): CStream[A] =
             ctx =>
                 self(ctx).flatMap {
                     case _: Empty.type => emptyFuture
-                    case Cons(h, t)    => f(h).lower(using ctx).map(_ => Cons(h, t.tap(f)))(parasiticEc)
-                }(parasiticEc)
+                    case Cons(h, t)    => f(h).lower(using ctx).map(_ => Cons(h, t.tap(f)))(using parasiticEc)
+                }(using parasiticEc)
 
         /** Takes the first `n` elements. */
         def take(n: Int): CStream[A] =
@@ -106,7 +106,7 @@ object CStream:
                     self(ctx).map {
                         case _: Empty.type => Empty
                         case Cons(h, t)    => Cons(h, t.take(n - 1))
-                    }(parasiticEc)
+                    }(using parasiticEc)
 
         /** Drops the first `n` elements. */
         def drop(n: Int): CStream[A] =
@@ -116,7 +116,7 @@ object CStream:
                     self(ctx).flatMap {
                         case _: Empty.type => emptyFuture
                         case Cons(_, t)    => t.drop(n - 1)(ctx)
-                    }(parasiticEc)
+                    }(using parasiticEc)
 
         /** Takes elements while `p` holds. */
         def takeWhilePure(p: A => Boolean): CStream[A] =
@@ -125,7 +125,7 @@ object CStream:
                     case _: Empty.type      => Empty
                     case Cons(h, t) if p(h) => Cons(h, t.takeWhilePure(p))
                     case _                  => Empty
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Keeps elements matching the pure predicate. */
         def filterPure(p: A => Boolean): CStream[A] =
@@ -134,7 +134,7 @@ object CStream:
                     case _: Empty.type      => emptyFuture
                     case Cons(h, t) if p(h) => Future.successful(Cons(h, t.filterPure(p)))
                     case Cons(_, t)         => t.filterPure(p)(ctx)
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Keeps elements matching the effectful predicate. */
         def filter(p: A => CIO[Boolean]): CStream[A] =
@@ -145,8 +145,8 @@ object CStream:
                         p(h).lower(using ctx).flatMap { keep =>
                             if keep then Future.successful(Cons(h, t.filter(p)))
                             else t.filter(p)(ctx)
-                        }(parasiticEc)
-                }(parasiticEc)
+                        }(using parasiticEc)
+                }(using parasiticEc)
 
         /** Maps and filters in one pass via a pure partial mapping. */
         def collectPure[B](f: A => Option[B]): CStream[B] =
@@ -157,7 +157,7 @@ object CStream:
                         f(h) match
                             case Some(b) => Future.successful(Cons(b, t.collectPure(f)))
                             case None    => t.collectPure(f)(ctx)
-                }(parasiticEc)
+                }(using parasiticEc)
 
         /** Runs the stream and collects all emitted elements into a `CChunk`. */
         def run: CIO[CChunk[A]] = CIO.deferLift {
@@ -171,10 +171,10 @@ object CStream:
                         next.value match
                             case Some(Success(r)) => loop(r, newAcc)
                             case Some(Failure(e)) => Future.failed(e)
-                            case None             => next.flatMap(drive(_, newAcc))(parasiticEc)
+                            case None             => next.flatMap(drive(_, newAcc))(using parasiticEc)
                         end match
             def drive(repr: Repr[A], acc: List[A]): Future[CChunk[A]] = loop(repr, acc)
-            self(ctx).flatMap(drive(_, Nil))(parasiticEc)
+            self(ctx).flatMap(drive(_, Nil))(using parasiticEc)
         }
 
         /** Folds the stream with a pure accumulator. */
@@ -189,10 +189,10 @@ object CStream:
                         next.value match
                             case Some(Success(r)) => loop(r, newSt)
                             case Some(Failure(e)) => Future.failed(e)
-                            case None             => next.flatMap(drive(_, newSt))(parasiticEc)
+                            case None             => next.flatMap(drive(_, newSt))(using parasiticEc)
                         end match
             def drive(repr: Repr[A], st: B): Future[B] = loop(repr, st)
-            self(ctx).flatMap(drive(_, acc))(parasiticEc)
+            self(ctx).flatMap(drive(_, acc))(using parasiticEc)
         }
 
         /** Runs `f` for its effect on each element, discarding results. */
@@ -209,13 +209,13 @@ object CStream:
                                 next.value match
                                     case Some(Success(r)) => loop(r)
                                     case Some(Failure(e)) => Future.failed(e)
-                                    case None             => next.flatMap(drive)(parasiticEc)
+                                    case None             => next.flatMap(drive)(using parasiticEc)
                                 end match
                             case Some(Failure(e)) => Future.failed(e)
-                            case None             => effFut.flatMap(_ => t(ctx).flatMap(drive)(parasiticEc))(parasiticEc)
+                            case None             => effFut.flatMap(_ => t(ctx).flatMap(drive)(using parasiticEc))(using parasiticEc)
                         end match
             def drive(repr: Repr[A]): Future[Unit] = loop(repr)
-            self(ctx).flatMap(drive)(parasiticEc)
+            self(ctx).flatMap(drive)(using parasiticEc)
         }
 
         /** Runs the stream and discards all emitted elements. */
@@ -229,10 +229,10 @@ object CStream:
                         next.value match
                             case Some(Success(r)) => loop(r)
                             case Some(Failure(e)) => Future.failed(e)
-                            case None             => next.flatMap(drive)(parasiticEc)
+                            case None             => next.flatMap(drive)(using parasiticEc)
                         end match
             def drive(repr: Repr[A]): Future[Unit] = loop(repr)
-            self(ctx).flatMap(drive)(parasiticEc)
+            self(ctx).flatMap(drive)(using parasiticEc)
         }
 
     end extension

@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 import scala.scalajs.reflect.Reflect
 
 /** Scala.js implementation of the cross-platform reflective instantiation hook used by `Ffi.load[T]`.
@@ -10,7 +10,7 @@ import scala.scalajs.reflect.Reflect
   * `@scala.scalajs.reflect.annotation.EnableReflectiveInstantiation` (the codegen's JsEmitter applies this to every generated `{T}Impl`) so
   * the linker retains the class's nullary constructor.
   *
-  * Before any reflective lookup, this implementation consults [[NativeLoader.detectBrowser]] and throws [[FfiUnsupported]] if the current
+  * Before any reflective lookup, this implementation consults [[NativeLoader.detectBrowser]] and throws [[FfiLoadError.Unsupported]] if the current
   * runtime is a browser, the generated impl would immediately fail at static-init time trying to load koffi, but throwing here yields a
   * more informative error from the `Ffi.load` call site.
   *
@@ -20,7 +20,7 @@ object FfiReflect:
 
     /** Load class `implName` and invoke its nullary constructor.
       *
-      * @throws FfiUnsupported
+      * @throws FfiLoadError.Unsupported
       *   if the current runtime is a browser (neither `process` nor `require` is defined).
       * @throws IllegalStateException
       *   if the class is not found or lacks `@EnableReflectiveInstantiation`, the typical cause is that the kyo-ffi code generator did not
@@ -28,7 +28,7 @@ object FfiReflect:
       */
     def instantiate(implName: String, traitFqn: String): AnyRef =
         if NativeLoader.detectBrowser() then
-            throw new FfiUnsupported(FfiPlatformErrors.BrowserUnsupportedReflect)
+            throw new FfiLoadError.Unsupported(FfiPlatformErrors.BrowserUnsupportedReflect)
         end if
         FfiReflectCore.instantiate(
             implName,

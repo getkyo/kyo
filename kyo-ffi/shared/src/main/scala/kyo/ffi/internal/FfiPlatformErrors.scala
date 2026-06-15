@@ -8,7 +8,7 @@ private[ffi] object FfiPlatformErrors:
 
     // --- 32-bit host rejection ---
 
-    /** Message for [[kyo.ffi.FfiUnsupported]] when a 32-bit host is detected (kyo-ffi requires 64-bit). */
+    /** Message for [[kyo.ffi.FfiLoadError.Unsupported]] when a 32-bit host is detected (kyo-ffi requires 64-bit). */
     def unsupported32BitHost(detail: String): String =
         s"[kyo-ffi] kyo-ffi requires a 64-bit host; detected 32-bit ($detail). " +
             "32-bit support is not implemented."
@@ -30,13 +30,13 @@ private[ffi] object FfiPlatformErrors:
     /** Supported koffi npm-package version range. */
     val KoffiSupportedRange: String = "^2.7"
 
-    /** Message for [[kyo.ffi.FfiKoffiVersionMismatch]] when the installed koffi version is outside [[KoffiSupportedRange]]. */
+    /** Message for [[kyo.ffi.FfiLoadError.Unsupported]] when the installed koffi version is outside [[KoffiSupportedRange]]. */
     def koffiVersionMismatch(detected: String): String =
         s"kyo-ffi requires koffi $KoffiSupportedRange (2.7.x ≤ v < 3.0.0); detected $detected. " +
             "Pin the supported range in your package.json (`\"koffi\": \"^2.7\"`) and reinstall. " +
             "See kyo-ffi/README.md §JS runtime requirements."
 
-    /** Message for [[kyo.ffi.FfiKoffiVersionMismatch]] when a required koffi method is absent. */
+    /** Message for [[kyo.ffi.FfiLoadError.Unsupported]] when a required koffi method is absent. */
     def koffiMissingMethod(method: String, detected: String): String =
         s"kyo-ffi requires koffi $KoffiSupportedRange; the installed koffi (version $detected) is missing method `$method`. " +
             "Reinstall koffi with `npm install koffi@^2.7` and retry. See kyo-ffi/README.md §JS runtime requirements."

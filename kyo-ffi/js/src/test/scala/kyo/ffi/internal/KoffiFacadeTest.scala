@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiKoffiVersionMismatch
+import kyo.ffi.FfiLoadError
 import kyo.ffi.Test
 import scala.scalajs.js as sjs
 
@@ -94,7 +94,7 @@ class KoffiFacadeTest extends Test:
         end koffiLike
 
         "accepts koffi 2.7.0 with every required method present" in {
-            // `probe` returns Unit and throws FfiKoffiVersionMismatch on reject; returning normally is the accept signal.
+            // `probe` returns Unit and throws FfiLoadError.Unsupported on reject; returning normally is the accept signal.
             KoffiAbiProbe.probe(koffiLike("2.7.0"))
             succeed
         }
@@ -120,7 +120,7 @@ class KoffiFacadeTest extends Test:
         }
 
         "rejects koffi 2.6.x (too old, below ^2.7 floor)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("2.6.5"))
             }
             assert(ex.getMessage.contains("2.6.5"))
@@ -128,7 +128,7 @@ class KoffiFacadeTest extends Test:
         }
 
         "rejects koffi 3.0.0 (major above range)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("3.0.0"))
             }
             assert(ex.getMessage.contains("3.0.0"))
@@ -136,7 +136,7 @@ class KoffiFacadeTest extends Test:
         }
 
         "rejects koffi 1.x (major below range)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("1.99.0"))
             }
             assert(ex.getMessage.contains("1.99.0"))
@@ -149,7 +149,7 @@ class KoffiFacadeTest extends Test:
                 val fn: sjs.Function0[Unit] = () => ()
                 lit.updateDynamic(m)(fn.asInstanceOf[sjs.Any])
             }
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(lit)
             }
             assert(ex.getMessage.contains("unknown"))
@@ -157,21 +157,21 @@ class KoffiFacadeTest extends Test:
         }
 
         "rejects koffi where .version is not a string (koffi shape drift)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike(42))
             }
             assert(ex.getMessage.contains("unknown"))
         }
 
         "rejects koffi where .version is a garbled string" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("not.a.version"))
             }
             assert(ex.getMessage.contains("not.a.version"))
         }
 
         "rejects koffi missing `register` (callback API drift)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("2.7.9", drop = Set("register")))
             }
             assert(ex.getMessage.contains("register"))
@@ -179,14 +179,14 @@ class KoffiFacadeTest extends Test:
         }
 
         "rejects koffi missing `struct` (struct API drift)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("2.7.9", drop = Set("struct")))
             }
             assert(ex.getMessage.contains("struct"))
         }
 
         "rejects koffi missing `as` (F8b variadic pin helper)" in {
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(koffiLike("2.7.9", drop = Set("as")))
             }
             assert(ex.getMessage.contains("as"))
@@ -196,7 +196,7 @@ class KoffiFacadeTest extends Test:
             // Covers load, errno, proto, pointer, unregister, pack, union, the remainder not called out above.
             val targeted = Seq("load", "errno", "proto", "pointer", "unregister", "pack", "union")
             targeted.foreach { m =>
-                val ex = intercept[FfiKoffiVersionMismatch] {
+                val ex = intercept[FfiLoadError.Unsupported] {
                     KoffiAbiProbe.probe(koffiLike("2.7.9", drop = Set(m)))
                 }
                 assert(ex.getMessage.contains(m))
@@ -212,7 +212,7 @@ class KoffiFacadeTest extends Test:
                     val fn: sjs.Function0[Unit] = () => ()
                     lit.updateDynamic(m)(fn.asInstanceOf[sjs.Any])
             }
-            val ex = intercept[FfiKoffiVersionMismatch] {
+            val ex = intercept[FfiLoadError.Unsupported] {
                 KoffiAbiProbe.probe(lit)
             }
             assert(ex.getMessage.contains("register"))
@@ -234,11 +234,6 @@ class KoffiFacadeTest extends Test:
                 "as"
             )
             assert(KoffiAbiProbe.RequiredMethods.toSet == expected.toSet)
-        }
-
-        "FfiKoffiVersionMismatch is a subclass of FfiUnsupported (shared catch surface)" in {
-            val ex: kyo.ffi.FfiUnsupported = new FfiKoffiVersionMismatch("msg")
-            assert(ex.getMessage == "msg")
         }
     }
 end KoffiFacadeTest

@@ -44,7 +44,7 @@ private[ffi] object FfiGenErrors:
 
     // --- Unsupported variadic argument ---
 
-    /** Message for [[kyo.ffi.FfiUnsupported]] when a variadic argument has an unsupported runtime type. */
+    /** Message for [[kyo.ffi.FfiLoadError.Unsupported]] when a variadic argument has an unsupported runtime type. */
     def unsupportedVararg(
         bindingFqn: String,
         methodName: String,

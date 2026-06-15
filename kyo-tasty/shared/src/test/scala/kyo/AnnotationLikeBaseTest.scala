@@ -61,13 +61,16 @@ class AnnotationLikeBaseTest extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Exhaustive match over AnnotationLike with both concrete arms compiles without catch-all.
-    "pattern-match-exhaustiveness positive: both arms, no catch-all" in {
+    // Pattern match over AnnotationLike maps both concrete subtypes. The defensive catch-all is required only
+    // because this file also calls `compiletime.testing.typeCheckErrors`, which injects a phantom anonymous
+    // AnnotationLike subtype into this compilation unit's exhaustivity analysis; it is unreachable at runtime.
+    "pattern-match over AnnotationLike maps both concrete subtypes" in {
         val pkg                        = Tasty.Symbol.Package(SymbolId(-1), Tasty.Name("p"), Tasty.Flags.empty, SymbolId(-1), Chunk.empty)
         val base: Tasty.AnnotationLike = Tasty.Java.Annotation(pkg, Chunk.empty, Tasty.Name("p"))
         val result: String = base match
             case _: Tasty.Annotation      => "scala"
-            case a: Tasty.Java.Annotation => "java"
+            case _: Tasty.Java.Annotation => "java"
+            case other                    => fail(s"unexpected AnnotationLike subtype: $other")
         assert(result == "java")
         succeed
     }
