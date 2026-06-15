@@ -38,7 +38,7 @@ class PollerIoDriverTest extends Test:
       * fill the kernel buffer.
       */
     private def loopbackPair()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -53,7 +53,7 @@ class PollerIoDriverTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -62,7 +62,7 @@ class PollerIoDriverTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
                 }.map { accepted =>
                     // The connection is established; switch both ends non-blocking for the driver phase. Done after connect/accept because a
                     // non-blocking connect would return EINPROGRESS rather than the 0 asserted above. This honors the driver's non-blocking

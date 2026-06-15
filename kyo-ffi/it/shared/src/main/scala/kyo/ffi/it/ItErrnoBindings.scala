@@ -5,8 +5,9 @@ import kyo.ffi.Ffi
 
 /** Errno-capture exercise.
   *
-  * `kyoItAlwaysFail` unconditionally sets `errno = EINVAL (22)` and returns `-1`. Declared as `WithError[Int]` so the caller can inspect
-  * both the return value and the captured error code.
+  * `kyoItAlwaysFail` unconditionally sets `errno = EINVAL (22)` and returns `-1`. Declared as `Ffi.Outcome[Int]` so the caller can inspect
+  * both the return value and the captured error code; the `Int` width makes the C `int` return read at `JAVA_INT`, so a negative `-1`
+  * sign-extends into the packed `Long` rather than zero-extending to `4294967295`.
   *
   * `kyoItClearErrno` sets `errno = 0` and returns `1`. Declared as a plain `Int` return, since errno = 0, the auto-throw contract is
   * satisfied (no throw).
@@ -15,8 +16,8 @@ import kyo.ffi.Ffi
   * `errno.errno` read, and JsEmitter's koffi `errno` wrapper). No annotation is required on the binding method.
   */
 trait ItErrnoBindings extends Ffi:
-    /** C-side `errno = EINVAL; return -1;`. WithError return: user inspects `.errorCode` and `.value`. */
-    def kyoItAlwaysFail()(using AllowUnsafe): Ffi.WithError[Int]
+    /** C-side `errno = EINVAL; return -1;`. Outcome return: user inspects `.errorCode` and `.value`. */
+    def kyoItAlwaysFail()(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** C-side `errno = 0; return 1;`. Plain return: errno = 0 means no throw. */
     def kyoItClearErrno()(using AllowUnsafe): Int

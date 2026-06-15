@@ -33,7 +33,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
 
     private def kq(using AllowUnsafe): KqueueBindings = Ffi.load[KqueueBindings]
 
-    def create()(using AllowUnsafe): Int = kq.kqueue().value
+    def create()(using AllowUnsafe): Int = kq.kqueue().value.toInt
 
     def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         // EV_CLEAR: edge-triggered (auto-reset after delivery, filter stays armed). EV_ADD registers or re-enables if previously deleted.
@@ -78,7 +78,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         scratch.wakeArmBuf = Buffer.alloc[Byte](KEvent.size)
         val emptyEvents = Buffer.alloc[Byte](0)
         KEvent.encodeUser(scratch.wakeArmBuf, scratch.wakeUserIdent, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, 0)
-        val rc = kq.keventNow(pollerFd, scratch.wakeArmBuf, 1, emptyEvents, 0, ZeroTimeout).value
+        val rc = kq.keventNow(pollerFd, scratch.wakeArmBuf, 1, emptyEvents, 0, ZeroTimeout).value.toInt
         emptyEvents.close()
         rc >= 0
     end registerWake
@@ -128,7 +128,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 val emptyEvents = Buffer.alloc[Byte](0)
                 try
                     KEvent.encodeChange(changelist, 0, fd, filter, flags)
-                    kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value
+                    kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value.toInt
                 finally
                     changelist.close()
                     emptyEvents.close()
@@ -144,7 +144,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
             case Present(data) =>
                 KEvent.encodeChange(data.armBuf, 0, fd, filter, flags)
                 val emptyEvents = Buffer.alloc[Byte](0)
-                val rc          = kq.keventNow(pollerFd, data.armBuf, 1, emptyEvents, 0, ZeroTimeout).value
+                val rc          = kq.keventNow(pollerFd, data.armBuf, 1, emptyEvents, 0, ZeroTimeout).value.toInt
                 emptyEvents.close()
                 rc
             case Absent =>
@@ -152,7 +152,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 val emptyEvents = Buffer.alloc[Byte](0)
                 try
                     KEvent.encodeChange(changelist, 0, fd, filter, flags)
-                    kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value
+                    kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value.toInt
                 finally
                     changelist.close()
                     emptyEvents.close()
@@ -195,7 +195,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         // Submit the changelist alongside the wait; interest changes and the blocking wait happen atomically in one kevent syscall.
         data.nChanges = 0 // reset BEFORE the kevent call so disableWrite calls during drainReady accumulate into slots 0+
         kq.kevent(pollerFd, changelist, nChanges, data.eventsBuffer, MaxEvents, timeout).map { ready =>
-            val n = ready.value
+            val n = ready.value.toInt
             if n <= 0 then 0
             else
                 var i = 0
@@ -233,7 +233,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         val timeout     = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
         kq.kevent(pollerFd, emptyChange, 0, events, MaxEvents, timeout).map { ready =>
             try
-                val n = ready.value
+                val n = ready.value.toInt
                 if n <= 0 then 0
                 else
                     var i = 0

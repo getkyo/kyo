@@ -13,13 +13,13 @@ import kyo.ffi.internal.{AbiCheck, JsRawSegment, KoffiFacade, KoffiFn, NativeLoa
 @EnableReflectiveInstantiation final class BlockingBindingsImpl extends BlockingBindings:
     import BlockingBindingsImpl.*
 
-    def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.WithError[Long], Any] =
+    def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         val bufU8 = kyo.ffi.internal.FfiUnsafe.expect[JsRawSegment](buf.raw.asInstanceOf[AnyRef], classOf[JsRawSegment], "JsRawSegment on JS", "kyo.example.BlockingBindings", "recv").u8a
         kyo.ffi.internal.BlockingBridge.runAsync(facade, "recv", js.Array[js.Any](fd, bufU8, len), (raw: js.Any) =>
             val retVal = raw.asInstanceOf[js.BigInt].toString.toLong
             val __errno = KoffiFacade.errno()
             val __kyoResult = retVal
-            new Ffi.WithError(__kyoResult, __errno)
+            Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)
         )
 end BlockingBindingsImpl
 

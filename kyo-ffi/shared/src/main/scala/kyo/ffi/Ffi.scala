@@ -19,7 +19,7 @@ import scala.concurrent.duration.FiniteDuration
   */
 trait Ffi
 
-/** Companion to [[Ffi]]. Contains FFI type wrappers ([[Handle]], [[Borrowed]], [[WithError]]), the `@Ffi.blocking` annotation, the optional
+/** Companion to [[Ffi]]. Contains FFI type wrappers ([[Handle]], [[Borrowed]], [[Outcome]]), the `@Ffi.blocking` annotation, the optional
   * per-trait [[Config]] base class, the callback [[Guard]], and the runtime entry points [[load]].
   */
 object Ffi:
@@ -113,30 +113,49 @@ object Ffi:
             def value: A = b
     end Borrowed
 
-    /** Return type wrapper for errno-aware C calls.
+    /** Zero-allocation POSIX value-or-error carrier for errno-aware C calls.
       *
-      * When a binding method declares its return type as `WithError[A]`, the generated code captures `errno` after the C call and packages
-      * both the return value and the error code into this wrapper. The caller inspects `.errorCode` to decide whether the call succeeded.
+      * Packs a syscall result and its errno into one `Long`: `o >= 0` carries the return value (an fd, a byte count, 0); `o < 0` carries
+      * `-errno`. POSIX returns are `Int` fds and result codes and `Long` byte counts, all of which fit a 64-bit word, so the opaque `Long`
+      * is lossless. An `Int`-valued consumer reads `.value.toInt`.
       *
-      * For methods that return a plain `A` (not wrapped in `WithError`), the generated code does NOT capture or check `errno`, the return
-      * value is passed through directly. Use `WithError[A]` for any C call where errno is meaningful.
+      * The phantom type parameter `A` records the C return width (`Int` or `Long`): the code generator reads it to pick the function
+      * descriptor's return layout, so an `Outcome[Int]` reads a C `int` at `JAVA_INT` (sign-extended into the packed `Long`) and an
+      * `Outcome[Long]` reads a C `long` at `JAVA_LONG`. `A` carries no runtime cost, `Outcome[A]` still erases to a bare `Long`.
+      *
+      * The failure model is the throwing one: this is a value representation, not a typed `Abort`. The caller inspects `.errorCode`
+      * (or the branch-free `.isError`); `.errorCode != 0` is the success test.
       *
       * {{{
-      * // Plain return: errno is not captured
-      * def fastOp(x: Int): Int
-      *
-      * // WithError return: user handles errno explicitly
-      * def riskyOp(x: Int): WithError[Int]
-      * val r = bindings.riskyOp(42)
+      * val r = bindings.riskyOp(42)        // returns Outcome[Int]
       * if r.errorCode != 0 then handleError(r.errorCode)
-      * else useValue(r.value)
+      * else useValue(r.value.toInt)        // .value is Long; an Int consumer reads .toInt
       * }}}
       */
-    final class WithError[A](val value: A, val errorCode: Int)
+    opaque type Outcome[A] = Long
 
-    object WithError:
-        private[kyo] def apply[A](value: A, errorCode: Int): WithError[A] = new WithError(value, errorCode)
-    end WithError
+    object Outcome:
+        /** Smart constructor the codegen emits to wrap an already-packed Long. Companion-private,
+          * mirroring `Handle.wrap` / `Borrowed.wrap`.
+          */
+        private[kyo] inline def wrap[A](packed: Long): Outcome[A] = packed
+
+        /** The packing constructor: returns `value` when `errno == 0` or `value >= 0`, else `-errno`. The single place the POSIX packing
+          * convention is defined; codegen calls it after the C call.
+          */
+        private[kyo] inline def fromValueErrno[A](value: Long, errno: Int): Outcome[A] =
+            if errno == 0 || value >= 0L then value else -errno.toLong
+        extension [A](o: Outcome[A])
+            /** The syscall return value when `o >= 0`; `-1` when `o` packs an error (matching the POSIX `-1`-on-error convention). */
+            def value: Long = if o >= 0L then o else -1L
+
+            /** 0 when `value >= 0` (success); the positive errno (`= -o`) when `o < 0`. The `errorCode != 0` success test. */
+            def errorCode: Int = if o < 0L then (-o).toInt else 0
+
+            /** Total, branch-free error predicate (`o < 0L`); the canonical check `errorCode != 0` stays valid. */
+            def isError: Boolean = o < 0L
+        end extension
+    end Outcome
 
     /** Optional customization for an `Ffi` binding trait's companion. All parameters are compile-time constants read by the generator via
       * TASTy, supply concrete literals only.

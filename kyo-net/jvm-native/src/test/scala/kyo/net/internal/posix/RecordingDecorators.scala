@@ -56,7 +56,7 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // null means no hook set; CAS to null before firing so it fires exactly once.
     @volatile var onSend: () => Unit = null
 
-    // Authorized one-shot errno injection: when set to true, the next recvNow returns a synthesized (-1, EINTR) WithError ONCE
+    // Authorized one-shot errno injection: when set to true, the next recvNow returns a synthesized (-1, EINTR) Outcome ONCE
     // instead of delegating, then clears itself so every later recvNow delegates to the real syscall. A real mid-syscall signal
     // delivery (EINTR before any data is transferred) is not deterministically injectable from Scala, so this seam stands in for it:
     // the driver must retry the interrupted recv and recover the connection rather than failing it Closed. CAS to false on first use
@@ -70,44 +70,44 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
     // the driver must retry the send (POSIX send(2)); the retried sendNow writes the bytes for real. CAS to false on first use.
     val injectSendEintrOnce: AtomicBoolean = new AtomicBoolean(false)
 
-    def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+    def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.socket(domain, `type`, protocol)
 
-    def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+    def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.bind(fd, addr, addrlen)
 
-    def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+    def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.listen(fd, backlog)
 
-    def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+    def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
         real.setsockopt(fd, level, optname, optval, optlen)
 
-    def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+    def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
         real.getsockopt(fd, level, optname, optval, optlen)
 
-    def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+    def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
         real.getsockname(fd, addr, addrlen)
 
-    def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int] =
+    def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int] =
         real.fstat(fd, buf)
 
     def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int =
         real.shutdown(fd, how)
 
-    def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+    def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
         real.connect(fd, addr, addrlen)
 
-    def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+    def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
         real.accept(fd, addr, addrlen)
 
-    def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+    def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         real.recv(fd, buf, len, flags)
 
-    def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+    def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         sendBufs.add(buf)
         // One-shot EINTR injection (JVM/Native flush path uses sockets.send): return (-1, EINTR) once, no bytes sent, without delegating.
         if injectSendEintrOnce.compareAndSet(true, false) then
-            Fiber.Unsafe.fromResult(Result.succeed(new Ffi.WithError(-1L, PosixConstants.EINTR)))
+            Fiber.Unsafe.fromResult(Result.succeed(Ffi.Outcome.fromValueErrno(-1L, PosixConstants.EINTR)))
         else
             // Fire the onSend hook before delegating so it fires while beginWrite is held on JVM/Native (where PollerIoDriver uses
             // sockets.send for the flush path, not sendNow). This mirrors the HookSockets.send -> onSend() ordering.
@@ -121,13 +121,13 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         end if
     end send
 
-    def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+    def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
         sendNowBufs.add(buf)
         // Position 0 and len at call time; the actual buffer position is always 0 here because we pass sliced spans.
         sendNowRegions.add((0, len))
         // One-shot EINTR injection (JS flush path and JS writeRaw use sendNow): return (-1, EINTR) once, no bytes sent, without delegating.
         if injectSendEintrOnce.compareAndSet(true, false) then
-            new Ffi.WithError(-1L, PosixConstants.EINTR)
+            Ffi.Outcome.fromValueErrno(-1L, PosixConstants.EINTR)
         else
             // Fire hook before delegating so the hook fires while beginWrite is still held (the flush-race ordering requirement).
             val hook = onSend
@@ -140,12 +140,12 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         end if
     end sendNow
 
-    def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+    def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
         recvNowBufs.add(buf)
         // One-shot EINTR injection: return (-1, EINTR) once without delegating, so the real socket still holds the unread data; the
         // driver must retry the interrupted recv and the retried call (delegating below) then delivers the data for real.
         if injectRecvEintrOnce.compareAndSet(true, false) then
-            return new Ffi.WithError(-1L, PosixConstants.EINTR)
+            return Ffi.Outcome.fromValueErrno(-1L, PosixConstants.EINTR)
         val r        = real.recvNow(fd, buf, len, flags)
         val isEagain = r.value < 0 && (r.errorCode == PosixConstants.EAGAIN || r.errorCode == PosixConstants.EWOULDBLOCK)
         if isEagain then
@@ -159,10 +159,10 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
         r
     end recvNow
 
-    def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+    def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
         real.acceptNow(fd, addr, addrlen)
 
-    def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+    def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         real.read(fd, buf, count)
 
     def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =

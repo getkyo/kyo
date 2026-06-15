@@ -1555,10 +1555,10 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
-    // Section: WithError[A] errno capture
+    // Section: Outcome errno capture
     // -------------------------------------------------------------------------
 
-    "WithError[Int] return emits errnoSeg capture and Ffi.WithError wrapping" in {
+    "Outcome from Int return emits errnoSeg capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyOp",
             "risky_op",
@@ -1570,11 +1570,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src  = JvmEmitter.emit(spec)
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Long] return emits errnoSeg capture and Ffi.WithError wrapping" in {
+    "Outcome from Long return emits errnoSeg capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyLong",
             "risky_long",
@@ -1586,11 +1586,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src  = JvmEmitter.emit(spec)
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Long]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Double] return emits errnoSeg capture and Ffi.WithError wrapping" in {
+    "Outcome from Double return emits errnoSeg capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyDouble",
             "risky_double",
@@ -1602,11 +1602,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src  = JvmEmitter.emit(spec)
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Double]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Boolean] return emits errnoSeg capture and Ffi.WithError wrapping" in {
+    "Outcome from Boolean return emits errnoSeg capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyBool",
             "risky_bool",
@@ -1618,11 +1618,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src  = JvmEmitter.emit(spec)
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Boolean]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Unit] (void return) emits errnoSeg capture and Ffi.WithError wrapping" in {
+    "Outcome from void return emits errnoSeg capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyVoid",
             "risky_void",
@@ -1634,11 +1634,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src  = JvmEmitter.emit(spec)
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Unit]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError on @Ffi.blocking method emits errnoSeg capture" in {
+    "Outcome on @Ffi.blocking method emits errnoSeg capture" in {
         val m = mkMethod(
             "blockingRisky",
             "blocking_risky",
@@ -1651,10 +1651,10 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         val src  = JvmEmitter.emit(spec)
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
     }
 
-    "plain Int return does NOT emit WithError or __errno" in {
+    "plain Int return does NOT emit Outcome or __errno" in {
         val m = mkMethod(
             "safeOp",
             "safe_op",
@@ -1663,12 +1663,12 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainTest", "plain_test", List(m))
         val src  = JvmEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
     }
 
-    "plain void return does NOT emit WithError or __errno" in {
+    "plain void return does NOT emit Outcome or __errno" in {
         val m = mkMethod(
             "safeVoid",
             "safe_void",
@@ -1677,12 +1677,12 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainVoidTest", "plain_void_test", List(m))
         val src  = JvmEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
     }
 
-    "plain Handle return does NOT emit WithError or __errno" in {
+    "plain Handle return does NOT emit Outcome or __errno" in {
         val m = mkMethod(
             "getHandle",
             "get_handle",
@@ -1691,12 +1691,12 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainHandleTest", "plain_handle_test", List(m))
         val src  = JvmEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
     }
 
-    "trait with both WithError and plain methods emits errno only for WithError method" in {
+    "trait with both Outcome and plain methods emits errno only for Outcome method" in {
         val riskyM = mkMethod(
             "riskyOp",
             "risky_op",
@@ -1712,15 +1712,15 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("MixedErrnoTest", "mixed_errno_test", List(riskyM, safeM))
         val src  = JvmEmitter.emit(spec)
-        // The WithError method should have the wrapping.
-        assert(src.contains("Ffi.WithError[Int]"))
-        // Verify the safeOp method signature does not have WithError in its return type.
+        // The errno-capturing method renders the Outcome return type.
+        assert(src.contains(": Ffi.Outcome[Int] ="))
+        // Verify the safeOp method signature has the plain Int return type, not Outcome.
         val safeDefLine = src.linesIterator.find(_.contains("def safeOp")).getOrElse(fail("safeOp def not found"))
-        assert(!safeDefLine.contains("WithError"))
+        assert(!safeDefLine.contains("Outcome"))
         assert(safeDefLine.contains(": Int ="))
     }
 
-    "WithError with Handle return emits errno capture and Handle wrapping" in {
+    "Outcome with Handle return emits errno capture and Handle wrapping" in {
         val m = mkMethod(
             "riskyHandle",
             "risky_handle",
@@ -1730,13 +1730,13 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("HandleErrnoTest", "handle_errno_test", List(m))
         val src  = JvmEmitter.emit(spec)
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
         assert(src.contains("Ffi.Handle.wrap"))
     }
 
-    "WithError with BorrowedString return emits errno capture and Borrowed wrapping" in {
+    "Outcome with BorrowedString return emits errno capture and Borrowed wrapping" in {
         val m = mkMethod(
             "riskyBorrowed",
             "risky_borrowed",
@@ -1746,13 +1746,13 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("BorrowedErrnoTest", "borrowed_errno_test", List(m))
         val src  = JvmEmitter.emit(spec)
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
         assert(src.contains("errnoSeg"))
         assert(src.contains("__errno"))
         assert(src.contains("Ffi.Borrowed.wrap"))
     }
 
-    "trait with Handle and WithError on different methods emits errno only for WithError method" in {
+    "trait with Handle and Outcome on different methods emits errno only for Outcome method" in {
         val handleM = mkMethod(
             "getHandle",
             "get_handle",
@@ -1768,11 +1768,11 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("HandleMixedTest", "handle_mixed_test", List(handleM, riskyM))
         val src  = JvmEmitter.emit(spec)
-        // The riskyOp method should have WithError wrapping.
-        assert(src.contains("Ffi.WithError[Int]"))
-        // The getHandle method should NOT have WithError in its return type.
+        // The riskyOp method renders the Outcome return type.
+        assert(src.contains(": Ffi.Outcome[Int] ="))
+        // The getHandle method should NOT have Outcome in its return type.
         val handleDefLine = src.linesIterator.find(_.contains("def getHandle")).getOrElse(fail("getHandle def not found"))
-        assert(!handleDefLine.contains("WithError"))
+        assert(!handleDefLine.contains("Outcome"))
     }
 
 end JvmEmitterTest

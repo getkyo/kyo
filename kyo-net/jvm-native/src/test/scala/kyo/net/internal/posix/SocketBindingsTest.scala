@@ -40,7 +40,7 @@ class SocketBindingsTest extends Test:
     private def newSocket()(using kyo.test.AssertScope, Frame): Int =
         val r = b.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0)
         assert(r.value >= 0, s"socket failed fd=${r.value} errno=${r.errorCode}")
-        r.value
+        r.value.toInt
     end newSocket
 
     /** Bind to 127.0.0.1:0, listen, and resolve the ephemeral port via getsockname. Returns (serverFd, port). Every call here is non-blocking,
@@ -96,7 +96,7 @@ class SocketBindingsTest extends Test:
         Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
             b.accept(serverFd, noAddr, noLen).safe.get.map { r =>
                 assert(r.value >= 0, s"accept failed fd=${r.value} errno=${r.errorCode}")
-                r.value
+                r.value.toInt
             }
         }
     end acceptOne

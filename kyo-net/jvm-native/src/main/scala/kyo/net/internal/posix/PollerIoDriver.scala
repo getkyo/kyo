@@ -453,7 +453,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 i += 1
             end while
             // EINTR is retried in place by sendBlockingWithRetry (bounded), so a signal mid-send does not surface as Error (POSIX send(2)).
-            val result: Maybe[Ffi.WithError[Long]] = sendBlockingWithRetry(handle.writeFd, mirror, len.toLong, flags)
+            val result: Maybe[Ffi.Outcome[Long]] = sendBlockingWithRetry(handle.writeFd, mirror, len.toLong, flags)
             result match
                 case Present(r) =>
                     val n = r.value.toInt
@@ -569,7 +569,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                     val sent =
                         // EINTR is retried in place by the *WithRetry helpers (bounded), so a signal mid-send does not look like a hard error and
                         // discard the tail; EAGAIN still parks the flush via the 0 (would-block) branch (POSIX send(2)).
-                        val result: Maybe[Ffi.WithError[Long]] =
+                        val result: Maybe[Ffi.Outcome[Long]] =
                             if kyo.internal.Platform.isJS then
                                 Present(sendNowWithRetry(handle.writeFd, mirror, unsentLen.toLong, flags))
                             else sendBlockingWithRetry(handle.writeFd, mirror, unsentLen.toLong, flags)
@@ -1176,9 +1176,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       * branches still decide. The retry is bounded by [[maxTransientIoRetries]] so an EINTR storm cannot spin: past the bound the last EINTR result
       * is returned and falls through to the hard-error branch.
       */
-    private def recvNowWithRetry(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+    private def recvNowWithRetry(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
         @scala.annotation.tailrec
-        def loop(attempt: Int): Ffi.WithError[Long] =
+        def loop(attempt: Int): Ffi.Outcome[Long] =
             val r = sockets.recvNow(fd, buf, len, flags)
             if r.value.toInt < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries then loop(attempt + 1)
             else r
@@ -1190,9 +1190,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       * is sent means nothing was transferred, so the send is retried. Only EINTR is retried; EAGAIN / EWOULDBLOCK and genuine errors return unchanged
       * so the would-block (park on writability) and hard-error (Error / discard tail) branches still decide. Bounded by [[maxTransientIoRetries]].
       */
-    private def sendNowWithRetry(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+    private def sendNowWithRetry(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
         @scala.annotation.tailrec
-        def loop(attempt: Int): Ffi.WithError[Long] =
+        def loop(attempt: Int): Ffi.Outcome[Long] =
             val r = sockets.sendNow(fd, buf, len, flags)
             if r.value.toInt < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries then loop(attempt + 1)
             else r
@@ -1208,9 +1208,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def sendBlockingWithRetry(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using
         AllowUnsafe,
         Frame
-    ): Maybe[Ffi.WithError[Long]] =
+    ): Maybe[Ffi.Outcome[Long]] =
         @scala.annotation.tailrec
-        def loop(attempt: Int): Maybe[Ffi.WithError[Long]] =
+        def loop(attempt: Int): Maybe[Ffi.Outcome[Long]] =
             takeNow(sockets.send(fd, buf, len, flags)) match
                 case Present(r) if r.value.toInt < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries =>
                     loop(attempt + 1)

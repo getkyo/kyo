@@ -69,48 +69,48 @@ class PosixTransportAcceptEmfileTest extends Test:
     final private class EmfileAcceptSockets(real: SocketBindings) extends SocketBindings:
         val acceptNowCalls: AtomicInteger = new AtomicInteger(0)
 
-        def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+        def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             val n = acceptNowCalls.incrementAndGet()
             if n >= spinThreshold then
                 // Spin cap: a regressed build that spins past the threshold gets the real accept so the backlog drains and teardown is clean.
                 real.acceptNow(fd, addr, addrlen)
             else
                 // The pending connection stays in the backlog (EMFILE does not dequeue it); the listen fd remains read-ready.
-                new Ffi.WithError[Int](-1, EMFILE)
+                Ffi.Outcome.fromValueErrno(-1L, EMFILE)
             end if
         end acceptNow
 
-        def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.socket(domain, `type`, protocol)
-        def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.bind(fd, addr, addrlen)
-        def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.listen(fd, backlog)
-        def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.setsockopt(fd, level, optname, optval, optlen)
         def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using
             AllowUnsafe
-        ): Ffi.WithError[Int] =
+        ): Ffi.Outcome[Int] =
             real.getsockopt(fd, level, optname, optval, optlen)
-        def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+        def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             real.getsockname(fd, addr, addrlen)
-        def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int] =
+        def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int] =
             real.fstat(fd, buf)
         def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int =
             real.shutdown(fd, how)
-        def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+        def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
             real.connect(fd, addr, addrlen)
-        def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+        def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
             real.accept(fd, addr, addrlen)
-        def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+        def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.recv(fd, buf, len, flags)
-        def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+        def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.send(fd, buf, len, flags)
-        def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+        def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
             real.sendNow(fd, buf, len, flags)
-        def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+        def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
             real.recvNow(fd, buf, len, flags)
-        def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+        def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.read(fd, buf, count)
         def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =
             real.close(fd)
@@ -131,7 +131,7 @@ class PosixTransportAcceptEmfileTest extends Test:
                     // One real client connect: the listen fd gets exactly one backlog entry, so it is genuinely read-ready and the poll loop
                     // drives the transport's acceptAll -> acceptNow path against the injected EMFILE.
                     clientFd <-
-                        val fd       = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                        val fd       = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
                         val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
                         spy.connect(fd, ca, cl).safe.get.map { r =>
                             ca.close()

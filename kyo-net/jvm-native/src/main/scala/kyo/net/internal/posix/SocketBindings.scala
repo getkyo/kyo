@@ -11,7 +11,7 @@ import kyo.ffi.Ffi
   * Every method is part of the unsafe FFI tier and takes a trailing `(using AllowUnsafe)` clause: each native call is a side effect tracked by
   * the caller.
   *
-  * Every fallible call returns `Ffi.WithError[Int]` / `Ffi.WithError[Long]` so the driver can read `errno` (the codegen captures it after the
+  * Every fallible call returns `Ffi.Outcome[Int]` / `Ffi.Outcome[Long]` so the driver can read `errno` (the codegen captures it after the
   * downcall on every platform). The blocking syscalls (`connect`, `accept`, `recv`, `send`, `read`, `close`) carry `@Ffi.blocking`, so the
   * generator returns a `Fiber.Unsafe[<value>, Any]` rather than a bare value: on JVM/Native the blocking downcall runs synchronously on the
   * calling carrier (kyo's `BlockingMonitor` parks/compensates) and the result is wrapped in an already-completed fiber; on JS the call is
@@ -30,34 +30,34 @@ import kyo.ffi.Ffi
 private[net] trait SocketBindings extends Ffi:
 
     /** `int socket(int domain, int type, int protocol)`. Returns the new fd (>=0) or -1 with `errno` set. */
-    def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int bind(int fd, const struct sockaddr* addr, socklen_t addrlen)`. `addr` is a [[SockAddr]] encoding; 0 on success. */
-    def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int listen(int fd, int backlog)`. 0 on success. */
-    def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int setsockopt(int fd, int level, int optname, const void* optval, socklen_t optlen)`. Used for `SO_REUSEADDR`, `TCP_NODELAY`, and
       * the macOS/BSD `SO_NOSIGPIPE` opt-out. `optval` is a small `Buffer[Byte]` holding the option value.
       */
-    def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int getsockopt(int fd, int level, int optname, void* optval, socklen_t* optlen)`. Used to read `SO_ERROR` after a non-blocking
       * connect. `optval` receives the value, `optlen` is the in/out length.
       */
-    def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int]
+    def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int getsockname(int fd, struct sockaddr* addr, socklen_t* addrlen)`. Resolves the bound address, notably the ephemeral port chosen
       * when binding to port 0. `addr` is a [[SockAddr]]-sized buffer, `addrlen` is the in/out length.
       */
-    def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int]
+    def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int fstat(int fd, struct stat* buf)`. Fills `buf` (a [[PosixStructs.Stat]]-sized `Buffer[Byte]`) with the fd's metadata; the stdio
       * pollability probe reads `st_mode` to classify the read end (regular file vs pipe vs tty). Returns 0 on success or -1 with
       * `errno`.
       */
-    def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int]
+    def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int shutdown(int fd, int how)`. Half- or full-close of a connected socket. */
     def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int
@@ -67,26 +67,26 @@ private[net] trait SocketBindings extends Ffi:
       * the result is a `Fiber.Unsafe` the caller must await.
       */
     @Ffi.blocking
-    def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any]
+    def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any]
 
     /** `int accept(int fd, struct sockaddr* addr, socklen_t* addrlen)`. Returns the accepted client fd. `addr`/`addrlen` may receive the
       * peer address; pass a zeroed buffer when the peer address is not needed. Blocking-annotated: the result is a `Fiber.Unsafe` the caller
       * must await.
       */
     @Ffi.blocking
-    def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any]
+    def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any]
 
     /** `ssize_t recv(int fd, void* buf, size_t len, int flags)`. Returns bytes read (>0), 0 on orderly peer close (EOF), or -1 with `errno`.
       * Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await.
       */
     @Ffi.blocking
-    def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any]
+    def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any]
 
     /** `ssize_t send(int fd, const void* buf, size_t len, int flags)`. Returns bytes written. The driver passes `MSG_NOSIGNAL` on Linux to
       * suppress SIGPIPE. Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await.
       */
     @Ffi.blocking
-    def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any]
+    def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any]
 
     /** `ssize_t send(int fd, const void* buf, size_t len, int flags)`, bound NON-blocking: returns the byte count directly rather than a
       * `Fiber.Unsafe`. The readiness driver only writes to sockets it has set non-blocking (`O_NONBLOCK`), where `send` never blocks: it
@@ -96,7 +96,7 @@ private[net] trait SocketBindings extends Ffi:
       * the same `send` symbol as a plain synchronous downcall on every backend (Panama on JVM, `@extern` on Native, a direct koffi call on JS)
       * so the count is available immediately. Used only on a non-blocking fd; a blocking fd would freeze the event loop here.
       */
-    def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long]
+    def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long]
 
     /** `ssize_t recv(int fd, void* buf, size_t len, int flags)`, bound NON-blocking: returns the byte count directly rather than a
       * `Fiber.Unsafe`. The readiness driver only reads from sockets it has set non-blocking (`O_NONBLOCK`), where `recv` never blocks: it
@@ -104,20 +104,20 @@ private[net] trait SocketBindings extends Ffi:
       * as a plain synchronous downcall on every backend (Panama on JVM, `@extern` on Native, a direct koffi call on JS) so the byte count is
       * available immediately. Used only on a non-blocking fd; a blocking fd would freeze the event loop here.
       */
-    def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long]
+    def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long]
 
     /** `int accept(int fd, struct sockaddr* addr, socklen_t* addrlen)`, bound NON-blocking: returns the accepted client fd directly rather
       * than a `Fiber.Unsafe`. Used only on a listen fd set `O_NONBLOCK` and armed on the poller, where `accept` returns a valid fd (>=0) or -1
       * with `EAGAIN`/`EWOULDBLOCK` when no connection is pending. Runs the same `accept` symbol as a plain synchronous downcall.
       */
-    def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int]
+    def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `ssize_t read(int fd, void* buf, size_t count)`. The fd-generic read used by the stdio `BlockingReaderDriver` fallback
       * where the read end may be a regular file rather than a socket. Returns bytes read, 0 on EOF, -1 with `errno`. Blocking-annotated: the
       * result is a `Fiber.Unsafe` the caller must await.
       */
     @Ffi.blocking
-    def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any]
+    def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any]
 
     /** `int close(int fd)`. Releases the fd. Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await. */
     @Ffi.blocking

@@ -25,7 +25,7 @@ import kyo.ffi.Ffi
 private[net] trait KqueueBindings extends Ffi:
 
     /** `int kqueue(void)`. Returns the kqueue fd or -1 with `errno`. */
-    def kqueue()(using AllowUnsafe): Ffi.WithError[Int]
+    def kqueue()(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int kevent(int kq, const struct kevent* changelist, int nchanges, struct kevent* eventlist, int nevents, const struct timespec*
       * timeout)`. Submits `nchanges` interest changes and collects up to `nevents` ready events into `eventlist`, blocking up to `timeout`.
@@ -41,7 +41,7 @@ private[net] trait KqueueBindings extends Ffi:
         eventlist: Buffer[Byte],
         nevents: Int,
         timeout: Timespec
-    )(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any]
+    )(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any]
 
     /** Non-blocking synchronous companion of [[kevent]] for interest REGISTRATION only. A register-only `kevent` (a one-element changelist
       * with a zero `timeout`) never blocks: it applies the change and returns immediately. This overload omits `@Ffi.blocking`, so it returns
@@ -57,7 +57,7 @@ private[net] trait KqueueBindings extends Ffi:
         eventlist: Buffer[Byte],
         nevents: Int,
         timeout: Timespec
-    )(using AllowUnsafe): Ffi.WithError[Int]
+    )(using AllowUnsafe): Ffi.Outcome[Int]
 
     /** `int close(int fd)`. Releases the kqueue fd. Blocking-annotated: the result is a `Fiber.Unsafe` the caller must await. */
     @Ffi.blocking

@@ -100,7 +100,7 @@ object VariadicMarshaller:
         // invocation requires a single array-args form at the call site, pass `Any*`.
         val invokeArgs = (errnoSeg :: (fixedArgs ++ vValues)).toArray.asInstanceOf[Array[AnyRef | Null]]
         val result     = mh.invokeWithArguments(invokeArgs*)
-        // Errno is captured in errnoSeg by Panama, the caller reads it for WithError returns.
+        // Errno is captured in errnoSeg by Panama, the caller reads it for Outcome returns.
         result
     end invoke
 

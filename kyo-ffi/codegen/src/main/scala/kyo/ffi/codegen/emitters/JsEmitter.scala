@@ -163,7 +163,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 sb ++= s"val _ = $callExpr\n"
                 if method.withError then
                     sb ++= "val __errno = KoffiFacade.errno()\n"
-                    sb ++= "new Ffi.WithError((), __errno)\n"
+                    sb ++= "Ffi.Outcome.fromValueErrno(0L, __errno)\n"
                 else
                     sb ++= "()\n"
                 end if
@@ -171,7 +171,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 sb ++= s"val retVal = $callExpr.asInstanceOf[Int]\n"
                 if method.withError then
                     sb ++= "val __errno = KoffiFacade.errno()\n"
-                    sb ++= "new Ffi.WithError(retVal != 0, __errno)\n"
+                    sb ++= "Ffi.Outcome.fromValueErrno(if retVal != 0 then 1L else 0L, __errno)\n"
                 else
                     sb ++= "retVal != 0\n"
                 end if
@@ -179,7 +179,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 sb ++= s"val retVal = $callExpr.asInstanceOf[js.BigInt].toString.toLong\n"
                 if method.withError then
                     sb ++= "val __errno = KoffiFacade.errno()\n"
-                    sb ++= "new Ffi.WithError(retVal, __errno)\n"
+                    sb ++= "Ffi.Outcome.fromValueErrno(retVal, __errno)\n"
                 else
                     sb ++= "retVal\n"
                 end if
@@ -187,7 +187,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
                 sb ++= s"val retVal = $callExpr.asInstanceOf[${jsScalaReturn(t)}]\n"
                 if method.withError then
                     sb ++= "val __errno = KoffiFacade.errno()\n"
-                    sb ++= s"new Ffi.WithError(retVal, __errno)\n"
+                    sb ++= s"Ffi.Outcome.fromValueErrno(retVal.toLong, __errno)\n"
                 else
                     sb ++= "retVal\n"
                 end if
@@ -455,7 +455,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
             if method.withError then
                 sb ++= "    val __errno = KoffiFacade.errno()\n"
                 sb ++= s"    val __kyoResult = $resultExpr\n"
-                sb ++= "    new Ffi.WithError(__kyoResult, __errno)\n"
+                sb ++= "    Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)\n"
             else
                 sb ++= s"    $resultExpr\n"
             end if
@@ -471,7 +471,7 @@ object JsEmitter extends EmitterBase.Ops with PlatformTypes:
             if method.withError then
                 sb ++= "val __errno = KoffiFacade.errno()\n"
                 sb ++= s"val __kyoResult = $resultExpr\n"
-                sb ++= "new Ffi.WithError(__kyoResult, __errno)\n"
+                sb ++= "Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)\n"
             else
                 sb ++= resultExpr + "\n"
             end if

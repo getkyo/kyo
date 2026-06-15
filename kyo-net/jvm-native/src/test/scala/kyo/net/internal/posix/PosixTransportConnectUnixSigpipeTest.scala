@@ -48,45 +48,45 @@ class PosixTransportConnectUnixSigpipeTest extends Test:
         val setsockoptCalls: ConcurrentLinkedQueue[(Int, Int, Int)] = new ConcurrentLinkedQueue[(Int, Int, Int)]()
         val connectFds: ConcurrentLinkedQueue[Int]                  = new ConcurrentLinkedQueue[Int]()
 
-        def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def setsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             discard(setsockoptCalls.add((fd, level, optname)))
             real.setsockopt(fd, level, optname, optval, optlen)
         end setsockopt
 
-        def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+        def connect(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
             discard(connectFds.add(fd))
             real.connect(fd, addr, addrlen)
         end connect
 
-        def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def socket(domain: Int, `type`: Int, protocol: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.socket(domain, `type`, protocol)
-        def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def bind(fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.bind(fd, addr, addrlen)
-        def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.WithError[Int] =
+        def listen(fd: Int, backlog: Int)(using AllowUnsafe): Ffi.Outcome[Int] =
             real.listen(fd, backlog)
         def getsockopt(fd: Int, level: Int, optname: Int, optval: Buffer[Byte], optlen: Buffer[Int])(using
             AllowUnsafe
-        ): Ffi.WithError[Int] =
+        ): Ffi.Outcome[Int] =
             real.getsockopt(fd, level, optname, optval, optlen)
-        def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+        def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             real.getsockname(fd, addr, addrlen)
-        def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.WithError[Int] =
+        def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int] =
             real.fstat(fd, buf)
         def shutdown(fd: Int, how: Int)(using AllowUnsafe): Int =
             real.shutdown(fd, how)
-        def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Int], Any] =
+        def accept(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Int], Any] =
             real.accept(fd, addr, addrlen)
-        def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+        def recv(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.recv(fd, buf, len, flags)
-        def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+        def send(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.send(fd, buf, len, flags)
-        def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+        def sendNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
             real.sendNow(fd, buf, len, flags)
-        def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.WithError[Long] =
+        def recvNow(fd: Int, buf: Buffer[Byte], len: Long, flags: Int)(using AllowUnsafe): Ffi.Outcome[Long] =
             real.recvNow(fd, buf, len, flags)
-        def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.WithError[Int] =
+        def acceptNow(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
             real.acceptNow(fd, addr, addrlen)
-        def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.WithError[Long], Any] =
+        def read(fd: Int, buf: Buffer[Byte], count: Long)(using AllowUnsafe): Fiber.Unsafe[Ffi.Outcome[Long], Any] =
             real.read(fd, buf, count)
         def close(fd: Int)(using AllowUnsafe): Fiber.Unsafe[Int, Any] =
             real.close(fd)

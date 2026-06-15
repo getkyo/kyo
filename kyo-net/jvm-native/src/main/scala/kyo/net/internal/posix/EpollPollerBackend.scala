@@ -36,7 +36,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
 
     private def ep(using AllowUnsafe): EpollBindings = Ffi.load[EpollBindings]
 
-    def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value
+    def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value.toInt
 
     def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
@@ -72,9 +72,9 @@ private[net] object EpollPollerBackend extends PollerBackend:
             // Skip MOD if the effective mask (after adding ET flags) matches what was previously armed.
             val prevEtInterest = prevUnion | PosixConstants.EPOLLET | PosixConstants.EPOLLRDHUP
             if etInterest == prevEtInterest then 0
-            else ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value
+            else ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value.toInt
             end if
-        else added.value
+        else added.value.toInt
         end if
     end arm
 
@@ -96,12 +96,12 @@ private[net] object EpollPollerBackend extends PollerBackend:
         val efd = ep.eventfd(0, PosixConstants.EFD_NONBLOCK | PosixConstants.EFD_CLOEXEC)
         if efd.value < 0 then false
         else
-            scratch.wakeFd = efd.value
+            scratch.wakeFd = efd.value.toInt
             scratch.wakeDrainBuf = Buffer.alloc[Byte](8) // eventfd counter is a uint64
             val armBuf = Buffer.alloc[Byte](EpollEvent.size)
             scratch.wakeArmBuf = armBuf // owned by registerWake/close only; reused for the (single) wake registration
-            EpollEvent.encode(armBuf, 0, EpollEvent(PosixConstants.EPOLLIN, efd.value.toLong))
-            val rc = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, efd.value, armBuf)
+            EpollEvent.encode(armBuf, 0, EpollEvent(PosixConstants.EPOLLIN, efd.value))
+            val rc = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, efd.value.toInt, armBuf)
             rc.value >= 0
         end if
     end registerWake
@@ -135,7 +135,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
         val flags = scratch.flags
         val evBuf = scratch.eventsBuffer
         ep.epoll_wait(pollerFd, evBuf, MaxEvents, timeoutMs).map { ready =>
-            val n = ready.value
+            val n = ready.value.toInt
             if n <= 0 then 0
             else
                 var i = 0

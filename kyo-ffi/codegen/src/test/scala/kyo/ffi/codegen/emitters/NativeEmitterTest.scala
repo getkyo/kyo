@@ -1193,10 +1193,10 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
-    // Section: WithError[A] errno capture
+    // Section: Outcome errno capture
     // -------------------------------------------------------------------------
 
-    "WithError[Int] return emits errno capture and Ffi.WithError wrapping" in {
+    "Outcome from Int return emits errno capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyOp",
             "risky_op",
@@ -1208,11 +1208,11 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val src  = NativeEmitter.emit(spec)
         assert(src.contains("__errno"))
         assert(src.contains("errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Long] return emits errno capture and Ffi.WithError wrapping" in {
+    "Outcome from Long return emits errno capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyLong",
             "risky_long",
@@ -1223,11 +1223,11 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val spec = mkTrait("ErrnoTestLong", "errno_test_long", List(m))
         val src  = NativeEmitter.emit(spec)
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Long]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Double] return emits errno capture and Ffi.WithError wrapping" in {
+    "Outcome from Double return emits errno capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyDouble",
             "risky_double",
@@ -1238,11 +1238,11 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val spec = mkTrait("ErrnoTestDouble", "errno_test_double", List(m))
         val src  = NativeEmitter.emit(spec)
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Double]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Boolean] return emits errno capture and Ffi.WithError wrapping" in {
+    "Outcome from Boolean return emits errno capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyBool",
             "risky_bool",
@@ -1253,11 +1253,11 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val spec = mkTrait("ErrnoTestBool", "errno_test_bool", List(m))
         val src  = NativeEmitter.emit(spec)
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Boolean]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Unit] (void return) emits errno capture and Ffi.WithError wrapping" in {
+    "Outcome from void return emits errno capture and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyVoid",
             "risky_void",
@@ -1268,11 +1268,11 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val spec = mkTrait("ErrnoTestVoid", "errno_test_void", List(m))
         val src  = NativeEmitter.emit(spec)
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Unit]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError on @Ffi.blocking method emits errno capture" in {
+    "Outcome on @Ffi.blocking method emits errno capture" in {
         val m = mkMethod(
             "blockingRisky",
             "blocking_risky",
@@ -1284,10 +1284,10 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         val spec = mkTrait("BlockingErrnoTest", "blocking_errno_test", List(m))
         val src  = NativeEmitter.emit(spec)
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
     }
 
-    "plain Int return does NOT emit WithError or __errno" in {
+    "plain Int return does NOT emit Outcome or __errno" in {
         val m = mkMethod(
             "safeOp",
             "safe_op",
@@ -1296,12 +1296,12 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainTest", "plain_test", List(m))
         val src  = NativeEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
     }
 
-    "plain void return does NOT emit WithError or __errno" in {
+    "plain void return does NOT emit Outcome or __errno" in {
         val m = mkMethod(
             "safeVoid",
             "safe_void",
@@ -1310,12 +1310,12 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainVoidTest", "plain_void_test", List(m))
         val src  = NativeEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
     }
 
-    "plain Handle return does NOT emit WithError or __errno" in {
+    "plain Handle return does NOT emit Outcome or __errno" in {
         val m = mkMethod(
             "getHandle",
             "get_handle",
@@ -1324,12 +1324,12 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainHandleTest", "plain_handle_test", List(m))
         val src  = NativeEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
     }
 
-    "trait with both WithError and plain methods emits errno only for WithError method" in {
+    "trait with both Outcome and plain methods emits errno only for Outcome method" in {
         val riskyM = mkMethod(
             "riskyOp",
             "risky_op",
@@ -1345,13 +1345,13 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("MixedErrnoTest", "mixed_errno_test", List(riskyM, safeM))
         val src  = NativeEmitter.emit(spec)
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains(": Ffi.Outcome[Int] ="))
         val safeDefLine = src.linesIterator.find(_.contains("def safeOp")).getOrElse(fail("safeOp def not found"))
-        assert(!safeDefLine.contains("WithError"))
+        assert(!safeDefLine.contains("Outcome"))
         assert(safeDefLine.contains(": Int ="))
     }
 
-    "WithError with Handle return emits errno capture and Handle wrapping" in {
+    "Outcome with Handle return emits errno capture and Handle wrapping" in {
         val m = mkMethod(
             "riskyHandle",
             "risky_handle",
@@ -1361,12 +1361,12 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("HandleErrnoTest", "handle_errno_test", List(m))
         val src  = NativeEmitter.emit(spec)
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
         assert(src.contains("__errno"))
         assert(src.contains("Ffi.Handle.wrap"))
     }
 
-    "WithError with BorrowedString return emits errno capture and Borrowed wrapping" in {
+    "Outcome with BorrowedString return emits errno capture and Borrowed wrapping" in {
         val m = mkMethod(
             "riskyBorrowed",
             "risky_borrowed",
@@ -1376,12 +1376,12 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("BorrowedErrnoTest", "borrowed_errno_test", List(m))
         val src  = NativeEmitter.emit(spec)
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
         assert(src.contains("__errno"))
         assert(src.contains("Ffi.Borrowed.wrap"))
     }
 
-    "trait with Handle and WithError on different methods emits errno only for WithError method" in {
+    "trait with Handle and Outcome on different methods emits errno only for Outcome method" in {
         val handleM = mkMethod(
             "getHandle",
             "get_handle",
@@ -1397,9 +1397,9 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("HandleMixedTest", "handle_mixed_test", List(handleM, riskyM))
         val src  = NativeEmitter.emit(spec)
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains(": Ffi.Outcome[Int] ="))
         val handleDefLine = src.linesIterator.find(_.contains("def getHandle")).getOrElse(fail("getHandle def not found"))
-        assert(!handleDefLine.contains("WithError"))
+        assert(!handleDefLine.contains("Outcome"))
     }
 
 end NativeEmitterTest

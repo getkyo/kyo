@@ -416,7 +416,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
         // The invocation.
         bodyInner ++= invokeLine
         bodyInner ++= "\n"
-        // Capture errno from the segment if this method uses WithError.
+        // Capture errno from the segment if this method returns an Outcome.
         if method.withError then
             bodyInner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
 
@@ -505,10 +505,10 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     else s"""(if (java.lang.System.getProperty("kyo.ffi.checkedBorrows") == "true") $checkedCall else $uncheckedCall)"""
                 s"Ffi.Borrowed.wrap(if $retValName.address() == 0L then null else $nonNullWrap)"
 
-        // Emit errno handling + result. WithError wraps the result + errno; plain returns just emit the result.
+        // Emit errno handling + result. Outcome packs value-or-(-errno) into one Long; plain returns just emit the result.
         if method.withError then
             bodyInner ++= s"val __kyoResult = $resultExpr\n"
-            bodyInner ++= "new Ffi.WithError(__kyoResult, __errno)\n"
+            bodyInner ++= "Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)\n"
         else
             bodyInner ++= resultExpr + "\n"
         end if
@@ -653,7 +653,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 inner ++= s"val _ = $invokeCall\n"
                 if method.withError then
                     inner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
-                    inner ++= "new Ffi.WithError((), __errno)\n"
+                    inner ++= "Ffi.Outcome.fromValueErrno(0L, __errno)\n"
                 else
                     inner ++= "()\n"
                 end if
@@ -661,7 +661,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 inner ++= s"val retVal = $invokeCall\n"
                 if method.withError then
                     inner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
-                    inner ++= "new Ffi.WithError(retVal.asInstanceOf[java.lang.Integer].intValue() != 0, __errno)\n"
+                    inner ++= "Ffi.Outcome.fromValueErrno(if retVal.asInstanceOf[java.lang.Integer].intValue() != 0 then 1L else 0L, __errno)\n"
                 else
                     inner ++= s"retVal.asInstanceOf[java.lang.Integer].intValue() != 0\n"
                 end if
@@ -677,7 +677,7 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 inner ++= s"val retVal = $invokeCall\n"
                 if method.withError then
                     inner ++= "val __errno = errnoSeg.get(JAVA_INT, 0L)\n"
-                    inner ++= s"new Ffi.WithError(retVal.asInstanceOf[$boxed].$prim, __errno)\n"
+                    inner ++= s"Ffi.Outcome.fromValueErrno(retVal.asInstanceOf[$boxed].$prim.toLong, __errno)\n"
                 else
                     inner ++= s"retVal.asInstanceOf[$boxed].$prim\n"
                 end if

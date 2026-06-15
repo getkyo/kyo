@@ -56,7 +56,7 @@ class RecordingDecoratorsTest extends Test:
         PosixTestSockets.assumePoller().andThen {
             val recording = new RecordingSocketBindings(sock)
             // Create one fd and close it through the recording spy.
-            val fd = recording.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val fd = recording.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             assert(fd >= 0, s"socket creation failed: fd=$fd")
             recording.close(fd).safe.get.map { _ =>
                 val count = recording.closeCounts.getOrDefault(fd, 0)

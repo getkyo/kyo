@@ -29,7 +29,7 @@ class KqueueBindingsTest extends Test:
       * fiber-suspending `… < Async`. errno is consulted only on failure (POSIX leaves it untouched on success).
       */
     private def loopbackPair()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -44,7 +44,7 @@ class KqueueBindingsTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -53,7 +53,7 @@ class KqueueBindingsTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
                 }.map { accepted =>
                     sock.close(server).safe.get.map(_ => (client, accepted))
                 }
@@ -78,7 +78,7 @@ class KqueueBindingsTest extends Test:
                 )
                 emptyEvents = Buffer.alloc[Byte](KEvent.size)
                 // Register the accepted fd for EVFILT_READ.
-                reg <- kq.kevent(kqfd.value, change, 1, emptyEvents, 0, Timespec(0L, 0L)).safe.get
+                reg <- kq.kevent(kqfd.value.toInt, change, 1, emptyEvents, 0, Timespec(0L, 0L)).safe.get
                 _ = assert(reg.value >= 0, s"kevent register failed errno=${reg.errorCode}")
                 _ = change.close()
                 _ = emptyEvents.close()
@@ -90,13 +90,13 @@ class KqueueBindingsTest extends Test:
                 events    = Buffer.alloc[Byte](KEvent.size)
                 emptyPoll = Buffer.alloc[Byte](KEvent.size)
                 pollResult <- Sync.ensure(Sync.defer { events.close(); emptyPoll.close() }) {
-                    kq.kevent(kqfd.value, emptyPoll, 0, events, 1, Timespec(1L, 0L)).safe.get.map { n =>
+                    kq.kevent(kqfd.value.toInt, emptyPoll, 0, events, 1, Timespec(1L, 0L)).safe.get.map { n =>
                         (n, KEvent.decode(events, 0))
                     }
                 }
                 _ <- sock.close(client).safe.get
                 _ <- sock.close(accepted).safe.get
-                _ <- kq.close(kqfd.value).safe.get
+                _ <- kq.close(kqfd.value.toInt).safe.get
             yield
                 val (n, ev) = pollResult
                 assert(n.value == 1, s"kevent poll returned ${n.value} errno=${n.errorCode}")

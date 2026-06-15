@@ -162,7 +162,7 @@ class PosixTestSocketsTest extends Test:
 
     "acceptOne: accepts exactly one connection on a server fd" in {
         PosixTestSockets.assumePoller().andThen {
-            val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
             Sync.ensure(Sync.defer(a.close())) {
                 assert(sock.bind(server, a, l).value == 0)
@@ -177,7 +177,7 @@ class PosixTestSocketsTest extends Test:
                     finally
                         portBuf.close()
                         portLen.close()
-                val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+                val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
                 val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(_ => ())).andThen {
                     PosixTestSockets.acceptOne(server).map { accepted =>

@@ -235,7 +235,10 @@ private[emitters] object EmitterBase:
         val fixedPs  = method.params.map(p => s"${safeName(p.name)}: ${scalaTypeOf(p.tpe)}")
         val allPs    = if includeVarargs && method.hasVarargs then fixedPs :+ "args: Any*" else fixedPs
         val innerRet = returnType(method.returnShape)
-        val errRet   = if method.withError then s"Ffi.WithError[$innerRet]" else innerRet
+        // For an Outcome return the inner shape is the C return width (Int / Long); render it as the phantom type
+        // argument `Ffi.Outcome[<width>]` so the generated signature matches the binding trait and the descriptor reads
+        // the C value at that width.
+        val errRet = if method.withError then s"Ffi.Outcome[$innerRet]" else innerRet
         // The FFI binding layer is the unsafe tier: every binding method takes a trailing `(using AllowUnsafe)`
         // clause (every native call is a side effect tracked by the caller). `@Ffi.blocking` methods additionally
         // return `kyo.Fiber.Unsafe[<ret>, Any]` rather than a bare value: the blocking downcall is surfaced as an

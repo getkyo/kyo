@@ -73,7 +73,7 @@ class IoUringHandshakeTimeoutOrderingTest extends Test:
       * TLS handshake it triggers parks waiting for a ClientHello. The connect completes inline on loopback.
       */
     private def rawStallingClient(port: Int)(using Frame, kyo.test.AssertScope): Int < (Abort[Closed] & Async) =
-        val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0))).map(_ => client)
     end rawStallingClient

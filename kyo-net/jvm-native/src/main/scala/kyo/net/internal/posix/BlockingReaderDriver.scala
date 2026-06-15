@@ -37,7 +37,7 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
         // fiber to the caller) or via onComplete on JS (where the blocking task is genuinely async).
         discard(Fiber.Unsafe.init {
             val readFiber = sockets.read(handle.readFd, handle.readBuffer, handle.readBufferSize.toLong)
-            def deliver(result: Ffi.WithError[Long]): Unit =
+            def deliver(result: Ffi.Outcome[Long]): Unit =
                 val n = result.value.toInt
                 if n < 0 then
                     // read(2) returns -1 on error; errorCode holds the errno.

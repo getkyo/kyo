@@ -51,7 +51,7 @@ class PosixTransportTest extends Test:
       * a non-regular-file mode. `isRegularFile(fd)` returns false for a socket, so `pollable(fd)` returns true on any backend.
       */
     private def transportForSocket(backendIsEpoll: Boolean): (PosixTransport, Int, PollerIoDriver) =
-        val socketFd  = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val socketFd  = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val driver    = PollerIoDriver.init(transportConfig)
         val transport = TestTransports.forTesting(transportConfig, driver, Ffi.load[SocketBindings], backendIsEpoll)
         (transport, socketFd, driver)
@@ -186,7 +186,7 @@ class PosixTransportTest extends Test:
             val sockets = sock
 
             val epollDriver = PollerIoDriver.init(transportConfig)
-            val socketFd1   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val socketFd1   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val pipeEpoll   = TestTransports.forTesting(transportConfig, epollDriver, Ffi.load[SocketBindings], backendIsEpoll = true)
             try
                 assert(pipeEpoll.pollable(socketFd1), "socket fd (non-regular) must be pollable under epoll")
@@ -197,7 +197,7 @@ class PosixTransportTest extends Test:
             end try
 
             val kqueueDriver = PollerIoDriver.init(transportConfig)
-            val socketFd2    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val socketFd2    = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val kqueueEpoll  = TestTransports.forTesting(transportConfig, kqueueDriver, Ffi.load[SocketBindings], backendIsEpoll = false)
             try
                 assert(kqueueEpoll.pollable(socketFd2), "socket fd must be pollable under kqueue")
@@ -211,7 +211,7 @@ class PosixTransportTest extends Test:
 
     /** Build a connected loopback socket pair; returns (clientFd, acceptedFd). */
     private def loopbackPair()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -226,7 +226,7 @@ class PosixTransportTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -235,7 +235,7 @@ class PosixTransportTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
                 }.map { accepted =>
                     sock.close(server).safe.get.map(_ => (client, accepted))
                 }

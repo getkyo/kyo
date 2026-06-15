@@ -118,7 +118,7 @@ class StartTlsUpgradeTest extends Test:
 
     /** Build a connected loopback socket pair; returns (clientFd, acceptedFd). */
     private def loopbackPair()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -133,7 +133,7 @@ class StartTlsUpgradeTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -142,7 +142,7 @@ class StartTlsUpgradeTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
                 }.map { accepted =>
                     // The transport drives these fds through its readiness model, which requires non-blocking sockets: the handshake's
                     // recvAndFeed does a direct non-blocking recv and parks on EAGAIN, and the poll loop's recv/send expect EAGAIN too.

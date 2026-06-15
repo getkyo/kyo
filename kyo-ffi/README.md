@@ -269,7 +269,7 @@ Callbacks must not propagate exceptions into C. Doing so corrupts the C call sta
 
 ### Errors and errno
 
-For methods that return a plain type, errno is not captured or checked; the return value is passed through directly. To inspect errno after a C call, wrap the return type in `Ffi.WithError[A]`:
+For methods that return a plain type, errno is not captured or checked; the return value is passed through directly. To inspect errno after a C call, declare the return type as `Ffi.Outcome[A]` (where `A` is the C return width, `Int` or `Long`):
 
 **Plain return:** Errno is not captured. Use this for calls where errno is not meaningful:
 
@@ -281,14 +281,14 @@ trait FastOpBindings extends Ffi:
     def fastOp(x: Int)(using AllowUnsafe): Int // errno not checked
 ```
 
-**WithError return (user handles errno):** Wrap the return type in `Ffi.WithError[A]` to receive both the return value and the error code. The errno is captured via platform-specific mechanisms (Panama `captureCallState("errno")` on JVM, `errno.h` on Native, `koffi.errno()` on JS):
+**Outcome return (user handles errno):** Declare the return type as `Ffi.Outcome[A]`, a zero-allocation opaque carrier that packs the return value and the error code into a single `Long`. The phantom `A` is the C return width (`Int` or `Long`) the codegen reads to pick the descriptor layout. The errno is captured via platform-specific mechanisms (Panama `captureCallState("errno")` on JVM, `errno.h` on Native, `koffi.errno()` on JS):
 
 ```scala doctest:scope=isolated
 import kyo.*
 import kyo.ffi.*
 
 trait RiskyBindings extends Ffi:
-    def riskyOp(x: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def riskyOp(x: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 object RiskyBindings extends Ffi.Config(library = "math")
 
 import AllowUnsafe.embrace.danger
@@ -297,7 +297,7 @@ val r     = risky.riskyOp(42)
 if r.errorCode != 0 then
     handleError(r.errorCode)
 else
-    useValue(r.value)
+    useValue(r.value.toInt) // .value is Long; an Int consumer reads .toInt
 end if
 ```
 

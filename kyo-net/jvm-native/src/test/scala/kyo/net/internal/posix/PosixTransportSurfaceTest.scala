@@ -62,7 +62,7 @@ class PosixTransportSurfaceTest extends Test:
       */
     private def deadPort()(using Frame, kyo.test.AssertScope): Int < Async =
         val sockets = Ffi.load[SocketBindings]
-        val fd      = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val fd      = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (a, l)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sockets.bind(fd, a, l).value == 0)

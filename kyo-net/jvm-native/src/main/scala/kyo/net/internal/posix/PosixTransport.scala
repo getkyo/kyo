@@ -304,7 +304,7 @@ final private[net] class PosixTransport private[posix] (
                 promise.completeDiscard(Result.fail(connectFail(host, port, "")))
             case Present((family, addr, len)) =>
                 val sockR = sockets.socket(family, PosixConstants.SOCK_STREAM, 0)
-                val fd    = sockR.value
+                val fd    = sockR.value.toInt
                 if fd < 0 then
                     addr.close()
                     promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(sockR.errorCode))))
@@ -682,7 +682,7 @@ final private[net] class PosixTransport private[posix] (
             case Present((family, addr, len)) =>
                 try
                     val sockR = sockets.socket(family, PosixConstants.SOCK_STREAM, 0)
-                    val fd    = sockR.value
+                    val fd    = sockR.value.toInt
                     if fd < 0 then
                         promise.completeDiscard(Result.fail(NetBindException(host, port, new NetErrno(sockR.errorCode))))
                     else
@@ -798,7 +798,7 @@ final private[net] class PosixTransport private[posix] (
                 @scala.annotation.tailrec
                 def drain(transientRetries: Int): AcceptDrain =
                     val r  = sockets.acceptNow(listener.serverFd, noAddr, noLen)
-                    val fd = r.value
+                    val fd = r.value.toInt
                     if fd >= 0 then
                         handleAccepted(fd, handler, tls)
                         drain(transientRetries)

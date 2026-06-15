@@ -29,7 +29,7 @@ class EpollBindingsTest extends Test:
       * fiber-suspending `… < Async`. errno is consulted only on failure (POSIX leaves it untouched on success).
       */
     private def loopbackPair()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -44,7 +44,7 @@ class EpollBindingsTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
+            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -53,7 +53,7 @@ class EpollBindingsTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
                 }.map { accepted =>
                     sock.close(server).safe.get.map(_ => (client, accepted))
                 }
@@ -74,7 +74,7 @@ class EpollBindingsTest extends Test:
                 ctlR =
                     try
                         EpollEvent.encode(event, 0, EpollEvent(PosixConstants.EPOLLIN, key))
-                        ep.epoll_ctl(epfd.value, PosixConstants.EPOLL_CTL_ADD, accepted, event)
+                        ep.epoll_ctl(epfd.value.toInt, PosixConstants.EPOLL_CTL_ADD, accepted, event)
                     finally event.close()
                 _  = assert(ctlR.value == 0, s"epoll_ctl failed errno=${ctlR.errorCode}")
                 wb = Buffer.fromArray[Byte](Array[Byte](7))
@@ -83,14 +83,14 @@ class EpollBindingsTest extends Test:
                 }
                 events = Buffer.alloc[Byte](4 * EpollEvent.size)
                 result <- Sync.ensure(Sync.defer(events.close())) {
-                    ep.epoll_wait(epfd.value, events, 4, 1000).safe.get.map { n =>
+                    ep.epoll_wait(epfd.value.toInt, events, 4, 1000).safe.get.map { n =>
                         val ev = EpollEvent.decode(events, 0)
                         (n, ev)
                     }
                 }
                 _ <- sock.close(client).safe.get
                 _ <- sock.close(accepted).safe.get
-                _ <- ep.close(epfd.value).safe.get
+                _ <- ep.close(epfd.value.toInt).safe.get
             yield
                 val (n, ev) = result
                 assert(n.value == 1, s"epoll_wait returned ${n.value} errno=${n.errorCode}")
