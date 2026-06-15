@@ -249,13 +249,13 @@ A code block can sit in the document body two ways:
 
 `Hidden`: inside an `<!-- ... -->` block. Invisible to readers entirely. Use when you need a block to compile but do not want it shown (negative-control type checks, fixture state the reader does not need to see).
 
-```markdown
+````markdown
 <!--
 ```scala doctest:expect=skipped
 val secret = "internal fixture"
 ```
 -->
-```
+````
 
 > **Note:** the carrier controls visibility only. A `doctest:setup` block hidden in `<!-- ... -->` is compiled identically and injects its prelude identically to a `Visible` setup block. The DSL and the validator treat both carriers as equivalent inputs.
 
