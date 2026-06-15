@@ -317,6 +317,7 @@ lazy val kyoJS = project
         `kyo-flow`.js,
         `kyo-browser`.js,
         `kyo-ui`.js,
+        `kyo-three`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -409,6 +410,7 @@ lazy val kyoWasm = project
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-ui`.wasm,
+        `kyo-three`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
@@ -1698,6 +1700,89 @@ lazy val `kyo-ui` =
         .wasmSettings(
             `wasm-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0"
+        )
+
+val installThree = taskKey[Unit]("npm install three@0.184.0 next to the Scala.js test linker output dir")
+
+// Installs three.js into the PARENT of the test linker output directory. Node loads the test entry
+// file from the linker output dir and walks UP for module resolution, so node_modules/three in the
+// parent resolves for both require("three") (CommonJS/JS) and import "three" (ESModule/Wasm). The
+// install target must be OUTSIDE the linker output dir itself: the Scala.js linker deletes the
+// contents of its output dir before each link, and a non-empty node_modules there fails that delete
+// with a DirectoryNotEmptyException. Idempotency-guarded on the package marker so a re-run with three
+// already present is a no-op. Each platform sets `installThree := installThreeTask.value` in its own
+// settings, so `scalaJSLinkerOutputDirectory` resolves to that platform's target tree: JS and Wasm
+// install three independently under their respective js/target and wasm/target trees.
+def installThreeTask = Def.task {
+    val outDir    = (Test / fastLinkJS / scalaJSLinkerOutputDirectory).value
+    val installIn = outDir.getParentFile
+    val marker    = installIn / "node_modules" / "three" / "package.json"
+    if (!marker.exists()) {
+        IO.createDirectory(installIn)
+        val rc = scala.sys.process.Process(Seq("npm", "install", "three@0.184.0"), installIn).!
+        if (rc != 0) sys.error(s"npm install three failed with exit $rc in $installIn")
+    }
+}
+
+lazy val `kyo-three` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-three"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-ui`, `kyo-browser`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / sourceGenerators += Def.task {
+                val readme = baseDirectory.value / ".." / "README.md"
+                // The `Test.scala` suffix matters: the generated objects live under `package kyo.readme`,
+                // and the `Frame` macro refuses to derive inside package `kyo` except in files whose name
+                // ends in `Test.scala`/`Spec.scala`/`Bench.scala` (see kyo.internal.FindEnclosing). README
+                // examples build scenes through `(using Frame)` factories, so the file must use that
+                // suffix or every factory call fails to derive its `Frame`.
+                val out = (Test / sourceManaged).value / "ReadmeExamplesTest.scala"
+                ReadmeBlocks.generate(readme, out)
+                Seq(out)
+            }.taskValue
+        )
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            installThree := installThreeTask.value,
+            Test / test  := (Test / test).dependsOn(installThree).value
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            installThree := installThreeTask.value,
+            Test / test  := (Test / test).dependsOn(installThree).value
+        )
+
+// The visual-review demo bundle: kyo-three MAIN plus the six committed demos plus the
+// `@JSExportTopLevel("mountDemo")` entry, linked as a browser-clean ESModule (one external `three`
+// import, no node:* / require). The demo sources stay in kyo-three's test tree (so they remain
+// compile-checked by kyo-three's own test on both backends) and are pulled in here via
+// unmanagedSourceDirectories; this project never links the kyo-three test stack (kyo-ui DOM mount,
+// HttpServer, kyo-browser) because the entry reaches only the demos' scene-graph builders, so the
+// linker's dead-code elimination drops the node:*-carrying paths. kyo-ui is a compile dependency
+// because the SolarSystem KyoApp references UI.runMount; that code is unreachable from the entry and
+// elided from the linked output (asserted by the node:* grep in the harness gate).
+lazy val `kyo-three-demos` =
+    project
+        .in(file("kyo-three/demos"))
+        .enablePlugins(ScalaJSPlugin)
+        .dependsOn(`kyo-three`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            Compile / unmanagedSourceDirectories +=
+                (`kyo-three`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
+            // No test sources; this project exists only to produce the linked demo bundle.
+            Test / sources := Seq.empty
         )
 
 lazy val `kyo-examples` =

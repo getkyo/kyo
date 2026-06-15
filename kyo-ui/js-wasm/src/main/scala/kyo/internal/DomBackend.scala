@@ -10,7 +10,9 @@ private[kyo] object DomBackend:
 
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
-        mountInto(ui, document.body)
+        // `document.body` is read inside the effect, not at the call site, so building the mount
+        // value stays pure (no DOM access until it runs ; safe to construct under Node/SSR).
+        Sync.defer(document.body).map(body => mountInto(ui, body))
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
@@ -41,6 +43,7 @@ private[kyo] object DomBackend:
             html <- HtmlRenderer.render(ui, Seq.empty)
             _    <- Sync.defer(container.innerHTML = html)
             _    <- applyJsProps(container)
+            _    <- fireHostMounts(ui, Seq.empty)
             _    <- Sync.defer(beginAnimationsSync(container))
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
@@ -59,6 +62,41 @@ private[kyo] object DomBackend:
         yield ()
         end for
     end mountInto
+
+    /** Walk the original AST tracking `data-kyo-path` exactly as `HtmlRenderer.renderTo`
+      * assigns it (children indexed by position; `KeyedChild` keeps its parent path), and for
+      * each `HostNode` carrying a `DomHostMount` resolve the live element by its path and run
+      * the mount effect once under the ambient page Scope. The walk does not descend into
+      * reactive (`Reactive`/`Foreach`) zones: a host there would sit under a signal whose
+      * subtree a re-render may replace, so only a host in a const subtree is fired.
+      */
+    private def fireHostMounts(ui: UI, path: Seq[String])(using Frame): Unit < (Async & Scope) =
+        ui match
+            case host: UI.Ast.HostNode =>
+                host.mount match
+                    case Present(m: DomHostMount) =>
+                        Sync.defer(document.querySelector(s"""[data-kyo-path="${path.mkString(".")}"]""")).map {
+                            case null    => ()
+                            case element => m.run(element.asInstanceOf[dom.Element])
+                        }
+                    case _ => ()
+            case elem: UI.Ast.Element =>
+                Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
+                    fireHostMounts(child, path :+ i.toString)
+                }
+            case UI.Ast.Fragment(children) =>
+                Kyo.foreachDiscard(children.toSeq.zipWithIndex) { (child, i) =>
+                    val childPath = child match
+                        case kc: UI.Ast.KeyedChild[?] => path :+ kc.key
+                        case _                        => path :+ i.toString
+                    fireHostMounts(child, childPath)
+                }
+            case UI.Ast.KeyedChild(_, child) =>
+                fireHostMounts(child, path)
+            case _ =>
+                // Text nodes and reactive boundaries (Reactive/Foreach) carry no fireable host.
+                Kyo.unit
+    end fireHostMounts
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:

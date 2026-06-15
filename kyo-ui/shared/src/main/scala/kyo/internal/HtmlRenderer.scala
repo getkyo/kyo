@@ -305,6 +305,7 @@ private[kyo] object HtmlRenderer:
         case _: FileInput      => "input"
         case _: HiddenInput    => "input"
         case _: Dropdown       => "div"
+        case h: HostNode       => h.hostTag
         case e: Svg.SvgElement => svgTagName(e)
         // SvgNode/SvgRootNode are the sanctioned non-sealed cross-file bridge for the SVG AST
         // (see UI.Ast.SvgNode); every in-tree SVG node extends Svg.SvgElement, matched above, so
