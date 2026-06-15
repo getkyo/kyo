@@ -36,12 +36,14 @@ object WithKyoTest {
 
         def withKyoTest: CrossProject = {
             val base =
-                cp.jvmSettings(
-                    Test / unmanagedClasspath ++=
-                        (LocalProject("kyo-test-runnerJVM") / Test / fullClasspath).value,
-                    Test / testFrameworks +=
-                        new TestFramework("kyo.test.runner.SbtFramework")
-                )
+                if (cp.projects.contains(JVMPlatform))
+                    cp.jvmSettings(
+                        Test / unmanagedClasspath ++=
+                            (LocalProject("kyo-test-runnerJVM") / Test / fullClasspath).value,
+                        Test / testFrameworks +=
+                            new TestFramework("kyo.test.runner.SbtFramework")
+                    )
+                else cp
             val withJs =
                 if (cp.projects.contains(JSPlatform))
                     base.jsSettings(
