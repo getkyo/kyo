@@ -209,6 +209,25 @@ class DocsMarkdownTest extends WebsiteTest:
         yield assert(html.contains(">Sync.defer</code>"), s"single-backtick code span must still work: $html")
     }
 
+    // A bare ```scala (an unmatched triple-backtick run) in the MIDDLE of prose must render as literal
+    // text, not swallow the rest of the line up to the next real inline-code chip. CommonMark: an
+    // unmatched backtick run is literal and parsing resumes after it, so the later `code` chips and the
+    // word spacing around them stay intact.
+    "an unmatched backtick run in prose is literal and does not swallow following inline code" in {
+        val source = "extracts every ```scala block, and opts out with `.disable` per project.\n"
+        for html <- transpileHtml(source)
+        yield
+            // The bare ```scala renders as literal backticks in the prose, not a code chip.
+            assert(html.contains("```scala block"), s"bare ```scala must render literally in prose: $html")
+            // The real single-backtick chip after it is its own clean chip.
+            assert(html.contains(">.disable</code>"), s"the later inline-code chip must render as one chip: $html")
+            // The word before that chip keeps its space (not eaten into a swallowed span).
+            assert(html.contains("opts out with "), s"the space before the chip must survive: $html")
+            // Exactly ONE code chip on the line (the bare run did not open a spurious span).
+            assert(html.split("<code", -1).length - 1 == 1, s"only the real chip is a <code>, not the bare run: $html")
+        end for
+    }
+
     // ---- Doctest comment stripping ----
 
     "doctest:setup comment is stripped" in {

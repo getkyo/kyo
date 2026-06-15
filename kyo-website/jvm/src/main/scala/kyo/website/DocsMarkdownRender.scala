@@ -949,17 +949,27 @@ object DocsMarkdownRender:
     // A CommonMark inline code span: a run of N backticks, then content up to the next run of N
     // backticks. The delimiter length matters: a span opened with N backticks lets runs of OTHER
     // lengths appear verbatim inside it, which is how prose shows a literal ```scala by writing it as
-    // ```` ```scala ````. A single backtick (N=1) is the common case. An unmatched opening run drops
-    // the branch (readUntilString reaches EOF, the closing literal fails), so the backticks fall
-    // through to literal text, the CommonMark behavior for an unpaired run.
+    // ```` ```scala ````. A single backtick (N=1) is the common case.
+    //
+    // An UNMATCHED opening run (no closing run of the same length) is LITERAL text, consumed here so
+    // parsing resumes AFTER the run. This is the CommonMark rule and the load-bearing detail: without
+    // it, a bare ```scala in prose would leave the failed branch to backtrack one char and re-enter on
+    // the next backtick, and the leftover single backtick would open a span that swallows the prose up
+    // to the next real inline-code backtick (eating chip delimiters and word spacing).
     private def inlineCode(using Frame): UI < Parse[Char] =
         for
             ticks <- Parse.readWhile[Char](_ == '`').map(_.mkString).map { run =>
                 if run.isEmpty then Parse.fail[Char]("no opening backtick run") else run
             }
-            inner <- readUntilString(ticks)
-            _     <- Parse.literal(ticks)
-        yield UI.code(Ast.Text(stripInlineCodeSpan(inner)))
+            node <- Parse.firstOf(
+                for
+                    inner <- readUntilString(ticks)
+                    _     <- Parse.literal(ticks)
+                yield UI.code(Ast.Text(stripInlineCodeSpan(inner))),
+                // No matching close: the opening run is literal backticks (already consumed above).
+                (Ast.Text(ticks): UI)
+            )
+        yield node
 
     // CommonMark: when a code span's content has a non-space character and begins AND ends with a
     // space, strip exactly one space from each end (so ```` ```scala ```` shows as ```scala, not as
