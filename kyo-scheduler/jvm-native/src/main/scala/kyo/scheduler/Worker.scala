@@ -256,6 +256,9 @@ abstract private class Worker(
         mountId = ThreadUserTime.currentThreadId()
         setCurrent(this)
         var task: Task = null
+        // Set once the idle path below releases ownership of the worker. After that a successor run()
+        // may own it, so the finally must not write any shared field (state, mount, mountId, queue).
+        var released = false
 
         try
             while (!shouldStop()) {
@@ -316,20 +319,43 @@ abstract private class Worker(
                         completions += 1
                     }
                 } else {
-                    // No tasks available - prepare to go idle
+                    // No tasks available: release ownership and go idle. Clear the active-run fields
+                    // BEFORE publishing Idle: while state is Running no wakeup can dispatch a successor,
+                    // so these writes cannot race one. Once Idle is published a successor may mount and
+                    // set its own fields, so from then on this invocation must not write them.
+                    blocked = false
+                    mountId = -1L
+                    mount = null
                     state.set(State.Idle)
-                    if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running))
+                    if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
+                        // Queue empty (released as the last owner) or a wakeup re-acquired ahead of us
+                        // (a fresh run() now owns the worker): either way this invocation is done. Leave
+                        // the shared fields untouched so a successor's setup is not clobbered.
+                        released = true
                         return
+                    }
+                    // Re-acquired before any successor: re-mount and keep running.
+                    mount = Thread.currentThread()
+                    mountId = ThreadUserTime.currentThreadId()
                 }
             }
         finally {
-            // Clean up on any exit path: idle, shouldStop, or fatal Throwable escaping runTask
-            state.set(State.Idle)
-            if (task ne null) queue.add(task)
-            drain()
-            mountId = -1L
-            blocked = false
-            mount = null
+            if (!released) {
+                // Owner exit: shouldStop or a fatal Throwable escaping runTask. We still own the worker
+                // (at loop exit state is Running/Stalled, never Idle, so no successor can have spawned).
+                // Clear the single-owner fields BEFORE publishing Idle; those (not drain) are what would
+                // clobber a successor that mounts once Idle is visible. Publish Idle, then drain LAST: a
+                // task enqueued while we were not yet Idle had its producer's wakeup skip dispatch, so the
+                // post-Idle drain hands it off. Safe after Idle because WorkerQueue is spin-locked and
+                // drain writes no single-owner field; strand-free because the @volatile count the idle
+                // double-check relies on makes the pre-Idle add visible to drain here.
+                blocked = false
+                mountId = -1L
+                mount = null
+                if (task ne null) queue.add(task)
+                state.set(State.Idle)
+                drain()
+            }
             clearCurrent()
         }
     }
