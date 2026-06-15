@@ -8,10 +8,14 @@ import kyo.ffi.Ffi
   *
   * Interest is registered edge-triggered (`EPOLLET | EPOLLRDHUP`): `epoll_ctl(ADD)` arms a fresh fd with `EPOLLIN | EPOLLOUT | EPOLLRDHUP |
   * EPOLLET`. The kernel fires readiness once per empty->ready state transition; the fd stays armed until explicitly deregistered with
-  * `epoll_ctl(DEL)`. The driver drains to EAGAIN on each readiness event to ensure no data is missed between transitions. If the fd
-  * is already in the set, the kernel returns `EEXIST` and we re-arm with `epoll_ctl(MOD)` ONLY when the interest mask has actually changed from
-  * the previously armed mask (skip the syscall when identical). The watched fd is carried in the event's `data` key so the
-  * decoded event can name it without a side table.
+  * `epoll_ctl(DEL)`. When a recv fills the read buffer exactly, the driver sets `readMightHaveMore` on the handle and re-dispatches
+  * the next read immediately on re-registration (consumer-paced drain) rather than waiting for a new edge that may never arrive. When
+  * `eofPending` is set alongside a partial recv, re-dispatch is also forced so the EOF surfaces on the next `awaitRead`. When an edge
+  * fires while no pending read is present (the consumer is in a backpressure pause), the driver records the fd in `missedReads` and
+  * re-dispatches on the consumer's next `awaitRead`, since `epoll_ctl(MOD)` with the same mask is a no-op that produces no new edge.
+  * If the fd is already in the set, the kernel returns `EEXIST` and we re-arm with `epoll_ctl(MOD)` ONLY when the interest mask has
+  * actually changed from the previously armed mask (skip the syscall when identical). The watched fd is carried in the event's `data`
+  * key so the decoded event can name it without a side table.
   *
   * Unlike kqueue, where `EVFILT_READ` and `EVFILT_WRITE` are INDEPENDENT filters that coexist on one fd, epoll carries ONE interest mask per fd.
   * Registering write while a read was already armed would replace the mask and drop the pending direction's interest. To match kqueue semantics

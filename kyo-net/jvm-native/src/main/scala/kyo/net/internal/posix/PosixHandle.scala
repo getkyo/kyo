@@ -226,6 +226,14 @@ final private[net] class PosixHandle private (
       */
     @volatile var backpressureWaiter: Maybe[(Promise.Unsafe[Unit, Abort[Closed]], Frame)] = Absent
 
+    /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
+      * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
+      * the kernel with no new edge). On the next awaitRead registration the driver immediately re-dispatches the fd rather than waiting for an
+      * edge that may never arrive. Cleared to false whenever recv returns EAGAIN (buffer confirmed empty), n == 0 (peer close), or a hard error.
+      * Poll-carrier-only: written and read exclusively on the single poll-loop carrier, so no @volatile is needed.
+      */
+    var readMightHaveMore: Boolean = false
+
     /** The pending read promise for this fd, stored directly on the handle rather than as a `(promise, handle)` pair in the `pendingReads`
       * map. Written by the driver carrier under `awaitRead`/`rearmOwned`; read and cleared by the driver on `dispatchRead`. The `@volatile`
       * ensures the store is visible to the change worker that may fail the promise on `rc < 0` (the happens-before barrier is the

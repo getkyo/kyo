@@ -108,6 +108,22 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     // carriers at once.
     private val engineQueue = new ConcurrentLinkedQueue[() => Unit]()
 
+    // Missed-readiness tracker for the dropped-edge case under epoll EPOLLET register-once.
+    //
+    // When an EPOLLIN edge fires on an armed fd and dispatchRead finds no pending read (the consumer is in a backpressure pause, so
+    // pendingReads.remove(fd) returns Absent), the edge is lost. The fd stays armed at the kernel, but EPOLLET only fires once per
+    // empty->ready state transition, so no new edge fires when the consumer eventually calls awaitRead. That awaitRead issues an
+    // epoll_ctl(MOD) with the same mask, which the kernel accepts as a no-op (the mask did not change), leaving the buffered data
+    // stranded until more data arrives or the peer closes.
+    //
+    // This set records every fd whose kernel read edge was dropped because no pending read was present. On the consumer's next
+    // awaitRead, dispatchCmd's OpRegisterRead branch checks and clears the entry, then re-dispatches immediately via dispatchRead,
+    // which drains the buffered data without waiting for a new edge. The entry is also cleared on deregister and driver close.
+    //
+    // Poll-carrier-only: drainReady (which calls dispatchRead) and dispatchCmd (which is called from drainChanges) both run exclusively
+    // on the single poll-loop carrier. No synchronization is needed; java.util.HashSet is sufficient.
+    private val missedReads = new java.util.HashSet[Int]()
+
     // Per-driver reused poll/arm scratch. Allocated once at driver init. Ownership:
     //   eventsBuffer + fds + flags: poll loop carrier (pollLoop + drainReady on the same fiber).
     //   armBuf (epoll) / kqueueData.armBuf (kqueue): change worker (drainChanges + dispatchCmd on one worker fiber).
@@ -652,6 +668,10 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def deregisterFds(handle: PosixHandle, fdClosing: Boolean)(using AllowUnsafe, Frame): Unit =
         discard(activeFds.remove(handle.readFd))
         discard(activeFds.remove(handle.writeFd))
+        // missedReads is poll-carrier-only (java.util.HashSet, not thread-safe). deregisterFds runs on an arbitrary carrier,
+        // so we do NOT touch missedReads here. The OpDeregister handler in dispatchCmd (which runs on the poll-loop carrier)
+        // clears the entry under the single-carrier invariant. That clear is sufficient: a stale entry at most triggers one
+        // spurious EAGAIN probe on the new owner's first awaitRead, which the driver handles correctly.
         submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
         if handle.writeFd != handle.readFd then
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
@@ -754,6 +774,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             }
             pendingAccepts.clear()
             activeFds.clear()
+            missedReads.clear()
             backend.close(pollerFd)
             // The poll scratch is NOT freed here while the loop is running: the poll loop carrier uses it on every cycle (the bounded
             // epoll_wait/kevent holds the off-heap buffer in use for the whole native wait), so freeing it from this carrier mid-poll closes
@@ -771,9 +792,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds); under edge-triggered the fd is persistently
       *     armed and there is no survivor re-arm to submit.
       *   - Dispatches write-ready events to `dispatchWritable`.
-      *   - Dispatches Eof events (peer half-close): when Eof fires alongside Read, `dispatchRead` drains buffered bytes first (the drain loop
-      *     passes `eofPending=true` so the final EAGAIN surfaces as Span.empty rather than a silent stop). When Eof fires without Read, the
-      *     fd's read-promise is completed directly with Span.empty (no bytes to drain first).
+      *   - Dispatches Eof events (peer half-close): when Eof fires alongside Read, `dispatchRead` handles buffered bytes first (passing
+      *     `eofPending=true` so EAGAIN surfaces as Span.empty rather than a silent stop). When Eof fires without Read, the fd's read-promise
+      *     is completed directly with Span.empty (no bytes to drain first).
       *   - Dispatches error-ONLY events (no read/write/eof bit) to `dispatchError` so a peer reset surfaces immediately rather than being
       *     missed until a later op fails. When a read or write bit is also set, the normal dispatch runs and surfaces the error in-band.
       */
@@ -794,9 +815,10 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 val eof   = (f & PollFlags.Eof) != 0
                 if read then
                     // Prefer accept dispatch over read dispatch: a listen fd registered via awaitAccept must not be routed to dispatchRead.
-                    // Pass eofPending=eof so the drain-to-EAGAIN loop surfaces half-close after the buffered bytes are consumed.
+                    // Pass eofPending=eof so the read path surfaces half-close after the buffered bytes are consumed.
+                    // Pass fromKernelEdge=true so a dropped edge (Absent case) is recorded in missedReads for the consumer-resume path.
                     if pendingAccepts.containsKey(fd) then dispatchAccept(fd)
-                    else dispatchRead(fd, eofPending = eof)
+                    else dispatchRead(fd, eofPending = eof, fromKernelEdge = true)
                 else if eof then
                     // Eof without Read: no buffered bytes before the EOF marker (or already drained). Surface the half-close directly.
                     dispatchEof(fd)
@@ -859,7 +881,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         end try
     end soError
 
-    private def dispatchRead(fd: Int, eofPending: Boolean = false)(using AllowUnsafe, Frame): Unit =
+    private def dispatchRead(fd: Int, eofPending: Boolean = false, fromKernelEdge: Boolean = false)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
                 val promise   = handle.pendingReadPromise
@@ -887,8 +909,13 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                     end match
                 end if
             case Absent =>
-                // No pending read (a one-shot event arrived after cancel/close, or a stale-fd recycle whose new owner has none). Drop it.
-                ()
+                // No pending read. Under the register-once (EPOLLET) model, if this is a real kernel read edge (fromKernelEdge=true),
+                // the edge is being dropped because no consumer is waiting (the consumer is in a backpressure pause or cancelled). Record
+                // the fd so dispatchCmd's OpRegisterRead branch can re-dispatch when the consumer's next awaitRead arrives, rather than
+                // letting the consumer park on a MOD-skip that produces no new kernel edge. Stale-fd recycles are also safe: a recycled
+                // fd gets a fresh activeFds entry and the stale missedReads entry is cleared on deregister; at worst it triggers one
+                // spurious EAGAIN probe on the new owner's first awaitRead, which the driver already handles correctly.
+                if fromKernelEdge then discard(missedReads.add(fd))
         end match
     end dispatchRead
 
@@ -913,7 +940,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     /** Release this dispatch's ownership and re-deposit the handle into `pendingReads` to keep waiting (the EAGAIN close-race guard), UNLESS a
       * `closeHandle` raced this dispatch, in which case the deferred free has happened and the read is failed `Closed` instead (a handle that
       * was closed during dispatch must not be re-deposited into pendingReads). Under edge-triggered (ET) registration the fd is persistently
-      * armed at the kernel; this method does NOT submit a new RegisterRead command (no re-arm needed; the kernel re-fires when data arrives).
+      * armed at the kernel; this method does NOT submit a new RegisterRead command. The consumer calls `awaitRead` next, which submits an
+      * OpRegisterRead; `dispatchCmd` then re-dispatches immediately if `readMightHaveMore` is set (residual bytes stranded on ET), or otherwise
+      * parks until the kernel fires a new readiness edge.
       */
     private def rearmOwned(fd: Int, handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using
         AllowUnsafe,
@@ -924,25 +953,30 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         else
             handle.pendingReadPromise = Present(promise)
             discard(pendingReads.put(fd, handle))
-            // ET: fd stays armed; no re-arm submission needed. The kernel re-fires when more data arrives.
+            // ET: fd stays armed at the kernel. The consumer-paced drain in dispatchCmd handles any residual bytes.
 
-    /** Drain-to-EAGAIN plain (non-TLS) read loop under edge-triggered registration.
+    /** Consumer-paced plain (non-TLS) read under edge-triggered registration.
       *
-      * Under ET the kernel fires once per empty->ready transition. The driver must keep calling recvNow until EAGAIN to guarantee
-      * it does not miss bytes that arrived between the readiness event and this first recv.
+      * Under ET the kernel fires once per empty->ready transition. A recv that fills the read buffer exactly (n == readBufferSize) may
+      * leave residual bytes in the kernel that the ET backend will never re-signal (no new edge occurs when the buffer was already non-empty
+      * when the consumer re-registered). The consumer-paced drain handles this: when n == readBufferSize, `readMightHaveMore` is set true on
+      * the handle; when the consumer re-registers (OpRegisterRead in `dispatchCmd`), the driver calls `dispatchRead` immediately rather than
+      * waiting for an edge that may never arrive.
       *
-      * Loop behaviour:
-      *   - n > 0: deliver the first chunk to the caller's promise (each `pendingReads` slot holds one promise; the consumer re-registers
-      *     before issuing the next read, so delivering the first chunk and stopping the drain is correct: the next re-register will re-enter
-      *     `pendingReads` and the FIFO will drain the remaining kernelspace buffer on the next event). `rearmOwned` re-deposits the handle.
-      *   - n == 0 (recv returned 0): orderly peer close (TCP FIN received and kernel buffer empty). Surface as Span.empty (not Closed).
-      *   - EAGAIN / EWOULDBLOCK with eofPending: the kernel buffer is now empty and we know the peer half-closed. Surface Span.empty.
-      *   - EAGAIN / EWOULDBLOCK without eofPending: buffer drained, no pending EOF; the fd stays armed, re-deposit handle.
+      * Behaviour:
+      *   - n > 0: deliver the chunk; set `readMightHaveMore = (n == readBufferSize) || eofPending`. `finishDispatch` releases ownership;
+      *     the consumer re-registers before issuing the next read. If the buffer was full OR `eofPending` is set, `dispatchCmd`
+      *     re-dispatches immediately on re-register. The eofPending case forces re-dispatch because EPOLLRDHUP fires only once per
+      *     transition; after consuming data, the EPOLLRDHUP condition persists but epoll will not fire again without a new transition.
+      *     The forced re-dispatch calls recv a second time, which returns 0 (FIN) and surfaces Span.empty.
+      *   - n == 0 (recv returned 0): orderly peer close (TCP FIN, kernel buffer empty). Surface as Span.empty (not Closed).
+      *   - EAGAIN / EWOULDBLOCK with eofPending: kernel buffer confirmed empty, peer half-closed. Surface Span.empty.
+      *   - EAGAIN / EWOULDBLOCK without eofPending: buffer confirmed empty; fd stays armed, re-deposit handle.
       *   - Hard error: surface Closed.
       *
       * `eofPending` is forwarded from `drainReady` when `PollFlags.Eof` fired alongside `PollFlags.Read`, signalling that the peer
       * half-closed but bytes were still buffered at the time of the event (EPOLLRDHUP can fire with EPOLLIN; EV_EOF can fire with EV_READ).
-      * After draining to EAGAIN with eofPending=true, the buffer is confirmed empty and Span.empty is the correct EOF delivery.
+      * After an EAGAIN with eofPending=true, the buffer is confirmed empty and Span.empty is the correct EOF delivery.
       */
     private def dispatchReadPlain(
         fd: Int,
@@ -957,11 +991,20 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             // Keep a reference to this chunk so a subsequent STARTTLS upgrade can recover a handshake flight that arrived coalesced with
             // the upgrade signal in this same read (the consumer takes the whole chunk as the signal and discards the trailing bytes).
             handle.lastPlaintextRead = Present(arr)
+            // Set readMightHaveMore when the kernel may have additional bytes with no new ET edge pending. Two cases:
+            // (1) n == readBufferSize: the recv filled the buffer; residual bytes may remain in the kernel that epoll ET will not re-signal.
+            // (2) eofPending && n > 0: the peer half-closed; the next recv will either return more data or 0 (EOF). Re-dispatch is
+            //     required regardless of buffer fill so the EOF surfaces on the next awaitRead rather than waiting for an edge that
+            //     epoll ET will not fire (EPOLLRDHUP was already signalled and consumed with the EPOLLIN edge).
+            handle.readMightHaveMore = (n == handle.readBufferSize) || eofPending
             finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(arr)))
         else if n == 0 then
             // Orderly peer close: recv(2) returns 0 when the kernel buffer is empty and the peer sent FIN. Surface as empty Span (not error).
+            handle.readMightHaveMore = false
             finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
         else if isWouldBlock(result.errorCode) then
+            // EAGAIN confirms the kernel buffer is empty: no residual possible.
+            handle.readMightHaveMore = false
             if eofPending then
                 // Buffer fully drained and the peer's half-close is confirmed empty. Deliver EOF (Span.empty) and release the dispatch.
                 finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
@@ -971,6 +1014,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             end if
         else
             // Hard error (e.g. ECONNRESET, ECONNABORTED): surface Closed.
+            handle.readMightHaveMore = false
             finishDispatch(
                 fd,
                 handle,
@@ -1059,6 +1103,8 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         val result  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
         val n       = result.value.toInt
         if n > 0 then
+            // A full-buffer recv may leave residual ciphertext in the kernel with no new ET edge. Record that for the re-register path.
+            handle.readMightHaveMore = n == handle.readBufferSize
             // Feed staging directly to feedCiphertext on the FIFO worker: no per-read re-fromArray.
             // The happens-before between the recvNow write (poll carrier) and the feedCiphertext read (FIFO worker) is the
             // submitEngineOp enqueue, the same mechanism as writableArmed. The at-most-one-in-flight guarantee ensures the next
@@ -1079,9 +1125,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         else if n == 0 then
             // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered EOF first): record
             // the truncation condition so closeReason reports Truncated, then deliver EOF immediately without engine involvement.
+            handle.readMightHaveMore = false
             handle.peerEof = true
             finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
         else if isWouldBlock(result.errorCode) then
+            // EAGAIN confirms the kernel socket buffer is empty: no residual possible. Engine plaintext may still be buffered (checked below).
+            handle.readMightHaveMore = false
             // Socket buffer empty: check for already-buffered plaintext first (via the engine FIFO), then re-arm if none.
             submitEngineOp { () =>
                 if engine.hasBufferedPlaintext then
@@ -1093,6 +1142,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 end if
             }
         else
+            handle.readMightHaveMore = false
             finishDispatch(
                 fd,
                 handle,
@@ -1228,6 +1278,18 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                         h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
                         h.pendingReadPromise = Absent
                     }
+                else
+                    // Consumer-paced drain: re-dispatch immediately when the kernel may hold bytes with no new ET edge pending. Two cases:
+                    // (1) readMightHaveMore=true: the previous recv filled the read buffer exactly; the kernel holds residual bytes
+                    //     that EPOLLET will never re-signal (no new empty->ready transition when data was already present).
+                    // (2) missedReads contains fd: a kernel read edge fired while no pending read was present (consumer was in a
+                    //     backpressure pause). The edge was dropped by dispatchRead's Absent branch. On re-registration, epoll_ctl(MOD)
+                    //     with the same mask is a no-op (no new edge fires). Remove clears the entry so it applies exactly once per
+                    //     missed edge. A spurious re-dispatch (no actual bytes in the kernel) hits EAGAIN immediately and is harmless.
+                    val missed = missedReads.remove(fd)
+                    Maybe(pendingReads.get(fd)).foreach { h =>
+                        if h.readMightHaveMore || missed then dispatchRead(fd)
+                    }
                 end if
             end if
         else if op == OpRegisterWrite then
@@ -1236,6 +1298,8 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
         else
             // OpDeregister: pass fdClosing to the backend so kqueue can skip EV_DELETE when the OS already closed the fd.
+            // Also clear any missed-readiness entry on the poll-loop carrier so a recycled fd does not inherit a stale entry.
+            discard(missedReads.remove(fd))
             backend.deregister(pollerFd, fd, fdClosing, pollScratch)
         end if
     end dispatchCmd
