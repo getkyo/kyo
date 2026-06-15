@@ -946,12 +946,28 @@ object DocsMarkdownRender:
         yield UI.span.style(Style.italic)(Ast.Text(inner))
 
     /** `` `text` `` -> an inline `UI.code` node. */
+    // A CommonMark inline code span: a run of N backticks, then content up to the next run of N
+    // backticks. The delimiter length matters: a span opened with N backticks lets runs of OTHER
+    // lengths appear verbatim inside it, which is how prose shows a literal ```scala by writing it as
+    // ```` ```scala ````. A single backtick (N=1) is the common case. An unmatched opening run drops
+    // the branch (readUntilString reaches EOF, the closing literal fails), so the backticks fall
+    // through to literal text, the CommonMark behavior for an unpaired run.
     private def inlineCode(using Frame): UI < Parse[Char] =
         for
-            _     <- Parse.literal('`')
-            inner <- nonEmptyUntilChar('`')
-            _     <- Parse.literal('`')
-        yield UI.code(Ast.Text(inner))
+            ticks <- Parse.readWhile[Char](_ == '`').map(_.mkString).map { run =>
+                if run.isEmpty then Parse.fail[Char]("no opening backtick run") else run
+            }
+            inner <- readUntilString(ticks)
+            _     <- Parse.literal(ticks)
+        yield UI.code(Ast.Text(stripInlineCodeSpan(inner)))
+
+    // CommonMark: when a code span's content has a non-space character and begins AND ends with a
+    // space, strip exactly one space from each end (so ```` ```scala ```` shows as ```scala, not as
+    // a chip padded with stray spaces). Content that is all spaces, or padded on one side only, is
+    // left untouched.
+    private def stripInlineCodeSpan(s: String): String =
+        if s.length >= 2 && s.startsWith(" ") && s.endsWith(" ") && s.exists(_ != ' ') then s.substring(1, s.length - 1)
+        else s
 
     /** `<...>` -> a verbatim `UI.rawHtml` leaf for inline HTML snippets. */
     private def inlineHtml(using Frame): UI < Parse[Char] =

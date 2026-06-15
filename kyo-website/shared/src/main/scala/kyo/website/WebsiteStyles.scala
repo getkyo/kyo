@@ -195,8 +195,13 @@ object WebsiteStyles:
             )
             .rule(
                 Selector.tag("body"),
+                // Ligatures OFF for the whole document (the property inherits, so this reaches every code
+                // panel and inline chip). The mono font (JetBrains Mono) fuses `--`, `<!--`, `-->`, `->`
+                // into dash/arrow glyphs by default, which misrepresents literal source in the docs (a
+                // doctest README shows `<!-- doctest:default -->` markers that must read as exact ASCII).
                 Style.bg(_.variable("bg")).color(_.variable("ink"))
                     .fontFamily(Style.FontFamily.Custom("var(--sans)"))
+                    .fontVariantLigatures(_.none)
                     .fontSize(17.px).lineHeight(1.6)
             )
             // Layout wrapper

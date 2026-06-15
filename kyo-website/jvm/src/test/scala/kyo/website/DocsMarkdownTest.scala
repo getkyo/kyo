@@ -186,6 +186,29 @@ class DocsMarkdownTest extends WebsiteTest:
         end for
     }
 
+    // A CommonMark inline code span can be delimited by N backticks, letting a shorter run appear inside
+    // it. The kyo-doctest README writes `` ```` ```scala ```` `` to show a literal ```scala token inline.
+    // A single-backtick parser splits that into stray backticks; the N-backtick parser keeps it as one chip.
+    "a multi-backtick inline code span renders the literal inner backticks as one chip" in {
+        val source = "A plain ```` ```scala ```` fenced block, or a `<details>` element.\n"
+        for html <- transpileHtml(source)
+        yield
+            // The 4-backtick span becomes ONE <code> chip whose text is the literal ```scala (CommonMark
+            // strips one padding space each side), not stray backticks leaking into the prose.
+            assert(html.contains(">```scala</code>"), s"the ```scala token must be one inline code chip: $html")
+            // The trailing single-backtick span still works alongside the multi-backtick one.
+            assert(html.contains(">&lt;details&gt;</code>"), s"the <details> token must be its own chip: $html")
+            // The prose around the chips is intact (no stray backticks leaked into the text).
+            assert(html.contains("fenced block, or a"), s"prose around the chip must be clean: $html")
+            assert(!html.contains("```` "), s"no raw 4-backtick run may leak into the rendered prose: $html")
+        end for
+    }
+
+    "a plain single-backtick inline code span still renders as one chip" in {
+        for html <- transpileHtml("Use `Sync.defer` to suspend.\n")
+        yield assert(html.contains(">Sync.defer</code>"), s"single-backtick code span must still work: $html")
+    }
+
     // ---- Doctest comment stripping ----
 
     "doctest:setup comment is stripped" in {
