@@ -233,7 +233,16 @@ abstract private class Worker(
         val task    = currentTask
         val start   = taskStartMs
         val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
-        if (stalled && !queue.isEmpty()) {
+        if (stalled) {
+            // Preempt a long-running task even when this worker's own queue is empty. The task may be
+            // pinned on work that cannot progress until a task stranded on another worker's queue runs:
+            // e.g. a fiber blocked in runAndBlock parks its carrier, and the completer that would
+            // unblock it can be enqueued onto that now-parked worker (the producer cannot avoid this:
+            // a worker can block after a task is submitted to it). The pinned worker is then the only
+            // one that can make progress, but it never would, because with an empty local queue it has
+            // no reason to yield and run() never reaches the steal path. Preempting unconditionally lets
+            // run() attempt a steal and pick that stranded work up. With local work queued the behavior
+            // is unchanged: the preempted task interleaves with the queued tasks.
             task.doPreempt()
         }
         stalled
@@ -280,9 +289,28 @@ abstract private class Worker(
                             // Interrupted during its slice: never requeue (a racy runtime key could starve
                             // it). Run it again immediately; eval observes the interrupt and finalizes.
                             task = current
-                        else
-                            // Task was preempted - add it back to queue and get next task
-                            task = queue.addAndPoll(current)
+                        else {
+                            // Add the preempted task back and pick the next local task. addAndPoll returns
+                            // `current` itself only when the local queue was empty; in that case attempt a
+                            // steal before resuming `current`. This is what lets a worker pinned on a task
+                            // that cannot progress (until work stranded on a blocked worker's queue runs)
+                            // yield its core to that stranded work instead of spinning on `current`. With
+                            // local work queued, addAndPoll returns it and we run it as before.
+                            val next = queue.addAndPoll(current)
+                            if (next ne current)
+                                task = next
+                            else {
+                                val stolen = stealTask(this)
+                                if (stolen ne null) {
+                                    stolenTasks += queue.size() + 1
+                                    // Re-enqueue `current` (it keeps its accumulated runtime, so it sorts
+                                    // behind the stolen work) and run the stolen task now.
+                                    queue.add(current)
+                                    task = stolen
+                                } else
+                                    task = current
+                            }
+                        }
                     } else {
                         // Task completed normally
                         completions += 1
