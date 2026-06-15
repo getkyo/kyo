@@ -12,7 +12,8 @@ import kyo.net.Test
   *   1. `selectRingFlagsByVersion`: pure-function test of `IoUringDriver.selectRingFlags`. Platform-agnostic (no FFI). Real representative inputs
   *      per tier plus off-by-one boundary values. Asserts concrete flag values.
   *   2. `kernelVersionProbeIsReal`: exercises the REAL `kyo_uring_kernel_version()` uname FFI on the test host. On Linux it must return a plausible
-  *      packed version (> 0, >= 5000 for any io_uring-capable kernel). On non-Linux it returns 0.
+  *      packed version (> 0, >= 5000 for any io_uring-capable kernel). Cancels on non-Linux: the io_uring shim is Linux-only and loading it off-Linux
+  *      hangs, so the probe runs only where the shim exists.
   *   3. `queueInitSucceedsWithProbedFlags`: on a real Linux ring (podman), `queue_init` with the probe-selected flags returns 0. Cancels on
   *      macOS (io_uring is Linux-only).
   */
@@ -45,17 +46,15 @@ class IoUringSetupFlagsTest extends Test:
         }
 
         "kernelVersionProbeIsReal: the uname FFI returns a plausible result on the host" in {
+            // The io_uring shim is Linux-only; loading IoUringBindings on a non-Linux host hangs, so cancel off-Linux before the load. The
+            // probe is meaningful on ANY Linux kernel (the uname FFI works regardless of whether io_uring itself is available), so this guards
+            // on the platform alone rather than on io_uring availability.
+            if !PosixConstants.isLinux then cancel("io_uring is Linux-only")
             val uring   = Ffi.load[IoUringBindings]
             val version = uring.kyo_uring_kernel_version()
-            if PosixConstants.isLinux then
-                // A Linux 5.6+ kernel is the floor for io_uring; any io_uring-capable kernel will be >= 5000 in the packed encoding.
-                assert(version > 0, s"kyo_uring_kernel_version returned $version on Linux; expected > 0")
-                assert(version >= 5000, s"kyo_uring_kernel_version returned $version; expected >= 5000 for any io_uring-capable kernel")
-            else
-                // macOS / other: uname returns a non-Linux release; the C shim parses major*1000+minor which is valid but not io_uring-capable.
-                // We assert only that the call does not crash and returns a non-negative value; the specific value is not contractual.
-                assert(version >= 0, s"kyo_uring_kernel_version returned negative $version on non-Linux")
-            end if
+            // A Linux 5.6+ kernel is the floor for io_uring; any io_uring-capable kernel will be >= 5000 in the packed encoding.
+            assert(version > 0, s"kyo_uring_kernel_version returned $version on Linux; expected > 0")
+            assert(version >= 5000, s"kyo_uring_kernel_version returned $version; expected >= 5000 for any io_uring-capable kernel")
         }
 
         "queueInitSucceedsWithProbedFlags: queue_init with the probe-selected flags returns 0 on the real kernel" in {

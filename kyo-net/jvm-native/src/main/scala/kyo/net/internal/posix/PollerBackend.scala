@@ -199,6 +199,13 @@ final private[net] class PollScratch(
       */
     val wakeUserIdent: Long = 0x7fffffffL
 
+    /** The number of decoded readiness events the last [[PollerBackend.poll]] filled into `fds`/`flags`. The backend writes it before the poll
+      * fiber resolves (inside the decode `.map`, so it is set on the inline JVM/Native completion and the JS libuv callback alike); the poll loop
+      * reads it as a raw `Int` to bound its `drainReady` scan, instead of unwrapping the boxed `Int` fiber result. Poll-loop-carrier-owned (the
+      * decode that writes it and the `drainReady` that reads it both run on the single poll-loop carrier), so no synchronization is needed.
+      */
+    var readyCount: Int = 0
+
     def close()(using AllowUnsafe): Unit =
         eventsBuffer.close()
         armBuf.close()

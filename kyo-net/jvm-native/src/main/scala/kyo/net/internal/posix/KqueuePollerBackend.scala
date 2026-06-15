@@ -165,8 +165,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         Frame
     ): Fiber.Unsafe[Int, Any] =
         scratch.kqueueData match
-            case Present(data) => pollWithData(pollerFd, timeoutMs, changelist, nChanges, scratch.fds, scratch.flags, data)
-            case Absent        => pollFresh(pollerFd, timeoutMs, scratch.fds, scratch.flags)
+            case Present(data) => pollWithData(pollerFd, timeoutMs, changelist, nChanges, scratch, data)
+            case Absent        => pollFresh(pollerFd, timeoutMs, scratch)
 
     /** Poll using the caller-owned reused buffers from [[KqueuePollData]]. The changelist batch (built by `drainChanges`) is passed alongside
       * the poll wait so interest changes and event collection happen in one atomic `kevent` syscall. After submission, `data.nChanges`
@@ -181,10 +181,11 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         timeoutMs: Int,
         changelist: kyo.ffi.Buffer[Byte],
         nChanges: Int,
-        fds: Array[Int],
-        flags: Array[Int],
+        scratch: PollScratch,
         data: KqueuePollData
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any] =
+        val fds   = scratch.fds
+        val flags = scratch.flags
         val timeout =
             if data.pollMemoMs == timeoutMs then data.pollMemoTs
             else
@@ -195,16 +196,55 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         // Submit the changelist alongside the wait; interest changes and the blocking wait happen atomically in one kevent syscall.
         data.nChanges = 0 // reset BEFORE the kevent call so disableWrite calls during drainReady accumulate into slots 0+
         kq.kevent(pollerFd, changelist, nChanges, data.eventsBuffer, MaxEvents, timeout).map { ready =>
-            val n = ready.value.toInt
-            if n <= 0 then 0
-            else
+            val raw = ready.value.toInt
+            val n   = if raw <= 0 then 0 else raw
+            // Publish the ready count as a raw int on the poll scratch BEFORE the fiber resolves (see EpollPollerBackend.poll). The decode runs
+            // inline on JVM/Native and on the JS libuv callback, so drainReady reads a written value on every platform.
+            scratch.readyCount = n
+            var i = 0
+            while i < n do
+                // Read the three needed fields directly from the byte buffer via the KEvent codec; no per-event KEvent is allocated
+                // and no Long field is boxed.
+                fds(i) = KEvent.ident(data.eventsBuffer, i).toInt
+                val evFilter = KEvent.filter(data.eventsBuffer, i)
+                val evFlags  = KEvent.flags(data.eventsBuffer, i)
+                var f        = 0
+                if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
+                if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
+                // EV_EOF signals peer half-close (distinct from EV_ERROR which is a hard error). Both can appear on EVFILT_READ/WRITE.
+                if (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Eof
+                if (evFlags & PosixConstants.EV_ERROR) != 0 then f |= PollFlags.Error
+                flags(i) = f
+                i += 1
+            end while
+            n
+            // eventsBuffer is NOT closed here: it is the caller-owned per-driver reused buffer.
+        }
+    end pollWithData
+
+    /** Poll using freshly-allocated per-call buffers. Used when `PollScratch.kqueueData` is `Absent` (test callers that bypass the driver
+      * scratch, e.g. `PollerBackendTest` direct calls). No per-driver scratch is available in this path, so a fresh [[Timespec]] is
+      * computed on each call and changelist/nChanges are unused (empty changelist is used instead).
+      */
+    private def pollFresh(pollerFd: Int, timeoutMs: Int, scratch: PollScratch)(using
+        AllowUnsafe,
+        Frame
+    ): Fiber.Unsafe[Int, Any] =
+        val fds         = scratch.fds
+        val flags       = scratch.flags
+        val emptyChange = Buffer.alloc[Byte](0)
+        val events      = Buffer.alloc[Byte](MaxEvents * KEvent.size)
+        val timeout     = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
+        kq.kevent(pollerFd, emptyChange, 0, events, MaxEvents, timeout).map { ready =>
+            try
+                val raw = ready.value.toInt
+                val n   = if raw <= 0 then 0 else raw
+                scratch.readyCount = n
                 var i = 0
                 while i < n do
-                    // Read the three needed fields directly from the byte buffer via the KEvent codec; no per-event KEvent is allocated
-                    // and no Long field is boxed.
-                    fds(i) = KEvent.ident(data.eventsBuffer, i).toInt
-                    val evFilter = KEvent.filter(data.eventsBuffer, i)
-                    val evFlags  = KEvent.flags(data.eventsBuffer, i)
+                    fds(i) = KEvent.ident(events, i).toInt
+                    val evFilter = KEvent.filter(events, i)
+                    val evFlags  = KEvent.flags(events, i)
                     var f        = 0
                     if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
                     if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
@@ -215,43 +255,6 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                     i += 1
                 end while
                 n
-            end if
-            // eventsBuffer is NOT closed here: it is the caller-owned per-driver reused buffer.
-        }
-    end pollWithData
-
-    /** Poll using freshly-allocated per-call buffers. Used when `PollScratch.kqueueData` is `Absent` (test callers that bypass the driver
-      * scratch, e.g. `PollerBackendTest` direct calls). No per-driver scratch is available in this path, so a fresh [[Timespec]] is
-      * computed on each call and changelist/nChanges are unused (empty changelist is used instead).
-      */
-    private def pollFresh(pollerFd: Int, timeoutMs: Int, fds: Array[Int], flags: Array[Int])(using
-        AllowUnsafe,
-        Frame
-    ): Fiber.Unsafe[Int, Any] =
-        val emptyChange = Buffer.alloc[Byte](0)
-        val events      = Buffer.alloc[Byte](MaxEvents * KEvent.size)
-        val timeout     = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
-        kq.kevent(pollerFd, emptyChange, 0, events, MaxEvents, timeout).map { ready =>
-            try
-                val n = ready.value.toInt
-                if n <= 0 then 0
-                else
-                    var i = 0
-                    while i < n do
-                        fds(i) = KEvent.ident(events, i).toInt
-                        val evFilter = KEvent.filter(events, i)
-                        val evFlags  = KEvent.flags(events, i)
-                        var f        = 0
-                        if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
-                        if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
-                        // EV_EOF signals peer half-close (distinct from EV_ERROR which is a hard error). Both can appear on EVFILT_READ/WRITE.
-                        if (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Eof
-                        if (evFlags & PosixConstants.EV_ERROR) != 0 then f |= PollFlags.Error
-                        flags(i) = f
-                        i += 1
-                    end while
-                    n
-                end if
             finally
                 emptyChange.close()
                 events.close()

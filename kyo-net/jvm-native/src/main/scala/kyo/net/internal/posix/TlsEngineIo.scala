@@ -38,7 +38,7 @@ private[posix] trait TlsEngineIo:
         handle: PosixHandle,
         data: Span[Byte],
         engine: TlsEngine
-    )(appendChunk: (Buffer[Byte], Int) => Unit)(using
+    )(appendChunk: ChunkConsumer)(using
         AllowUnsafe
     ): Boolean =
         val arr     = data.toArrayUnsafe
@@ -264,3 +264,11 @@ private[posix] object TlsEngineIo:
       */
     val FatalRecord: Array[Byte] = new Array[Byte](0)
 end TlsEngineIo
+
+/** Receives one drained ciphertext chunk `(buf, len)` from the encrypt loop in [[TlsEngineIo.encryptPlaintext]]. A single-abstract-method class
+  * so a lambda passed at the call site converts to it directly, taking the primitive `Int` length without the `java.lang.Integer` box a
+  * `Function2[Buffer[Byte], Int, Unit]` would allocate on each per-record call. `buf` is the caller's reused drain buffer; `len` is the byte
+  * count `drainCiphertext` produced.
+  */
+abstract private[posix] class ChunkConsumer:
+    def apply(buf: Buffer[Byte], len: Int): Unit

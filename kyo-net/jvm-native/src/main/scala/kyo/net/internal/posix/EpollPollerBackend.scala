@@ -135,25 +135,27 @@ private[net] object EpollPollerBackend extends PollerBackend:
         val flags = scratch.flags
         val evBuf = scratch.eventsBuffer
         ep.epoll_wait(pollerFd, evBuf, MaxEvents, timeoutMs).map { ready =>
-            val n = ready.value.toInt
-            if n <= 0 then 0
-            else
-                var i = 0
-                while i < n do
-                    val ev   = EpollEvent.decode(evBuf, i * EpollEvent.size)
-                    val bits = ev.events
-                    fds(i) = ev.data.toInt
-                    var f = 0
-                    if (bits & PosixConstants.EPOLLIN) != 0 then f |= PollFlags.Read
-                    if (bits & PosixConstants.EPOLLOUT) != 0 then f |= PollFlags.Write
-                    if (bits & (PosixConstants.EPOLLERR | PosixConstants.EPOLLHUP)) != 0 then f |= PollFlags.Error
-                    // EPOLLRDHUP signals peer half-close; can co-occur with EPOLLIN when bytes are buffered before EOF.
-                    if (bits & PosixConstants.EPOLLRDHUP) != 0 then f |= PollFlags.Eof
-                    flags(i) = f
-                    i += 1
-                end while
-                n
-            end if
+            val raw = ready.value.toInt
+            val n   = if raw <= 0 then 0 else raw
+            // Publish the ready count as a raw int on the poll scratch BEFORE the fiber resolves, so the poll loop reads it without unwrapping
+            // the boxed Int fiber result. The decode below runs inline on JVM/Native (fiber already done) and on the JS libuv callback, so the
+            // field is set on every platform before drainReady reads it.
+            scratch.readyCount = n
+            var i = 0
+            while i < n do
+                val ev   = EpollEvent.decode(evBuf, i * EpollEvent.size)
+                val bits = ev.events
+                fds(i) = ev.data.toInt
+                var f = 0
+                if (bits & PosixConstants.EPOLLIN) != 0 then f |= PollFlags.Read
+                if (bits & PosixConstants.EPOLLOUT) != 0 then f |= PollFlags.Write
+                if (bits & (PosixConstants.EPOLLERR | PosixConstants.EPOLLHUP)) != 0 then f |= PollFlags.Error
+                // EPOLLRDHUP signals peer half-close; can co-occur with EPOLLIN when bytes are buffered before EOF.
+                if (bits & PosixConstants.EPOLLRDHUP) != 0 then f |= PollFlags.Eof
+                flags(i) = f
+                i += 1
+            end while
+            n
         }
     end poll
 

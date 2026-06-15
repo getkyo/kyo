@@ -9,6 +9,8 @@ import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.net.internal.util.IntLongMap
+import kyo.net.internal.util.IntRefMap
 import kyo.net.internal.util.MpscLongQueue
 
 /** Readiness-to-completion I/O driver over epoll (Linux) / kqueue (macOS/BSD), unified onto [[PosixHandle]] and the kyo-ffi bindings.
@@ -55,30 +57,49 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     extends IoDriver[PosixHandle], TlsEngineIo:
 
     import PollerIoDriver.PendingWritable
+    import PollerIoDriver.Registration
+    import PollerIoDriver.RegKind
 
     // Unsafe: the driver's atomic flags are created at construction with no ambient AllowUnsafe; the danger bridge builds each here and every
     // access runs under the caller's AllowUnsafe.
     private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
-    // Concurrent-collection audit: the fd-keyed maps below and the changeQueue/engineQueue (further down) are raw
-    // java.util.concurrent types. kyo has no concurrent-map type, and its effect-based Queue/Channel cannot back this driver's non-parking poll
-    // loop and lock-free change/engine FIFOs (the maps are touched on the poll-loop and change-worker carriers without suspension; the queues are
-    // single-consumer FIFOs drained inline). Retained as documented no-equivalent exceptions; the per-field comments name each owning carrier.
+    // The fd-keyed tables below are primitive open-addressing maps (int key, no Integer boxing; activeFds also has a primitive long value, no
+    // Long box). They are NOT thread-safe and are safe ONLY because every mutation is applied on the poll-loop carrier (single-writer):
+    // callers ENQUEUE a registration (regIntake) or a change command (changeQueue) and the poll fiber applies the put/remove from its drain path,
+    // never the caller. This confinement is the prerequisite the primitive swap rides (an unconfined primitive map is a data race).
+    // kyo has no primitive-keyed map, so the raw maps are the documented no-equivalent exception, each on the per-driver instance.
     // fd -> current handle id. Used to discard stale poller events after fd reuse.
-    private val activeFds = new ConcurrentHashMap[Int, Long]()
+    private val activeFds = new IntLongMap()
 
-    // readFd -> handle (promise stored on handle.pendingReadPromise); writeFd -> writable entry. Keyed per direction.
-    // The read promise is stored on the handle directly, eliminating the per-await (promise, handle) Tuple2 allocation.
-    // The writable entry pairs the promise with the arming handle's monotonic id so dispatchWritable can apply the same
-    // stale-fd-id equality guard the read/accept paths use (activeFds[writeFd] == id), instead of a presence-only check that
-    // would deliver a writable readiness event the kernel queued for a now-recycled fd's prior owner to the new owner.
-    private val pendingReads     = new ConcurrentHashMap[Int, PosixHandle]()
-    private val pendingWritables = new ConcurrentHashMap[Int, PendingWritable]()
+    // readFd -> handle (read promise stored on handle.pendingReadPromise); writeFd -> writable entry (held on handle.pendingWritablePromise too,
+    // so the cancel/close paths can fail the promise synchronously without touching this non-thread-safe map). The writable entry pairs the
+    // promise with the arming handle's monotonic id so dispatchWritable can apply the same stale-fd-id equality guard the read/accept paths use
+    // (activeFds[writeFd] == id), instead of a presence-only check that would deliver a recycled fd's prior owner's readiness to the new owner.
+    private val pendingReads     = new IntRefMap[PosixHandle]()
+    private val pendingWritables = new IntRefMap[PendingWritable]()
 
     // readFd -> handle (accept promise stored on handle.pendingAcceptPromise) for listen fds registered via awaitAccept.
     // Keyed separately from pendingReads: the listen fd must route to dispatchAccept, not dispatchRead.
     // The check in drainReady tries pendingAccepts first, then falls through to pendingReads.
-    private val pendingAccepts = new ConcurrentHashMap[Int, PosixHandle]()
+    private val pendingAccepts = new IntRefMap[PosixHandle]()
+
+    // Registration intake: many fibers enqueue a pending registration (awaitRead/armSocketWritable/awaitAccept) here; the poll-loop carrier consumes
+    // it and applies the activeFds + pendingReads/pendingWritables/pendingAccepts puts on its own carrier, so the maps are written by ONE carrier.
+    // A ConcurrentLinkedQueue (single poll-fiber consumer) mirrors the engineQueue; the small Registration record per await replaces the
+    // prior per-await Integer key-box on the activeFds put. The handle reference cannot be packed into the unboxed long change command, so it travels
+    // through this side queue and is matched to its register command on the poll carrier.
+    //
+    // regIntake and changeQueue are two independent MPSC queues, and each producer offers its Registration and submits its packed command as two
+    // separate steps. Under concurrent producers (every connection runs an independent ReadPump and WritePump fiber, each arming reads/writes), the
+    // two queues' enqueue orders can diverge: producer A may win the regIntake offer while producer B wins the changeQueue offer, so a register
+    // command at position k in changeQueue does NOT correspond to the entry at position k in regIntake. The poll carrier therefore MATCHES each
+    // register command to its registration by (fd, kind) IDENTITY (takeRegistration scans regIntake head-first for the first entry with that fd and
+    // kind), never by FIFO position. The command carries its kind explicitly (the opcode plus the accept discriminator bit, see packCmd), so an
+    // OpRegisterRead from awaitAccept and one from awaitRead are never confused even when a recycled fd is reused across an accept and a read.
+    // Matching by identity also makes a rapid arm/cancel/re-arm on one fd correct: two registrations of the same (fd, kind) sit in the queue in offer
+    // order, and consecutive register commands consume them head-first in that order, so neither is lost.
+    private val regIntake = new ConcurrentLinkedQueue[Registration]()
 
     // Backend interest changes (register / deregister) must run in submission order. epoll_ctl and kqueue's EV_ADD/EV_DELETE are last-write-wins
     // per fd+filter, so an out-of-order deregister can delete a freshly re-armed interest and strand the fd (no readiness event ever fires for
@@ -244,7 +265,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 // JVM/Native inline-completion path: the @Ffi.blocking wait completed synchronously. Extract events and continue the
                 // while loop without growing the stack (the while iteration is the tail-loop equivalent of @tailrec).
                 waitFiber.poll() match
-                    case Present(Result.Success(n)) => drainReady(pollScratch.fds, pollScratch.flags, n.eval)
+                    case Present(Result.Success(_)) => drainReady(pollScratch.fds, pollScratch.flags, pollScratch.readyCount)
                     case Present(Result.Failure(_)) => running = false // backend closed or error; exit loop
                     case Present(Result.Panic(_))   => running = false // fatal backend error; exit loop
                     case Absent                     => ()              // unreachable when done(); continue
@@ -256,14 +277,23 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 running = false
                 enteredPending = true
                 waitFiber.onComplete {
-                    case Result.Success(n) =>
-                        drainReady(pollScratch.fds, pollScratch.flags, n.eval)
+                    case Result.Success(_) =>
+                        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.readyCount)
                         // Drain both FIFOs on the JS re-entry path too: JS is single-threaded so it never strands a drain, but the poll loop is the
-                        // sole FIFO consumer on every platform, so the drain must run on whichever poll path executes.
+                        // sole FIFO consumer on every platform, so the drain must run on whichever poll path executes. This also runs any
+                        // close-teardown engine op (the maps are poll-fiber-confined; JS is single-threaded so the teardown never races the loop).
                         drainFifos()
                         if !closedFlag.get() then discard(Fiber.Unsafe.init { pollLoop() })
-                        else freeScratch() // terminal JS exit: closed flag set, not re-entering, last poll done -> free the scratch once.
-                    case _ => freeScratch() // terminal JS exit: wait failed, not re-entering -> free the scratch once.
+                        else
+                            // Terminal JS exit: closed flag set, not re-entering, last poll done. Close the poller fd after the last poll and free
+                            // the scratch once (the teardown op was drained by the drainFifos above).
+                            backend.close(pollerFd)
+                            freeScratch()
+                        end if
+                    case _ =>
+                        // Terminal JS exit: wait failed, not re-entering. Close the poller fd and free the scratch once.
+                        backend.close(pollerFd)
+                        freeScratch()
                 }
             end if
             // Drain both FIFOs once per poll cycle on the JVM/Native always-running carrier, whether or not events fired this cycle: the poll loop is
@@ -272,19 +302,27 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             // submitted while idle is never stranded. On the JS pending path the loop exited before reaching here, so the JS drain runs in onComplete.
             if !enteredPending then drainFifos()
         end while
-        // Terminal exit on JVM/Native (the while loop ended on closedFlag or a backend failure/panic): the last poll has completed and the
-        // scratch is provably not in use, so the poll loop carrier frees it here. Skipped when the JS branch parked on a pending wait fiber:
-        // that loop is not terminal (it frees from the onComplete instead).
-        if !enteredPending then freeScratch()
+        // Terminal exit on JVM/Native (the while loop ended on closedFlag or a backend failure/panic): the last poll has completed and the maps +
+        // scratch are provably not in use, so the poll loop carrier finishes the teardown here. The FINAL drainFifos runs any close-teardown engine
+        // op that close() submitted concurrently with the closedFlag set (so it is never stranded by the loop exiting first); since it runs on this
+        // poll-loop carrier, the teardown's map access stays poll-fiber-confined. backend.close(pollerFd) runs AFTER the last poll, so the
+        // poller fd is never closed under an in-flight epoll_wait/kevent. Skipped when the JS branch parked on a pending wait fiber (not terminal:
+        // it tears down from the onComplete instead).
+        if !enteredPending then
+            drainFifos()
+            backend.close(pollerFd)
+            freeScratch()
+        end if
     end pollLoop
 
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        activeFds.put(handle.readFd, handle.id)
         handle.pendingReadPromise = Present(promise)
-        discard(pendingReads.put(handle.readFd, handle))
-        // rc<0 failure is handled inside dispatchCmd, which reads pendingReads and fails the stored promise.
-        // The pendingReadPromise write happens-before the changeQueue.offer (the MpscLongQueue offer's tail swap is the
-        // happens-before barrier): the change worker sees the stored promise when it processes rc<0.
+        // The activeFds + pendingReads puts are applied on the poll fiber (single-writer): enqueue the registration, then submit the
+        // change command. The poll fiber drains regIntake before processing the register command, so the map entry is in place when dispatchCmd
+        // runs (the registration is published before the command via the change-queue happens-before, and the intake drain precedes the command).
+        // rc<0 failure is handled inside dispatchCmd, which reads pendingReads and fails the stored promise. The pendingReadPromise store
+        // happens-before the changeQueue.offer (the MpscLongQueue offer tail swap is the barrier), so the change worker sees it on rc<0.
+        regIntake.offer(Registration(handle, RegKind.Read))
         submitChange(packCmd(OpRegisterRead, handle.readFd))
     end awaitRead
 
@@ -317,11 +355,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       * re-arm needs the SOCKET signal (so it can send more of the tail), so it calls this directly rather than the tail-aware public method.
       */
     private def armSocketWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        activeFds.put(handle.writeFd, handle.id)
-        // Store the arming handle's id alongside the promise so dispatchWritable can drop the event if the fd is recycled (mirrors the read
-        // path, which reads the id off the stored handle and compares against activeFds[fd]).
-        discard(pendingWritables.put(handle.writeFd, PendingWritable(promise, handle.id)))
+        // Store the writable promise on the handle so the cancel/close paths can fail it synchronously without touching the poll-fiber-confined
+        // pendingWritables map. The activeFds + pendingWritables puts are applied on the poll fiber from the registration (single-writer);
+        // the entry pairs the promise with the arming handle's id (handle.id) so dispatchWritable drops a recycled fd's prior owner's readiness.
         // rc<0 failure is handled inside dispatchCmd, which reads pendingWritables and fails the stored promise.
+        handle.pendingWritablePromise = Present(promise)
+        regIntake.offer(Registration(handle, RegKind.Write))
         submitChange(packCmd(OpRegisterWrite, handle.writeFd))
     end armSocketWritable
 
@@ -335,11 +374,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       * transport can drain via `acceptNow`. The caller re-arms after each accept.
       */
     def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        activeFds.put(handle.readFd, handle.id)
         handle.pendingAcceptPromise = Present(promise)
-        discard(pendingAccepts.put(handle.readFd, handle))
-        // rc<0 failure is handled inside dispatchCmd, which checks pendingAccepts and fails the stored promise.
-        submitChange(packCmd(OpRegisterRead, handle.readFd))
+        // The activeFds + pendingAccepts puts are applied on the poll fiber from the registration (single-writer).
+        // rc<0 failure is handled inside dispatchCmd, which checks pendingAccepts and fails the stored promise. The accept=true bit routes the
+        // command to the accept staging map on the poll carrier (an awaitRead on the same fd would clear it and stage a Read instead).
+        regIntake.offer(Registration(handle, RegKind.Accept))
+        submitChange(packCmd(OpRegisterRead, handle.readFd, accept = true))
     end awaitAccept
 
     /** Dispatch a read-ready event on a listen fd registered via `awaitAccept`. Completes the accept promise with -1 as a readiness
@@ -352,8 +392,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             case Present(handle) =>
                 val promise = handle.pendingAcceptPromise
                 handle.pendingAcceptPromise = Absent
-                val currentId = Maybe(activeFds.get(handle.readFd))
-                if currentId != Present(handle.id) then
+                if isStaleId(handle.readFd, handle.id) then
                     // Stale event: fd was recycled. Fail the accept promise.
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale accept event fd=$fd"))))
                 else
@@ -666,26 +705,23 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
       *   kqueue filters on close, so EV_DELETE is unnecessary and targeting a recycled fd number by mistake is avoided).
       */
     private def deregisterFds(handle: PosixHandle, fdClosing: Boolean)(using AllowUnsafe, Frame): Unit =
-        discard(activeFds.remove(handle.readFd))
-        discard(activeFds.remove(handle.writeFd))
-        // missedReads is poll-carrier-only (java.util.HashSet, not thread-safe). deregisterFds runs on an arbitrary carrier,
-        // so we do NOT touch missedReads here. The OpDeregister handler in dispatchCmd (which runs on the poll-loop carrier)
-        // clears the entry under the single-carrier invariant. That clear is sufficient: a stale entry at most triggers one
-        // spurious EAGAIN probe on the new owner's first awaitRead, which the driver handles correctly.
+        // deregisterFds runs on an ARBITRARY carrier (cancel / closeHandle). The four map REMOVALS (activeFds, pendingReads, pendingWritables,
+        // pendingAccepts) and the missedReads clear move into the OpDeregister apply on the poll-loop carrier (single-writer): the
+        // backend.deregister handler removes the map entries there. The PROMISE FAILS stay SYNCHRONOUS here so a cancel delivers Closed at once
+        // rather than waiting up to one poll cycle (EC-1): every pending promise is held on the handle (pendingReadPromise / pendingAcceptPromise /
+        // pendingWritablePromise / backpressureWaiter), so failing them needs no map access. completeDiscard is idempotent, so if the poll fiber's
+        // deregister removal also tried to fail them (it does not), there would be no double-completion hazard.
         submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
         if handle.writeFd != handle.readFd then
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
-        Maybe(pendingReads.remove(handle.readFd)).foreach { h =>
-            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-            h.pendingReadPromise = Absent
-        }
-        Maybe(pendingWritables.remove(handle.writeFd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
-        Maybe(pendingAccepts.remove(handle.readFd)).foreach { h =>
-            h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
-            h.pendingAcceptPromise = Absent
-        }
+        handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
+        handle.pendingReadPromise = Absent
+        handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
+        handle.pendingWritablePromise = Absent
+        handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
+        handle.pendingAcceptPromise = Absent
         // Fail any WritePump promise parked at the write-backpressure high-water bound (it is not in pendingWritables: a tail-bound park is held on
         // the handle, not armed on socket readiness). Releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
         handle.backpressureWaiter.foreach { case (p, _) => p.completeDiscard(Result.fail(closed)) }
@@ -758,31 +794,77 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         end if
     end shutdownTls
 
+    /** Fail every pending promise with `closed` and clear the poll-fiber-confined maps + missedReads. Poll-fiber-confined: called ONLY from the
+      * close-teardown engine op (which runs on the poll-loop carrier) and from close()'s never-started path (no poll fiber exists then). The maps are
+      * not thread-safe, so this must never run concurrently with the poll loop's map access. Flushes every registration still in regIntake
+      * (offered but whose register command had not yet run) into the live tables first, so its handle-held promise is then failed by the matching
+      * live-table foreach below rather than stranded.
+      */
+    private def closeTeardown(closed: Closed)(using AllowUnsafe): Unit =
+        flushRegIntakeToLiveTables()
+        pendingReads.foreach { (_, h) =>
+            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
+            h.pendingReadPromise = Absent
+        }
+        pendingReads.clear()
+        pendingWritables.foreach { (_, entry) =>
+            entry.promise.completeDiscard(Result.fail(closed))
+        }
+        pendingWritables.clear()
+        pendingAccepts.foreach { (_, h) =>
+            h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
+            h.pendingAcceptPromise = Absent
+        }
+        pendingAccepts.clear()
+        activeFds.clear()
+        missedReads.clear()
+    end closeTeardown
+
+    /** Drain every remaining registration from regIntake into the live pending tables, so [[closeTeardown]]'s foreach loops fail those promises with
+      * `closed`. A registration sits in regIntake from the moment its await offered it until its register command runs; at close, any registration
+      * whose command never ran must still have its promise (held on the handle) failed, which the live-table foreach does, so it is flushed here first.
+      * Poll-fiber-confined.
+      */
+    private def flushRegIntakeToLiveTables()(using AllowUnsafe): Unit =
+        var reg = regIntake.poll()
+        while reg != null do
+            val handle = reg.handle
+            reg.kind match
+                case RegKind.Read =>
+                    activeFds.put(handle.readFd, handle.id)
+                    pendingReads.put(handle.readFd, handle)
+                case RegKind.Accept =>
+                    activeFds.put(handle.readFd, handle.id)
+                    pendingAccepts.put(handle.readFd, handle)
+                case RegKind.Write =>
+                    activeFds.put(handle.writeFd, handle.id)
+                    handle.pendingWritablePromise match
+                        case Present(p) => pendingWritables.put(handle.writeFd, PendingWritable(p, handle.id))
+                        case Absent     => ()
+                    end match
+            end match
+            reg = regIntake.poll()
+        end while
+    end flushRegIntakeToLiveTables
+
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
             val closed = Closed(label, summon[Frame], "driver closed")
-            pendingReads.forEach { (_, h) =>
-                h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                h.pendingReadPromise = Absent
-            }
-            pendingReads.clear()
-            pendingWritables.forEach((_, entry) => entry.promise.completeDiscard(Result.fail(closed)))
-            pendingWritables.clear()
-            pendingAccepts.forEach { (_, h) =>
-                h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                h.pendingAcceptPromise = Absent
-            }
-            pendingAccepts.clear()
-            activeFds.clear()
-            missedReads.clear()
-            backend.close(pollerFd)
-            // The poll scratch is NOT freed here while the loop is running: the poll loop carrier uses it on every cycle (the bounded
-            // epoll_wait/kevent holds the off-heap buffer in use for the whole native wait), so freeing it from this carrier mid-poll closes
-            // the shared off-heap arena while it is still acquired. close() only signals termination via closedFlag (set above); the poll loop
-            // sees it between polls and frees the scratch at its terminal exit (freeScratch), when the buffer is provably not in use. The only
-            // case close() frees directly is when start() was never called: the loop never ran, so no carrier is using the scratch and it would
-            // otherwise leak. freeScratch CASes so the loop's terminal free and this never-started free can never double-free.
-            if !started.get() then freeScratch()
+            if started.get() then
+                // The poll loop is running (or ran). Its maps are poll-fiber-confined, so the teardown must run on the poll-loop carrier,
+                // not this arbitrary close carrier (a direct map iteration here would race the poll loop's map access on the non-thread-safe maps).
+                // Route the teardown through the engine FIFO (drained by the poll loop) and wake the parked poll so it drains it and exits promptly.
+                // The poll loop runs one final drainFifos at its terminal exit, so a teardown op submitted concurrently with the closedFlag set is
+                // still drained before the loop frees the scratch. backend.close(pollerFd) + freeScratch run at the poll loop's terminal exit, AFTER
+                // its last poll, so the poller fd is never closed out from under an in-flight epoll_wait/kevent.
+                submitEngineOp(() => closeTeardown(closed))
+                if wakeArmed.get() then backend.wake(pollerFd, pollScratch)
+            else
+                // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
+                closeTeardown(closed)
+                backend.close(pollerFd)
+                freeScratch()
+            end if
         end if
     end close
 
@@ -817,7 +899,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                     // Prefer accept dispatch over read dispatch: a listen fd registered via awaitAccept must not be routed to dispatchRead.
                     // Pass eofPending=eof so the read path surfaces half-close after the buffered bytes are consumed.
                     // Pass fromKernelEdge=true so a dropped edge (Absent case) is recorded in missedReads for the consumer-resume path.
-                    if pendingAccepts.containsKey(fd) then dispatchAccept(fd)
+                    if pendingAccepts.contains(fd) then dispatchAccept(fd)
                     else dispatchRead(fd, eofPending = eof, fromKernelEdge = true)
                 else if eof then
                     // Eof without Read: no buffered bytes before the EOF marker (or already drained). Surface the half-close directly.
@@ -884,9 +966,8 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def dispatchRead(fd: Int, eofPending: Boolean = false, fromKernelEdge: Boolean = false)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
-                val promise   = handle.pendingReadPromise
-                val currentId = Maybe(activeFds.get(handle.readFd))
-                if currentId != Present(handle.id) then
+                val promise = handle.pendingReadPromise
+                if isStaleId(handle.readFd, handle.id) then
                     // Stale event: this fd was closed and recycled into a different handle. Drop it; do not deliver to the new handle.
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale read event fd=$fd"))))
                     handle.pendingReadPromise = Absent
@@ -952,7 +1033,9 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read on closed handle fd=$fd")))
         else
             handle.pendingReadPromise = Present(promise)
-            discard(pendingReads.put(fd, handle))
+            // Poll-fiber-confined: rearmOwned runs only from the dispatch paths on the poll-loop carrier, so this re-deposit is a direct put.
+            // activeFds(fd) is still set from the original awaitRead, so no re-put is needed.
+            pendingReads.put(fd, handle)
             // ET: fd stays armed at the kernel. The consumer-paced drain in dispatchCmd handles any residual bytes.
 
     /** Consumer-paced plain (non-TLS) read under edge-triggered registration.
@@ -996,7 +1079,13 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
             // (2) eofPending && n > 0: the peer half-closed; the next recv will either return more data or 0 (EOF). Re-dispatch is
             //     required regardless of buffer fill so the EOF surfaces on the next awaitRead rather than waiting for an edge that
             //     epoll ET will not fire (EPOLLRDHUP was already signalled and consumed with the EPOLLIN edge).
-            handle.readMightHaveMore = (n == handle.readBufferSize) || eofPending
+            val filled = n == handle.readBufferSize
+            handle.readMightHaveMore = filled || eofPending
+            // Adaptive receive-buffer growth: feed the fill ratio to the per-handle predictor. The bytes for THIS read are already copied
+            // out into `arr` above, so a grow that closes the old buffer cannot lose them. Poll-fiber-confined and between reads (no recv is in
+            // flight against the old buffer here), so the close-old-then-replace recipe is single-owner-safe. The grown buffer
+            // serves the next recv; the value delivered for THIS read is unchanged.
+            discard(handle.growReadBufferForFullRead(n))
             finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(arr)))
         else if n == 0 then
             // Orderly peer close: recv(2) returns 0 when the kernel buffer is empty and the peer sent FIN. Surface as empty Span (not error).
@@ -1036,9 +1125,8 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def dispatchEof(fd: Int)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
-                val promise   = handle.pendingReadPromise
-                val currentId = Maybe(activeFds.get(handle.readFd))
-                if currentId != Present(handle.id) then
+                val promise = handle.pendingReadPromise
+                if isStaleId(handle.readFd, handle.id) then
                     // Stale event: fd recycled. Drop it.
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale eof event fd=$fd"))))
                     handle.pendingReadPromise = Absent
@@ -1155,8 +1243,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     private def dispatchWritable(fd: Int)(using AllowUnsafe, Frame): Unit =
         Maybe(pendingWritables.remove(fd)) match
             case Present(entry) =>
-                val currentId = Maybe(activeFds.get(fd))
-                if currentId != Present(entry.id) then
+                if isStaleId(fd, entry.id) then
                     // Stale event: this fd was closed and recycled into a different handle. Drop it; do not deliver to the new handle.
                     // (Same monotonic-id guard as dispatchRead/dispatchAccept; a presence-only check would deliver the prior owner's
                     // writable readiness to the recycled fd's new owner as Success.)
@@ -1169,6 +1256,12 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
 
     private def isWouldBlock(errno: Int): Boolean =
         errno == PosixConstants.EAGAIN || errno == PosixConstants.EWOULDBLOCK
+
+    /** Whether a readiness event for `fd` is stale: the fd's current armed handle id (from `activeFds`) is not `id`, meaning the fd was closed and
+      * recycled into a different handle since the event was queued. Reads `activeFds` with a `-1` absent sentinel; handle ids are always `>= 0`, so
+      * an absent fd (sentinel) is correctly treated as stale. Poll-fiber-confined (activeFds is poll-fiber-owned).
+      */
+    private def isStaleId(fd: Int, id: Long): Boolean = activeFds.getOrElse(fd, -1L) != id
 
     /** A non-blocking `recvNow` with a bounded in-place EINTR retry. POSIX recv(2): when a signal is delivered before any byte is transferred the
       * call returns -1 with errno EINTR; no data was moved, so the call is retried (the accept path's precedent). Only EINTR is retried; EAGAIN /
@@ -1236,34 +1329,97 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
         if wakeArmed.get() && wakePending.compareAndSet(false, true) then backend.wake(pollerFd, pollScratch)
     end submitChange
 
-    /** Pack an opcode, fd, and fdClosing flag into a single Long command for the change FIFO.
+    /** Pack an opcode, fd, fdClosing flag, and accept discriminator into a single Long command for the change FIFO.
       *   Bits 34-35: opcode (OpRegisterRead=0 / OpRegisterWrite=1 / OpDeregister=3; value 2 retired from OpRearm)
       *   Bit  36:    fdClosing (for OpDeregister only: true when the fd is being closed; 0 for all other opcodes)
+      *   Bit  37:    accept (for OpRegisterRead only: true when the registration came from awaitAccept, false from awaitRead; 0 otherwise)
       *   Bits 32-33: unused (formerly firedRead/firedWrite for the retired OpRearm opcode; always 0 for current opcodes)
       *   Bits 31-0:  fd as a signed 32-bit value (OS fds fit in 31 bits on Linux; the full 32-bit signed range is preserved)
-      * OpDeregister=3 (binary 11) occupies both bits 34 and 35. The fdClosing flag uses bit 36, which is above the 2-bit
-      * opcode field and therefore never set by any opcode value (0, 1, or 3 all fit in 2 bits).
+      * OpDeregister=3 (binary 11) occupies both bits 34 and 35. The fdClosing flag uses bit 36 and the accept flag uses bit 37, both above
+      * the 2-bit opcode field, so neither is ever set by any opcode value (0, 1, or 3 all fit in 2 bits). The accept bit lets the poll carrier
+      * take an OpRegisterRead's registration from the correct kind (awaitRead vs awaitAccept) without a separate side channel, so a recycled fd
+      * reused across an accept and a read is never mismatched.
       */
-    private def packCmd(op: Long, fd: Int, fdClosing: Boolean = false): Long =
+    private def packCmd(op: Long, fd: Int, fdClosing: Boolean = false, accept: Boolean = false): Long =
         (op << 34) |
             (fd.toLong & 0xffffffffL) |
-            (if fdClosing then 1L << 36 else 0L)
+            (if fdClosing then 1L << 36 else 0L) |
+            (if accept then 1L << 37 else 0L)
 
-    /** Decode a packed Long command and dispatch to the appropriate backend method. On rc<0 from registerRead/registerWrite, the pending
-      * promise is failed via the pending tables. For OpRegisterRead, pendingAccepts is checked before pendingReads (matching the existing
-      * drainReady accept-before-read priority so that a listen fd registered via awaitAccept is correctly handled on rc<0).
+    /** Whether `reg`'s fd matches `fd` for the given `kind`. Read and Accept key on `readFd`, Write on `writeFd` (matching the await methods). */
+    private def regMatches(reg: Registration, fd: Int, kind: RegKind): Boolean =
+        reg.kind == kind && (kind match
+            case RegKind.Read | RegKind.Accept => reg.handle.readFd == fd
+            case RegKind.Write                 => reg.handle.writeFd == fd)
+
+    /** Remove and return the first registration in `regIntake` matching `(fd, kind)`, scanning head-first so registrations for the same `(fd, kind)`
+      * are consumed in offer order (a rapid arm/cancel/re-arm leaves two such entries; consecutive register commands take them oldest-first). Returns
+      * `null` when none matches (a cancel removed the await's promise before its command ran). Poll-fiber-confined consumption (the poll carrier is the
+      * queue's single consumer); `ConcurrentLinkedQueue.iterator` is weakly consistent and tolerates concurrent producer offers.
+      *
+      * Matching by identity (not by FIFO position) is what makes this correct under concurrent producers: regIntake and changeQueue can interleave so
+      * a command's registration is not at the head, so the scan finds the right entry regardless of cross-producer ordering.
+      */
+    private def takeRegistration(fd: Int, kind: RegKind): Registration | Null =
+        val it                         = regIntake.iterator()
+        var found: Registration | Null = null
+        var scanning                   = true
+        while scanning && it.hasNext do
+            val reg = it.next()
+            // remove(Object) removes the first structurally-equal element; no two live registrations are structurally equal here (distinct handles,
+            // or the same handle re-arming only after its prior op on this direction completed), so this removes exactly the scanned entry.
+            if regMatches(reg, fd, kind) && regIntake.remove(reg) then
+                found = reg
+                scanning = false
+            end if
+        end while
+        found
+    end takeRegistration
+
+    /** Apply one register command's matching registration to the live poll-fiber-confined tables (single-writer), keyed by `(fd, kind)`. The
+      * accept bit disambiguates an OpRegisterRead from awaitAccept vs awaitRead, so a recycled fd reused across an accept and a read is never
+      * mismatched. Applies nothing when no registration matches (a cancel removed it before the command ran). The handle's `@volatile` promise/id
+      * reads here pair with the await methods' stores (published before the registration offer; the queue offer/take is the happens-before barrier).
+      */
+    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe): Unit =
+        Maybe(takeRegistration(fd, kind)).foreach { reg =>
+            val handle = reg.handle
+            kind match
+                case RegKind.Read =>
+                    activeFds.put(fd, handle.id)
+                    pendingReads.put(fd, handle)
+                case RegKind.Accept =>
+                    activeFds.put(fd, handle.id)
+                    pendingAccepts.put(fd, handle)
+                case RegKind.Write =>
+                    activeFds.put(fd, handle.id)
+                    handle.pendingWritablePromise match
+                        case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id))
+                        case Absent     => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
+                    end match
+            end match
+        }
+    end applyRegistration
+
+    /** Decode a packed Long command and dispatch to the appropriate backend method. On rc<0 from registerRead/registerWrite, the pending promise is
+      * failed via the pending tables. For OpRegisterRead the accept bit selects whether this command applies an accept or a read registration (so a
+      * listen fd registered via awaitAccept and a data fd registered via awaitRead are never confused, even on a recycled fd).
       */
     private def dispatchCmd(cmd: Long)(using AllowUnsafe, Frame): Unit =
-        val op        = (cmd >>> 34) & 0x3L // 2-bit opcode: mask off bit 36 (fdClosing) to avoid confusion with op values
+        val op        = (cmd >>> 34) & 0x3L // 2-bit opcode: mask off bits 36/37 (fdClosing/accept) to avoid confusion with op values
         val fd        = (cmd & 0xffffffffL).toInt
         val fdClosing = (cmd & (1L << 36)) != 0
+        val accept    = (cmd & (1L << 37)) != 0
         // Built lazily: only the rare rc<0 register-failure branches below consume it, but dispatchCmd runs once per
         // readiness command (register/deregister) on the hot path, so an eager val allocated a Closed plus its
         // interpolated message on every successful command and on every deregister, which never use it.
         def closed = Closed(label, summon[Frame], s"register failed fd=$fd")
         if op == OpRegisterRead then
-            // awaitAccept and awaitRead both use OpRegisterRead. Check pendingAccepts first (accept takes priority, matching drainReady).
-            if pendingAccepts.containsKey(fd) then
+            // awaitAccept and awaitRead both use OpRegisterRead; the accept bit (set by awaitAccept) selects which registration this command takes
+            // (RegKind.Accept vs RegKind.Read), so the live entry is applied to pendingAccepts vs pendingReads for THIS command, never confused with a
+            // concurrently-pending registration of the other kind on the same fd.
+            if accept then
+                applyRegistration(fd, RegKind.Accept)
                 val rc = backend.registerRead(pollerFd, fd, pollScratch)
                 if rc < 0 then
                     Maybe(pendingAccepts.remove(fd)).foreach { h =>
@@ -1272,6 +1428,7 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                     }
                 end if
             else
+                applyRegistration(fd, RegKind.Read)
                 val rc = backend.registerRead(pollerFd, fd, pollScratch)
                 if rc < 0 then
                     Maybe(pendingReads.remove(fd)).foreach { h =>
@@ -1293,12 +1450,20 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
                 end if
             end if
         else if op == OpRegisterWrite then
+            applyRegistration(fd, RegKind.Write)
             val rc = backend.registerWrite(pollerFd, fd, pollScratch)
             if rc < 0 then
                 Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
         else
-            // OpDeregister: pass fdClosing to the backend so kqueue can skip EV_DELETE when the OS already closed the fd.
-            // Also clear any missed-readiness entry on the poll-loop carrier so a recycled fd does not inherit a stale entry.
+            // OpDeregister: remove this fd's entries from the four poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer).
+            // The pending promises were already failed synchronously by deregisterFds (held on the handle, not in the maps), so this
+            // only drops the now-cleared entries; a readiness event in the small window before this removal finds a handle whose promise is
+            // already Absent and is handled by the dispatch Absent branch. Pass fdClosing to the backend so kqueue can skip EV_DELETE when the OS
+            // already closed the fd. Clear any missed-readiness entry so a recycled fd does not inherit a stale entry.
+            activeFds.remove(fd)
+            discard(pendingReads.remove(fd))
+            discard(pendingWritables.remove(fd))
+            discard(pendingAccepts.remove(fd))
             discard(missedReads.remove(fd))
             backend.deregister(pollerFd, fd, fdClosing, pollScratch)
         end if
@@ -1307,6 +1472,10 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     /** Drain the change FIFO to empty, running each command to completion before the next so the underlying `epoll_ctl` / `kevent` syscalls execute
       * in submission order. Called once per poll cycle from [[drainFifos]] on the single poll-loop carrier, so it is the FIFO's only consumer (the
       * MpscLongQueue single-consumer contract holds with no flag). A command offered after this returns empty is drained on the next poll cycle.
+      *
+      * Each register command takes its matching registration from `regIntake` by (fd, kind) identity as it is processed (see [[applyRegistration]]),
+      * so the registration's map puts are applied between the prior command and this one (an intervening OpDeregister therefore cannot clear a
+      * registration whose register command has not yet run). A command offered after this returns empty is drained on the next poll cycle.
       */
     @scala.annotation.tailrec
     private def drainChanges()(using AllowUnsafe, Frame): Unit =
@@ -1382,6 +1551,19 @@ private[net] object PollerIoDriver:
       * for a fd's prior owner is dropped after the fd is recycled into a new owner rather than delivered to the new owner as `Success`.
       */
     final private case class PendingWritable(promise: Promise.Unsafe[Unit, Abort[Closed]], id: Long)
+
+    /** Kind of a pending interest registration carried through [[regIntake]] to the poll fiber, which applies the matching map put on its own
+      * carrier (the single-writer confinement). Read and Accept share `OpRegisterRead` at the backend but route to different maps
+      * (`pendingReads` vs `pendingAccepts`); Write routes to `pendingWritables`.
+      */
+    private enum RegKind derives CanEqual:
+        case Read, Write, Accept
+
+    /** A pending interest registration: the handle to bind plus the direction. Offered by the await methods before their change command and
+      * drained by the poll fiber, which does the activeFds + pending-table put. The read/accept/writable promises are already on the handle
+      * (`pendingReadPromise` / `pendingAcceptPromise` / `pendingWritablePromise`), so this carries only the handle and the kind.
+      */
+    final private case class Registration(handle: PosixHandle, kind: RegKind)
 
     /** Build a driver over a fresh poller fd for the OS-appropriate backend (epoll on Linux, kqueue on macOS/BSD). */
     def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): PollerIoDriver =

@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
 
 /** Unified raw-fd handle (the unification of the transport layer).
@@ -23,17 +24,32 @@ final private[net] class PosixHandle private (
     val readFd: Int,
     val writeFd: Int,
     val id: Long,
-    val readBuffer: Buffer[Byte],
-    val readBufferSize: Int,
+    private var readBufferField: Buffer[Byte],
+    private var readBufferSizeField: Int,
     @volatile var tls: Maybe[TlsEngine],
     val connectTarget: Maybe[(Buffer[Byte], Int)]
 ):
+    /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
+      * [[growReadBufferForFullRead]]): the field is `var` so the grow can swap in a larger buffer, but every read of it is a coherent snapshot
+      * (the grow happens only on the poll-loop carrier between reads, when no recv is in flight against it). Accessors, not a public `var`, so the
+      * single-owner grow path is the only writer.
+      */
+    def readBuffer: Buffer[Byte] = readBufferField
+
+    /** The current capacity (in bytes) of [[readBuffer]]. Starts at the seed size passed at construction and rises as the predictor grows the
+      * buffer; it is the live size the recv length and the fill-ratio check use, never the original seed.
+      */
+    def readBufferSize: Int = readBufferSizeField
+
     /** The single I/O driver this handle is bound to for its lifetime (set once when the connection is opened via the transport's
       * pool.next() / openWith). Every per-handle op (read/write/await/closeHandle/submitEngineOp) routes through this driver, so a
       * connection's poll loop and TLS engine FIFO stay on one owning driver across the N-driver pool: each handle is bound to exactly one driver
       * for its whole lifetime, never re-routed mid-life. @volatile carries the bind-site write to the driver carriers that read it.
+      *
+      * Initialized to the [[NoDriver]] sentinel (absence as a sentinel, never null); replaced exactly once at bind time. A per-handle op that
+      * reaches this field before the bind would surface a clear `UnsupportedOperationException` from the sentinel rather than a `NullPointerException`.
       */
-    @volatile var driver: IoDriver[PosixHandle] = null
+    @volatile var driver: IoDriver[PosixHandle] = NoDriver
 
     /** The most recent plaintext chunk the driver read off this fd, kept only so a STARTTLS upgrade can recover the peer's first handshake
       * flight when it arrived coalesced with the upgrade signal in a single `recv` and the application consumed (and discarded) the whole
@@ -234,6 +250,47 @@ final private[net] class PosixHandle private (
       */
     var readMightHaveMore: Boolean = false
 
+    /** Count of consecutive reads that completely filled [[readBuffer]] (n == readBufferSize). The adaptive predictor grows the buffer
+      * once this reaches [[PosixHandle.GrowAfterFullReads]]: a connection that keeps saturating its buffer is one whose peer sends in bursts
+      * larger than the current size, so a larger buffer means fewer recv syscalls and fewer per-read copies for the same byte volume. A read that
+      * does NOT fill the buffer resets the count to 0, so a connection that settles back to small reads stops growing (and is never shrunk: the
+      * grown size is the high-water estimate). Poll-carrier-only, like [[readMightHaveMore]]: written and read exclusively on the poll-loop
+      * carrier, so no synchronization is needed.
+      */
+    private var consecutiveFullReads: Int = 0
+
+    /** Record one completed read of `n` bytes for the adaptive predictor and grow [[readBuffer]] when the fill ratio warrants it.
+      *
+      * A read that filled the buffer (`n == readBufferSize`) increments the consecutive-full-read counter; any smaller read resets it. Once the
+      * counter reaches [[PosixHandle.GrowAfterFullReads]] and the buffer is below [[PosixHandle.MaxReadBufferSize]], the buffer is grown via the
+      * close-old-then-replace recipe: allocate the larger buffer FIRST, swap the field to it, THEN close the old one, so if the alloc
+      * throws the field still points at the live old buffer and if the close throws the field already points at the new one (freed-exactly-once).
+      * Returns `true` when a grow happened (the caller may re-dispatch to fill the larger buffer), `false` otherwise.
+      *
+      * Poll-carrier-only and called ONLY between reads (after a read completes, before the next recv is armed), so no recv is in flight against the
+      * old buffer when it is closed: the single-owner free is safe. The io_uring driver, whose recv SQE pins the buffer address until its CQE
+      * reaps, never calls this (it keeps a fixed buffer), so a grow can never race a kernel-owned recv.
+      */
+    private[posix] def growReadBufferForFullRead(n: Int)(using AllowUnsafe): Boolean =
+        if n == readBufferSizeField then
+            consecutiveFullReads += 1
+            if consecutiveFullReads >= PosixHandle.GrowAfterFullReads && readBufferSizeField < PosixHandle.MaxReadBufferSize then
+                val newSize = math.min(readBufferSizeField * 2, PosixHandle.MaxReadBufferSize)
+                // Recipe order: alloc the larger buffer, swap the field, THEN close the old one. The old reference is captured locally and
+                // never escapes after close; the field points at a live buffer at every step.
+                val old = readBufferField
+                readBufferField = Buffer.alloc[Byte](newSize)
+                readBufferSizeField = newSize
+                old.close()
+                consecutiveFullReads = 0
+                true
+            else false
+            end if
+        else
+            consecutiveFullReads = 0
+            false
+    end growReadBufferForFullRead
+
     /** The pending read promise for this fd, stored directly on the handle rather than as a `(promise, handle)` pair in the `pendingReads`
       * map. Written by the driver carrier under `awaitRead`/`rearmOwned`; read and cleared by the driver on `dispatchRead`. The `@volatile`
       * ensures the store is visible to the change worker that may fail the promise on `rc < 0` (the happens-before barrier is the
@@ -250,6 +307,15 @@ final private[net] class PosixHandle private (
       * this field, and at most one accept is in flight per handle.
       */
     @volatile var pendingAcceptPromise: Maybe[Promise.Unsafe[Int, Abort[Closed]]] = Absent
+
+    /** The pending writable promise for this fd, stored directly on the handle alongside the poll-fiber-confined `pendingWritables` map entry.
+      * The map entry routes the readiness event to the right waiter on the poll fiber; this field lets the cancel/close paths fail the promise
+      * SYNCHRONOUSLY on their own carrier (the map removal itself is deferred to the poll fiber, so the close path must not touch the non-thread-safe
+      * map). Written by `armSocketWritable` (the WritePump / connect / flush re-arm carrier) before its change command; read and cleared by the poll
+      * fiber on `dispatchWritable` and by the cancel/close paths. At most one writable is armed per handle at a time. The arming handle's id is
+      * `id` itself, so the stale-fd guard reads `handle.id` rather than a separately-stored copy.
+      */
+    @volatile var pendingWritablePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
 
     /** Ownership guard for the shared resources (the TLS engine and the reused [[readBuffer]]) against the in-flight-op-vs-close use-after-free
       * race, on BOTH the read dispatch and the write paths.
@@ -414,6 +480,18 @@ private[net] object PosixHandle:
 
     val DefaultReadBufferSize = 8192
 
+    /** Number of consecutive buffer-filling reads (n == readBufferSize) before the adaptive predictor grows a handle's read buffer. A
+      * small threshold (4) reacts quickly to a genuinely high-throughput connection while ignoring a one-off full read that a transient burst can
+      * produce, so a steady small-read connection never grows. See [[PosixHandle.growReadBufferForFullRead]].
+      */
+    final val GrowAfterFullReads = 4
+
+    /** Upper bound (bytes) on the adaptive read buffer. The predictor doubles from [[DefaultReadBufferSize]] toward this cap and never past it,
+      * so a saturating connection's per-connection read-buffer memory is bounded (CWE-400 class): 1 MiB is large enough to amortize the recv /
+      * copy count for any realistic stream while capping the worst-case pin at a fixed multiple of the seed.
+      */
+    final val MaxReadBufferSize = 1 << 20
+
     /** High-water mark (bytes) for a handle's write-backpressure tail ([[PosixHandle.pendingCipher]] / [[PosixHandle.rawPending]]). When the unsent
       * tail has reached this size, the drivers' async-write paths ([[PollerIoDriver.writeTls]], [[IoUringDriver.writeTls]],
       * [[IoUringDriver.writeRaw]]) stop appending and report `WriteResult.Partial` so the `WritePump` parks on writability rather than pulling the
@@ -531,6 +609,7 @@ private[net] object PosixHandle:
         // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
         h.pendingReadPromise = Absent
         h.pendingAcceptPromise = Absent
+        h.pendingWritablePromise = Absent
     end freeResources
 
     /** Release the resources the handle owns (the TLS engine and the reused read buffer), coordinated against any in-flight read dispatch OR
@@ -542,3 +621,25 @@ private[net] object PosixHandle:
         h.requestClose()
     end close
 end PosixHandle
+
+/** Sentinel driver used as the initial value of [[PosixHandle.driver]] before the handle is bound to its real driver at connection open. It
+  * makes the field a non-null sentinel rather than `null`, so an op that reaches a handle before its bind surfaces a clear, named failure
+  * (`UnsupportedOperationException` naming the unbound state) instead of a `NullPointerException`. Every real per-handle op runs only after the
+  * bind (the transport sets `handle.driver` before returning the connection), so no production path invokes these methods.
+  */
+private[posix] object NoDriver extends IoDriver[PosixHandle]:
+    private def unbound: Nothing =
+        throw new UnsupportedOperationException("PosixHandle is not bound to a driver")
+
+    def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]                                                         = unbound
+    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit = unbound
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = unbound
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = unbound
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit      = unbound
+    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                          = unbound
+    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                        = unbound
+    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                   = unbound
+    def close()(using AllowUnsafe, Frame): Unit                                                                            = unbound
+    def label: String                                                                                                      = "NoDriver"
+    def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"
+end NoDriver

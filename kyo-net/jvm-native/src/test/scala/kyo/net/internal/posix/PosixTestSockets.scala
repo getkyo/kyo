@@ -232,6 +232,48 @@ object PosixTestSockets:
         loop(0)
     end drainPeer
 
+    /** Drain at least `want` bytes from `fd` via the driver's readiness, returning the bytes received IN ORDER.
+      *
+      * The byte-collecting twin of [[drainPeer]]: each iteration parks an `awaitRead` (a real Promise.Unsafe latch completing on the real recv)
+      * on a fresh peer handle, then drains with `recvNow` until EAGAIN, appending the bytes in receive order. Used by the coalescing tests to
+      * assert the peer received the spans' bytes in exact enqueue order (not just the right total count). No sleep; the loop exits on the real
+      * condition total >= want.
+      */
+    def drainCollect(driver: IoDriver[PosixHandle], fd: Int, want: Int)(using Frame): List[Byte] < (Abort[Closed] & Async) =
+        import AllowUnsafe.embrace.danger
+        val sockets = sock
+        val handle  = PosixHandle.socket(fd, PosixHandle.DefaultReadBufferSize, Absent)
+        def recvLoop(acc: List[Byte]): List[Byte] =
+            val buf = Buffer.alloc[Byte](65536)
+            try
+                var out  = acc
+                var more = true
+                while more do
+                    val r = sockets.recvNow(fd, buf, 65536L, PosixConstants.MSG_DONTWAIT)
+                    val n = r.value.toInt
+                    if n > 0 then out = out ++ Buffer.copyToArray[Byte](buf, 0, n).toList
+                    else more = false
+                end while
+                out
+            finally buf.close()
+            end try
+        end recvLoop
+
+        def loop(acc: List[Byte]): List[Byte] < (Abort[Closed] & Async) =
+            if acc.length >= want then acc
+            else
+                val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                driver.awaitRead(handle, promise)
+                promise.safe.get.map { delivered =>
+                    // The delivered span carries the readiness chunk; recvLoop drains any further bytes the same edge made available.
+                    val afterDelivered = acc ++ delivered.toArray.toList
+                    loop(recvLoop(afterDelivered))
+                }
+            end if
+        end loop
+        loop(Nil)
+    end drainCollect
+
     /** Force an RST on `fd` by setting SO_LINGER {l_onoff=1, l_linger=0} then closing.
       *
       * The peer's next recv sees ECONNRESET. Lifted from PollerIoDriverTest.scala lines 131-141, with the SO_LINGER constant consolidated
