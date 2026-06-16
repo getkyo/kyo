@@ -13,5 +13,6 @@ private[kyo] object PlatformModuleOps:
         Abort.fail(TastyError.UnsupportedPlatform("initWithPlatformModules is JVM-only"))
 
     /** Returns Chunk.empty on JS: jrt:/ filesystem is not available. */
-    def listJdkClassFiles(moduleFilter: Set[String] = Set.empty)(using AllowUnsafe): Chunk[String] = Chunk.empty
+    def listJdkClassFiles(moduleFilter: Set[String] = Set.empty, classFilter: Set[String] = Set.empty)(using AllowUnsafe): Chunk[String] =
+        Chunk.empty
 end PlatformModuleOps
