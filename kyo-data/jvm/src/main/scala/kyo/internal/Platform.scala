@@ -10,9 +10,7 @@ object Platform:
     inline def isWasm: Boolean             = false
     inline def isNative: Boolean           = false
 
-    // Frames a synchronous chain runs before the kernel suspends through Safepoint to stay
-    // stack-safe. 512 fits comfortably within the default JVM thread stack.
-    inline def maxStackDepth: Int = 512
+    inline def maxStackDepth: Int = 256
 
     val isDebugEnabled: Boolean =
         java.lang.management.ManagementFactory

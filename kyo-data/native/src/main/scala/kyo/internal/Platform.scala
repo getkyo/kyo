@@ -11,9 +11,6 @@ object Platform:
     inline def isNative: Boolean           = true
     inline def isDebugEnabled: Boolean     = false
 
-    // Frames a synchronous chain runs before the kernel suspends through Safepoint to stay
-    // stack-safe. Native frames are larger than the JVM's, so it uses the lower 256 bound
-    // (matching WASM) rather than 512.
     inline def maxStackDepth: Int = 256
 
     def exit(code: Int): Unit = java.lang.System.exit(code)
