@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.internal.TestClasspaths2
-
 /** Verifies that Java enum constants on the jrt:/ platform-modules classpath decode as Symbol.EnumCase (not Symbol.Field with EnumFlag).
   * Uses java.lang.annotation.RetentionPolicy as the representative Java enum.
   */
@@ -10,7 +8,15 @@ class JavaEnumCaseTest extends kyo.test.Test[Any]:
     import AllowUnsafe.embrace.danger
 
     "Java enum constants (RetentionPolicy) are Symbol.EnumCase" in {
-        TestClasspaths2.standardWithPlatformModules.map { classpath =>
+        // Decode only RetentionPolicy from java.base instead of the whole module (~7,000 classfiles): this leaf
+        // inspects a single Java enum, so a class-scoped jrt:/ load keeps it fast and off the shared cold-load path.
+        val loadRetentionPolicy =
+            Tasty.Classpath.initWithPlatformModulesFiltered(
+                Seq.empty,
+                Set("java.base"),
+                Set("java.lang.annotation.RetentionPolicy")
+            )
+        loadRetentionPolicy.map { classpath =>
             classpath.findClass("java.lang.annotation.RetentionPolicy") match
                 case Maybe.Present(rp) =>
                     val allDecls = rp.declarationIds.flatMap(id => classpath.symbol(id).toChunk)
