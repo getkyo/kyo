@@ -113,35 +113,35 @@ end PendingOp
   * Buffers use the shared arena (`Buffer.alloc` / `Buffer.fromArray`), never `allocConfined`: submission and reaping run on different
   * scheduler carriers, so a confined arena would throw on the cross-carrier reap.
   */
-final private[net] class IoUringDriver private[posix] (uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using
-    AllowUnsafe
-) extends IoDriver[PosixHandle], TlsEngineIo:
-
-    // Unsafe: the driver's atomic flags and counters are created at construction with no ambient AllowUnsafe; the danger bridge builds each here
-    // and every access runs under the caller's AllowUnsafe.
-    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+final private[net] class IoUringDriver private[posix] (
+    uring: IoUringBindings,
+    ring: Buffer[Byte],
+    sockets: SocketBindings,
+    closedFlag: AtomicBoolean.Unsafe,
     // The ring and cqePtr are touched by the reap carrier inside its in-flight kyo_uring_submit_and_wait_timeout (which holds both segments for
     // up to ReapTimeoutNs) and by user carriers in kyo_uring_get_sqe. Their teardown must therefore be SINGLE-OWNER: when the reap loop was
     // started, only the reap carrier (on its own exit, after the wait has returned) frees them; close() then merely signals via closedFlag.
     // `started` records whether a reap carrier exists to own that teardown; `teardownDone` makes the actual free idempotent across the two
     // paths (reap-loop exit when started, close() inline when never started). See #177.
-    private val started      = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-    private val teardownDone = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
+    started: AtomicBoolean.Unsafe,
+    teardownDone: AtomicBoolean.Unsafe,
     // Set when the reap loop has exited (or never ran). The ring is touched by BOTH the reap carrier (wait/peek/seen) and the engine-FIFO
     // worker (flushTls/flushRaw get_sqe); io_uring_queue_exit frees the ring, so teardown must wait for BOTH to be done with it, not just the
     // reap carrier (#177 covered the reap carrier only). `tryTeardown` fires the exactly-once teardown when reapExited AND the FIFO worker is idle.
+    reapExited: AtomicBoolean.Unsafe,
+    keyGen: AtomicLong.Unsafe, // dense user_data keys (NOT fds: SQEs self-identify)
+    pendingSubmits: AtomicLong.Unsafe,
+    // The cqe pointer scratch is owned solely by the reap carrier (reapLoop and drainReady both run on it), allocated once for the driver
+    // lifetime. Both methods are called sequentially on the same carrier: reapLoop calls drainReady inline after the wait, then loops; the two
+    // sites never overlap.
+    cqePtr: Buffer[Long]
+) extends IoDriver[PosixHandle], TlsEngineIo:
+
     // Concurrent-collection audit: the raw java.util.concurrent maps and the ConcurrentLinkedQueue below are retained
     // deliberately. kyo has no concurrent-map type, and its effect-based Queue/Channel cannot back these non-parking hot syscall paths (the
     // user_data->op maps are touched without suspension on the reap and engine-FIFO carriers; the engineQueue is a lock-free single-consumer FIFO
     // drained inline at the top of each reap cycle). The per-field comments name each field's owning carrier; no raw type is shared unsafely.
-    private val reapExited = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-    private val keyGen  = AtomicLong.Unsafe.init(1L)(using AllowUnsafe.embrace.danger) // dense user_data keys (NOT fds: SQEs self-identify)
     private val pending = new ConcurrentHashMap[Long, PendingOp]()
-    private val pendingSubmits = AtomicLong.Unsafe.init(0L)(using AllowUnsafe.embrace.danger)
-    // Unsafe: the cqe pointer scratch is owned solely by the reap carrier (reapLoop and drainReady both run on it),
-    // allocated once for the driver lifetime. Both methods are called sequentially on the same carrier: reapLoop
-    // calls drainReady inline after the wait, then loops; the two sites never overlap.
-    private val cqePtr: Buffer[Long] = Buffer.alloc[Long](1)
 
     // Cross-carrier submission handoff: every SQ operation (get_sqe + prep + submit) and every TLS engine op for every connection on this driver
     // runs on the single reap carrier, which drains this queue at the top of each reap cycle (see [[submitEngineOp]] / [[reapLoop]]). One producer
@@ -1374,7 +1374,27 @@ private[net] object IoUringDriver:
             ring.close()
             throw Closed("IoUringDriver", summon[Frame], s"queue_init failed: rc=$rc flags=$flags")
         // io_uring has no prep_close SQE, so the connection-close fd shutdown/close goes through SocketBindings (the same library the poller uses).
-        new IoUringDriver(uring, ring, Ffi.load[SocketBindings])
+        init(uring, ring, Ffi.load[SocketBindings])
+    end init
+
+    /** Build a driver over caller-supplied uring bindings, an initialized ring, and socket bindings, allocating the driver's unsafe fields (the
+      * atomic flags/counters and the cqe scratch) under the caller's `AllowUnsafe`: the construction site propagates the capability rather than
+      * each field bridging it, so the class body never holds an ambient `AllowUnsafe` and every method keeps requiring its own. Shared by [[init]]
+      * and the test construction helpers so the unsafe allocation lives in one place.
+      */
+    private[posix] def init(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe): IoUringDriver =
+        new IoUringDriver(
+            uring = uring,
+            ring = ring,
+            sockets = sockets,
+            closedFlag = AtomicBoolean.Unsafe.init(false),
+            started = AtomicBoolean.Unsafe.init(false),
+            teardownDone = AtomicBoolean.Unsafe.init(false),
+            reapExited = AtomicBoolean.Unsafe.init(false),
+            keyGen = AtomicLong.Unsafe.init(1L),
+            pendingSubmits = AtomicLong.Unsafe.init(0L),
+            cqePtr = Buffer.alloc[Long](1)
+        )
     end init
 
     /** Pure SETUP-flag tier selector: maps a packed kernel version (major*1000+minor, e.g. 5.19 -> 5019) to the io_uring SETUP-flag set the

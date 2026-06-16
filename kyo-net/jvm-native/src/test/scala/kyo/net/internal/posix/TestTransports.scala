@@ -19,11 +19,9 @@ object TestTransports:
         ioDriver: IoDriver[PosixHandle],
         sockets: SocketBindings,
         backendIsEpoll: Boolean
-    ): PosixTransport =
-        // Unsafe: wrapping a single test driver in a pool; no I/O, used only in the test tree.
-        import AllowUnsafe.embrace.danger
+    )(using AllowUnsafe): PosixTransport =
         val pool = IoDriverPool.init(Array(ioDriver))
-        new PosixTransport(config, pool, ioDriver, sockets, backendIsEpoll)
+        PosixTransport.init(config, pool, ioDriver, sockets, backendIsEpoll)
     end forTesting
 
 end TestTransports

@@ -56,7 +56,14 @@ final private[net] class PosixTransport private[posix] (
     val pool: IoDriverPool[PosixHandle],
     representative: IoDriver[PosixHandle],
     sockets: SocketBindings,
-    backendIsEpoll: Boolean
+    backendIsEpoll: Boolean,
+    // Claim flag for the process-global stdio handle, so stdio is claimed at most once.
+    stdioClaimed: AtomicBoolean.Unsafe,
+    // Count of accept loops that have started but not yet exited. Each loop increments it on start and decrements it on exit (every path), so a
+    // caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has
+    // wound down. That matters for orderly shutdown: a blocking `accept` cannot be cancelled, so after closing a listen fd the only way to know
+    // its parked `accept` has woken (and the fd is safe to recycle without a stale loop stealing a connection) is to watch this drop to 0.
+    acceptLoopsActive: AtomicLong.Unsafe
 ) extends TransportImpl[PosixHandle]:
     // `representative` is one pool driver used ONLY for the transport-level, NON-per-handle paths that have no bound handle:
     //   - stdio (a single per-process handle; selectDriver bypasses the pool, so stdio rides the representative),
@@ -66,10 +73,6 @@ final private[net] class PosixTransport private[posix] (
     private val ioDriver: IoDriver[PosixHandle] = representative
 
     import PosixTransport.AcceptDrain
-
-    // Unsafe: created at object initialization with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the
-    // caller's AllowUnsafe.
-    private val stdioClaimed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     /** Backoff before re-arming accept interest after `accept` returned `EMFILE`/`ENFILE` (out of file descriptors). The pending connection
       * stays in the backlog and the listen fd stays read-ready, so an immediate re-arm re-fires the same error in a tight CPU spin; the backoff
@@ -92,15 +95,6 @@ final private[net] class PosixTransport private[posix] (
     // kyo has no concurrent-set/map type, and its effect-based collections cannot back this set, which is added to on each listen carrier and
     // iterated on the transport-close carrier without suspension. Retained as a documented no-equivalent exception.
     private val listeners = java.util.concurrent.ConcurrentHashMap.newKeySet[PosixListener]()
-
-    /** Count of accept loops that have started but not yet exited. Each loop increments it on start and decrements it on exit (every path), so a
-      * caller that closed the listeners can observe via [[activeAcceptLoops]] when every blocking `accept` has actually returned and its loop has
-      * wound down. That matters for orderly shutdown: a blocking `accept` cannot be cancelled, so after closing a listen fd the only way to know
-      * its parked `accept` has woken (and the fd is safe to recycle without a stale loop stealing a connection) is to watch this drop to 0.
-      */
-    // Unsafe: a field initializer runs at construction, outside any effect, so there is no ambient AllowUnsafe to thread; the bridge only
-    // allocates the counter (no side effect on the network).
-    private val acceptLoopsActive = AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
     /** The number of accept loops still running (in `scheduleNextAccept` or `acceptAll`). Drops to 0 once every closed listener's loop has exited. */
     private[posix] def activeAcceptLoops(using AllowUnsafe): Long = acceptLoopsActive.get()
@@ -703,7 +697,8 @@ final private[net] class PosixTransport private[posix] (
                                     case Absent =>
                                         val resolved = resolvePort(fd, family)
                                         (resolved, NetAddress.Tcp(host, resolved))
-                                val listener = new PosixListener(fd, actualPort, host, address, sockets, listeners)
+                                val listener =
+                                    new PosixListener(fd, actualPort, host, address, sockets, listeners, AtomicBoolean.Unsafe.init(false))
                                 discard(listeners.add(listener))
                                 // Flip fd non-blocking BEFORE arming the poller (atomic with awaitAccept arming; no busy-spin window).
                                 if shim.kyo_posix_set_nonblocking(fd) != 0 then
@@ -1673,7 +1668,28 @@ private[net] object PosixTransport:
       */
     def init(config: kyo.net.TransportConfig, pool: IoDriverPool[PosixHandle])(using AllowUnsafe): PosixTransport =
         val representative = pool.next()
-        new PosixTransport(config, pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
+        init(config, pool, representative, Ffi.load[SocketBindings], backendIsEpoll(representative))
+
+    /** Build a transport over a caller-supplied pool, representative driver, socket bindings, and epoll flag, allocating the transport's unsafe
+      * fields under the caller's `AllowUnsafe`: the construction site propagates the capability rather than each field bridging it. Shared by
+      * [[init]] and the test construction helper so the unsafe allocation lives in one place.
+      */
+    private[posix] def init(
+        config: kyo.net.TransportConfig,
+        pool: IoDriverPool[PosixHandle],
+        representative: IoDriver[PosixHandle],
+        sockets: SocketBindings,
+        backendIsEpoll: Boolean
+    )(using AllowUnsafe): PosixTransport =
+        new PosixTransport(
+            config = config,
+            pool = pool,
+            representative = representative,
+            sockets = sockets,
+            backendIsEpoll = backendIsEpoll,
+            stdioClaimed = AtomicBoolean.Unsafe.init(false),
+            acceptLoopsActive = AtomicLong.Unsafe.init(0)
+        )
 
     /** True when `ioDriver` is the readiness poller AND that poller is epoll (the only backend the regular-file fallback applies to). io_uring's driver has
       * a different label, and kqueue is selected on macOS/BSD, so both correctly report false.
@@ -1699,12 +1715,10 @@ final private[net] class PosixListener(
     val host: String,
     val address: NetAddress,
     private val sockets: SocketBindings,
-    private val registry: java.util.Set[PosixListener]
+    private val registry: java.util.Set[PosixListener],
+    // CAS-guarded close flag: close() flips it so a second close() is a no-op (idempotent listener teardown).
+    closedFlag: AtomicBoolean.Unsafe
 ) extends ListenerImpl:
-
-    // Unsafe: created at object initialization with no ambient AllowUnsafe; the danger bridge builds it here and its accesses run under the
-    // caller's AllowUnsafe.
-    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     /** Tears down this listener's accept interest AND closes its fd, sequenced through the driver ([[kyo.net.internal.transport.IoDriver.closeListener]]).
       * Installed by the accept loop in `startAcceptLoop` (it holds the listen `handle` and `driver`); invoked by `close()`, which then must NOT

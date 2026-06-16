@@ -27,7 +27,11 @@ final private[net] class PosixHandle private (
     private var readBufferField: Buffer[Byte],
     private var readBufferSizeField: Int,
     @volatile var tls: Maybe[TlsEngine],
-    val connectTarget: Maybe[(Buffer[Byte], Int)]
+    val connectTarget: Maybe[(Buffer[Byte], Int)],
+    // One-shot claim for closing the fd (see claimFdClose), so the fd shutdown/close happens exactly once even on a recycled fd.
+    fdCloseClaimed: AtomicBoolean.Unsafe,
+    // The close-ownership guard (packed holder count + close bit, see CloseBit/HolderMask): the last holder while closing runs closeNow exactly once.
+    guard: AtomicInt.Unsafe
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
       * [[growReadBufferForFullRead]]): the field is `var` so the grow can swap in a larger buffer, but every read of it is a coherent snapshot
@@ -92,9 +96,6 @@ final private[net] class PosixHandle private (
       * the upgrade-failure cleanup and a concurrent `closeHandle` would otherwise issue `close(fd)`. Routing both through this CAS closes the fd
       * once and never double-closes (which could close a recycled fd belonging to another connection).
       */
-    // Unsafe: created at handle construction with no ambient AllowUnsafe; the danger bridge builds it here and claimFdClose runs under the
-    // caller's AllowUnsafe.
-    private val fdCloseClaimed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     /** Claim the socket-fd close: returns `true` for the single caller that should issue `close(fd)`, `false` for every later caller. */
     private[posix] def claimFdClose()(using AllowUnsafe): Boolean = fdCloseClaimed.compareAndSet(false, true)
@@ -335,9 +336,6 @@ final private[net] class PosixHandle private (
       * [[beginDispatch]] (the single poll fiber is the only reader of a given fd, so it never overlaps itself, but it CAN overlap a write); writes
       * acquire via [[beginWrite]].
       */
-    // Unsafe: created at handle construction with no ambient AllowUnsafe; the danger bridge builds it here and every get/compareAndSet runs
-    // under the caller's AllowUnsafe.
-    private val guard = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
     /** Acquire the shared resources for a read dispatch. Returns `true` when ownership was taken (the dispatch may read [[readBuffer]] and the
       * [[tls]] engine and MUST pair this with [[endDispatch]] on every exit). Returns `false` when a close has been requested: the resources are
@@ -516,10 +514,9 @@ private[net] object PosixHandle:
     final private val HolderMask = CloseBit - 1
     final private val Closed     = -1
 
-    // Unsafe: a process-lifetime id generator. There is no ambient AllowUnsafe at object
-    // initialization, so the counter is created through the single danger bridge here; every
-    // increment below runs under the caller's AllowUnsafe.
-    private val idGen = AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+    // A process-lifetime id generator. This companion singleton has no construction site to receive a propagated AllowUnsafe, so it uses the raw
+    // java.util.concurrent.atomic.AtomicLong (the type AtomicLong.Unsafe aliases) directly: a monotonic counter needs no capability.
+    private val idGen = new java.util.concurrent.atomic.AtomicLong(0L)
 
     /** Socket handle: one fd carries both directions, so `readFd == writeFd`. The optional `connectTarget` (an encoded `sockaddr` buffer and
       * its length) is stashed for the io_uring client-connect path: `IoUringDriver.awaitConnect` submits an `IORING_OP_CONNECT` SQE against it.
@@ -529,11 +526,31 @@ private[net] object PosixHandle:
     def socket(fd: Int, bufSize: Int, connectTarget: Maybe[(Buffer[Byte], Int)])(using
         AllowUnsafe
     ): PosixHandle =
-        new PosixHandle(fd, fd, idGen.getAndIncrement(), Buffer.alloc[Byte](bufSize), bufSize, Absent, connectTarget)
+        new PosixHandle(
+            fd,
+            fd,
+            idGen.getAndIncrement(),
+            Buffer.alloc[Byte](bufSize),
+            bufSize,
+            Absent,
+            connectTarget,
+            fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
+            guard = AtomicInt.Unsafe.init(0)
+        )
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
     def stdio(bufSize: Int)(using AllowUnsafe): PosixHandle =
-        new PosixHandle(0, 1, idGen.getAndIncrement(), Buffer.alloc[Byte](bufSize), bufSize, Absent, Absent)
+        new PosixHandle(
+            0,
+            1,
+            idGen.getAndIncrement(),
+            Buffer.alloc[Byte](bufSize),
+            bufSize,
+            Absent,
+            Absent,
+            fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
+            guard = AtomicInt.Unsafe.init(0)
+        )
 
     /** Actually release the resources the handle owns: the TLS engine (if any) and the reused read buffer. Called exactly once, under the
       * `guard` ownership protocol, by whichever of `requestClose` / `endDispatch` / `endWrite` wins the handoff (the last holder while closing,

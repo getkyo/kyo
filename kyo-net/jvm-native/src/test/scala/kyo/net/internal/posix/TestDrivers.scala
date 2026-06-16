@@ -10,27 +10,25 @@ import kyo.ffi.Ffi
   */
 object TestDrivers:
 
-    import AllowUnsafe.embrace.danger
-
     /** Build a [[PollerIoDriver]] over a caller-supplied backend and poller fd, loading the real socket bindings. */
     def forBackend(backend: PollerBackend, pollerFd: Int)(using AllowUnsafe): PollerIoDriver =
-        new PollerIoDriver(backend, pollerFd, Ffi.load[SocketBindings])
+        PollerIoDriver.init(backend, pollerFd, Ffi.load[SocketBindings])
 
     /** Build a [[PollerIoDriver]] over a caller-supplied backend, poller fd, and socket bindings (a recording decorator or the real bindings). */
-    def forBackend(backend: PollerBackend, pollerFd: Int, sockets: SocketBindings): PollerIoDriver =
-        new PollerIoDriver(backend, pollerFd, sockets)
+    def forBackend(backend: PollerBackend, pollerFd: Int, sockets: SocketBindings)(using AllowUnsafe): PollerIoDriver =
+        PollerIoDriver.init(backend, pollerFd, sockets)
 
     /** Build an [[IoUringDriver]] over caller-supplied bindings and a ring buffer, bypassing io_uring_queue_init, loading the real socket
       * bindings for the connection-close fd shutdown/close. The bindings are a recording decorator over a real ring or a single-result injector
       * over one (a real ring is still initialized by the caller).
       */
     def forBindings(uring: IoUringBindings, ring: Buffer[Byte])(using AllowUnsafe): IoUringDriver =
-        new IoUringDriver(uring, ring, Ffi.load[SocketBindings])
+        IoUringDriver.init(uring, ring, Ffi.load[SocketBindings])
 
     /** As [[forBindings]] but over caller-supplied socket bindings (a recording decorator or the real bindings), so a test can observe the
       * connection-close fd shutdown/close.
       */
-    def forBindings(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings): IoUringDriver =
-        new IoUringDriver(uring, ring, sockets)
+    def forBindings(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe): IoUringDriver =
+        IoUringDriver.init(uring, ring, sockets)
 
 end TestDrivers

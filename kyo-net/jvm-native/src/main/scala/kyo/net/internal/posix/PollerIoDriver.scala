@@ -53,16 +53,47 @@ import kyo.net.internal.util.MpscLongQueue
   * Stale-event guard: each handle carries a unique `id`; `activeFds` maps fd to the current id so an event for a fd that was closed and
   * recycled into a different handle is recognised and dropped rather than delivered to the new handle.
   */
-final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, pollerFd: Int, sockets: SocketBindings)
-    extends IoDriver[PosixHandle], TlsEngineIo:
+final private[net] class PollerIoDriver private[posix] (
+    backend: PollerBackend,
+    pollerFd: Int,
+    sockets: SocketBindings,
+    closedFlag: AtomicBoolean.Unsafe,
+    // Per-driver reused poll/arm scratch. Allocated once at driver init. Ownership:
+    //   eventsBuffer + fds + flags: poll loop carrier (pollLoop + drainReady on the same fiber).
+    //   armBuf (epoll) / kqueueData.armBuf (kqueue): change worker (drainChanges + dispatchCmd on one worker fiber).
+    // The two workers never access each other's scratch slots.
+    //
+    // Free ownership (single owner): the scratch is freed by the poll loop carrier at its terminal exit, when the last poll has completed and
+    // the buffer is provably not in use. close() does NOT free the scratch when the loop is running: the poll loop uses it on every cycle
+    // inside backend.poll, where the bounded epoll_wait/kevent holds the off-heap buffer in use for the whole native wait, and close() runs on
+    // a different carrier. Freeing it from close() while the loop is mid-poll would close the shared off-heap arena while it is still acquired
+    // (JVM: "Session is acquired by 1 clients"), or surface as a use-after-free on the next cycle. close() only signals termination via
+    // closedFlag; the loop sees it between polls and frees the scratch on its way out. The never-started case (close() before start(), so the
+    // loop never runs) is the only path where close() frees directly: no loop is using the scratch then. freeScratchOnce CASes so the scratch
+    // is freed EXACTLY once across {poll-loop terminal exit, close()-never-started path}.
+    // Exposed for allocation-seam tests: allows assertions on armBuf / eventsBuffer identity across calls.
+    private[posix] val pollScratch: PollScratch,
+    // True once start() has spawned the poll loop carrier. close() reads it to decide who frees the scratch: when the loop ran (or is running),
+    // the loop owns the free at its terminal exit; when it never ran, close() frees directly (no loop is using the scratch).
+    started: AtomicBoolean.Unsafe,
+    // Frees pollScratch exactly once. CASed by the poll loop's terminal exit (the loop ran) and by close()'s never-started path (the loop never
+    // ran); the CAS guarantees no double-free and no use-after-free between the two single owners.
+    freeScratchOnce: AtomicBoolean.Unsafe,
+    // Poll-loop wakeup coalescing flag. submitChange CASes it false->true and triggers backend.wake exactly once between poll cycles; the poll
+    // loop CASes it back to false at the top of each cycle (before the next park). This (1) dedups wakes so a burst of submits triggers at most one
+    // wake per cycle, and (2) serializes the kqueue wake-arm buffer to a single in-flight trigger (the buffer is written only by the CAS winner).
+    // Without the prompt wake, a change submitted while the loop is parked in the bounded epoll_wait/kevent waits out the whole park (up to ~100ms,
+    // longer under load) before it is registered with the kernel; the connect write-readiness arm then misses a short connect deadline (the
+    // NetConnectTimeoutException regression). The wake makes the parked poll return at once so the change is registered within microseconds.
+    wakePending: AtomicBoolean.Unsafe,
+    // True while the wakeup mechanism is armed (registerWake succeeded at start). When false (best-effort arm failed) the driver still works via the
+    // bounded-park drain; only the prompt-wake latency improvement is lost, so submitChange skips the wake rather than calling into a dead fd.
+    wakeArmed: AtomicBoolean.Unsafe
+) extends IoDriver[PosixHandle], TlsEngineIo:
 
     import PollerIoDriver.PendingWritable
     import PollerIoDriver.Registration
     import PollerIoDriver.RegKind
-
-    // Unsafe: the driver's atomic flags are created at construction with no ambient AllowUnsafe; the danger bridge builds each here and every
-    // access runs under the caller's AllowUnsafe.
-    private val closedFlag = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // The fd-keyed tables below are primitive open-addressing maps (int key, no Integer boxing; activeFds also has a primitive long value, no
     // Long box). They are NOT thread-safe and are safe ONLY because every mutation is applied on the poll-loop carrier (single-writer):
@@ -144,44 +175,6 @@ final private[net] class PollerIoDriver private[posix] (backend: PollerBackend, 
     // Poll-carrier-only: drainReady (which calls dispatchRead) and dispatchCmd (which is called from drainChanges) both run exclusively
     // on the single poll-loop carrier. No synchronization is needed; java.util.HashSet is sufficient.
     private val missedReads = new java.util.HashSet[Int]()
-
-    // Per-driver reused poll/arm scratch. Allocated once at driver init. Ownership:
-    //   eventsBuffer + fds + flags: poll loop carrier (pollLoop + drainReady on the same fiber).
-    //   armBuf (epoll) / kqueueData.armBuf (kqueue): change worker (drainChanges + dispatchCmd on one worker fiber).
-    // The two workers never access each other's scratch slots.
-    //
-    // Free ownership (single owner): the scratch is freed by the poll loop carrier at its terminal exit, when the last poll has completed and
-    // the buffer is provably not in use. close() does NOT free the scratch when the loop is running: the poll loop uses it on every cycle
-    // inside backend.poll, where the bounded epoll_wait/kevent holds the off-heap buffer in use for the whole native wait, and close() runs on
-    // a different carrier. Freeing it from close() while the loop is mid-poll would close the shared off-heap arena while it is still acquired
-    // (JVM: "Session is acquired by 1 clients"), or surface as a use-after-free on the next cycle. close() only signals termination via
-    // closedFlag; the loop sees it between polls and frees the scratch on its way out. The never-started case (close() before start(), so the
-    // loop never runs) is the only path where close() frees directly: no loop is using the scratch then. freeScratchOnce CASes so the scratch
-    // is freed EXACTLY once across {poll-loop terminal exit, close()-never-started path}.
-    // Unsafe: no ambient AllowUnsafe at field init; the init runs under AllowUnsafe.embrace.danger, matching the precedent for
-    // ConcurrentHashMap, AtomicBoolean, and other driver-field inits at class construction time.
-    // Exposed for allocation-seam tests: allows assertions on armBuf / eventsBuffer identity across calls.
-    private[posix] val pollScratch: PollScratch = backend.newPollScratch()(using AllowUnsafe.embrace.danger)
-
-    // True once start() has spawned the poll loop carrier. close() reads it to decide who frees the scratch: when the loop ran (or is running),
-    // the loop owns the free at its terminal exit; when it never ran, close() frees directly (no loop is using the scratch).
-    private val started = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-
-    // Frees pollScratch exactly once. CASed by the poll loop's terminal exit (the loop ran) and by close()'s never-started path (the loop never
-    // ran); the CAS guarantees no double-free and no use-after-free between the two single owners.
-    private val freeScratchOnce = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-
-    // Poll-loop wakeup coalescing flag. submitChange CASes it false->true and triggers backend.wake exactly once between poll cycles; the poll
-    // loop CASes it back to false at the top of each cycle (before the next park). This (1) dedups wakes so a burst of submits triggers at most one
-    // wake per cycle, and (2) serializes the kqueue wake-arm buffer to a single in-flight trigger (the buffer is written only by the CAS winner).
-    // Without the prompt wake, a change submitted while the loop is parked in the bounded epoll_wait/kevent waits out the whole park (up to ~100ms,
-    // longer under load) before it is registered with the kernel; the connect write-readiness arm then misses a short connect deadline (the
-    // NetConnectTimeoutException regression). The wake makes the parked poll return at once so the change is registered within microseconds.
-    private val wakePending = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
-
-    // True while the wakeup mechanism is armed (registerWake succeeded at start). When false (best-effort arm failed) the driver still works via the
-    // bounded-park drain; only the prompt-wake latency improvement is lost, so submitChange skips the wake rather than calling into a dead fd.
-    private val wakeArmed = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
     // Opcode constants for the packed Long change command:
     //   Bits 34-35: opcode (2 bits: 0=RegisterRead, 1=RegisterWrite, 3=Deregister; value 2 RETIRED from OpRearm, not reassigned)
@@ -1569,7 +1562,26 @@ private[net] object PollerIoDriver:
     def init(config: kyo.net.TransportConfig)(using AllowUnsafe, Frame): PollerIoDriver =
         val backend = PollerBackend.default()
         val fd      = backend.create()
-        new PollerIoDriver(backend, fd, Ffi.load[SocketBindings])
+        init(backend, fd, Ffi.load[SocketBindings])
+    end init
+
+    /** Build a driver over a caller-supplied backend, poller fd, and socket bindings, allocating the driver's unsafe fields (the atomic flags and
+      * the poll scratch) under the caller's `AllowUnsafe`: the construction site propagates the capability rather than each field bridging it, so the
+      * class body never holds an ambient `AllowUnsafe` and every method keeps requiring its own. Shared by [[init]] and the test construction helpers
+      * so the unsafe allocation lives in one place.
+      */
+    private[posix] def init(backend: PollerBackend, pollerFd: Int, sockets: SocketBindings)(using AllowUnsafe): PollerIoDriver =
+        new PollerIoDriver(
+            backend = backend,
+            pollerFd = pollerFd,
+            sockets = sockets,
+            closedFlag = AtomicBoolean.Unsafe.init(false),
+            pollScratch = backend.newPollScratch(),
+            started = AtomicBoolean.Unsafe.init(false),
+            freeScratchOnce = AtomicBoolean.Unsafe.init(false),
+            wakePending = AtomicBoolean.Unsafe.init(false),
+            wakeArmed = AtomicBoolean.Unsafe.init(false)
+        )
     end init
 
 end PollerIoDriver
