@@ -185,6 +185,9 @@ object SiteApp:
                         .target(Target.Blank),
                     UI.a.cssClass("soc")(LandingApp.brandGlyph(LandingApp.githubMark), "GitHub")
                         .href(Href.External("https", "//github.com/getkyo/kyo"))
+                        .target(Target.Blank),
+                    UI.a.cssClass("soc")(LandingApp.brandGlyph(LandingApp.discordMark), "Community")
+                        .href(Href.External("https", "//discord.gg/KxxkBbW8bq"))
                         .target(Target.Blank)
                 ),
                 UI.div.cssClass("right")(

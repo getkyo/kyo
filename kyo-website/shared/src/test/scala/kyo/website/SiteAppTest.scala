@@ -107,11 +107,14 @@ class SiteAppTest extends WebsiteTest:
         }
     }
 
-    "API and GitHub are external links opening in a new tab (Target.Blank)" in {
+    "API, GitHub, and Community are external links opening in a new tab (Target.Blank)" in {
         render(versions2, home).map { html =>
             assert(html.contains("javadoc.io/doc/io.getkyo/kyo-core_3"), s"API javadoc link missing: $html")
             assert(html.contains("github.com/getkyo/kyo"), s"GitHub link missing: $html")
-            // Both external links open in a new tab.
+            // The Community link points to the Discord invite.
+            assert(html.contains("//discord.gg/KxxkBbW8bq"), s"Community Discord link missing: $html")
+            assert(html.contains("Community"), s"Community link text missing: $html")
+            // All three external links open in a new tab.
             assert(html.contains("target=\"_blank\""), s"external links must open in a new tab: $html")
         }
     }
