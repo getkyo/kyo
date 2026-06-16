@@ -1,6 +1,6 @@
 # kyo-doctest
 
-kyo-doctest validates the Scala code blocks inside your Markdown by compiling them, so the examples in your docs cannot rot. `KyoDoctestPlugin` auto-enables on every JVM project. Running `sbt doctest` finds the project's `README.md`, extracts every ```scala block, and type-checks each one against the project's own classpath, failing the build on any unexpected outcome. A project opts out with `.disablePlugins(KyoDoctestPlugin)`. Each fenced block is treated as an independent compile unit by default, so examples stay copy-pasteable. An info-string DSL (`doctest:scope=...`, `doctest:expect=...`, `doctest:platform=...`, `doctest:setup`) lets a doc author chain blocks, declare blocks that must fail to compile, hide a setup fixture inside an HTML comment, or restrict a block to a single platform.
+kyo-doctest validates the Scala code blocks inside your Markdown by compiling them, so the examples in your docs cannot rot. `KyoDoctestPlugin` auto-enables on every JVM project. Running `sbt doctest` finds the project's `README.md`, extracts every ```` ```scala ```` block, and type-checks each one against the project's own classpath, failing the build on any unexpected outcome. A project opts out with `.disablePlugins(KyoDoctestPlugin)`. Each fenced block is treated as an independent compile unit by default, so examples stay copy-pasteable. An info-string DSL (`doctest:scope=...`, `doctest:expect=...`, `doctest:platform=...`, `doctest:setup`) lets a doc author chain blocks, declare blocks that must fail to compile, hide a setup fixture inside an HTML comment, or restrict a block to a single platform.
 
 There are two surfaces. `kyo-doctest-plugin` is the user-facing sbt plugin: it exposes the task and setting keys that almost every user touches. `kyo-doctest` is the JVM-only runner library that the plugin forks into over a temp JSON config, never called directly by users. Anyone wiring doctest into a non-sbt build (Mill, a CI script, an editor integration) calls `kyo.doctest.Doctest.check` directly with a `Doctest.Config`.
 
@@ -249,13 +249,13 @@ A code block can sit in the document body two ways:
 
 `Hidden`: inside an `<!-- ... -->` block. Invisible to readers entirely. Use when you need a block to compile but do not want it shown (negative-control type checks, fixture state the reader does not need to see).
 
-```markdown
+````markdown
 <!--
 ```scala doctest:expect=skipped
 val secret = "internal fixture"
 ```
 -->
-```
+````
 
 > **Note:** the carrier controls visibility only. A `doctest:setup` block hidden in `<!-- ... -->` is compiled identically and injects its prelude identically to a `Visible` setup block. The DSL and the validator treat both carriers as equivalent inputs.
 
