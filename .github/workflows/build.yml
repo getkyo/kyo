@@ -198,6 +198,16 @@ jobs:
             windows-*) export SBT_TASK_LIMIT=1;;
           esac
 
+          # Linux JVM: the forked test JVMs spawn podman containers (kyo-pod) and chrome
+          # (kyo-browser) alongside the sbt driver heap; on the 16GB Linux runners two concurrent
+          # forks overcommit and the kernel reclaims the runner (job dies with exit 143 /
+          # "runner received a shutdown signal"). Serialize so one forked test group runs at a time.
+          if [ "${{ matrix.target }}" = "JVM" ]; then
+            case "${{ inputs.os }}" in
+              linux-*) export SBT_TASK_LIMIT=1 ;;
+            esac
+          fi
+
           # Build testKyo command
           mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
           cmd="testKyo $mode ${{ matrix.target }}"
