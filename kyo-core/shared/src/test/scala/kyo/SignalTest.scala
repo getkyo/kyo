@@ -559,9 +559,11 @@ class SignalTest extends kyo.test.Test[Any]:
                 r1 <- Signal.initRef(0)
                 r2 <- Signal.initRef(0)
                 f  <- Fiber.initUnscoped(Signal.awaitAny(Seq(r0, r1, r2)))
-                _  <- assertEventually(r0.waiters.map(_ == 1))
-                _  <- r1.set(1)
-                _  <- f.get
+                // awaitAny races r0.next, r1.next, r2.next, arming their waiters independently. Wait for all
+                // three to be armed before firing r1, otherwise r1.set races r1's subscription and f.get hangs.
+                _ <- assertEventually(Kyo.foreach(Seq(r0, r1, r2))(_.waiters).map(_.forall(_ == 1)))
+                _ <- r1.set(1)
+                _ <- f.get
             yield ()
         }
 
