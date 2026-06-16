@@ -173,6 +173,26 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
         assert(summary.contains("1 failed")): Unit
     }
 
+    // ── Test 10: done() summary loses a run executed by a separate (forked) runner ──────────────
+    // Under `fork := true`, sbt runs SbtTask.execute in the forked JVM's runner, but logs the
+    // main-JVM runner's done(), whose results queue never received the reports, so the kyo-test
+    // summary line and TOTAL FAILURES block report zero. This is modelled by executing the suite
+    // on a separate runner from the one that produces the summary. pendingUntilFixed runs the body
+    // and inverts: a still-failing body reports Pending. Remove the marker once the fork-side
+    // summary is surfaced and the body passes (if the fix routes the fork's own done() rather than
+    // sharing results across instances, remove the marker by hand when that lands).
+
+    test("done() summary reflects a run executed by a separate (forked) runner instance") {
+        pendingUntilFixed {
+            val summaryRunner = makeRunner()
+            val execRunner    = makeRunner()
+            execRunner.tasks(Array(taskDefFor(classOf[NextSuiteA])))(0).execute(new CapturingEventHandler, loggers)
+            val summary = summaryRunner.done()
+            assert(summary.contains("1 tests")): Unit
+            assert(summary.contains("1 passed")): Unit
+        }
+    }
+
     // ── Test 11: SbtRunner.discoveryErrors is overwritten by successive calls ───────────────────
 
     test("discoveryErrors is overwritten by successive calls to tasks(), not accumulated") {

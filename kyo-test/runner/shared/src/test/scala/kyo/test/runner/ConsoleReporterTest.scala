@@ -51,6 +51,7 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         }
         assert(out.contains("[FAIL]"))
         assert(out.contains("x == 5"))
+        assert(out.contains("*** FAILED ***"))
     }
 
     "onLeafComplete with TimedOut prints [TIMEOUT]" in {
@@ -59,6 +60,21 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         }
         assert(out.contains("[TIMEOUT]"))
         assert(out.contains("100ms"))
+        assert(out.contains("*** FAILED ***"))
+    }
+
+    "onLeafComplete appends the ScalaTest failure marker on failures only" in {
+        def lineFor(result: TestResult): String =
+            capture() { r => r.onLeafComplete(leaf("x"), result) }
+        // Failures carry the ScalaTest-compatible marker so log-grepping tooling can locate them.
+        assert(lineFor(TestResult.Failed("d", Maybe.empty, 1L.millis)).contains("*** FAILED ***"))
+        assert(lineFor(TestResult.TimedOut(1L.millis)).contains("*** FAILED ***"))
+        // Deliberate non-runs and passes never carry it.
+        assert(!lineFor(TestResult.Passed(1L.millis)).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Cancelled("r", 1L.millis)).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Skipped("r")).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Pending("r")).contains("*** FAILED ***"))
+        assert(!lineFor(TestResult.Ignored("")).contains("*** FAILED ***"))
     }
 
     "onLeafHeartbeat prints [STUCK] with the leaf path and elapsed" in {

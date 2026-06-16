@@ -969,7 +969,6 @@ lazy val `kyo-actor` =
 
 lazy val `kyo-tasty` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
@@ -1010,7 +1009,6 @@ lazy val `kyo-tasty` =
 
 lazy val `kyo-tasty-fixtures-internal` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty/fixtures"))
         .withKyoTest
