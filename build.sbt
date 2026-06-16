@@ -283,7 +283,8 @@ lazy val kyoJVM: Project = project
         `kyo-test-runner`.jvm,
         `kyo-test-prop`.jvm,
         `kyo-test-snapshot`.jvm,
-        `root-readme`
+        `root-readme`,
+        `kyo-website`.jvm
     )
 
 lazy val kyoJS = project
@@ -322,6 +323,8 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
+        `kyo-website`.js,
+        `kyo-website-bundle`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -1725,6 +1728,56 @@ lazy val `kyo-ui` =
         .wasmSettings(
             `wasm-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0"
+        )
+
+// The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
+// transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the
+// SSG generator; JS side is the browser-mounted chrome. Native is not a target: the generator needs
+// one host and the deploy runs on JVM.
+lazy val `kyo-website` =
+    crossProject(JSPlatform, JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-website"))
+        .dependsOn(`kyo-ui`)
+        .dependsOn(`kyo-parse`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .settings(publish / skip := true)
+        .disablePlugins(MimaPlugin)
+        .jvmSettings(
+            // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
+            // link classpath. WebsiteBuildGraphTest enforces this placement.
+            // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
+            // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
+            // while the rest of the project uses sourcecode_3.
+            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.13.4")
+                .exclude("com.lihaoyi", "sourcecode_2.13")
+        )
+        .jsSettings(
+            `js-settings`,
+            // The content model shares WebsiteContent with the JVM generator, whose path.read pulls in
+            // node:path. Enable module support so the JS test link resolves it, matching kyo-ui. The
+            // browser bundle (kyo-website-bundle) re-links as ESModule for Chrome.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+
+// The single browser-loadable ESModule bundle (chrome only). Its Compile classpath holds
+// kyo-website.js + kyo-ui.js so the linked bundle has no Node-only require calls and loads in
+// Chrome as `<script type="module">`. fullLinkJS in deploy.
+lazy val `kyo-website-bundle` =
+    crossProject(JSPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-website-bundle"))
+        .dependsOn(`kyo-website`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .settings(publish / skip := true)
+        .disablePlugins(MimaPlugin)
+        .jsSettings(
+            `js-settings`,
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("kyo.website.WebsiteBundleMain"),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
         )
 
 lazy val `kyo-examples` =

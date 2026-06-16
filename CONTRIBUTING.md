@@ -773,51 +773,43 @@ Similarly for data types like `Maybe`:
 
 ### Framework
 
-Each module defines an `abstract class Test` in `src/test/scala/kyo/Test.scala` that extends `AsyncFreeSpec with NonImplicitAssertions` and mixes in one of the base traits below. Test classes extend their module's `Test`, not ScalaTest traits directly. Test files are named `FooTest.scala` (not `FooSpec`) and mirror the main source structure.
-
-### Base Trait Hierarchy
-
-| Trait                  | Module     | Purpose                                                                               |
-| ---------------------- | ---------- | ------------------------------------------------------------------------------------- |
-| `BaseKyoDataTest`      | kyo-data   | Compile-time type checking (`typeCheck`, `typeCheckFailure`)                          |
-| `BaseKyoKernelTest[S]` | kyo-kernel | Parameterized `run` method, platform-conditional runners (`runJVM`, `runNotJS`, etc.) |
-| `BaseKyoCoreTest`      | kyo-core   | Full `run` handling `Abort[Any] & Async & Scope` with timeout                         |
-
-Each module has a `src/test/scala/kyo/Test.scala` that wires ScalaTest to the appropriate base trait:
+Test suites extend `kyo.test.Test[Any]` (or a module-derived base that extends it). The type parameter is an additive extra effect row; `Any` is the common case (baseline `Async & Abort[Any] & Scope` only). There are no per-module `Test.scala` shim files. Test files are named `FooTest.scala` and mirror the main source structure.
 
 ```scala
-// kyo-data
-abstract class Test extends AsyncFreeSpec, NonImplicitAssertions, BaseKyoDataTest:
-    override type Assertion = org.scalatest.Assertion
-    override val assertionSuccess: Assertion = Succeeded
-    override def assertionFailure(msg: String): Assertion = fail(msg)
+class ChannelTest extends kyo.test.Test[Any]:
+    "put and take" in {
+        for
+            channel <- Channel.init[Int](2)
+            _       <- channel.put(1)
+            v       <- channel.take
+        yield assert(v == 1)
+    }
+```
 
-// kyo-core (and modules that depend on it)
-abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKyoCoreTest:
-    type Assertion = org.scalatest.Assertion
-    def assertionSuccess = succeed
-    def assertionFailure(msg: String) = fail(msg)
+Modules that share a common fixture define a thin abstract base:
+
+```scala
+// e.g. kyo-parse
+abstract class ParseTestBase extends kyo.test.Test[Any]
+
+class ParserTest extends ParseTestBase:
+    "parse empty" in {
+        assert(parse("") == Result.unit)
+    }
 ```
 
 ### Test Patterns by Level
 
-**kyo-data** — pure assertions, no effects:
+**Pure / synchronous**: no effects, leaf body is `Unit`:
 ```scala
-"name" in {
+"value equality" in {
     assert(Maybe(42) == Maybe(42))
 }
 ```
 
-**kyo-prelude** — effect evaluation with `.eval`:
+**Effectful**: the leaf body is `Unit < (Async & Abort[Any] & Scope)`; Kyo effects compose directly with no `run` wrapper:
 ```scala
-"name" in {
-    assert(Abort.run(Abort.fail("error")).eval == Result.fail("error"))
-}
-```
-
-**kyo-core+** — effectful tests using `run`:
-```scala
-"name" in run {
+"put and take" in {
     for
         channel <- Channel.init[Int](2)
         _       <- channel.put(1)
@@ -826,47 +818,118 @@ abstract class Test extends AsyncFreeSpec with NonImplicitAssertions with BaseKy
 }
 ```
 
-### Platform-Conditional Tests
-
-Use platform-specific runners for tests that depend on a particular platform:
+Groups are registered with `-` (always a group; body runs at registration time to collect nested leaves):
 
 ```scala
-"jvm only" in runJVM { ... }
-"not js" in runNotJS { ... }
-"not native" in runNotNative { ... }
-"js only" in runJS { ... }
+"channel" - {
+    "bounded" - {
+        "put and take" in { ... }
+    }
+}
 ```
 
-Platform-specific source code lives in `src/test/scala-jvm/`, `src/test/scala-js/`, etc.
+### Assertion Model
+
+`assert(cond)` is a power-assert macro: on failure it prints a diagram of subexpression values. Every leaf must evaluate at least one assertion; a leaf that completes without any assertion is failed by default (the `failOnNoAssertion` check). To explicitly mark a leaf as asserting no runtime value, write `succeed` (or `succeed("why")`) in the body.
+
+To disable the check for a whole suite:
+
+```scala
+override def config = super.config.failOnNoAssertion(false)
+```
 
 ### Compile-Time Tests
 
-Verify that code compiles (or fails to compile with expected errors):
+Verify that code compiles or fails to compile:
 
 ```scala
 "valid code compiles" in {
     typeCheck("Env.get[Int]")
 }
 
-"invalid code fails" in {
+"invalid code fails with expected message" in {
     typeCheckFailure("Layer.init[String]()")("Missing Input: scala.Predef.String")
 }
 ```
 
-The expected error string in `typeCheckFailure` is a substring match.
+The string passed to `typeCheckFailure` is a substring match against the compiler error.
 
 ### Concurrent Test Helpers
 
-Use `untilTrue` for eventually-consistent assertions in concurrent tests. It retries the condition every 10ms until it returns `true` or the test times out:
+`assertEventually(cond)` retries `cond` every 10ms until it yields `true`, bounded by the per-test timeout. Use it for eventually-consistent concurrent state instead of sleeps:
 
 ```scala
-"eventually consistent" in run {
+"counter reaches 1" in {
     for
         counter <- AtomicInt.init(0)
         _       <- Async.run(counter.incrementAndGet.unit)
-        _       <- untilTrue(counter.get.map(_ > 0))
-    yield assert(true)
+        _       <- assertEventually(counter.get.map(_ > 0))
+    yield ()
 }
+```
+
+### Exception and Failure Assertions
+
+`intercept[E](body)` asserts that `body` throws an exception of type `E` and returns the caught exception:
+
+```scala
+"throws on invalid input" in {
+    val ex = intercept[IllegalArgumentException] {
+        parseStrict("")
+    }
+    assert(ex.getMessage.contains("empty"))
+}
+```
+
+### Skipping and Preconditions
+
+`assume(cond, msg)` cancels (not fails) the test when a precondition is not met. `cancel(msg)` cancels unconditionally. Use these for platform-specific prerequisites rather than guarding with `if`:
+
+```scala
+"requires multiple cores" in {
+    assume(Runtime.getRuntime.availableProcessors > 1, "requires multi-core")
+    // ...
+}
+```
+
+### Platform-Conditional Tests
+
+Platform gates restrict a leaf or group to one or more platforms. On a disabled platform the body is compile-excluded (absent, not skipped):
+
+```scala
+"jvm only" .jvm in { ... }
+"not native" .notNative in { ... }
+"jvm or js" .notNative in { ... }
+```
+
+### Decorators
+
+Decorators chain on a leaf name before `in`:
+
+```scala
+"flaky network call" .flaky in { ... }          // retry up to 3x, tags "flaky"
+"slow integration" .timeout(120.seconds) in { ... }
+"known broken" .pendingUntilFixed("issue #42") in { ... }
+"retry on failure" .retry(3) in { ... }
+```
+
+### Per-Suite Configuration
+
+Override `config` to control parallelism, timeout, and other run settings:
+
+```scala
+// Run all leaves in this suite sequentially
+override def config = super.config.sequential
+
+// Change the default per-leaf timeout
+override def timeout = 30.seconds
+```
+
+Override `aroundLeaf` to wrap every leaf with shared setup or teardown:
+
+```scala
+override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame) =
+    HttpClient.withConfig(_.timeout(60.seconds))(body)
 ```
 
 ---
