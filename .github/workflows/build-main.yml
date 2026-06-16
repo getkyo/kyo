@@ -14,14 +14,14 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       os: linux-x64
-      runner-image: ubuntu-latest
+      runner-image: blacksmith-4vcpu-ubuntu-2404
       test-command: test
 
   linux-arm64:
     uses: ./.github/workflows/build.yml
     with:
       os: linux-arm64
-      runner-image: ubuntu-24.04-arm
+      runner-image: blacksmith-4vcpu-ubuntu-2404-arm
       test-command: test
 
   # Uncomment to extend the matrix when budget allows:
