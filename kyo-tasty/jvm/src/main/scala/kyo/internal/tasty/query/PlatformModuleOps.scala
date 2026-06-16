@@ -55,8 +55,12 @@ private[kyo] object PlatformModuleOps:
       * When `moduleFilter` is non-empty, only the named modules are walked. An empty set walks ALL modules, which is the
       * production default used by `initWithPlatformModules`. Tests should pass a small module set (e.g. `Set("java.base")`)
       * to limit decode time: java.base has ~7,000 classes vs ~27,000 across all modules.
+      *
+      * When `classFilter` is non-empty, only those classes (by fully-qualified name, matched against each class's
+      * module-relative path) are returned, so a caller can decode a single JDK class instead of a whole module: a
+      * fixture that inspects one class drops from ~7,000 decodes to one.
       */
-    def listJdkClassFiles(moduleFilter: Set[String] = Set.empty)(using AllowUnsafe): Chunk[String] =
+    def listJdkClassFiles(moduleFilter: Set[String] = Set.empty, classFilter: Set[String] = Set.empty)(using AllowUnsafe): Chunk[String] =
         val fs =
             try FileSystems.getFileSystem(URI.create("jrt:/"))
             catch
@@ -66,7 +70,10 @@ private[kyo] object PlatformModuleOps:
             val modulesRoot = fs.getPath("/modules")
             if !Files.exists(modulesRoot) then Chunk.empty
             else
-                val results = mutable.ArrayBuffer.empty[String]
+                // Fully-qualified class names to keep, as module-relative `.class` paths
+                // (e.g. "java.lang.annotation.RetentionPolicy" -> "java/lang/annotation/RetentionPolicy.class").
+                val classPaths = classFilter.map(_.replace('.', '/') + ".class")
+                val results    = mutable.ArrayBuffer.empty[String]
                 val moduleRoots: Iterator[java.nio.file.Path] =
                     if moduleFilter.isEmpty then
                         // Walk all modules (production path).
@@ -78,7 +85,10 @@ private[kyo] object PlatformModuleOps:
                     Files.walk(moduleRoot).iterator().asScala.foreach { p =>
                         val name = p.getFileName.toString
                         if name.endsWith(".class") && name != "module-info.class" then
-                            results += "jrt:/" + p.toString
+                            val rel = moduleRoot.relativize(p).toString.replace('\\', '/')
+                            if classPaths.isEmpty || classPaths.contains(rel) then
+                                results += "jrt:/" + p.toString
+                        end if
                     }
                 }
                 Chunk.from(results.toSeq)
