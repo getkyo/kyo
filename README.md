@@ -324,12 +324,14 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Specialized tools
 
-Parsing, container management, browser automation, and low-latency messaging.
+Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, web UIs, and Slack bots.
 
 | Module                                                 | JVM | JS  | Native | WASM | Identity                                                                                                  |
 | ------------------------------------------------------ | --- | --- | ------ | ---- | --------------------------------------------------------------------------------------------------------- |
 | [kyo-parse](kyo-parse/README.md)                       | ✅   | ✅   | ✅      | ✅   | Parser combinators in the effect row; supports dual-input-type parsers (e.g. `Parse[Char] & Parse[Int]`)  |
 | [kyo-pod](kyo-pod/README.md)                           | ✅   | ✅   | ✅      | ✅   | Docker and Podman client cross-compiled to JVM/JS/Native/WASM, streaming logs/stats, scope-managed cleanup     |
+| [kyo-slack](kyo-slack/README.md)                       | ✅   | ✅   | ✅      | ✅   | Slack Socket Mode bot client: typed `SlackEnvelope` handling, structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect |
+| [kyo-aeron](kyo-aeron/README.md)                       | ✅   | ❌   | ❌      | ❌   | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
 | [kyo-browser](kyo-browser/README.md)                   | ✅   | ✅   | ✅      | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown |
 | [kyo-aeron](kyo-aeron/README.md)                       | ✅   |    |       |    | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API             |
 
