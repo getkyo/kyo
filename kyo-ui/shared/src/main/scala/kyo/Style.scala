@@ -255,6 +255,10 @@ final case class Style private[kyo] (props: Chunk[Style.Prop]) derives CanEqual:
     def fontStyle(f: FontStyle.type => FontStyle): Style = fontStyle(f(FontStyle))
     def italic: Style                                    = fontStyle(FontStyle.italic)
 
+    def fontVariantLigatures(v: FontVariantLigatures): Style = appendProp(Prop.FontVariantLigaturesProp(v))
+    def fontVariantLigatures(f: FontVariantLigatures.type => FontVariantLigatures): Style =
+        fontVariantLigatures(f(FontVariantLigatures))
+
     def fontFamily(v: FontFamily): Style                    = appendProp(Prop.FontFamilyProp(v))
     def fontFamily(f: FontFamily.type => FontFamily): Style = fontFamily(f(FontFamily))
 
@@ -631,44 +635,47 @@ object Style:
         bottom: Length.Px | Length.Pct | Length.Em,
         left: Length.Px | Length.Pct | Length.Em
     ): Style = empty.padding(top, right, bottom, left)
-    def margin(all: Length): Style                                                  = empty.margin(all)
-    def margin(vertical: Length, horizontal: Length): Style                         = empty.margin(vertical, horizontal)
-    def margin(top: Length, right: Length, bottom: Length, left: Length): Style     = empty.margin(top, right, bottom, left)
-    def gap(v: Length.Px | Length.Em): Style                                        = empty.gap(v)
-    def row: Style                                                                  = empty.row
-    def column: Style                                                               = empty.column
-    def rowReverse: Style                                                           = empty.rowReverse
-    def columnReverse: Style                                                        = empty.columnReverse
-    def flexWrap(v: FlexWrap): Style                                                = empty.flexWrap(v)
-    def flexWrap(f: FlexWrap.type => FlexWrap): Style                               = empty.flexWrap(f)
-    def align(v: Alignment): Style                                                  = empty.align(v)
-    def align(f: Alignment.type => Alignment): Style                                = empty.align(f)
-    def justify(v: Justification): Style                                            = empty.justify(v)
-    def justify(f: Justification.type => Justification): Style                      = empty.justify(f)
-    def overflow(v: Overflow): Style                                                = empty.overflow(v)
-    def overflow(f: Overflow.type => Overflow): Style                               = empty.overflow(f)
-    def overflowX(v: Overflow): Style                                               = empty.overflowX(v)
-    def overflowX(f: Overflow.type => Overflow): Style                              = empty.overflowX(f)
-    def overflowY(v: Overflow): Style                                               = empty.overflowY(v)
-    def overflowY(f: Overflow.type => Overflow): Style                              = empty.overflowY(f)
-    def scrollbarWidth(v: ScrollbarWidth): Style                                    = empty.scrollbarWidth(v)
-    def scrollbarWidth(f: ScrollbarWidth.type => ScrollbarWidth): Style             = empty.scrollbarWidth(f)
-    def scrollbarColor(thumb: Color, track: Color): Style                           = empty.scrollbarColor(thumb, track)
-    def scrollbarGutter(v: ScrollbarGutter): Style                                  = empty.scrollbarGutter(v)
-    def scrollbarGutter(f: ScrollbarGutter.type => ScrollbarGutter): Style          = empty.scrollbarGutter(f)
-    def width(v: Length): Style                                                     = empty.width(v)
-    def height(v: Length): Style                                                    = empty.height(v)
-    def minWidth(v: Length): Style                                                  = empty.minWidth(v)
-    def maxWidth(v: Length): Style                                                  = empty.maxWidth(v)
-    def minHeight(v: Length): Style                                                 = empty.minHeight(v)
-    def maxHeight(v: Length): Style                                                 = empty.maxHeight(v)
-    def fontSize(v: Length.Px | Length.Em): Style                                   = empty.fontSize(v)
-    def fontWeight(v: FontWeight): Style                                            = empty.fontWeight(v)
-    def fontWeight(f: FontWeight.type => FontWeight): Style                         = empty.fontWeight(f)
-    def bold: Style                                                                 = empty.bold
-    def italic: Style                                                               = empty.italic
-    def fontStyle(v: FontStyle): Style                                              = empty.fontStyle(v)
-    def fontStyle(f: FontStyle.type => FontStyle): Style                            = empty.fontStyle(f)
+    def margin(all: Length): Style                                              = empty.margin(all)
+    def margin(vertical: Length, horizontal: Length): Style                     = empty.margin(vertical, horizontal)
+    def margin(top: Length, right: Length, bottom: Length, left: Length): Style = empty.margin(top, right, bottom, left)
+    def gap(v: Length.Px | Length.Em): Style                                    = empty.gap(v)
+    def row: Style                                                              = empty.row
+    def column: Style                                                           = empty.column
+    def rowReverse: Style                                                       = empty.rowReverse
+    def columnReverse: Style                                                    = empty.columnReverse
+    def flexWrap(v: FlexWrap): Style                                            = empty.flexWrap(v)
+    def flexWrap(f: FlexWrap.type => FlexWrap): Style                           = empty.flexWrap(f)
+    def align(v: Alignment): Style                                              = empty.align(v)
+    def align(f: Alignment.type => Alignment): Style                            = empty.align(f)
+    def justify(v: Justification): Style                                        = empty.justify(v)
+    def justify(f: Justification.type => Justification): Style                  = empty.justify(f)
+    def overflow(v: Overflow): Style                                            = empty.overflow(v)
+    def overflow(f: Overflow.type => Overflow): Style                           = empty.overflow(f)
+    def overflowX(v: Overflow): Style                                           = empty.overflowX(v)
+    def overflowX(f: Overflow.type => Overflow): Style                          = empty.overflowX(f)
+    def overflowY(v: Overflow): Style                                           = empty.overflowY(v)
+    def overflowY(f: Overflow.type => Overflow): Style                          = empty.overflowY(f)
+    def scrollbarWidth(v: ScrollbarWidth): Style                                = empty.scrollbarWidth(v)
+    def scrollbarWidth(f: ScrollbarWidth.type => ScrollbarWidth): Style         = empty.scrollbarWidth(f)
+    def scrollbarColor(thumb: Color, track: Color): Style                       = empty.scrollbarColor(thumb, track)
+    def scrollbarGutter(v: ScrollbarGutter): Style                              = empty.scrollbarGutter(v)
+    def scrollbarGutter(f: ScrollbarGutter.type => ScrollbarGutter): Style      = empty.scrollbarGutter(f)
+    def width(v: Length): Style                                                 = empty.width(v)
+    def height(v: Length): Style                                                = empty.height(v)
+    def minWidth(v: Length): Style                                              = empty.minWidth(v)
+    def maxWidth(v: Length): Style                                              = empty.maxWidth(v)
+    def minHeight(v: Length): Style                                             = empty.minHeight(v)
+    def maxHeight(v: Length): Style                                             = empty.maxHeight(v)
+    def fontSize(v: Length.Px | Length.Em): Style                               = empty.fontSize(v)
+    def fontWeight(v: FontWeight): Style                                        = empty.fontWeight(v)
+    def fontWeight(f: FontWeight.type => FontWeight): Style                     = empty.fontWeight(f)
+    def bold: Style                                                             = empty.bold
+    def italic: Style                                                           = empty.italic
+    def fontStyle(v: FontStyle): Style                                          = empty.fontStyle(v)
+    def fontStyle(f: FontStyle.type => FontStyle): Style                        = empty.fontStyle(f)
+    def fontVariantLigatures(v: FontVariantLigatures): Style                    = empty.fontVariantLigatures(v)
+    def fontVariantLigatures(f: FontVariantLigatures.type => FontVariantLigatures): Style =
+        empty.fontVariantLigatures(f)
     def fontFamily(v: FontFamily): Style                                            = empty.fontFamily(v)
     def fontFamily(f: FontFamily.type => FontFamily): Style                         = empty.fontFamily(f)
     def textAlign(v: TextAlign): Style                                              = empty.textAlign(v)
@@ -918,6 +925,14 @@ object Style:
     enum FontStyle derives CanEqual:
         case normal, italic
 
+    /** Maps to the CSS `font-variant-ligatures` property. `none` turns OFF every ligature and
+      * contextual alternate, so a ligature-carrying programming font (JetBrains Mono, Fira Code) shows
+      * the literal characters: `--`, `<!--`, `-->`, `->`, `=>` stay as those exact glyphs instead of
+      * being fused into a dash or arrow. `normal` is the UA default (ligatures on).
+      */
+    enum FontVariantLigatures derives CanEqual:
+        case normal, none
+
     /** Maps to the CSS `text-align` property. */
     enum TextAlign derives CanEqual:
         case left, center, right, justify
@@ -1101,6 +1116,7 @@ object Style:
         case FontSizeProp(value: Length)
         case FontWeightProp(value: FontWeight)
         case FontStyleProp(value: FontStyle)
+        case FontVariantLigaturesProp(value: FontVariantLigatures)
         case FontFamilyProp(value: FontFamily)
         case TextAlignProp(value: TextAlign)
         case TextDecorationProp(value: TextDecoration)

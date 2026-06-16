@@ -266,8 +266,11 @@ private[kyo] object UnsafeServerDispatch:
         parser: Http1Parser
     )(using AllowUnsafe, Frame): Unit =
         val headers = HttpHeaders.fromPacked(request.headersAsPacked)
-        val url     = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
-        val conn    = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
+        // Carry the query string into the handler's request url: a WebSocket upgrade target
+        // may put data in the query (e.g. the Slack Socket Mode connection ticket), so a
+        // handler must be able to read it via req.query, exactly as a non-upgrade request can.
+        val url  = HttpUrl(Absent, "", 0, request.pathAsString, request.queryRawString)
+        val conn = new ChannelBackedStream(streamCtx.inbound, streamCtx.outbound)
         discard(IOTask(
             Abort.run[Any](
                 WebSocketCodec.acceptUpgrade(conn, headers, wsHandler.wsConfig).andThen {
@@ -317,7 +320,8 @@ private[kyo] object UnsafeServerDispatch:
                                     stream,
                                     conn,
                                     wsHandler.wsConfig.maxFrameSize,
-                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr))
+                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr)),
+                                    mask = false
                                 ) { (frame, remaining) =>
                                     inbound.put(frame).andThen(Loop.continue(remaining))
                                 }

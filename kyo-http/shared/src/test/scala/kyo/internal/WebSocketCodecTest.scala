@@ -225,7 +225,7 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
             val frame2 = makeFrame(opcode = 0x0, fin = false, payload = "BBB".getBytes(Utf8))
             val frame3 = makeFrame(opcode = 0x0, fin = true, payload = "CCC".getBytes(Utf8))
             val mock   = new MockConn(frame1 ++ frame2 ++ frame3)
-            WebSocketCodec.readFrameWith(mock.read, mock, Int.MaxValue) { (payload, _) =>
+            WebSocketCodec.readFrameWith(mock.read, mock) { (payload, _) =>
                 payload match
                     case HttpWebSocket.Payload.Text(s) =>
                         assert(s == "AAABBBCCC")
@@ -284,8 +284,9 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
                 payload.length.toByte
             ) ++ payload
             val conn = new MockConn(frame)
-            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, maxFrameSize = 4)((frame, _) => frame)).map { result =>
-                assert(result.isFailure)
+            Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, 4, _ => Kyo.unit, mask = false)((frame, _) => frame)).map {
+                result =>
+                    assert(result.isFailure)
             }
         }
 
@@ -382,11 +383,43 @@ class WebSocketCodecTest extends kyo.BaseHttpTest:
         ) ++ textPayload
 
         val conn = new MockConn(pingFrame ++ textFrame)
+        // Default (server) mode: the auto-Pong is UNMASKED per RFC 6455 §5.1 (servers must not mask).
         Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn)((frame, _) => frame)).map {
             case Result.Success(HttpWebSocket.Payload.Text(text)) =>
                 assert(text == "after-ping")
-                val written = conn.written
-                assert(written.nonEmpty) // Pong frame was auto-sent
+                val pong = conn.written
+                assert(pong.nonEmpty) // Pong frame was auto-sent
+                assert((pong(0) & 0xff) == 0x8a, s"expected Pong opcode, got ${pong(0) & 0xff}")
+                assert((pong(1) & 0x80) == 0, "server auto-Pong must NOT set the mask bit")
+            case other =>
+                fail(s"Expected Text after Ping, got $other")
+        }
+    }
+
+    "ping in client mode auto-sends a MASKED pong (RFC 6455 §5.1)" in {
+        // A client MUST mask every frame it sends, including the auto-Pong it emits in reply to a
+        // server Ping. Slack's Socket Mode gateway enforces this and closes an unmasked frame with
+        // 1002. The auto-Pong is written by the shared readFrameWith, so the client role must reach it.
+        val pingPayload = "pingdata".getBytes(Utf8)
+        val pingFrame   = Array[Byte]((0x80 | 0x09).toByte, pingPayload.length.toByte) ++ pingPayload
+        val textPayload = "after-ping".getBytes(Utf8)
+        val textFrame   = Array[Byte]((0x80 | 0x01).toByte, textPayload.length.toByte) ++ textPayload
+
+        val conn = new MockConn(pingFrame ++ textFrame)
+        Abort.run[Closed](WebSocketCodec.readFrameWith(conn.read, conn, Int.MaxValue, _ => Kyo.unit, mask = true)((frame, _) =>
+            frame
+        )).map {
+            case Result.Success(HttpWebSocket.Payload.Text(text)) =>
+                assert(text == "after-ping")
+                val pong = conn.written
+                assert((pong(0) & 0xff) == 0x8a, s"expected Pong opcode, got ${pong(0) & 0xff}")
+                assert((pong(1) & 0x80) != 0, "client auto-Pong must set the mask bit")
+                val payloadLen = pong(1) & 0x7f
+                assert(payloadLen == pingPayload.length, s"pong payload length should be ${pingPayload.length}, got $payloadLen")
+                // bytes 2..5 are the mask key; unmasking the remainder must recover the ping payload.
+                val maskKey   = Span.fromUnsafe(pong.slice(2, 6))
+                val recovered = WebSocketCodec.unmask(Span.fromUnsafe(pong.slice(6, 6 + payloadLen)), maskKey).toArrayUnsafe
+                assert(recovered.sameElements(pingPayload), "unmasked pong payload must equal the ping payload")
             case other =>
                 fail(s"Expected Text after Ping, got $other")
         }

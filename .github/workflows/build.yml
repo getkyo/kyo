@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 4
       matrix:
         target: [JVM, JS, Native, Wasm]
     runs-on: ${{ inputs.runner-image }}
@@ -178,7 +178,7 @@ jobs:
         run: |
           # macOS arm64 (14GB): serialize JS/Native to avoid Scala.js linker OOM
           if [ "${{ inputs.os }}" = "macos-arm64" ] && [ "${{ matrix.target }}" != "JVM" ]; then
-            export SBT_TASK_LIMIT=1
+            export SBT_TASK_LIMIT=2
           fi
 
           # Native: nativeLink forks one LLVM process per module and Scala Native's
@@ -189,13 +189,13 @@ jobs:
           # link one at a time, capping peak memory. macOS/Windows already serialize
           # these targets above; this is the redundant-but-explicit Linux case.
           if [ "${{ matrix.target }}" = "Native" ]; then
-            export SBT_TASK_LIMIT=1
+            export SBT_TASK_LIMIT=2
           fi
 
           # Windows: serialize all sbt tasks to avoid OverlappingFileLockException
           # during coursier dependency resolution (mandatory file locks).
           case "${{ inputs.os }}" in
-            windows-*) export SBT_TASK_LIMIT=1;;
+            windows-*) export SBT_TASK_LIMIT=2;;
           esac
 
           # Linux JVM: the forked test JVMs spawn podman containers (kyo-pod) and chrome
@@ -204,7 +204,7 @@ jobs:
           # "runner received a shutdown signal"). Serialize so one forked test group runs at a time.
           if [ "${{ matrix.target }}" = "JVM" ]; then
             case "${{ inputs.os }}" in
-              linux-*) export SBT_TASK_LIMIT=1 ;;
+              linux-*) export SBT_TASK_LIMIT=2 ;;
             esac
           fi
 

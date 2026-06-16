@@ -782,7 +782,8 @@ final private[kyo] class HttpClientBackend[Handle] private (
                                     stream,
                                     transportStream,
                                     config.maxFrameSize,
-                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr))
+                                    (cr: (Int, String)) => closeReasonRef.set(Present(cr)),
+                                    mask = true
                                 ) { (frame, remaining) =>
                                     inbound.put(frame).andThen(Loop.continue(remaining))
                                 }
