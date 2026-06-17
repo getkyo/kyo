@@ -304,13 +304,19 @@ class ClockTest extends kyo.test.Test[Any]:
     "TimeShift" - {
         "speed up time" in {
             for
-                wallStart  <- Clock.now
-                shiftedEnd <- Clock.withTimeShift(2)(Clock.sleep(10.millis).map(_.get.andThen(Clock.now)))
+                wallStart <- Clock.now
+                // 80ms shifted -> ~40ms wall. elapsedWall captures wallEnd AFTER the shifted block
+                // exits, so it includes the post-sleep scheduling gap (which elapsedShifted does not);
+                // a short sleep makes `elapsedShifted > elapsedWall` flip whenever that gap exceeds the
+                // wall sleep. config.sequential only orders this suite's leaves, not other suites
+                // sharing the process-global pool, so under CI contention the gap can be large. Sleeping
+                // long enough keeps the wall sleep well above the gap.
+                shiftedEnd <- Clock.withTimeShift(2)(Clock.sleep(80.millis).map(_.get.andThen(Clock.now)))
                 wallEnd    <- Clock.now
             yield
                 val elapsedWall    = wallEnd - wallStart
                 val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 4.millis && elapsedWall < 40.millis)
+                assert(elapsedWall >= 25.millis && elapsedWall < 400.millis)
                 assert(elapsedShifted > elapsedWall)
         }
 
