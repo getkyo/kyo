@@ -705,7 +705,10 @@ class SignalTest extends kyo.test.Test[Any]:
                 r2 <- Signal.initRef(0)
                 z = Signal.combineLatestAll(Seq(r0, r1, r2))
                 f <- Fiber.initUnscoped(z.next)
-                _ <- assertEventually(r0.waiters.map(_ == 1))
+                // Sync on the signal we mutate. combineLatestAll subscribes to r0/r1/r2 concurrently
+                // via Async.race, so r0 having a waiter does not imply r1 does; setting r1 before its
+                // subscription lands would lose the wakeup and hang z.next.
+                _ <- assertEventually(r1.waiters.map(_ == 1))
                 _ <- r1.set(99)
                 v <- f.get
             yield assert(v == Chunk(0, 99, 0))
