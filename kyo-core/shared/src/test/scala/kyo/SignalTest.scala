@@ -642,9 +642,11 @@ class SignalTest extends kyo.test.Test[Any]:
                 r1 <- Signal.initRef(0)
                 r2 <- Signal.initRef(0)
                 z = Signal.zipAll(Seq(r0, r1, r2))
-                // Arm the waiter
                 f <- Fiber.initUnscoped(z.next)
-                _ <- assertEventually(r0.waiters.map(_ == 1))
+                // zipAll subscribes to r0/r1/r2 concurrently; wait until all three are armed so the
+                // r1/r2 changes below are registered. Syncing on r0 alone would let them fire before
+                // their subscriptions land, dropping the changes and hanging the emit.
+                _ <- assertEventually(Kyo.foreach(Seq(r0, r1, r2))(_.waiters).map(_.forall(_ == 1)))
                 // Change r1 and r2 but NOT r0: emit must not fire yet
                 _ <- r1.set(1)
                 _ <- r2.set(1)
@@ -662,8 +664,10 @@ class SignalTest extends kyo.test.Test[Any]:
                 r1 <- Signal.initRef(0)
                 r2 <- Signal.initRef(0)
                 z = Signal.zipAll(Seq(r0, r1, r2))
-                f      <- Fiber.initUnscoped(z.next)
-                _      <- assertEventually(r0.waiters.map(_ == 1))
+                f <- Fiber.initUnscoped(z.next)
+                // Wait until all three are armed: zipAll subscribes concurrently, so r0 being armed
+                // does not imply r1/r2 are subscribed before we fire them.
+                _      <- assertEventually(Kyo.foreach(Seq(r0, r1, r2))(_.waiters).map(_.forall(_ == 1)))
                 _      <- r2.set(1)
                 _      <- r1.set(1)
                 _      <- r0.set(1)
@@ -732,11 +736,11 @@ class SignalTest extends kyo.test.Test[Any]:
                 _  <- assertEventually(r1.waiters.map(_ >= 2))
                 _  <- r1.set(1)
                 v1 <- f1.get
-                // Third emit: r2 fires; after second emit, r1 is fresh (0 waiters),
-                // r2 has 2 ghost waiters. After third awaitAny subscribes, r1 has 1 new.
-                // Use r1.waiters >= 1 as sync point (r1 is fresh, so 0+1=1 is reliable).
+                // Third emit: r2 fires, so sync on r2 (concurrent subscription means r1 being armed
+                // does not imply r2 is). r2 was never set, so it still carries its 2 ghost waiters from
+                // the prior races; r2.waiters >= 3 confirms the third subscription landed on r2.
                 f2 <- Fiber.initUnscoped(z.next)
-                _  <- assertEventually(r1.waiters.map(_ >= 1))
+                _  <- assertEventually(r2.waiters.map(_ >= 3))
                 _  <- r2.set(1)
                 v2 <- f2.get
             yield assert(v0 == Chunk(1, 0, 0) && v1 == Chunk(1, 1, 0) && v2 == Chunk(1, 1, 1))
