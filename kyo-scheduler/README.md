@@ -2,8 +2,6 @@
 
 `kyo-scheduler` is a standalone work-stealing task scheduler for the JVM with adaptive concurrency control. You plug it in wherever you would use a `java.util.concurrent.ExecutorService` or `scala.concurrent.ExecutionContext`, and it handles the things a normal pool will not: it watches its own queuing delays and rejects new work when the system is overloaded, it samples per-thread CPU time to detect threads stuck in blocking syscalls and grows the pool to compensate, and it shrinks the pool back down when scheduling delays recover. Tasks run for a bounded time slice before being re-queued so no single task starves the others. The scheduler can be used on its own (the rest of Kyo is not required) and a single JVM-wide instance is available as `Scheduler.get`.
 
-
-
 ```scala
 import kyo.scheduler.Scheduler
 import scala.concurrent.ExecutionContext
@@ -12,6 +10,8 @@ import scala.concurrent.Future
 implicit val ec: ExecutionContext = Scheduler.get.asExecutionContext
 val f: Future[Int]                = Future(42)
 ```
+
+> **Important**: Most users should rely on Kyo's primitives built on top of the scheduler without ever using its APIs directly. Using the scheduler directly is an advanced feature.
 
 ## Getting started
 

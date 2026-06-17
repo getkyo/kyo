@@ -97,8 +97,6 @@ val ready: Int < Any = 1 + 1
 assert(ready.eval == 2)
 ```
 
-> **Caution:** `eval` is defined on `A < Any`. Calling it on a value with unhandled effects in the row fails at runtime via `bug.failTag`, not at compile time. The compile-time signal is the type: if the row is not `Any`, there are effects to handle first.
-
 ### Pipeline-style application: `handle`
 
 When you want to apply several handlers and transformations in order without nesting them, `handle` takes them as a left-to-right pipeline. It is purely sugar over function application, so `Env.run(1)(Abort.run(c))` and `c.handle(Abort.run, Env.run(1))` are identical. Up to 10 stages are supported.
@@ -118,14 +116,14 @@ val greeting: String < Greet = ArrowEffect.suspend[Any](Tag[Greet], "Ada")
 
 val out: String =
     greeting
-        .handle(runGreet, _.map(_.toUpperCase))
+        .handle(runGreet)
         .eval
 // out == "HELLO, ADA!"
 ```
 
 ### Lifting plain values: `lift` and `CanLift`
 
-Plain values lift into `A < S` implicitly. The `CanLift[A]` constraint blocks two specific mistakes: lifting an already-effectful value (`A < S < S2`, which would silently flatten incorrectly), and lifting kyo module singletons (`Abort.type`, `Env.type`) which is almost always a forgotten apply.
+Plain values lift into `A < S` implicitly. The `CanLift[A]` constraint blocks two specific mistakes: lifting an already-effectful value (`A < S < S2`, which would silently lift), and lifting kyo module singletons (`Abort.type`, `Env.type`) which is almost always a forgotten apply.
 
 ```scala
 import kyo.*
@@ -136,15 +134,10 @@ case class Visitor(name: String, language: String)
 val v: Visitor < Any = Visitor("Ada", "en")
 
 // Explicit lift, primarily useful where if/else inference needs help:
-def maybeVisitor(name: Option[String]): Visitor < Any =
-    name match
-        case Some(n) => Visitor(n, "en")
-        case None    => Visitor("anonymous", "en")
+val v2: Visitor < Any = Kyo.lift(Visitor("Ada", "en"))
 ```
 
 If you write code that produces `Visitor < S1` and assign it to a `Visitor < S2` (forgetting to handle the difference), the macro rejects the lift with a message that walks you through `.flatten` and splitting the statement into two `val`s.
-
-> **Note:** `CanLift` is a *soft* constraint: it forbids the common mistakes (`A < S < S2`, module singletons) but cannot strictly enforce non-nesting in every generic context. If you genuinely need to bypass it for an unusual case, `CanLift.unsafe.bypass` is public but flagged "Warning" in the scaladoc.
 
 ### Lifting pure functions into the effect row
 
@@ -191,7 +184,7 @@ Pending values pretty-print via the underlying `Render[A]` of their result type.
 
 ## Defining effects
 
-Concrete effects (Abort, Env, Var, Emit, Choice, ...) are defined as either an `ArrowEffect` or a `ContextEffect`, then expose user-facing functions that call `suspend` to request work from a handler. The kernel itself ships no concrete effects: this section teaches the pattern every kyo module uses.
+Concrete effects (`Abort`, `Env`, `Var`, `Emit`, `Choice`, ...) are defined as either an `ArrowEffect` or a `ContextEffect`, then expose user-facing functions that call `suspend` to request work from a handler. The kernel itself ships no concrete effects: this section teaches the pattern every kyo module uses.
 
 ### Catching throwables: `Effect.catching`
 
@@ -673,7 +666,7 @@ Each phase has a specific job: `capture` obtains the state that will be managed,
 
 ### `use` and `andThen`: ergonomics and composition
 
-When a kyo-prelude operation like `Async.parallel` needs to find its isolation strategy implicitly, `isolate.use { ... }` makes the `Isolate` available as a `given` for the block. `andThen` composes two isolates: `Remove` effects union, `Keep` effects intersect, `Restore` effects union.
+When a kyo-prelude operation like `Async.foreach` needs to find its isolation strategy implicitly, `isolate.use { ... }` makes the `Isolate` available as a `given` for the block. `andThen` composes two isolates: `Remove` effects union, `Keep` effects intersect, `Restore` effects union.
 
 ### Summoning and deriving instances
 
@@ -737,7 +730,7 @@ val result: List[Greeting] =
 
 A few hardcoded behaviors of the runtime occasionally matter when reading stack traces or benchmarking.
 
-The kernel suspends a synchronous chain every `maxStackDepth` frames. This threshold is platform-specific (set in `kyo.internal.Platform`): 512 on the JVM and JS, 256 on Native and WebAssembly, which run on smaller call stacks. A long-running pure chain that the JIT could in principle inline does not get inlined past this depth; it suspends through `Safepoint` instead. This is what makes Kyo stack-safe without unbounded recursion. Reader expectation: "stack-safe = unbounded recursion at no cost" is wrong; deep synchronous chains still pay the suspension cost periodically.
+The kernel suspends a synchronous chain every `maxStackDepth` frames. This threshold is platform-specific (set in `kyo.internal.Platform`). A long-running pure chain that the JIT could in principle inline does not get inlined past this depth; it suspends through `Safepoint` instead. This is what makes Kyo stack-safe without unbounded recursion. Reader expectation: "stack-safe = unbounded recursion at no cost" is wrong; deep synchronous chains still pay the suspension cost periodically.
 
 `Safepoint.enter` checks both stack depth and thread id. A `Kyo` value created on thread A and resumed on thread B forces a re-entry through the suspension machinery. Cross-thread reuse is not a no-op; if you build a pending value on one thread and execute it on another, expect the first step to take the suspension path.
 

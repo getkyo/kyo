@@ -5,7 +5,7 @@ import kyo.*
 /** Link checker - client-only demo (no server).
   *
   * Fetches a web page, extracts all href links, then checks each link in parallel. Reports status for each link. Demonstrates pure
-  * HttpClient usage and concurrent fan-out with Async.parallel.
+  * HttpClient usage and concurrent fan-out with Async.foreach.
   */
 object LinkChecker extends KyoApp:
 

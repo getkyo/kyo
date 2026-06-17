@@ -4,8 +4,6 @@
 
 Two effects anchor the model and split responsibility. `Sync` marks pure suspension of side effects: code that runs to completion without parking. `Async` adds the fiber scheduler on top: parking, races, structured cancellation, bounded-concurrency collection ops. Most application code reads as a chain of effectful values (`Console.printLine(...)`, `Path("data") / "users.json" read`, `Async.foreach(items)(process)`) terminating at a `KyoApp` `run` block that discharges the effects at the application boundary. `Fiber[A, S]` is the low-level primitive those combinators sit on top of; application code rarely names it directly, because `Async`, `Scope`, `Channel`, `Hub`, and friends do the fiber work for you.
 
-Every public API in this module works on JVM, Scala.js, and Scala Native. Platform-specific transports live under `kyo/jvm`, `kyo/js`, `kyo/native`, and `kyo/jvm-native` packages, but the surface you call is the same on all three.
-
 ```scala
 import kyo.*
 
@@ -51,10 +49,10 @@ val withCleanup: String < Sync =
 import kyo.*
 
 val read: String < Sync =
-    Sync.acquireReleaseWith(Sync.defer(new java.io.BufferedReader(new java.io.FileReader("data.txt"))))(reader =>
-        Sync.defer(reader.close())
+    Sync.acquireReleaseWith(new java.io.BufferedReader(new java.io.FileReader("data.txt")))(reader =>
+        reader.close()
     ) { reader =>
-        Sync.defer(reader.readLine())
+        reader.readLine()
     }
 ```
 
@@ -271,9 +269,7 @@ import kyo.*
 
 val withFile: Unit < (Async & Sync) =
     Scope.run {
-        Scope.acquireRelease(Sync.defer(new FileWriter("log.txt")))(w =>
-            Sync.defer(w.close())
-        ).map { writer =>
+        Scope.acquireRelease(new FileWriter("log.txt"))(_.close()).map { writer =>
             Sync.defer(writer.write("entry\n"))
         }
     }
@@ -286,7 +282,7 @@ import kyo.*
 
 val read: String < (Async & Sync) =
     Scope.run {
-        Scope.acquire(Sync.defer(new java.io.BufferedReader(new java.io.FileReader("data.txt")))).map { reader =>
+        Scope.acquire(new java.io.BufferedReader(new java.io.FileReader("data.txt"))).map { reader =>
             Sync.defer(reader.readLine())
         }
     }
@@ -323,22 +319,6 @@ def serve: Result[Throwable, Unit] < Async = ???
 ```
 
 > **Note:** Scope finalizers run exactly once. Failures are logged via `Log.error`, not raised, so a finalizer failure does not mask the primary computation's result.
-
-> **Caution:** `Scope.acquireRelease` inside `Async.foreach` registers each task's finalizer into the *outer* scope's queue. Per-task resources live until the outer `Scope.run` exits. To bound resource lifetime per task, wrap the per-task work in its own inner `Scope.run`:
->
-> ```scala
-> Async.foreach(orders) { order =>
->     Scope.run {
->         Scope.acquireRelease(openConnection)(_.close()).map { conn =>
->             process(order, conn)
->         }
->     }
-> }
->
-> def openConnection: Connection < Sync = ???
-> def process(o: Order, conn: Connection): Unit < Sync = ???
-> trait Connection: def close(): Unit
-> ```
 
 The lower-level `Scope.Finalizer` and `Scope.Finalizer.Awaitable` types are surfaced for library code that wants to drive finalizer lifecycles directly.
 

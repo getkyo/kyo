@@ -85,7 +85,7 @@ object Async extends AsyncPlatformSpecific:
       * method allows users to work with a single unified effect that handles both concerns.
       *
       * Note that this method only suspends the computation - it does not fork execution into a new fiber. For concurrent execution, use
-      * Fiber.init or combinators like Async.parallel instead.
+      * Fiber.init or combinators like Async.foreach instead.
       *
       * This is particularly useful in application code where the distinction between pure side effects and asynchronous execution is less
       * important than having a simple, consistent way to handle effects. The underlying effects are typically managed together at the
