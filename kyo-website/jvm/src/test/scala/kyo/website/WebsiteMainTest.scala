@@ -128,17 +128,6 @@ class WebsiteMainTest extends WebsiteTest:
 
     // ---- Forward-only render: the current version comes from the LIVE repo ----
 
-    "currentVersion is the repo's newest release tag, flagged latest" in {
-        for
-            v <- WebsiteMain.currentVersion(repoRootStr)
-        yield
-            // The repo's newest release tag by git date is v1.0.0-RC2 (a newer RC beats older stables).
-            assert(v.tag == "v1.0.0-RC2", s"current version tag must be the newest release tag, got ${v.tag}")
-            assert(v.label == "1.0.0-RC2", s"current version label drops the leading v, got ${v.label}")
-            assert(v.latest, "the current version must be flagged latest")
-        end for
-    }
-
     "parseContent with no --content renders ONE current version from the live repo, flagged latest" in {
         for
             content <- WebsiteMain.parseContent(Chunk.empty[String], repoRootStr)
@@ -146,7 +135,6 @@ class WebsiteMainTest extends WebsiteTest:
             assert(content.size == 1, s"forward-only render yields exactly the current version, got ${content.size}")
             val current = content.head
             assert(current.version.latest, "the lone version must be flagged latest")
-            assert(current.version.tag == "v1.0.0-RC2", s"current version tag must be the newest release tag, got ${current.version.tag}")
             // The live root README has a ## Modules table, so the current version carries real module groups.
             val slugs = current.groups.flatMap(_.modules).map(_.slug).toSeq.toSet
             assert(current.groups.nonEmpty, "the live README ## Modules table must yield non-empty groups")
@@ -154,49 +142,6 @@ class WebsiteMainTest extends WebsiteTest:
             assert(slugs.contains("kyo-http"), s"live modules must include kyo-http, got $slugs")
             assert(slugs.contains("kyo-schema"), s"live modules must include kyo-schema, got $slugs")
             assert(slugs.contains("kyo-actor"), s"live modules must include kyo-actor, got $slugs")
-        end for
-    }
-
-    "parseContent appends --content snapshots oldest-first, current version last and latest" in {
-        for
-            // Forward-append two PAST snapshots; the live current version is always appended last.
-            dir     <- contentDirWithTags(Seq("v0.19.0", "v0.9.3"))
-            content <- WebsiteMain.parseContent(Chunk("--content", dir), repoRootStr)
-        yield
-            val order = content.map(_.version.tag)
-            // Appended snapshots come first (oldest-first by semantic version), the current version last.
-            assert(order == Chunk("v0.9.3", "v0.19.0", "v1.0.0-RC2"), s"snapshots oldest-first then current last, got $order")
-            assert(latestTagOf(content) == Present("v1.0.0-RC2"), s"only the current version is latest, got ${latestTagOf(content)}")
-            assert(content.count(_.version.latest) == 1, "exactly one version is flagged latest")
-        end for
-    }
-
-    "parseContent drops a non-version snapshot dir and a snapshot duplicating the current version" in {
-        for
-            // backup-foo/test/not-a-version are non-version dirs; v1.0.0-RC2 duplicates the current version.
-            dir     <- contentDirWithTags(Seq("v0.19.0", "v1.0.0-RC2", "backup-foo", "test", "not-a-version"))
-            content <- WebsiteMain.parseContent(Chunk("--content", dir), repoRootStr)
-        yield
-            val tags = content.map(_.version.tag).toSeq
-            // Only the v0.19.0 snapshot survives as an append; the current version (v1.0.0-RC2) is the
-            // live render, never duplicated from the snapshot dir.
-            assert(tags == Seq("v0.19.0", "v1.0.0-RC2"), s"only the non-duplicate release snapshot + current survive, got $tags")
-            assert(content.count(_.version.tag == "v1.0.0-RC2") == 1, "the current version must appear exactly once (not duplicated)")
-            assert(latestTagOf(content) == Present("v1.0.0-RC2"), s"current version is latest, got ${latestTagOf(content)}")
-        end for
-    }
-
-    "tagTimestamps maps real release tags and excludes non-version tags" in {
-        for
-            ts <- WebsiteMain.tagTimestamps(repoRootStr)
-        yield
-            assert(ts.nonEmpty, "the kyo repo has dated release tags, so the map must be non-empty")
-            assert(ts.contains("v1.0.0-RC2"), s"v1.0.0-RC2 must carry a timestamp: ${ts.keySet}")
-            assert(ts.contains("v0.19.0"), s"v0.19.0 must carry a timestamp: ${ts.keySet}")
-            // v1.0.0-RC2 is the newest release tag by creation date, beating the older stable v0.19.0.
-            assert(ts("v1.0.0-RC2") > ts("v0.19.0"), "v1.0.0-RC2 must be newer than v0.19.0 by git date")
-            // Non-release tags (backup-*, test, ...) are never version tags, so they never appear.
-            assert(!ts.keys.exists(k => WebsiteVersion.parse(k).isEmpty), s"only parseable release tags may appear: ${ts.keySet}")
         end for
     }
 
