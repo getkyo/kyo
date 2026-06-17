@@ -8,7 +8,7 @@ import kyo.internal.ProtobufWriter
 import kyo.internal.StructureValueReader
 import kyo.internal.StructureValueWriter
 
-case class RTTree(value: Int, children: List[RTTree]) derives CanEqual
+case class RTTree(value: Int, children: List[RTTree]) derives CanEqual, Schema
 case class RTPersonDTO(name: String, age: Int) derives CanEqual
 case class RTPersonDiff(name: String, age: String) derives CanEqual
 
@@ -27,7 +27,7 @@ case class AllPrimitives(
 ) derives Schema,
       CanEqual
 
-// Variant dispatch for all-no-arg enums must use reference equality, not isInstanceOf — widening a singleton term-ref to the parent enum type would match every variant.
+// Variant dispatch for all-no-arg enums must use reference equality, not isInstanceOf. Widening a singleton term-ref to the parent enum type would match every variant.
 
 enum AllNoArgEnumA derives Schema, CanEqual:
     case First
@@ -40,6 +40,13 @@ enum MixedArityEnum derives Schema, CanEqual:
     case Beta
     case Gamma
 end MixedArityEnum
+
+// Generic sealed trait for typeParams regression: derived Sum must populate typeParams.
+// Variants are concrete so the sealed-trait macro can emit each variant schema without
+// needing to substitute the parent's type argument into a generic child type.
+sealed trait GenericSealed[A] derives Schema, CanEqual
+case class GenericSealedA(a: Int) extends GenericSealed[Int] derives CanEqual
+case class GenericSealedB(b: Int) extends GenericSealed[Int] derives CanEqual
 
 // Scala 2 style sealed trait with mixed case class / case object cases.
 sealed trait SealedNoArgVariants derives Schema, CanEqual
@@ -304,6 +311,17 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(names == List("MTSmallTeam", "MTPerson", "String", "Int", "Int"))
         }
 
+        "derived generic sealed trait populates typeParams" in {
+            // Regression guard for CR-r1-003: buildSumSchema must thread typeParamStructures
+            // so that Structure.Type.Sum.typeParams is non-empty for generic sealed traits.
+            val s = Schema[GenericSealed[Int]].structure
+            s match
+                case sum: Structure.Type.Sum =>
+                    assert(sum.typeParams.size == 1, s"Expected 1 typeParam for GenericSealed[Int], got ${sum.typeParams.size}")
+                case other => fail(s"Expected Sum, got $other")
+            end match
+        }
+
         "Structure.of[Unit] produces Primitive(PrimitiveKind.Unit, _)" in {
             val t = Structure.of[Unit]
             t match
@@ -320,14 +338,15 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(paths == Chunk(Chunk("lead", "name"), Chunk("lead", "age"), Chunk("size")))
         }
 
-        "Structure.of[A] matches Schema[A].structure" in {
+        "Structure.of[A] delegates to Schema[A].structure" in {
+            // Structure.of[MTPerson] calls summon[Schema[MTPerson]].structure.
+            // MTPerson uses auto-derivation (inline given), so two summons yield
+            // different Schema instances; use compatible (structural equality) not eq.
             val fromDirect = Structure.of[MTPerson]
             val fromSchema = Schema[MTPerson].structure
 
-            // Both should produce structurally identical types
             assert(Structure.Type.compatible(fromDirect, fromSchema))
 
-            // Both should be Products with the same field structure
             (fromDirect, fromSchema) match
                 case (Structure.Type.Product(n1, _, _, f1), Structure.Type.Product(n2, _, _, f2)) =>
                     assert(n1 == n2)
@@ -345,6 +364,66 @@ class StructureTest extends kyo.test.Test[Any]:
                 case Structure.Type.Product(_, _, _, fields) =>
                     assert(fields.forall(_.doc.isEmpty))
                 case other => fail(s"Expected Product, got $other")
+            end match
+        }
+
+        "Structure.Field by-name construction does not force the structure thunk" in {
+            val sentinel = new java.util.concurrent.atomic.AtomicInteger(0)
+            // The by-name expression must appear directly at the call site (not through
+            // a pre-assigned val) so the thunk captures the unevaluated block.
+            val f = Structure.Field(
+                "x",
+                { sentinel.incrementAndGet(); Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]]) },
+                Maybe.empty,
+                Maybe.empty,
+                false
+            )
+            assert(sentinel.get() == 0, s"thunk was forced at construction time; sentinel=${sentinel.get()}")
+            val ft = f.fieldType
+            assert(sentinel.get() == 1, s"expected sentinel==1 after one fieldType read; got ${sentinel.get()}")
+            ft match
+                case Structure.Type.Primitive(kind, _) => assert(kind == Structure.PrimitiveKind.Int)
+                case other                             => fail(s"Expected Primitive(Int), got $other")
+            end match
+        }
+
+        "Structure.Field equality compares the forced fieldType" in {
+            val ft = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val a  = Structure.Field("x", ft, Maybe("doc"), Maybe.empty, optional = false)
+            val b  = Structure.Field("x", ft, Maybe("doc"), Maybe.empty, optional = false)
+            // Two Fields built from identical data compare equal despite the by-name `apply`
+            // wrapping each call's argument in a fresh `() => fieldType` lambda.
+            assert(a == b, s"Field equality regressed: a=$a b=$b")
+            assert(a.hashCode == b.hashCode, "hashCode must agree with equals")
+            val ftOther = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val c       = Structure.Field("x", ftOther, Maybe("doc"), Maybe.empty, optional = false)
+            assert(a != c, "Fields with different fieldType must not compare equal")
+            val d = Structure.Field("y", ft, Maybe("doc"), Maybe.empty, optional = false)
+            assert(a != d, "Fields with different name must not compare equal")
+            val e = Structure.Field("x", ft, Maybe.empty, Maybe.empty, optional = false)
+            assert(a != e, "Fields with different doc must not compare equal")
+            val f = Structure.Field("x", ft, Maybe("doc"), Maybe.empty, optional = true)
+            assert(a != f, "Fields with different optional must not compare equal")
+        }
+
+        "Structure.Field roundtrips via Json with public field names" in {
+            val ft      = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val f       = Structure.Field("x", ft, Maybe("hi"), Maybe.empty, optional = true)
+            val encoded = Json.encode(f)
+            assert(encoded.contains("\"name\":\"x\""), s"encoded did not contain name:x; got $encoded")
+            assert(encoded.contains("\"fieldType\":"), s"encoded did not contain fieldType; got $encoded")
+            assert(encoded.contains("\"doc\":\"hi\""), s"encoded did not contain doc:hi; got $encoded")
+            assert(encoded.contains("\"optional\":true"), s"encoded did not contain optional:true; got $encoded")
+            assert(!encoded.contains("\"_fieldType\""), s"encoded contained private _fieldType; got $encoded")
+            val decoded = Json.decode[Structure.Field](encoded)
+            decoded match
+                case Result.Success(f2) =>
+                    assert(f2.name == "x")
+                    assert(Structure.Type.compatible(f2.fieldType, ft))
+                    assert(f2.doc == Maybe("hi"))
+                    assert(f2.default == Maybe.empty)
+                    assert(f2.optional == true)
+                case other => fail(s"Expected Success, got $other")
             end match
         }
 
@@ -1165,6 +1244,28 @@ class StructureTest extends kyo.test.Test[Any]:
             ()
         }
 
+        "StructureValueReader.char rejects multi-character strings" in {
+            // Regression guard: char() must not silently truncate a multi-character string to its first char.
+            // The strict-on-text-input symmetry argument (matching `string()` rejecting Integer-as-String) applies.
+            val dv = Structure.Value.Str("ab")
+            val r  = new StructureValueReader(dv)
+            intercept[TypeMismatchException](r.char())
+            ()
+        }
+
+        "StructureValueReader.char rejects empty strings" in {
+            val dv = Structure.Value.Str("")
+            val r  = new StructureValueReader(dv)
+            intercept[TypeMismatchException](r.char())
+            ()
+        }
+
+        "StructureValueReader.char accepts a single-character string" in {
+            val dv = Structure.Value.Str("x")
+            val r  = new StructureValueReader(dv)
+            assert(r.char() == 'x')
+        }
+
         "json int parse error throws ParseException" in {
             val r  = JsonReader("3.14")
             val ex = intercept[ParseException](r.int())
@@ -1339,9 +1440,8 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "all-no-arg enum round-trips each case distinctly through Protobuf" in {
-            // Byte distinctness still exercises the FocusMacro variant-dispatch fix on
-            // the write path. The decode round-trip additionally covers the top-level
-            // sealed-trait read path now that ProtobufReader dispatches via matchField.
+            // Byte distinctness exercises sealed-trait variant dispatch on the write path.
+            // The decode round-trip exercises top-level sealed-trait read dispatch through matchField.
             val first: AllNoArgEnumA  = AllNoArgEnumA.First
             val second: AllNoArgEnumA = AllNoArgEnumA.Second
             val third: AllNoArgEnumA  = AllNoArgEnumA.Third
@@ -1378,10 +1478,10 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "mixed parameterized and no-arg enum cases round-trip distinctly through Protobuf" in {
-            // Byte distinctness exercises the write-path variant-dispatch fix;
-            // round-trip additionally exercises top-level sealed-trait decoding
-            // via matchField (covering both the case-class variant Alpha(7) and
-            // the two no-arg case-object variants Beta / Gamma).
+            // Byte distinctness exercises sealed-trait variant dispatch on the write path.
+            // The round-trip exercises top-level sealed-trait decoding through matchField
+            // (covering both the case-class variant Alpha(7) and the two no-arg case-object
+            // variants Beta / Gamma).
             val alpha: MixedArityEnum = MixedArityEnum.Alpha(7)
             val beta: MixedArityEnum  = MixedArityEnum.Beta
             val gamma: MixedArityEnum = MixedArityEnum.Gamma
@@ -1420,6 +1520,90 @@ class StructureTest extends kyo.test.Test[Any]:
             assert(Json.decode[SealedNoArgVariants](j2).getOrThrow == unit2)
             assert(Json.decode[SealedNoArgVariants](j3).getOrThrow == unit3)
         }
+    }
+
+    // ==================== Structure.Type.Open variant ====================
+
+    "Open variant" - {
+
+        "Open.name returns 'Open'" in {
+            val open = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            assert(open.name == "Open")
+        }
+
+        "compatible returns true for two Open with same tag" in {
+            val a = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val b = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            assert(Structure.Type.compatible(a, b))
+        }
+
+        "compatible returns false for two Open with different tags" in {
+            val a = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val b = Structure.Type.Open(Tag[Int].asInstanceOf[Tag[Any]])
+            assert(!Structure.Type.compatible(a, b))
+        }
+
+        "fold visits Open node once with no children" in {
+            val open  = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val count = Structure.Type.fold(open)(0) { (acc, _) => acc + 1 }
+            assert(count == 1)
+        }
+
+        "JsonSchema.fromStructure on Open renders empty Obj" in {
+            val open   = Structure.Type.Open(Tag[String].asInstanceOf[Tag[Any]])
+            val schema = Json.JsonSchema.fromStructure(open)
+            assert(schema == Json.JsonSchema.Obj(List.empty, List.empty))
+        }
+
+    }
+
+    // ==================== Type.Schema round-trip via anonymous given ====================
+
+    "Type.Schema anonymous given" - {
+
+        "derives Schema absent on Type class (anonymous given resolves)" in {
+            val given1 = summon[Schema[Structure.Type]]
+            val given2 = summon[Schema[Structure.Type]]
+            assert(given1 eq given2)
+        }
+
+        "Open round-trips through Schema[Structure.Type] via JSON" in {
+            val open: Structure.Type = Structure.Type.Open(Tag[Int].asInstanceOf[Tag[Any]])
+            val encoded              = Json.encode[Structure.Type](open)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(open, decoded))
+        }
+
+        "Primitive round-trips through Schema[Structure.Type] via JSON" in {
+            val prim: Structure.Type = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[String].asInstanceOf[Tag[Any]])
+            val encoded              = Json.encode[Structure.Type](prim)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(prim, decoded))
+        }
+
+        "Collection round-trips through Schema[Structure.Type] via JSON" in {
+            val elem: Structure.Type = Structure.Type.Primitive(Structure.PrimitiveKind.Int, Tag[Int].asInstanceOf[Tag[Any]])
+            val coll: Structure.Type = Structure.Type.Collection("List", Tag[List[Int]].asInstanceOf[Tag[Any]], elem)
+            val encoded              = Json.encode[Structure.Type](coll)
+            val decoded              = Json.decode[Structure.Type](encoded).getOrThrow
+            assert(Structure.Type.compatible(coll, decoded))
+        }
+
+    }
+
+    "Structure.of reads Schema.structure (T2)" - {
+
+        "Int: Structure.of[Int] is same instance as Schema[Int].structure" in {
+            // intSchema is a singleton given so structure is the same lazy val instance
+            assert(Structure.of[Int] eq summon[Schema[Int]].structure)
+        }
+
+        "List[String]: Structure.of[List[String]] returns compatible structure to Schema[List[String]].structure" in {
+            // listSchema is a polymorphic given so two summons may yield different instances;
+            // use compatible (structural equality) rather than reference equality
+            assert(Structure.Type.compatible(Structure.of[List[String]], summon[Schema[List[String]]].structure))
+        }
+
     }
 
 end StructureTest

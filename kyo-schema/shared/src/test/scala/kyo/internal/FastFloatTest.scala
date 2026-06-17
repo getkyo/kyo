@@ -3,13 +3,13 @@ package kyo.internal
 import java.nio.charset.StandardCharsets
 import scala.util.Random
 
-/** Tests for [[FastFloat]] — the Eisel-Lemire fast-path double/float parser.
+/** Tests for [[FastFloat]]: the Eisel-Lemire fast-path double/float parser.
   *
   * Reference: Daniel Lemire, "Number Parsing at a Gigabyte per Second", arXiv:2101.11408. Port of Go's `strconv` Eisel-Lemire implementation
   * (BSD-3-Clause): see `FastFloat.scala` for full attribution.
   *
-  * 46 tests across 13 categories A–M:
-  *   - A. Property test (1) — 100k random-bit doubles.
+  * 46 tests across 13 categories A through M:
+  *   - A. Property test (1): 100k random-bit doubles.
   *   - B. Paxson hard doubles (8).
   *   - C. Subnormals (4).
   *   - D. Signed zero / specials (4).
@@ -38,7 +38,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         val bytes = bytesOf(s)
         val bits  = FastFloat.parseDouble(bytes, 0, bytes.length)
         if bits == DoubleBailOut then
-            // Legal bail-out — confirm slow path agrees with what the input names.
+            // Legal bail-out: confirm slow path agrees with what the input names.
             val ref = java.lang.Double.parseDouble(s)
             assert(!java.lang.Double.isNaN(ref) || java.lang.Double.isNaN(ref))
         else
@@ -51,7 +51,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         end if
     end assertParsesTo
 
-    // Strict version — fails if FastFloat bails out (used where fast path MUST succeed).
+    // Strict version: fails if FastFloat bails out (used where fast path MUST succeed).
     private def assertFastPathBitsMatch(s: String)(using kyo.test.AssertScope): Unit =
         val bytes = bytesOf(s)
         val bits  = FastFloat.parseDouble(bytes, 0, bytes.length)
@@ -63,7 +63,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         )
     end assertFastPathBitsMatch
 
-    "A — Property: round-trip against Double.parseDouble (100k random doubles)" - {
+    "A: Property: round-trip against Double.parseDouble (100k random doubles)" - {
         "random-bit doubles agree with Double.parseDouble (hit rate >= 95%)" in {
             val rng     = new Random(0x5ca1ab1eL)
             val count   = 100_000
@@ -96,7 +96,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "B — Paxson hard doubles" - {
+    "B: Paxson hard doubles" - {
         // Known IEEE 754 round-trip hazards; must match Double.parseDouble bit-identically when fast path
         // succeeds, otherwise must bail out cleanly.
         "5.0e-324 (smallest subnormal)" in {
@@ -125,7 +125,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "C — Subnormals" - {
+    "C: Subnormals" - {
         "2e-323 (deep subnormal)" in {
             assertParsesTo("2e-323")
         }
@@ -140,7 +140,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "D — Signed zero and specials" - {
+    "D: Signed zero and specials" - {
         "-0.0 produces negative-zero bit pattern" in {
             assertFastPathBitsMatch("-0.0")
             val bytes = bytesOf("-0.0")
@@ -164,7 +164,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "E — Range limits" - {
+    "E: Range limits" - {
         "1e308 near Double.MaxValue" in {
             assertParsesTo("1e308")
         }
@@ -195,7 +195,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "F — Round-to-even tie-break" - {
+    "F: Round-to-even tie-break" - {
         "1.5 (trivial)" in {
             assertFastPathBitsMatch("1.5")
         }
@@ -207,7 +207,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "G — Negative numbers" - {
+    "G: Negative numbers" - {
         "-1.5 (sign flag)" in {
             assertFastPathBitsMatch("-1.5")
         }
@@ -219,7 +219,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "H — Scientific notation variants" - {
+    "H: Scientific notation variants" - {
         "1e10 (lowercase e)" in {
             assertFastPathBitsMatch("1e10")
         }
@@ -239,7 +239,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "I — Integer-looking doubles (no regression)" - {
+    "I: Integer-looking doubles (no regression)" - {
         "42 (integer fast path)" in {
             assertFastPathBitsMatch("42")
         }
@@ -247,13 +247,13 @@ class FastFloatTest extends kyo.test.Test[Any]:
             assertFastPathBitsMatch("-42")
         }
         "9223372036854775807 (Long.MaxValue, overflow into float path)" in {
-            // 19-digit mantissa — mantissa fills u64 headroom. Either fast path succeeds or bails; in
+            // 19-digit mantissa: mantissa fills u64 headroom. Either fast path succeeds or bails; in
             // either case we must match Double.parseDouble.
             assertParsesTo("9223372036854775807")
         }
     }
 
-    "J — Leading-zero fractions" - {
+    "J: Leading-zero fractions" - {
         "0.00001 (standard small fraction)" in {
             assertFastPathBitsMatch("0.00001")
         }
@@ -265,7 +265,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "K — Truncation (>= 20-digit mantissa)" - {
+    "K: Truncation (>= 20-digit mantissa)" - {
         "12345678901234567890 (20-digit integer)" in {
             assertParsesTo("12345678901234567890")
         }
@@ -277,7 +277,7 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "L — Boundaries" - {
+    "L: Boundaries" - {
         "Double.MinValue.toString round-trip" in {
             assertParsesTo(java.lang.Double.MIN_VALUE.toString)
         }
@@ -289,13 +289,13 @@ class FastFloatTest extends kyo.test.Test[Any]:
         }
     }
 
-    "M — Float32 parallel" - {
+    "M: Float32 parallel" - {
         "3.4028235e38 (Float.MaxValue)" in {
             val s     = "3.4028235e38"
             val bytes = bytesOf(s)
             val bits  = FastFloat.parseFloat(bytes, 0, bytes.length)
             if bits == FloatBailOut then
-                // Legal bail-out — confirm slow path agrees.
+                // Legal bail-out: confirm slow path agrees.
                 val ref = java.lang.Float.parseFloat(s)
                 assert(!java.lang.Float.isNaN(ref) || java.lang.Float.isNaN(ref))
             else

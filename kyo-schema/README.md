@@ -18,20 +18,9 @@ val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", 
 
 Json.encode(alice)
 // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
-
-Yaml.encode(alice)
-// YAML 1.2-compatible text
-
-Protobuf.encode(alice)
-// Span[Byte] (binary)
-
-Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
-// User(1, "Alice", "alice@example.com", "secret", Address("PORTLAND", "97201"))
 ```
 
 Everything flows from `Schema[A]`, the central type that captures a type's structure at compile time. It's the single source of truth that powers serialization, validation, navigation, and conversion.
-
-The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)`, `Ion.encode(value)`, and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
 
 These are the top-level entry points:
 
@@ -66,7 +55,7 @@ Schemas are derived automatically on demand, but adding `derives Schema` caches 
 case class Person(name: String, age: Int) derives Schema
 ```
 
-**Note:** nearly every method in this module takes an implicit `kyo.Frame` parameter used for source-location reporting in exceptions. The signatures shown throughout this document omit `(using Frame)` for readability; the compiler synthesizes it at the call site from the caller's frame.
+Recursive types are the one case where `derives Schema` is required, not optional: a case class or sealed trait that mentions itself (directly or indirectly through `List`, `Maybe`, another case class, etc.) must carry `derives Schema` on the recursive type itself, or expose `given Schema[T] = Schema.derived[T]` in its companion. Without that binding the derivation has no forward reference to close the cycle on.
 
 ## Schemas: the single source of truth
 
@@ -162,14 +151,7 @@ Json.decodeBytes[User](bytes)
 // Result.Success(alice)
 ```
 
-When accepting untrusted input, configure safety limits to protect against denial-of-service attacks. `maxDepth` limits nesting depth (default `Json.DefaultMaxDepth`, currently `512`) and `maxCollectionSize` limits the number of entries in any single collection or object (default `Json.DefaultMaxCollectionSize`, currently `100000`):
-
-```scala
-val untrustedInput = """{"id":1,"name":"Alice","email":"a@b.com","password":"s","address":{"city":"Portland","zip":"97201"}}"""
-Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
-```
-
-Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+`Json.decode`, `Yaml.decode`, and `Protobuf.decode` all accept `maxDepth` and `maxCollectionSize` parameters (defaults: `512` and `100000`) to bound nesting depth and collection size on untrusted input; exceeding either returns `Result.Failure(LimitExceededException)`.
 
 ### Ion
 
@@ -309,7 +291,7 @@ The same event protocol can be driven from schema output with `Yaml.Events.write
 `Yaml.pipeline` composes event processors with schema operations. With no processors it delegates to the normal `Yaml.decode` and `Yaml.encode` fast paths. With processors, `decode` reads the transformed event stream directly into `Schema[A]`; it does not render YAML text first.
 
 ```scala
-case class PublicUser(name: String, age: Int) derives Schema
+case class Person(name: String, age: Int) derives Schema
 
 val legacyYaml =
     """fullName: Alice
@@ -327,9 +309,9 @@ val renameFullName =
 val decoded =
     Yaml.pipeline
         .through(renameFullName)
-        .decode[PublicUser](legacyYaml)
+        .decode[Person](legacyYaml)
 
-assert(decoded == Result.succeed(PublicUser("Alice", 30)))
+assert(decoded == Result.succeed(Person("Alice", 30)))
 ```
 
 Use `render` when the transformed YAML document itself is the desired output:
@@ -489,7 +471,7 @@ val proto = Protobuf.protoSchema[User]
 
 The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
 
-A few shapes that proto3 cannot express raise `IllegalArgumentException` at encode or `protoSchema` time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
+A few shapes that proto3 cannot express are rejected at `Protobuf.protoSchema` time or at encode time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields raise `IllegalArgumentException`; schemas with an `Open` shape (such as `Structure.Value` or `Json.JsonSchema`) raise `SchemaNotSerializableException` because proto3 has no open-shape construct. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
 
 ### Built-in Types
 
@@ -508,6 +490,8 @@ Schemas are provided for all common types out of the box:
 Any case class or sealed trait composed of these types derives a `Schema` automatically. Nested case classes work without additional setup.
 
 `Map[String, V]` and `Dict[String, V]` both serialize as JSON objects, because JSON object keys must be strings. `Dict[K, V]` with a non-string key type serializes as an array of `[key, value]` pairs. `Span[Byte]` is specialized to serialize as a primitive byte sequence rather than an array of individual bytes.
+
+`Schema[Unit]` writes `{}` (an empty JSON object) rather than `null`, and on decode accepts both `{}` and `null`. This matters for MCP tool schemas and OpenAPI consumers: encoding `Unit` as `null` would conflate it with `Maybe.empty` / `None` and produce a `type: "null"` JSON Schema shape where `type: "object"` is required.
 
 ### Custom Types
 
@@ -627,14 +611,14 @@ val errors: Chunk[ValidationFailedException] =
 
 ### JSON Schema
 
-`Json.jsonSchema[A]` derives a JSON Schema at compile time. Without a `Schema[A]` in scope, it produces a bare structural description:
+`Json.jsonSchema[A]` reads the `Schema[A]` in scope and produces a JSON Schema document. When the schema carries no constraints or documentation, the output is a bare structural description:
 
 ```scala
 val spec = Json.jsonSchema[User]
 // JsonSchema.Obj(properties = List(("name", Str()), ("age", Integer())), required = List("name", "age"))
 ```
 
-When a `Schema[A]` with constraints or documentation is in scope, the output is enriched with all registered metadata:
+When the in-scope `Schema[A]` is enriched with constraints or documentation, the output picks up all registered metadata:
 
 ```scala
 case class Product(name: String, price: Double, quantity: Int)
@@ -648,6 +632,8 @@ given Schema[Product] =
 val enriched = Json.jsonSchema[Product]
 // The "price" property now includes minimum=0.0, maximum=99999.99, and description="Product price in USD"
 ```
+
+`Json.JsonSchema` itself has a hand-rolled `given Schema[JsonSchema]` that serializes to standard JSON Schema Draft 2020-12 wire shape (`{"type":"object","properties":{...}}`), not the kyo tagged-union wrapper (`{"Obj":{...}}`) that auto-derivation would produce. This means the bytes from `Json.encode(Json.jsonSchema[A])` can be fed directly to any JSON Schema validator, MCP tool-schema consumer, or OpenAPI-compatible toolchain.
 
 ## Navigation and lenses
 
@@ -857,25 +843,23 @@ Each transform has defined behavior on the round-trip:
 `Convert[A, B]` is a one-directional conversion derived at compile time from the field structure of both types. It succeeds when B's fields are a subset of A's (with matching types), or when B has defaults for the missing ones:
 
 ```scala
-case class Point2D(x: Int, y: Int)
-case class Coords(x: Int, y: Int)
+case class City(city: String)
 
-val convert = Convert[Point2D, Coords]
+val convert = Convert[Address, City]
 
-convert(Point2D(3, 4)) // Coords(3, 4)
+convert(Address("Portland", "97201")) // City("Portland")
 ```
 
 `Convert` extends `scala.Conversion[A, B]`, so providing it as a `given` enables implicit conversion:
 
 ```scala
-case class Point2D(x: Int, y: Int)
-case class Coords(x: Int, y: Int)
+case class City(city: String)
 
-given Convert[Point2D, Coords] = Convert[Point2D, Coords]
+given Convert[Address, City] = Convert[Address, City]
 
-def draw(c: Coords): Unit = ???
+def display(c: City): Unit = ???
 
-draw(Point2D(3, 4)) // implicit conversion applied
+display(Address("Portland", "97201")) // implicit conversion applied
 ```
 
 Providing `Convert[A, B]` as a `given` makes any `A` flow into a context expecting `B` without an explicit call site, which can be surprising at a distance. Prefer explicit `.apply` unless the conversion is genuinely ambient.
@@ -1099,7 +1083,7 @@ val tpe: Structure.Type = Structure.of[Person]
 // Structure.Type.Product with fields "name" (Str) and "age" (Integer)
 ```
 
-The type tree has variants for each category of Scala type: `Product` (case classes), `Sum` (sealed traits), `Collection` (lists, sets), `Mapping` (maps), `Optional` (Option/Maybe), and `Primitive` (scalars).
+The type tree has variants for each category of Scala type: `Product` (case classes), `Sum` (sealed traits), `Collection` (lists, sets), `Mapping` (maps), `Optional` (Option/Maybe), and `Primitive` (scalars). A schema whose wire shape is not fixed at compile time (for example `Structure.Value` and `Json.JsonSchema` themselves, where every instance may serialize to a different shape) reports `Type.Open(tag)`; consumers that need a concrete shape can reject `Open` explicitly (the Protobuf generator does, since `.proto` has no open-shape construct).
 
 `Structure.encode` converts a typed value into the untyped `Value` tree. `Structure.decode` converts it back:
 
@@ -1131,13 +1115,13 @@ The `Structure.Type` tree ships with a small set of operations for runtime inspe
 - `Structure.Type.fieldPaths(tpe)`: returns a `Chunk[Chunk[String]]` of all leaf paths through a `Product` type, flattening nested records.
 - `Structure.typedValue[A](value)`: bundles a `Structure.Type` descriptor (from `Structure.of[A]`) together with the encoded `Structure.Value` into a `Structure.TypedValue`, handy for passing fully-described data to a generic receiver.
 
-## Custom Formats
+## Custom codecs
 
-`Json`, `Ion`, `Yaml`, and `Protobuf` are the built-in formats, but the serialization pipeline itself is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. A format is the code that turns those events into bytes and back.
+The serialization pipeline is format-agnostic. A schema describes a value as a sequence of typed events (`objectStart`, `field`, `int`, `arrayStart`, ...) and a matching sequence on the way back. `Json`, `Ion`, `Yaml`, and `Protobuf` are built-in codecs; the same extension point is open to callers.
 
-### The Codec trait
+### Codec, Writer, Reader
 
-A format is implemented as a `Codec`, which is a factory for a matching `Writer` and `Reader`:
+A codec is a factory for a matching `Codec.Writer` and `Codec.Reader`:
 
 ```scala
 abstract class Codec:
@@ -1145,11 +1129,13 @@ abstract class Codec:
     def newReader(input: Span[Byte])(using Frame): Codec.Reader
 ```
 
-`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Schemas never know which codec is in use. They traverse the value in declaration order and emit events; the codec decides how those events are laid out on the wire.
+`Writer` receives a stream of structural events and accumulates bytes; `Reader` consumes bytes and answers the same events in reverse to reconstruct the value. Schemas never know which codec is in use. The full contract is ~20 methods each; `JsonWriter.scala`, `IonWriter.scala`, and `ProtobufWriter.scala` in the same package are the authoritative worked examples.
 
-### The event model
+`Codec.IntrospectingReader` is the capability marker for self-describing wire formats (JSON, YAML). The type system prevents decoding `Schema[Structure.Value]` or `Schema[Json.JsonSchema]` through a codec whose reader does not extend `IntrospectingReader`; a binary format like Protobuf cannot reconstruct the open-shape wire representation those schemas require.
 
-`Codec.Writer` and `Codec.Reader` share the same vocabulary. Every structural category maps to a sequence of calls:
+### Event vocabulary
+
+`Codec.Writer` and `Codec.Reader` share the same event vocabulary:
 
 | Structure | Writer calls | Reader calls |
 |-----------|--------------|--------------|
@@ -1160,52 +1146,13 @@ abstract class Codec:
 | Primitive | `int(v)` / `string(v)` / `bool(v)` / ... | `int()` / `string()` / `boolean()` / ... |
 | Optional | `nil()` when absent, otherwise the inner value | `isNil()` to detect, otherwise the inner value |
 
-The Reader also exposes `initFields(n)`, `clearFields(n)`, `droppedFieldsMask(n)`, and `release()` as overridable hooks for pooled / allocation-sensitive implementations. See `JsonReader` for an example that uses all of them.
+The Reader also exposes `initFields(n)`, `clearFields(n)`, `droppedFieldsMask(n)`, and `release()` as overridable hooks for pooled implementations. `fieldBytes(nameBytes, fieldId)` lets codecs avoid `String` allocation on hot paths.
 
-`fieldBytes(nameBytes, fieldId)` is available for codecs that want to avoid `String` allocation on hot paths. Protobuf uses the numeric `fieldId`; JSON uses the name bytes. Codecs that do not care about one side can ignore it.
+For custom opaque-type schemas without a full codec, use `Schema.init` (or `Schema.initFocused` when the `Focused` type member matters). Both take `inline writeFn` and `readFn` lambdas and a by-name `structure: => Structure.Type` (by-name so container givens can pass `inner.structure` without forcing recursive type graphs at init time).
 
-### A minimal codec
+### DoS limits
 
-A complete codec is three classes: a `Writer` that accumulates bytes from structural events, a `Reader` that answers the same events back from bytes, and a `Codec` that hands them out. The full `Writer`/`Reader` interface is around twenty methods each (one per primitive plus the structural start/end pairs). Rather than reproduce the whole contract here, the following sketch shows the pattern for a line-oriented text format handling strings and ints; a real implementation must cover every primitive the schema pipeline can emit:
-
-```scala doctest:expect=skipped
-import java.nio.charset.StandardCharsets
-
-final class LinesWriter extends Codec.Writer:
-    private val sb                                 = StringBuilder()
-    def objectStart(name: String, size: Int): Unit = ()
-    def objectEnd(): Unit                          = ()
-    def field(name: String, id: Int): Unit         = sb.append(name).append('=')
-    def string(v: String): Unit                    = sb.append(v).append('\n')
-    def int(v: Int): Unit                          = sb.append(v).append('\n')
-    // ... remaining primitives, arrays, maps, nil
-    def result(): Span[Byte] =
-        Span.from(sb.toString.getBytes(StandardCharsets.UTF_8))
-end LinesWriter
-
-final class LinesReader(input: Span[Byte])(using val frame: Frame) extends Codec.Reader:
-    // parse the input back into the same events
-end LinesReader
-
-object Lines extends Codec:
-    def newWriter(): Codec.Writer                               = LinesWriter()
-    def newReader(input: Span[Byte])(using Frame): Codec.Reader = LinesReader(input)
-```
-
-Because `Lines` is an object, you don't need to instantiate it or introduce a `given`. Just pass it directly to any schema method:
-
-```scala doctest:expect=skipped
-Schema[User].encode(alice)(using Lines) // Span[Byte] in the Lines format
-Schema[User].decode(bytes)(using Lines) // Result[DecodeException, User]
-```
-
-For a complete example, read `JsonWriter` and `JsonReader`, `IonWriter` and `IonReader`, or their Protobuf counterparts in the same package: they implement the full contract.
-
-When writing a custom schema for an opaque or wrapper type, you can also construct a `Schema` instance directly using the public factories `Schema.init` (for plain schemas) and `Schema.initFocused` (when you need to track the focused type member). Both take inlined `writeFn` and `readFn` lambdas, plus an optional `getterFn`/`setterFn` pair for lens support. Abstract members must be supplied (including `fieldParse`, `matchField`, `lastFieldName`, and `captureValue`); optional overrides like `fieldBytes`, `initFields`, `clearFields`, `droppedFieldsMask`, and `release` are where real codecs recover allocation-sensitive performance.
-
-### Safety limits
-
-`Codec.Reader` provides two DoS limit hooks: `maxDepth` (nesting) and `maxCollectionSize` (entries per collection). Implementations must call `checkDepth()` inside `objectStart`/`arrayStart`/`mapStart` and `checkCollectionSize(size)` when a collection reports its length; the base class does not enforce these on its own. Both methods throw `LimitExceededException` when their limit is breached. The `Frame` captured at Reader construction is used to attribute the exception to the caller, not to the codec internals.
+`Codec.Reader` provides two DoS limit hooks: `maxDepth` (nesting) and `maxCollectionSize` (entries per collection). Implementations must call `checkDepth()` inside `objectStart`/`arrayStart`/`mapStart` and `checkCollectionSize(size)` when a collection reports its length; the base class does not enforce these on its own. Both throw `LimitExceededException` when their limit is breached. The `Frame` captured at Reader construction is used to attribute the exception to the caller, not to the codec internals.
 
 ## Exceptions
 
@@ -1227,39 +1174,6 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | `SchemaIndexOutOfBoundsException` | a sequence index falls outside the bounds |
 
 All of these subtype one of the sealed markers `DecodeException`, `ValidationException`, `TransformException`, or `NavigationException`, so pattern-matching on a marker catches a family at once.
-
-## Putting it together
-
-A single `derives Schema` powers JSON and Protobuf serialization, deep lenses, type-level reshaping, and structural diffs, all on the same value:
-
-```scala doctest:scope=nested
-case class Address(city: String, zip: String)
-case class User(id: Int, name: String, email: String, password: String, address: Address) derives Schema
-
-val alice = User(1, "Alice", "alice@example.com", "secret", Address("Portland", "97201"))
-
-// JSON and Protobuf
-Json.encode(
-    alice
-) // {"id":1,"name":"Alice","email":"alice@example.com","password":"secret","address":{"city":"Portland","zip":"97201"}}
-Protobuf.encode(alice) // Span[Byte] (binary)
-
-// Type-safe lenses reach any depth
-Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
-// User(1, "Alice", "alice@example.com", "secret", Address("PORTLAND", "97201"))
-
-// Type-level reshaping: drop sensitive fields, rename, add computed
-val publicView =
-    Schema[User]
-        .drop(_.password)
-        .rename(_.name, "displayName")
-// Encodes alice as: {"id":1,"displayName":"Alice","email":"alice@example.com","address":{"city":"Portland","zip":"97201"}}
-
-// Diffs as data: capture just what changed, ship, replay
-val renamed = alice.copy(name = "Alicia")
-val cs      = Changeset(alice, renamed) // Produces a changeset with the new name patch
-cs.applyTo(alice) // Result.Success(renamed)
-```
 
 ## Cross-platform behavior
 

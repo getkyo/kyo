@@ -16,7 +16,7 @@ import scala.annotation.tailrec
   * Structure and branch-level semantics mirror the Go version; any divergence is documented inline.
   *
   * All entry points return IEEE 754 bit patterns. Callers decode via `java.lang.Double.longBitsToDouble` /
-  * `java.lang.Float.intBitsToFloat`. `Long.MinValue` / `Int.MinValue` are used as bail-out sentinels — these patterns are not valid results
+  * `java.lang.Float.intBitsToFloat`. `Long.MinValue` / `Int.MinValue` are used as bail-out sentinels: these patterns are not valid results
   * of the fast path (bail-out is checked before decoding).
   */
 private[internal] object FastFloat:
@@ -34,7 +34,7 @@ private[internal] object FastFloat:
     //   - `0x7ff8000000000000L` is a canonical quiet-NaN bit pattern. The fast path produces only
     //     finite, non-NaN doubles (its final range check rejects `retExp2 >= 0x7FF` which covers both
     //     Infinity and NaN), so this value is unambiguously a bail-out sentinel and cannot collide
-    //     with legitimate results — including `-0.0`, which the `man == 0` short-circuit emits as
+    //     with legitimate results, including `-0.0`, which the `man == 0` short-circuit emits as
     //     `0x8000000000000000L`.
     //   - Same reasoning for the float32 canonical qNaN pattern `0x7fc00000`.
     inline val DoubleBailOut = 0x7ff8000000000000L
@@ -46,7 +46,7 @@ private[internal] object FastFloat:
 
     /** Returns the top 64 bits of the unsigned 128-bit product `a * b`.
       *
-      * Pure-Scala implementation — portable across JVM / Scala.js / Scala Native without requiring JDK 18+'s `Math.unsignedMultiplyHigh`.
+      * Pure-Scala implementation: portable across JVM / Scala.js / Scala Native without requiring JDK 18+'s `Math.unsignedMultiplyHigh`.
       * Uses 32-bit half splits and Long arithmetic. This is the same identity used by `java.lang.Math.unsignedMultiplyHigh` in the JDK.
       *
       * Divergence from Go: Go uses `math/bits.Mul64` which compiles to a single hardware instruction. The portable Scala version expands to
@@ -77,7 +77,7 @@ private[internal] object FastFloat:
     def eiselLemire64(man: Long, exp10: Int, neg: Boolean): Long =
         // Exp10 Range.
         if man == 0L then
-            // Zero — always representable. Apply sign bit directly.
+            // Zero: always representable. Apply sign bit directly.
             return if neg then 0x8000000000000000L else 0L
         if exp10 < FastFloatPow10Table.pow10Min || exp10 > FastFloatPow10Table.pow10Max then
             return DoubleBailOut
@@ -97,7 +97,7 @@ private[internal] object FastFloat:
         var xLo: Long = mant * powHi
 
         // Wider Approximation.
-        // `xLo + man < man` is the unsigned carry check — in signed Long arithmetic we compare via
+        // `xLo + man < man` is the unsigned carry check: in signed Long arithmetic we compare via
         // java.lang.Long.compareUnsigned.
         if (xHi & 0x1ffL) == 0x1ffL && java.lang.Long.compareUnsigned(xLo + mant, mant) < 0 then
             val yHi      = unsignedMultiplyHigh(mant, powLo)
@@ -172,7 +172,7 @@ private[internal] object FastFloat:
         var xHi: Long = unsignedMultiplyHigh(mant, powHi)
         var xLo: Long = mant * powHi
 
-        // Wider Approximation — float32 mask is the low 38 bits (0x3fffffffffL).
+        // Wider Approximation: float32 mask is the low 38 bits (0x3fffffffffL).
         if (xHi & 0x3fffffffffL) == 0x3fffffffffL && java.lang.Long.compareUnsigned(xLo + mant, mant) < 0 then
             val yHi      = unsignedMultiplyHigh(mant, powLo)
             val yLo      = mant * powLo
@@ -188,7 +188,7 @@ private[internal] object FastFloat:
             xLo = mergedLo
         end if
 
-        // Shifting to 25 Bits — shift is `msb + 38` for float32.
+        // Shifting to 25 Bits: shift is `msb + 38` for float32.
         val msb         = xHi >>> 63
         var retMantissa = xHi >>> (msb.toInt + 38)
         retExp2 = retExp2 - (1L ^ msb)
@@ -214,8 +214,8 @@ private[internal] object FastFloat:
     end eiselLemire32
 
     /** Advances past a JSON-style number starting at `start`. Mirrors the loop in `JsonReader.readNumber`. Returns the end index
-      * (exclusive). The scan is permissive — it accepts any sequence of digits/`.eE+-` bytes and leaves detailed validation to the caller.
-      * Does NOT accept quoted special values (`"NaN"`, `"Infinity"`) — those are handled upstream in `JsonReader.double`.
+      * (exclusive). The scan is permissive: it accepts any sequence of digits/`.eE+-` bytes and leaves detailed validation to the caller.
+      * Does NOT accept quoted special values (`"NaN"`, `"Infinity"`); those are handled upstream in `JsonReader.double`.
       */
     def scanNumberEnd(input: Array[Byte], start: Int, limit: Int): Int =
         @tailrec def loop(p: Int): Int =
@@ -251,7 +251,7 @@ private[internal] object FastFloat:
         exp10Out: Array[Int],
         negOut: Array[Boolean]
     ): Int =
-        val MaxMantDigits = 19 // 10^19 fits in uint64 (just barely — max mantissa is 9_999_999_999_999_999_999L < 2^64).
+        val MaxMantDigits = 19 // 10^19 fits in uint64 (just barely: max mantissa is 9_999_999_999_999_999_999L < 2^64).
         var i             = start
         var neg           = false
         var mantissa      = 0L
@@ -262,7 +262,7 @@ private[internal] object FastFloat:
         var dp            = 0
         var truncated     = false
 
-        // Optional sign. JSON disallows leading '+', but we accept it here — the caller's scanner already
+        // Optional sign. JSON disallows leading '+', but we accept it here: the caller's scanner already
         // bounded the region, and the fallback path re-validates on failure.
         if i < end then
             val c = input(i)
@@ -286,7 +286,7 @@ private[internal] object FastFloat:
             else if c >= '0' && c <= '9' then
                 sawDigits = true
                 if c == '0' && nd == 0 then
-                    // Leading zero — advance the decimal-point offset.
+                    // Leading zero: advance the decimal-point offset.
                     dp -= 1
                     i += 1
                 else
@@ -335,7 +335,7 @@ private[internal] object FastFloat:
         end if
 
         if i != end then
-            // Unconsumed trailing bytes — the caller's scanner should never include these, but guard anyway.
+            // Unconsumed trailing bytes: the caller's scanner should never include these, but guard anyway.
             return ScanFailed
 
         // Final exponent is `dp - ndMant` when mantissa ≠ 0; zero mantissa still implies a zero result.
@@ -363,12 +363,12 @@ private[internal] object FastFloat:
 
     // Exact double-precision fast path. Mirrors Go's `atof64exact`. Returns the IEEE 754 bits of
     // `(-1)^neg * mantissa * 10^exp` if the computation can be done exactly in `double` arithmetic, or
-    // [[DoubleBailOut]] otherwise. The three accepted cases (per the paper's §2 and Go's comment):
+    // [[DoubleBailOut]] otherwise. The three accepted cases (per the paper's section 2 and Go's comment):
     //   - value is an exact integer (exp == 0, mantissa fits in 53 bits)
-    //   - value is an exact integer × exact power of 10 (exp in [1, 37])
-    //   - value is an exact integer ÷ exact power of 10 (exp in [-22, -1])
+    //   - value is an exact integer times an exact power of 10 (exp in [1, 37])
+    //   - value is an exact integer divided by an exact power of 10 (exp in [-22, -1])
     private def atof64Exact(mantissa: Long, exp10: Int, neg: Boolean): Long =
-        // Mantissa must fit in 53 bits (no truncation) — mirrors Go's `mantissa>>float64info.mantbits != 0` check.
+        // Mantissa must fit in 53 bits (no truncation): mirrors Go's `mantissa>>float64info.mantbits != 0` check.
         if (mantissa >>> Float64MantBits) != 0L then return DoubleBailOut
         var f: Double = mantissa.toDouble
         if neg then f = -f
@@ -413,11 +413,11 @@ private[internal] object FastFloat:
     end atof32Exact
 
     /** Parses the ASCII bytes `input[start, end)` as a decimal number and returns the IEEE 754 double bits. Returns [[DoubleBailOut]]
-      * (`Long.MinValue`) on any bail-out — parse failure, out-of-range exponent, half-way ambiguity, or truncation-retry disagreement.
+      * (`Long.MinValue`) on any bail-out: parse failure, out-of-range exponent, half-way ambiguity, or truncation-retry disagreement.
       * Callers must then fall back to a slow-path parser (e.g. `java.lang.Double.parseDouble`) to preserve correctness.
       *
-      * Mirrors Go's `atof64` flow in `src/internal/strconv/atof.go`: scan → `atof64exact` (integer × / ÷ power-of-10 if everything fits
-      * exactly in `double` arithmetic) → Eisel-Lemire → (if truncated) confirm by re-running on `mantissa + 1`.
+      * Mirrors Go's `atof64` flow in `src/internal/strconv/atof.go`: scan, `atof64exact` (integer times or divided by power-of-10 if everything fits
+      * exactly in `double` arithmetic), Eisel-Lemire, then (if truncated) confirm by re-running on `mantissa + 1`.
       */
     def parseDouble(input: Array[Byte], start: Int, end: Int): Long =
         val mantOut = new Array[Long](1)
@@ -430,8 +430,8 @@ private[internal] object FastFloat:
         val neg       = negOut(0)
         val truncated = status == ScanTruncated
 
-        // Try exact-arithmetic path first (only when mantissa was NOT truncated — a truncated mantissa
-        // can't be the "exact integer × 10^k" form).
+        // Try exact-arithmetic path first (only when mantissa was NOT truncated: a truncated mantissa
+        // can't be the "exact integer times 10^k" form).
         if !truncated then
             val exactBits = atof64Exact(mantissa, exp10, neg)
             if exactBits != DoubleBailOut then return exactBits
@@ -441,14 +441,14 @@ private[internal] object FastFloat:
         else if !truncated then bits
         else
             // Mirrors Go's `atof64` truncation retry: if the mantissa was truncated at 19 digits, re-run on
-            // `mantissa + 1`. If both bounds produce the same double, the truncated bits were safe and we
-            // can commit the result. Otherwise bail out.
+            // `mantissa + 1`. If both bounds produce the same double; the truncated bits were safe and we
+            // can commit the result. Otherwise, bail out.
             val bitsUp = eiselLemire64(mantissa + 1L, exp10, neg)
             if bitsUp == bits then bits else DoubleBailOut
         end if
     end parseDouble
 
-    /** Parses the ASCII bytes `input[start, end)` as a decimal number and returns the IEEE 754 float bits. Analogous to [[parseDouble]] —
+    /** Parses the ASCII bytes `input[start, end)` as a decimal number and returns the IEEE 754 float bits. Analogous to [[parseDouble]]:
       * returns [[FloatBailOut]] (`Int.MinValue`) on any bail-out.
       */
     def parseFloat(input: Array[Byte], start: Int, end: Int): Int =

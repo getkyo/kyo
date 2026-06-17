@@ -38,7 +38,7 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
         // entering a nested message: consume its length prefix and push a limit
         // so hasNextField() stops at the end of the nested payload. At the
         // top-level call (no preceding tag), currentWireType is 0 (Varint), so
-        // we leave limits untouched — the top-level limit (data.length) set at
+        // we leave limits untouched: the top-level limit (data.length) set at
         // construction already bounds the message.
         if currentWireType == LengthDelimited then
             val len = readVarint().toInt
@@ -47,7 +47,7 @@ final class ProtobufReader(data: Array[Byte])(using _frame: Frame) extends Reade
             limits = (pos + len) :: limits
             currentWireType = Varint // reset so nested objectStart calls don't re-consume a length
         end if
-        -1 // unknown field count — callers drive the loop via hasNextField()
+        -1 // unknown field count: callers drive the loop via hasNextField()
     end objectStart
 
     def objectEnd(): Unit =

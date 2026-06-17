@@ -6,8 +6,11 @@ import scala.quoted.*
 
 /** Shared macro utility methods used across multiple macro files in kyo-schema.
   *
-  * Contains structural type checks, field operations, string literal extraction, Maybe/Option field detection, case class default
-  * detection, and constructor call generation.
+  * Contains structural type checks, field operations, string literal extraction, case class default
+  * detection, identity getter/setter generation, nominal-type derivation, and constructor call
+  * generation. NO classifier specialization for user case-class / sealed-trait field types lives
+  * here: the derivation path resolves all field schemas via
+  * `scala.compiletime.summonInline[Schema[ft]]`.
   */
 private[internal] object MacroUtils:
 
@@ -112,39 +115,6 @@ private[internal] object MacroUtils:
         end match
     end extractStringLiteral
 
-    // ---- Maybe/Option field detection ----
-
-    /** Detects which fields are Maybe[?] or Option[?] types.
-      *
-      * Returns a tuple of (maybeFieldIndices, optionFieldIndices).
-      */
-    private[internal] def detectMaybeOptionFields(using
-        Quotes
-    )(
-        tpe: quotes.reflect.TypeRepr,
-        fields: List[quotes.reflect.Symbol]
-    ): (Set[Int], Set[Int]) =
-        import quotes.reflect.*
-        given CanEqual[Symbol, Symbol] = CanEqual.derived
-        val maybeSym                   = TypeRepr.of[kyo.Maybe[Any]].typeSymbol
-        val optionSym                  = TypeRepr.of[Option[Any]].typeSymbol
-        val maybeFields: Set[Int] = fields.zipWithIndex.collect {
-            case (field, idx) if tpe.memberType(field).dealias match
-                    case AppliedType(tycon, _) => tycon.typeSymbol == maybeSym
-                    case _                     => false
-                =>
-                idx
-        }.toSet
-        val optionFields: Set[Int] = fields.zipWithIndex.collect {
-            case (field, idx) if tpe.memberType(field).dealias match
-                    case AppliedType(tycon, _) => tycon.typeSymbol == optionSym
-                    case _                     => false
-                =>
-                idx
-        }.toSet
-        (maybeFields, optionFields)
-    end detectMaybeOptionFields
-
     // ---- Case class default detection ----
 
     /** Checks if a case class field at the given index has a default value. */
@@ -156,9 +126,10 @@ private[internal] object MacroUtils:
 
     /** Gets the default value expression for a case class field at the given index, if any.
       *
-      * For generic case classes, the generated default-value method is itself type-parameterized (`<init>$default$N[A, ...]`); we must
-      * apply the case class's type arguments to the method reference before treating it as an expression, otherwise `asExprOf` raises
-      * "Expected an expression. This is a partially applied Term" at macro expansion time.
+      * For generic case classes, the generated default-value method is itself type-parameterized
+      * (`<init>$default$N[A, ...]`); we must apply the case class's type arguments to the method
+      * reference before treating it as an expression, otherwise `asExprOf` raises "Expected an
+      * expression. This is a partially applied Term" at macro expansion time.
       */
     private[internal] def getDefault(using Quotes)(tpe: quotes.reflect.TypeRepr, idx: Int): Option[Expr[Any]] =
         import quotes.reflect.*
@@ -176,15 +147,17 @@ private[internal] object MacroUtils:
 
     /** Creates an identity getter `A => Maybe[F]` that wraps the input in Maybe.
       *
-      * At the root level, F is the structural expansion of A -- same runtime representation, different compile-time type. Uses Any as
-      * intermediate to avoid JVM class cast checks against the structural type.
+      * At the root level, F is the structural expansion of A: same runtime representation,
+      * different compile-time type. Uses Any as intermediate to avoid JVM class cast checks against
+      * the structural type.
       */
     private[internal] def identityGetter[A: Type, F: Type](using Quotes): Expr[A => kyo.Maybe[F]] =
         '{ ((root: Any) => kyo.Maybe(root)).asInstanceOf[A => kyo.Maybe[F]] }
 
     /** Creates an identity setter `(A, F) => A` that returns the new value unchanged.
       *
-      * At the root level, the setter simply replaces the entire value. Uses Any as intermediate to avoid JVM class cast checks.
+      * At the root level, the setter simply replaces the entire value. Uses Any as intermediate to
+      * avoid JVM class cast checks.
       */
     private[internal] def identitySetter[A: Type, F: Type](using Quotes): Expr[(A, F) => A] =
         '{ ((_: Any, value: Any) => value).asInstanceOf[(A, F) => A] }
@@ -193,8 +166,9 @@ private[internal] object MacroUtils:
 
     /** Derives the nominal parent type from A and F.
       *
-      * If F is the structural expansion of A (root level), returns TypeRepr.of[A]. If F is a structural type (post-transform), also returns
-      * TypeRepr.of[A] since the underlying data type is still A. Otherwise F is already a nominal type from a previous navigation step, so
+      * If F is the structural expansion of A (root level), returns TypeRepr.of[A]. If F is a
+      * structural type (post-transform), also returns TypeRepr.of[A] since the underlying data type
+      * is still A. Otherwise F is already a nominal type from a previous navigation step, so
       * returns TypeRepr.of[F].
       */
     private[internal] def deriveNominalType[A: Type, F: Type](using Quotes): quotes.reflect.TypeRepr =
@@ -204,82 +178,11 @@ private[internal] object MacroUtils:
         val fType    = TypeRepr.of[F]
         val expanded = ExpandMacro.expandType(aType)
 
-        // Check if F matches the expansion of A (root level)
-        if fType =:= expanded then
-            aType
-        else if isStructuralType(fType) then
-            // F is structural but doesn't match A's expansion (post-transform).
-            // The underlying data is still A, so use A as the nominal type.
-            aType
-        else
-            fType
+        if fType =:= expanded then aType
+        else if isStructuralType(fType) then aType
+        else fType
         end if
     end deriveNominalType
-
-    // ---- Type classifier sets ----
-
-    /** Base primitive type symbols: Int, String, Boolean, Double, Float, Long, Short, Byte, Char, Unit.
-      *
-      * Used by ExpandMacro.isPrimitive.
-      */
-    private[internal] def basePrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Int].typeSymbol,
-            TypeRepr.of[String].typeSymbol,
-            TypeRepr.of[Boolean].typeSymbol,
-            TypeRepr.of[Double].typeSymbol,
-            TypeRepr.of[Float].typeSymbol,
-            TypeRepr.of[Long].typeSymbol,
-            TypeRepr.of[Short].typeSymbol,
-            TypeRepr.of[Byte].typeSymbol,
-            TypeRepr.of[Char].typeSymbol,
-            TypeRepr.of[Unit].typeSymbol
-        )
-    end basePrimitiveSymbols
-
-    /** Extended primitive type symbols: base primitives + BigDecimal, BigInt, java.math.BigDecimal, java.math.BigInteger.
-      *
-      * Used by StructureMacro.isPrimitive.
-      */
-    private[internal] def extendedPrimitiveSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        basePrimitiveSymbols ++ Set(
-            TypeRepr.of[BigDecimal].typeSymbol,
-            TypeRepr.of[BigInt].typeSymbol,
-            TypeRepr.of[java.math.BigDecimal].typeSymbol,
-            TypeRepr.of[java.math.BigInteger].typeSymbol
-        )
-    end extendedPrimitiveSymbols
-
-    /** Collection type symbols: List, Seq, Vector, Set, Chunk. */
-    private[internal] def collectionSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[List].typeSymbol,
-            TypeRepr.of[Seq].typeSymbol,
-            TypeRepr.of[Vector].typeSymbol,
-            TypeRepr.of[Set].typeSymbol,
-            TypeRepr.of[kyo.Chunk].typeSymbol
-        )
-    end collectionSymbols
-
-    /** Optional type symbols: Option, Maybe. */
-    private[internal] def optionalSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Option].typeSymbol,
-            TypeRepr.of[kyo.Maybe].typeSymbol
-        )
-    end optionalSymbols
-
-    /** Map type symbols: Map. */
-    private[internal] def mapSymbols(using Quotes): Set[quotes.reflect.Symbol] =
-        import quotes.reflect.*
-        Set(
-            TypeRepr.of[Map].typeSymbol
-        )
-    end mapSymbols
 
     // ---- Constructor call generation ----
 

@@ -86,7 +86,7 @@ private[internal] object Ryu:
 
             if ieeeExponent == 0x7ff then
                 if ieeeMantissa != 0 then
-                    // NaN — sign is ignored per Java's Double.toString
+                    // NaN: sign is ignored per Java's Double.toString
                     buf(startPos) = 'N'
                     buf(startPos + 1) = 'a'
                     buf(startPos + 2) = 'N'
@@ -369,8 +369,8 @@ private[internal] object Ryu:
 
         private def mulShift(m: Long, mul: Array[Long], j: Int): Long =
             // m * (mul(0) << 64 + mul(1)) >> j
-            // m*mul(0) produces (high0, low0) — shifted left by 64 in the full product
-            // m*mul(1) produces (high1, low1) — low1 is discarded (below bit 0)
+            // m*mul(0) produces (high0, low0): shifted left by 64 in the full product
+            // m*mul(1) produces (high1, low1): low1 is discarded (below bit 0)
             // Full 192-bit product:
             //   bits 191-128: high0 + carry
             //   bits 127-64:  low0 + high1 (carry goes up)
@@ -434,7 +434,7 @@ private[internal] object Ryu:
 
             if ieeeExponent == 0xff then
                 if ieeeMantissa != 0 then
-                    // NaN — sign is ignored per Java's Float.toString
+                    // NaN: sign is ignored per Java's Float.toString
                     buf(startPos) = 'N'
                     buf(startPos + 1) = 'a'
                     buf(startPos + 2) = 'N'

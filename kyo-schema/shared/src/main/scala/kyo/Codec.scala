@@ -141,7 +141,27 @@ object Codec:
           * After this call, the parent Reader's position is advanced past the value (as if `skip()` had been called).
           */
         def captureValue(): Reader
+
     end Reader
+
+    /** Reader capability for self-describing wire formats that can materialize a value into [[Structure.Value]]
+      * regardless of its shape.
+      *
+      * Readers that walk a self-describing wire (JSON, YAML) or an in-memory value tree extend this trait;
+      * binary codecs without per-value type tags (e.g. Protobuf) do not. The identity [[Schema]] for
+      * `Structure.Value` requires this capability, so the type system prevents a `Structure.Value` from being
+      * decoded through a non-introspecting codec instead of failing at runtime with a misleading
+      * [[UnknownVariantException]].
+      */
+    trait IntrospectingReader extends Reader:
+        /** Read the next wire value into a [[Structure.Value]] tree, regardless of its shape.
+          *
+          * Walks the next value at the cursor (object, array, scalar, or null) and materializes it as the
+          * corresponding `Value` node. Used by the identity Schema for `Structure.Value` so that plain wire
+          * records round-trip without forcing a tagged-union wrapper.
+          */
+        def readStructure(): Structure.Value
+    end IntrospectingReader
 
     /** Abstract base for codec-specific serialization output.
       *
