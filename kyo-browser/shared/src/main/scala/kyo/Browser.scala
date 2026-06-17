@@ -105,7 +105,7 @@ import kyo.kernel.Isolate
   * #### Concurrent forks: Browser.isolate
   *
   * `Browser <: Env[BrowserTab] & Async`, but the opaque type hides the `Env` so two fibers cannot accidentally share a tab. Concurrent
-  * combinators like [[kyo.Async.zip]] / [[kyo.Async.parallel]] / [[kyo.Loop.foreach]] require an `Isolate[Browser, ...]` to fork the
+  * combinators like [[kyo.Async.zip]] / [[kyo.Async.foreach]] / [[kyo.Loop.foreach]] require an `Isolate[Browser, ...]` to fork the
   * `Browser` effect across fibers; the compiler refuses to derive one automatically because there is no safe default split for a single CDP
   * session. `Browser.isolate` provides the two safe ones and you pick the right semantics explicitly.
   *

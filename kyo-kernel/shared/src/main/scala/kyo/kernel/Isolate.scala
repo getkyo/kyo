@@ -35,7 +35,7 @@ import scala.quoted.*
   *
   * Operations specify their isolation requirements through the type parameters. For example:
   *   - `Fiber.init` requires `Isolate[S, Sync, S2]` - only Sync effects available during initialization
-  *   - `Async.parallel` might use `Isolate[S, Abort[E] & Async, S]` - async operations available, same effects restored
+  *   - `Async.foreach` might use `Isolate[S, Abort[E] & Async, S]` - async operations available, same effects restored
   *
   * The distinction between `Remove` and `Restore` is crucial: it allows operations to transform effects during isolation. A fiber might
   * capture `Var[Int]` effects but only restore the final value, not intermediate updates.
@@ -57,7 +57,7 @@ import scala.quoted.*
   *
   *  // Use in operations that accept isolation
   *  isolate.use {
-  *    Async.parallel(parallelism)(tasks)
+  *    Async.foreach(parallelism)(tasks)
   *  }
   * }}}
   *
@@ -286,18 +286,18 @@ object Isolate:
                         |You have a few options, from simplest to most advanced:
                         |
                         |1. Handle these effects before the operation:
-                        |   Async.parallel(parallelism)(tasks.map(MyEffect.run(_)))
+                        |   Async.foreach(parallelism)(tasks.map(MyEffect.run(_)))
                         |
                         |2. Some effects like Var and Emit provide options through their isolate object:
                         |   Var.isolate.update[Int].use {
-                        |     Async.parallel(parallelism)(tasks)
+                        |     Async.foreach(parallelism)(tasks)
                         |   }
                         |
                         |3. For multiple effects, compose isolates with andThen:
                         |   Var.isolate.update[Int]
                         |     .andThen(Emit.isolate.merge[String])
                         |     .use {
-                        |       Async.parallel(parallelism)(tasks)
+                        |       Async.foreach(parallelism)(tasks)
                         |     }
                         |
                         |4. For custom state management:
@@ -307,7 +307,7 @@ object Isolate:
                         |     ...
                         |   }
                         |   isolate.use {
-                        |     Async.parallel(parallelism)(tasks)
+                        |     Async.foreach(parallelism)(tasks)
                         |   }
                         |
                         |Failed to materialize `Isolate[${TypeRepr.of[Remove].show}, ${TypeRepr.of[Keep].show}, ${TypeRepr.of[
