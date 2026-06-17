@@ -40,6 +40,80 @@ class PathTest extends kyo.test.Test[Any]:
         assert(p1.hashCode == p2.hashCode)
     }
 
+    // =========================================================================
+    // Windows drive root (issue #1678)
+    //
+    // On Windows an absolute path is rooted on a drive (e.g. C:\). Reconstructing
+    // a path from `parts` (via `/`, `apply`, `parent`, ...) must preserve that
+    // drive root; dropping it re-anchors the path to the process's CWD drive,
+    // silently corrupting real I/O and `confinedTo`.
+    // =========================================================================
+
+    "/ preserves the Windows drive letter" in {
+        assume(Platform.isWindows, "Windows drive-letter paths")
+        val p = Path("C:/Windows/System32")
+        assert(p.toString == "C:/Windows/System32")
+        assert((p / "drivers").toString == "C:/Windows/System32/drivers")
+    }
+
+    "parts retain the Windows drive root and round-trip via reconstruction" in {
+        assume(Platform.isWindows, "Windows drive-letter paths")
+        val p = Path("C:/Windows/System32")
+        assert(p.parts == Chunk("C:", "Windows", "System32"))
+        // Reconstructing from parts must yield the same drive-rooted path.
+        assert(Path(p.parts*).toString == "C:/Windows/System32")
+        assert(p.isAbsolute)
+    }
+
+    "native backslash Windows path (C:\\Windows\\System32) is handled like the forward-slash form" in {
+        assume(Platform.isWindows, "Windows drive-letter paths")
+        // The canonical Windows spelling uses backslashes; it must parse, preserve the drive,
+        // and derive children identically to the C:/... form.
+        val p = Path("C:\\Windows\\System32")
+        assert(p.parts == Chunk("C:", "Windows", "System32"))
+        assert(p.isAbsolute)
+        assert(p.toString == "C:/Windows/System32")
+        assert((p / "drivers").toString == "C:/Windows/System32/drivers")
+        // Equal to the forward-slash spelling of the same path.
+        assert(p == Path("C:/Windows/System32"))
+    }
+
+    "mixed-separator Windows path is parsed consistently" in {
+        assume(Platform.isWindows, "Windows drive-letter paths")
+        val p = Path("C:\\Windows/System32\\drivers")
+        assert(p.parts == Chunk("C:", "Windows", "System32", "drivers"))
+        assert(p.toString == "C:/Windows/System32/drivers")
+    }
+
+    "drive root alone (C:\\) preserves the drive and has no parent" in {
+        assume(Platform.isWindows, "Windows drive-letter paths")
+        val root = Path("C:\\")
+        assert(root.parts == Chunk("C:"))
+        assert(root.isAbsolute)
+        assert(root.toString == "C:/")
+        // The volume root is the top of the tree.
+        assert(root.parent == Absent)
+    }
+
+    "a /-derived child path stays under its root (drive preserved)" in {
+        // Cross-platform regression: on Windows with the CWD on a different drive
+        // than the temp dir, the drive letter was previously dropped so the child
+        // re-anchored to the CWD drive and landed outside the root.
+        for
+            root <- Path.tempDir("kyo-drive")
+            sub = root / "sub" / "f.txt"
+            _      <- sub.write("payload")
+            exists <- sub.exists
+            _      <- root.removeAll
+        yield
+            assert(
+                sub.toString.startsWith(root.toString),
+                s"child ${sub.toString} should be under root ${root.toString}"
+            )
+            assert(exists, "file written via a /-derived path should exist under the root")
+        end for
+    }
+
     "Path.basePaths fields are populated" in {
         val bp = Path.basePaths
         assert(bp.cache.toString.nonEmpty)

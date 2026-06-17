@@ -30,8 +30,15 @@ final private[kyo] class NioPathUnsafe(val jpath: java.nio.file.Path) extends Pa
         if !jpath.isAbsolute && jpath.getNameCount == 1 && jpath.getName(0).toString.isEmpty then
             Chunk.empty // Path.of("") is the current-directory empty path
         else if jpath.isAbsolute then
-            // Preserve the leading "" representing the root
-            Chunk.from("" +: (0 until jpath.getNameCount).map(jpath.getName(_).toString))
+            // The leading segment encodes the filesystem root: "" for a POSIX root ("/")
+            // and the drive designator (e.g. "C:") for a Windows drive root ("C:\"). Carrying
+            // the drive here is what lets parts -> make round-trip without dropping the volume,
+            // which otherwise re-anchors the path to the process working directory's drive.
+            val root = jpath.getRoot
+            val rootSegment =
+                if root == null then ""
+                else root.toString.replace('\\', '/').stripSuffix("/")
+            Chunk.from(rootSegment +: (0 until jpath.getNameCount).map(jpath.getName(_).toString))
         else
             Chunk.from((0 until jpath.getNameCount).map(jpath.getName(_).toString))
         end if
@@ -519,6 +526,13 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
         if nonEmpty.isEmpty then
             if isAbsolute then new NioPathUnsafe(java.nio.file.Path.of("/")).safe
             else new NioPathUnsafe(java.nio.file.Path.of("")).safe
+        else if isDriveRoot(nonEmpty.head) then
+            // Windows drive-rooted path: the leading segment is the volume root (e.g. "C:").
+            // Rebuild as "C:/rest" so the drive is preserved instead of being re-anchored to
+            // the process working directory's drive. Handles both ["C:", ...] and the
+            // ["", "C:", ...] shape, since the leading "" is dropped by `nonEmpty`.
+            val jpath = java.nio.file.Path.of(nonEmpty.head + "/" + nonEmpty.tail.mkString("/"))
+            new NioPathUnsafe(jpath.normalize()).safe
         else
             val jpath =
                 if isAbsolute then
@@ -538,6 +552,19 @@ abstract private[kyo] class PathPlatformSpecific extends PathDirectories:
             new NioPathUnsafe(jpath.normalize()).safe
         end if
     end make
+
+    /** True on Windows when `segment` is a drive designator like `C:` (the volume root).
+      *
+      * Gated to Windows so a POSIX directory literally named `C:` is never mistaken for a drive
+      * (e.g. `/C:/foo` must stay absolute on Unix rather than collapsing to a relative path).
+      * Uses `Platform.isWindows` — the idiom already used by the sibling `ProcessPlatformSpecific`,
+      * and a compile-time constant on Scala Native — rather than an ad-hoc separator check.
+      */
+    private def isDriveRoot(segment: String): Boolean =
+        Platform.isWindows && segment.length == 2 && segment.charAt(1) == ':' && {
+            val c = segment.charAt(0)
+            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+        }
 
     private[kyo] def envOrEmpty(name: String): String =
         val v = java.lang.System.getenv(name)

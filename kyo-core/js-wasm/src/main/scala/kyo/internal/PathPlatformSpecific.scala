@@ -128,10 +128,14 @@ final private[kyo] class NodePathUnsafe(raw: String) extends Path.Unsafe:
     def parts: Chunk[String] =
         if pathStr.isEmpty then Chunk.empty
         else if NodePath.isAbsolute(pathStr) then
-            // Absolute: prepend "" to signal root
-            val stripped = if pathStr.startsWith("/") then pathStr.substring(1) else pathStr
-            val segs     = stripped.split("/", -1).filter(_.nonEmpty)
-            Chunk.from("" +: segs.toSeq)
+            if pathStr.startsWith("/") then
+                // POSIX root: the leading "" segment marks the root.
+                val segs = pathStr.substring(1).split("/", -1).filter(_.nonEmpty)
+                Chunk.from("" +: segs.toSeq)
+            else
+                // Windows drive root (e.g. "C:/Windows"): the drive designator segment marks
+                // the root, matching the JVM/Native representation so parts round-trip uniformly.
+                Chunk.from(pathStr.split("/", -1).filter(_.nonEmpty).toSeq)
         else
             Chunk.from(pathStr.split("/", -1).filter(_.nonEmpty).toSeq)
         end if
