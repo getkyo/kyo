@@ -22,7 +22,7 @@ import kyo.kernel.internal.Safepoint
   */
 opaque type Sync <: Abort[Nothing] = Abort[Nothing]
 
-object Sync extends KyoOps[Sync]:
+object Sync:
 
     /** Suspends a potentially side-effecting computation in an Sync effect.
       *

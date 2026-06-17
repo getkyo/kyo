@@ -6,15 +6,13 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.IterableOps
 
-/** Shared companion operations for Kyo effects.
+/** Object containing utility functions for working with Kyo effects.
   *
-  * Provides pure constructors and sequential collection operations that can be exposed by selected effect companion objects. `S0` is the
-  * companion's default effect type, used by operations that create a computation without an existing effect set, such as `unit`.
-  *
-  * Collection operations preserve the effects produced by their callback or source values. For example, `foreach(source)(f)` does not add
-  * the companion's default effect type unless `f` itself produces it.
+  * Provides sequential operations for working with collections and effects. For concurrent/parallel variants of these operations, see the
+  * Async effect. Use the Kyo companion object methods when sequential processing is sufficient and Async when concurrent processing would
+  * be beneficial.
   */
-abstract class KyoOps[S0] private[kyo] ():
+object Kyo:
 
     /** Explicitly lifts a pure plain value to a Kyo computation.
       *
@@ -25,24 +23,26 @@ abstract class KyoOps[S0] private[kyo] ():
       *
       * @tparam A
       *   The type of the value
-      * @tparam S1
-      *   The effect context
+      * @tparam S
+      *   The effect context (can be Any)
       * @param v
       *   The value to lift into the effect context
       * @return
       *   A computation that directly produces the given value without suspension
       */
-    inline def lift[A, S1 >: S0](inline v: A): A < S1 = v
+    inline def lift[A, S](inline v: A): A < S = v
 
     /** Returns a pure effect that produces Unit.
       *
       * This is exactly equivalent to `pure(())`, as both simply lift the Unit value into the effect context without introducing any effect
       * suspension.
       *
+      * @tparam S
+      *   The effect context (can be Any)
       * @return
       *   A computation that directly produces Unit without suspension
       */
-    inline def unit[S1 >: S0]: Unit < S1 = ()
+    inline def unit: Unit < Any = ()
 
     /** Run one of two effects based on the result of an effectful condition. An effectful if/then/else expression.
       *
@@ -2825,12 +2825,4 @@ abstract class KyoOps[S0] private[kyo] ():
         end if
     end shiftedWhile
 
-end KyoOps
-
-/** Pure Kyo operations that do not require side-effecting modules.
-  */
-object Pure extends KyoOps[Any]
-
-/** Backwards-compatible alias for pure Kyo operations.
-  */
-val Kyo: Pure.type = Pure
+end Kyo
