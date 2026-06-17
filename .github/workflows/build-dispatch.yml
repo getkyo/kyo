@@ -39,8 +39,14 @@ jobs:
     timeout-minutes: 180
     runs-on: ${{ inputs.runner-image }}
     env:
-      JAVA_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-      JVM_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      # Serialize: one sbt task at a time. A broad command (e.g. `testKyo JVM`) compiles/links and
+      # forks many modules in one process; on the 16GB runner two concurrent compiles/forks either
+      # exhaust the 12GB heap (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill,
+      # exit 143). Mirrors build.yml; a single-module command has little parallelism to lose anyway.
+      SBT_TASK_LIMIT: 1
+      # G1 is the JDK 24 default; pin it explicitly. -Xmx12G is the safe ceiling on a 16GB runner.
+      JAVA_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
     steps:
       - uses: actions/checkout@v6.0.3
         with:
