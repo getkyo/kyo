@@ -18,7 +18,7 @@ import kyo.Codec.Writer
   * @see
   *   [[kyo.Structure.Value]] for the value tree data model
   */
-final class StructureValueWriter(using Frame) extends Writer:
+final class StructureValueWriter extends Writer:
 
     sealed private trait StackFrame
     private case class ObjectFrame(
@@ -50,7 +50,7 @@ final class StructureValueWriter(using Frame) extends Writer:
                 stack = rest
                 addValue(Structure.Value.Record(Chunk.from(f.fields)))
             case _ =>
-                throw TypeMismatchException(Seq.empty, "ObjectFrame", "no active object")
+                bug("StructureValueWriter.objectEnd/fieldBytes: no active object frame")
     end objectEnd
 
     def arrayStart(size: Int): Unit =
@@ -62,7 +62,7 @@ final class StructureValueWriter(using Frame) extends Writer:
                 stack = rest
                 addValue(Structure.Value.Sequence(Chunk.from(f.elements)))
             case _ =>
-                throw TypeMismatchException(Seq.empty, "ArrayFrame", "no active array")
+                bug("StructureValueWriter.arrayEnd: no active array frame")
     end arrayEnd
 
     def fieldBytes(nameBytes: Array[Byte], index: Int): Unit =
@@ -70,7 +70,7 @@ final class StructureValueWriter(using Frame) extends Writer:
             case (f: ObjectFrame) :: _ =>
                 f.currentField = new String(nameBytes, java.nio.charset.StandardCharsets.UTF_8)
             case _ =>
-                throw TypeMismatchException(Seq.empty, "ObjectFrame", "no active object")
+                bug("StructureValueWriter.objectEnd/fieldBytes: no active object frame")
     end fieldBytes
 
     def string(value: String): Unit   = addValue(Structure.Value.Str(value))

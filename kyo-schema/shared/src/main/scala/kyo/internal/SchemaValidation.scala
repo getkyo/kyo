@@ -27,24 +27,8 @@ private[kyo] object SchemaValidation:
                     if pred(v) then Seq.empty
                     else Seq(ValidationFailedException(segs, msg)(using frame))
                 case _ => Seq.empty
-        Schema.createWithFocused[A, meta.Focused](
-            getterFn = (a: A) => meta.getter(a),
-            setterFn = (a: A, v: Any) => meta.setter(a, v),
-            writeFn = (a: A, w: Writer) => meta.serializeWrite(a, w),
-            readFn = (r: Reader) => meta.serializeRead(r),
-            segments = meta.segments,
-            checks = meta.checks :+ check,
-            computedFields = meta.computedFields,
-            renamedFields = meta.renamedFields,
-            sourceFields = meta.sourceFields,
-            droppedFields = meta.droppedFields,
-            doc = meta.documentation,
-            fieldDocs = meta.fieldDocs,
-            examples = meta.examples,
-            fieldDeprecated = meta.fieldDeprecated,
-            constraints = meta.constraints,
-            fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+        Schema.copyWith(meta)(
+            checks = meta.checks :+ check
         )
     end fieldCheck
 
@@ -65,24 +49,9 @@ private[kyo] object SchemaValidation:
                     if pred(v) then Seq.empty
                     else Seq(ValidationFailedException(segs, msg)(using frame))
                 case _ => Seq.empty
-        Schema.createWithFocused[A, meta.Focused](
-            getterFn = (a: A) => meta.getter(a),
-            setterFn = (a: A, v: Any) => meta.setter(a, v),
-            writeFn = (a: A, w: Writer) => meta.serializeWrite(a, w),
-            readFn = (r: Reader) => meta.serializeRead(r),
-            segments = meta.segments,
+        Schema.copyWith(meta)(
             checks = meta.checks :+ check,
-            computedFields = meta.computedFields,
-            renamedFields = meta.renamedFields,
-            sourceFields = meta.sourceFields,
-            droppedFields = meta.droppedFields,
-            doc = meta.documentation,
-            fieldDocs = meta.fieldDocs,
-            examples = meta.examples,
-            fieldDeprecated = meta.fieldDeprecated,
-            constraints = meta.constraints :+ constraint,
-            fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+            constraints = meta.constraints :+ constraint
         )
     end fieldCheckWithConstraint
 
@@ -92,24 +61,8 @@ private[kyo] object SchemaValidation:
         meta: Schema[A],
         constraint: Schema.Constraint
     ): Schema[A] { type Focused = meta.Focused } =
-        Schema.createWithFocused[A, meta.Focused](
-            getterFn = (a: A) => meta.getter(a),
-            setterFn = (a: A, v: Any) => meta.setter(a, v),
-            writeFn = (a: A, w: Writer) => meta.serializeWrite(a, w),
-            readFn = (r: Reader) => meta.serializeRead(r),
-            segments = meta.segments,
-            checks = meta.checks,
-            computedFields = meta.computedFields,
-            renamedFields = meta.renamedFields,
-            sourceFields = meta.sourceFields,
-            droppedFields = meta.droppedFields,
-            doc = meta.documentation,
-            fieldDocs = meta.fieldDocs,
-            examples = meta.examples,
-            fieldDeprecated = meta.fieldDeprecated,
-            constraints = meta.constraints :+ constraint,
-            fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+        Schema.copyWith(meta)(
+            constraints = meta.constraints :+ constraint
         )
     end fieldConstraintOnly
 
@@ -120,24 +73,8 @@ private[kyo] object SchemaValidation:
         fieldPath: Seq[String],
         description: String
     ): Schema[A] { type Focused = meta.Focused } =
-        Schema.createWithFocused[A, meta.Focused](
-            getterFn = (a: A) => meta.getter(a),
-            setterFn = (a: A, v: Any) => meta.setter(a, v),
-            writeFn = (a: A, w: Writer) => meta.serializeWrite(a, w),
-            readFn = (r: Reader) => meta.serializeRead(r),
-            segments = meta.segments,
-            checks = meta.checks,
-            computedFields = meta.computedFields,
-            renamedFields = meta.renamedFields,
-            sourceFields = meta.sourceFields,
-            droppedFields = meta.droppedFields,
-            doc = meta.documentation,
-            fieldDocs = meta.fieldDocs.updated(fieldPath, description),
-            examples = meta.examples,
-            fieldDeprecated = meta.fieldDeprecated,
-            constraints = meta.constraints,
-            fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+        Schema.copyWith(meta)(
+            fieldDocs = meta.fieldDocs.updated(fieldPath, description)
         )
     end withFieldDoc
 
@@ -148,24 +85,8 @@ private[kyo] object SchemaValidation:
         fieldPath: Seq[String],
         reason: String
     ): Schema[A] { type Focused = meta.Focused } =
-        Schema.createWithFocused[A, meta.Focused](
-            getterFn = (a: A) => meta.getter(a),
-            setterFn = (a: A, v: Any) => meta.setter(a, v),
-            writeFn = (a: A, w: Writer) => meta.serializeWrite(a, w),
-            readFn = (r: Reader) => meta.serializeRead(r),
-            segments = meta.segments,
-            checks = meta.checks,
-            computedFields = meta.computedFields,
-            renamedFields = meta.renamedFields,
-            sourceFields = meta.sourceFields,
-            droppedFields = meta.droppedFields,
-            doc = meta.documentation,
-            fieldDocs = meta.fieldDocs,
-            examples = meta.examples,
-            fieldDeprecated = meta.fieldDeprecated.updated(fieldPath, reason),
-            constraints = meta.constraints,
-            fieldIds = meta.fieldIdOverrides,
-            discriminatorField = meta.discriminatorField
+        Schema.copyWith(meta)(
+            fieldDeprecated = meta.fieldDeprecated.updated(fieldPath, reason)
         )
     end withFieldDeprecated
 
