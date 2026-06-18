@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.TestClasspaths
 import kyo.internal.tasty.query.Binding
 import kyo.internal.tasty.query.DecodeContext
 
@@ -30,6 +31,7 @@ class TastyBindingLiftTest extends kyo.test.Test[Any]:
 
     // Tasty.global is a lazy val singleton; two accesses return the same Binding reference.
     "Tasty.global lazy val returns the same Binding instance on every access".onlyJvm in {
+        TestClasspaths.forceGlobalNarrowed()
         val b1 = Tasty.global
         val b2 = Tasty.global
         assert(
@@ -49,6 +51,7 @@ class TastyBindingLiftTest extends kyo.test.Test[Any]:
 
     // On JVM, Tasty.classpath outside any withClasspath scope falls back to Tasty.global's classpath.
     "classpath outside withClasspath scope returns global classpath on JVM".onlyJvm in {
+        TestClasspaths.forceGlobalNarrowed()
         Tasty.classpath.map { classpath =>
             val globalClasspath = Tasty.global.classpath
             assert(
