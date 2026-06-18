@@ -320,7 +320,7 @@ Higher-level concurrency built on `kyo-core`'s fiber runtime. Reach for `kyo-act
 
 ### Specialized tools
 
-Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, web UIs, and Slack bots.
+Domain-shaped modules: parsing, durable workflows, container management, low-latency messaging, browser automation, web UIs, Slack bots, native C bindings, and TASTy reflection.
 
 | Module                                  | JVM | JS  | Native | WASM | Identity                                                                                                   |
 | --------------------------------------- | --- | --- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
@@ -329,6 +329,8 @@ Domain-shaped modules: parsing, durable workflows, container management, low-lat
 | [kyo-slack](kyo-slack/README.md)        | ✅  | ✅  | ✅     | ✅   | Slack Socket Mode bot client: structural acking, Web API, typed Block Kit + `dsl`, lossless reconnect      |
 | [kyo-browser](kyo-browser/README.md)    | ✅  | ✅  | ✅     | ✅   | Browser automation over Chrome DevTools Protocol; settlement-aware actions, `readableContent` as Markdown  |
 | [kyo-aeron](kyo-aeron/README.md)        | ✅  |     |        |      | Typed pub/sub on Aeron: shared-memory IPC, UDP unicast, UDP multicast through one `Topic` API              |
+| [kyo-ffi](kyo-ffi/README.md)            | ✅  | ✅  | ✅     |      | Bind a C library once with typed Scala signatures; safe calls from JVM (Panama), JS (koffi), and Native    |
+| [kyo-tasty](kyo-tasty/README.md)        | ✅  | ✅  | ✅     | ✅   | Cross-platform TASTy reflection over a pure sealed model; Scala 3 reflection without a live JVM             |
 
 ### Observability
 
