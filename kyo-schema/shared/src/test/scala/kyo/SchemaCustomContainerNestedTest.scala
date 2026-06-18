@@ -162,4 +162,22 @@ class SchemaCustomContainerNestedTest extends kyo.test.Test[Any]:
         assert(decoded == Result.succeed(instance))
     }
 
+    // Mutual (cross-type) recursion through a container, where only the entry type carries a
+    // source-side `derives Schema`. The cycle `RecSym.Cls -> Chunk[RecAnn] -> RecAnn -> RecSym
+    // -> RecSym.Cls` runs through the container given and through two types (`RecAnn`, `RecSym`)
+    // that have no derives of their own. The BoxedHolder tests above cover self-recursion through
+    // a container; this covers cross-type recursion through one. Mirrors the kyo-tasty
+    // `Symbol.Class` / `Java.Annotation` shape.
+    sealed trait RecSym derives CanEqual
+    object RecSym:
+        case class Cls(name: String, anns: Chunk[RecAnn]) extends RecSym derives CanEqual, Schema
+    case class RecAnn(owner: RecSym, label: String) derives CanEqual
+
+    "derives Schema for mutual recursion through a container without source-side derives on the cycle" in {
+        val v       = RecSym.Cls("c", Chunk(RecAnn(RecSym.Cls("d", Chunk.empty), "a")))
+        val encoded = Json.encode(v)
+        val decoded = Json.decode[RecSym.Cls](encoded)
+        assert(decoded == Result.succeed(v))
+    }
+
 end SchemaCustomContainerNestedTest

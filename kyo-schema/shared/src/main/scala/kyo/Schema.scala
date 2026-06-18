@@ -1355,7 +1355,8 @@ object Schema:
     // --- Collection Schema givens ---
 
     /** Schema for List[A] values. */
-    given listSchema[A](using inner: Schema[A]): Schema[List[A]] =
+    given listSchema[A](using inner0: => Schema[A]): Schema[List[A]] =
+        lazy val inner = inner0
         Schema.init[List[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1382,9 +1383,11 @@ object Schema:
                 inner.structure
             )
         )
+    end listSchema
 
     /** Schema for Vector[A] values. */
-    given vectorSchema[A](using inner: Schema[A]): Schema[Vector[A]] =
+    given vectorSchema[A](using inner0: => Schema[A]): Schema[Vector[A]] =
+        lazy val inner = inner0
         Schema.init[Vector[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1411,9 +1414,11 @@ object Schema:
                 inner.structure
             )
         )
+    end vectorSchema
 
     /** Schema for Set[A] values. */
-    given setSchema[A](using inner: Schema[A]): Schema[Set[A]] =
+    given setSchema[A](using inner0: => Schema[A]): Schema[Set[A]] =
+        lazy val inner = inner0
         Schema.init[Set[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1440,9 +1445,11 @@ object Schema:
                 inner.structure
             )
         )
+    end setSchema
 
     /** Schema for Chunk[A] values. */
-    given chunkSchema[A](using inner: Schema[A]): Schema[Chunk[A]] =
+    given chunkSchema[A](using inner0: => Schema[A]): Schema[Chunk[A]] =
+        lazy val inner = inner0
         Schema.init[Chunk[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1469,9 +1476,11 @@ object Schema:
                 inner.structure
             )
         )
+    end chunkSchema
 
     /** Schema for Seq[A] values. */
-    given seqSchema[A](using inner: Schema[A]): Schema[Seq[A]] =
+    given seqSchema[A](using inner0: => Schema[A]): Schema[Seq[A]] =
+        lazy val inner = inner0
         Schema.init[Seq[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1498,9 +1507,11 @@ object Schema:
                 inner.structure
             )
         )
+    end seqSchema
 
     /** Schema for Span[A] values. */
-    given spanSchema[A](using inner: Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
+    given spanSchema[A](using inner0: => Schema[A], ct: scala.reflect.ClassTag[A]): Schema[Span[A]] =
+        lazy val inner = inner0
         Schema.init[Span[A]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1526,12 +1537,14 @@ object Schema:
                 inner.structure
             )
         )
+    end spanSchema
 
     /** Schema for Maybe[A] values.
       *
       * Encodes as null when Absent, delegates to inner schema when Present.
       */
-    given maybeSchema[A](using inner: Schema[A]): Schema[Maybe[A]] =
+    given maybeSchema[A](using inner0: => Schema[A]): Schema[Maybe[A]] =
+        lazy val inner = inner0
         Schema.init[Maybe[A]](
             writeFn = (value, writer) =>
                 value match
@@ -1549,9 +1562,11 @@ object Schema:
                 inner.structure
             )
         )
+    end maybeSchema
 
     /** Schema for Option[A] values. */
-    given optionSchema[A](using inner: Schema[A]): Schema[Option[A]] =
+    given optionSchema[A](using inner0: => Schema[A]): Schema[Option[A]] =
+        lazy val inner = inner0
         Schema.init[Option[A]](
             writeFn = (value, writer) =>
                 value match
@@ -1569,9 +1584,11 @@ object Schema:
                 inner.structure
             )
         )
+    end optionSchema
 
     /** Schema for Map[String, V] values (object encoding). */
-    given stringMapSchema[V](using valueSchema: Schema[V]): Schema[Map[String, V]] =
+    given stringMapSchema[V](using valueSchema0: => Schema[V]): Schema[Map[String, V]] =
+        lazy val valueSchema = valueSchema0
         Schema.init[Map[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
@@ -1604,6 +1621,7 @@ object Schema:
                 valueSchema.structure
             )
         )
+    end stringMapSchema
 
     // --- Tuple Schemas ---
 
@@ -1615,7 +1633,9 @@ object Schema:
     // --- Kyo-data type Schemas ---
 
     /** Schema for Result[E, A] values - serialized as discriminated union. */
-    given resultSchema[E, A](using eSchema: Schema[E], aSchema: Schema[A]): Schema[Result[E, A]] =
+    given resultSchema[E, A](using eSchema0: => Schema[E], aSchema0: => Schema[A]): Schema[Result[E, A]] =
+        lazy val eSchema = eSchema0
+        lazy val aSchema = aSchema0
         Schema.init[Result[E, A]](
             writeFn = (value, writer) =>
                 value match
@@ -1687,9 +1707,12 @@ object Schema:
                 enumValues = Chunk.empty
             )
         )
+    end resultSchema
 
     /** Schema for Either[A, B] values - serialized as discriminated union with Left/Right variants. */
-    given eitherSchema[A, B](using aSchema: Schema[A], bSchema: Schema[B]): Schema[Either[A, B]] =
+    given eitherSchema[A, B](using aSchema0: => Schema[A], bSchema0: => Schema[B]): Schema[Either[A, B]] =
+        lazy val aSchema = aSchema0
+        lazy val bSchema = bSchema0
         Schema.init[Either[A, B]](
             writeFn = (value, writer) =>
                 value match
@@ -1743,9 +1766,11 @@ object Schema:
                 enumValues = Chunk.empty
             )
         )
+    end eitherSchema
 
     /** Schema for Dict[String, V] - serializes as a JSON object. */
-    given stringDictSchema[V](using vSchema: Schema[V]): Schema[Dict[String, V]] =
+    given stringDictSchema[V](using vSchema0: => Schema[V]): Schema[Dict[String, V]] =
+        lazy val vSchema = vSchema0
         Schema.init[Dict[String, V]](
             writeFn = (value, writer) =>
                 writer.mapStart(value.size)
@@ -1778,9 +1803,12 @@ object Schema:
                 vSchema.structure
             )
         )
+    end stringDictSchema
 
     /** Schema for Dict[K, V] with non-String keys - serializes as array of [k, v] pairs. */
-    given dictSchema[K, V](using kSchema: Schema[K], vSchema: Schema[V]): Schema[Dict[K, V]] =
+    given dictSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Dict[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
         Schema.init[Dict[K, V]](
             writeFn = (value, writer) =>
                 writer.arrayStart(value.size)
@@ -1816,6 +1844,7 @@ object Schema:
                 vSchema.structure
             )
         )
+    end dictSchema
 
     // --- Internal helpers ---
 
