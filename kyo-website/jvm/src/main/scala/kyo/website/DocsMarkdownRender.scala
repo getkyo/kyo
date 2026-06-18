@@ -99,6 +99,23 @@ object DocsMarkdownRender:
     final case class Rendered(article: UI, articleHtml: String, headings: Chunk[DocsMarkdown.Heading])
         derives CanEqual
 
+    /** The repo location and git ref a README is rendered from, used to rewrite intra-repo file links
+      * (demo sources, `CONTRIBUTING.md`, `LICENSE.txt`, ...) to absolute GitHub URLs. The docs site
+      * hosts only the rendered README pages, never the source tree, so a README-relative file link like
+      * `shared/src/test/scala/demo/ChatRoom.scala` would 404 if left same-origin (it would resolve under
+      * the page route, e.g. `/latest/kyo-http/shared/...`); rewritten against the README's location it
+      * points at the file on GitHub instead.
+      *
+      * `repoSubdir` is the README's directory relative to the repo root: `""` for the root README and
+      * the manifesto, `"kyo-http"` for a module README. `ref` is the git ref the rendered content came
+      * from: a release tag (`"v1.0.0-RC2"`) for a versioned build, or `"main"` when no tag is known.
+      *
+      * Only intra-repo FILE links are redirected to GitHub. Links that map to a docs route (a sibling
+      * `README.md`, the repo-root `MANIFESTO.md`), in-page anchors, and external `http(s)` URLs are left
+      * to their existing handling.
+      */
+    final case class LinkBase(repoSubdir: String, ref: String) derives CanEqual
+
     /** Transpile a single README Markdown source to a [[Rendered]] value.
       *
       * The effect row is `Sync` only (no `Abort`). Malformed input degrades rather than failing:
@@ -110,12 +127,18 @@ object DocsMarkdownRender:
       *
       * @param source
       *   The Markdown text to transpile. May be empty.
+      * @param linkBase
+      *   The README's repo location and git ref. `Present` rewrites intra-repo file links to absolute
+      *   GitHub URLs (see [[LinkBase]]); `Absent` (the default, used by heading-only transpiles and unit
+      *   tests, where the article is discarded or links are not under test) leaves them same-origin.
       */
-    def transpile(source: String)(using Frame): Rendered < Sync =
+    def transpile(source: String, linkBase: Maybe[LinkBase] = Absent)(using Frame): Rendered < Sync =
+        given Maybe[LinkBase] = linkBase
         Sync.defer {
             if source.isBlank then Rendered(UI.empty, "", Chunk.empty)
             else parseArticle(stripDoctest(source))
         }
+    end transpile
 
     /** Render a `UI` article subtree to an HTML string by draining the first emission of
       * `UI.runRender`. This is the one-shot idiom: `.take(1).run.map(_.headMaybe.getOrElse(""))`
@@ -137,10 +160,13 @@ object DocsMarkdownRender:
       *
       * @param source
       *   The Markdown text to transpile. May be empty.
+      * @param linkBase
+      *   The README's repo location and git ref, threaded to [[transpile]] (see [[LinkBase]]). `Absent`
+      *   (the default) leaves intra-repo file links same-origin.
       */
-    def renderArticle(source: String)(using Frame): Rendered < Async =
+    def renderArticle(source: String, linkBase: Maybe[LinkBase] = Absent)(using Frame): Rendered < Async =
         for
-            t    <- transpile(source)
+            t    <- transpile(source, linkBase)
             html <- renderArticleHtml(t.article)
         yield t.copy(articleHtml = html)
 
@@ -507,7 +533,7 @@ object DocsMarkdownRender:
       * parsed by a kyo-parse `Parse[Char]` parser. Heading slugs are tracked in a mutable map local
       * to this call; duplicate slugs receive `-2` (then `-3`, etc.) suffixes.
       */
-    private def parseArticle(cleaned: String)(using Frame): Rendered =
+    private def parseArticle(cleaned: String)(using Frame, Maybe[LinkBase]): Rendered =
         val blocks     = splitBlocks(cleaned)
         val uiBlocks   = new mutable.ArrayBuffer[UI]()
         val headings   = new mutable.ArrayBuffer[DocsMarkdown.Heading]()
@@ -684,7 +710,7 @@ object DocsMarkdownRender:
     /** Parse a GFM pipe table. The first row is the header; the second is the separator; remaining
       * rows are body rows. Cell content is re-parsed with [[parseInline]].
       */
-    private def parseTable(tableLines: Chunk[String])(using Frame): UI =
+    private def parseTable(tableLines: Chunk[String])(using Frame, Maybe[LinkBase]): UI =
         if tableLines.length < 2 then
             // Malformed table (missing separator): degrade to paragraph.
             UI.p(Ast.Text(tableLines.headOption.getOrElse("")))
@@ -703,7 +729,7 @@ object DocsMarkdownRender:
     /** Parse an unordered list from its grouped lines, handling two-space sub-indented items. The
       * `- ` / `  - ` markers are recognized with a `Parse[Char]` parser per line.
       */
-    private def parseUnorderedList(lines: Chunk[String])(using Frame): UI =
+    private def parseUnorderedList(lines: Chunk[String])(using Frame, Maybe[LinkBase]): UI =
         val arr   = lines.toArray
         val items = new mutable.ArrayBuffer[Ast.Li]()
         var i     = 0
@@ -742,7 +768,7 @@ object DocsMarkdownRender:
       * the splitter. A `> **Note:**` opener becomes a note callout, `> **Caution:**` a caution
       * callout, everything else a generic blockquote.
       */
-    private def parseBlockquote(content: String)(using Frame): UI =
+    private def parseBlockquote(content: String)(using Frame, Maybe[LinkBase]): UI =
         val firstNonEmpty = content.linesIterator.find(_.trim.nonEmpty).getOrElse("").trim
         val bqBlocks      = parseBlockquoteContent(content)
         if firstNonEmpty.startsWith("**Note:**") then UI.div.cssClass("callout callout-note")(html(bqBlocks)*)
@@ -750,7 +776,7 @@ object DocsMarkdownRender:
         else UI.div.cssClass("blockquote")(html(bqBlocks)*)
     end parseBlockquote
 
-    private def parseBlockquoteContent(content: String)(using Frame): Chunk[UI] =
+    private def parseBlockquoteContent(content: String)(using Frame, Maybe[LinkBase]): Chunk[UI] =
         val lines  = content.linesIterator.toArray
         val result = new mutable.ArrayBuffer[UI]()
         var i      = 0
@@ -781,17 +807,35 @@ object DocsMarkdownRender:
 
     // ---- inline kyo-parse grammar ----
 
-    /** Convert a raw URL string to a `Href`. Treats `#id` as Fragment, `http(s)://...` as External,
-      * and everything else as Path. Intra-repo Markdown links to a sibling README (e.g.
-      * `../kyo-prelude/README.md`) are rewritten to the directory route they map to under the docs
-      * site so they resolve to a real page instead of 404ing on the raw `.md` file.
+    /** Convert a raw URL string to a `Href`. Treats `#id` as Fragment and `http(s)://...` as External.
+      * A docs-route link (a sibling `README.md` or the repo-root `MANIFESTO.md`) is rewritten to the
+      * same-origin Path the docs site serves (see [[rewriteReadmePath]]). Any other intra-repo link is
+      * a file the site does not host: with a [[LinkBase]] in scope (`Present`) it is rewritten to an
+      * absolute GitHub URL so it resolves to the source on GitHub (see [[gitHubHref]]); with no base
+      * (`Absent`, the heading-only / unit-test default) it stays a same-origin Path, preserving the
+      * prior behavior.
       */
-    private def toHref(url: String): Href =
+    private def toHref(url: String)(using base: Maybe[LinkBase]): Href =
         if url.startsWith("#") then Href.Fragment(url.drop(1))
         else if url.startsWith("https://") then Href.External("https", url.drop(6))
         else if url.startsWith("http://") then Href.External("http", url.drop(5))
-        else Href.Path(rewriteReadmePath(url))
+        else if isDocRouteLink(url) then Href.Path(rewriteReadmePath(url))
+        else
+            base match
+                case Present(b) => gitHubHref(url, b)
+                case Absent     => Href.Path(url)
+        end if
     end toHref
+
+    /** True when `url` targets a documentation route the site actually serves: a sibling `README.md`
+      * (mapped to its directory route) or the repo-root `MANIFESTO.md` (mapped to the manifesto page).
+      * These are the links [[rewriteReadmePath]] turns into a same-origin Path; every other intra-repo
+      * link is a source file the site does not host. A `#fragment` is ignored for the test.
+      */
+    private def isDocRouteLink(url: String): Boolean =
+        val path = url.takeWhile(_ != '#')
+        path == "README.md" || path.endsWith("/README.md") || path == "MANIFESTO.md"
+    end isDocRouteLink
 
     /** Rewrite an intra-repo link that targets a `README.md` file to the directory route it lives in.
       *
@@ -817,6 +861,62 @@ object DocsMarkdownRender:
         end if
     end rewriteReadmePath
 
+    // The kyo repository, as a scheme-relative authority+path so `Href.External("https", _)` renders
+    // `https://github.com/getkyo/kyo/...` (the External case prints `scheme:value`, see UI.Href).
+    private val GitHubRepo = "//github.com/getkyo/kyo"
+
+    /** Rewrite an intra-repo file link to an absolute GitHub URL against `base`. The README-relative
+      * `target` is resolved to a repo-root-relative path (a leading `./` dropped, `../` segments popped
+      * against `base.repoSubdir`), then joined as `https://github.com/getkyo/kyo/<kind>/<ref>/<path>`
+      * where `<kind>` is `blob` for a file and `tree` for a directory. A `#fragment` (e.g. a GitHub line
+      * anchor) is preserved. Examples, with `base = LinkBase("kyo-http", "v1.0.0-RC2")`:
+      *
+      *   - `shared/src/test/scala/demo/ChatRoom.scala`
+      *     -> `.../blob/v1.0.0-RC2/kyo-http/shared/src/test/scala/demo/ChatRoom.scala`
+      *   - `shared/src/test/scala/demo` (a directory)
+      *     -> `.../tree/v1.0.0-RC2/kyo-http/shared/src/test/scala/demo`
+      *
+      * and with `base = LinkBase("kyo-case-app", "main")`, a `../` link escapes the module directory:
+      *
+      *   - `../kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala`
+      *     -> `.../blob/main/kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala`
+      */
+    private def gitHubHref(target: String, base: LinkBase): Href =
+        val hashIdx  = target.indexOf('#')
+        val rawPath  = if hashIdx >= 0 then target.substring(0, hashIdx) else target
+        val fragment = if hashIdx >= 0 then target.substring(hashIdx) else ""
+        val repoPath = resolveRepoPath(base.repoSubdir, rawPath)
+        val kind     = if isDirectoryTarget(rawPath, repoPath) then "tree" else "blob"
+        Href.External("https", s"$GitHubRepo/$kind/${base.ref}/$repoPath$fragment")
+    end gitHubHref
+
+    /** Resolve a README-relative link `target` to a repo-root-relative path against `repoSubdir` (the
+      * README's own directory). A leading `./` is dropped, `.` and empty segments are skipped, and each
+      * `..` pops one segment (never above the repo root). `repoSubdir = ""` (the root README) resolves
+      * the target as-is.
+      */
+    private def resolveRepoPath(repoSubdir: String, target: String): String =
+        val baseSegs   = repoSubdir.split("/").iterator.filter(_.nonEmpty).toList
+        val targetSegs = target.stripPrefix("./").split("/").toList
+        val resolved = targetSegs.foldLeft(baseSegs.reverse) { (stack, seg) =>
+            seg match
+                case "" | "." => stack
+                case ".."     => if stack.isEmpty then stack else stack.tail
+                case s        => s :: stack
+        }
+        resolved.reverse.mkString("/")
+    end resolveRepoPath
+
+    /** Whether the link targets a directory (`tree` on GitHub) rather than a file (`blob`): a trailing
+      * slash on the raw target, or a final resolved-path segment with no `.` extension (`shared/.../demo`,
+      * `.../examples/ledger`). The kyo README corpus uses an extension on every file link and a bare name
+      * on every directory link, so this split is exact for it; a misclassified target still resolves,
+      * since GitHub redirects `blob` <-> `tree` for the other kind.
+      */
+    private def isDirectoryTarget(rawTarget: String, repoPath: String): Boolean =
+        rawTarget.endsWith("/") || !repoPath.split("/").lastOption.getOrElse("").contains(".")
+    end isDirectoryTarget
+
     /** Parse inline Markdown to a sequence of UI nodes with a kyo-parse `Parse[Char]` grammar.
       *
       * Handles, in PEG ordered-choice precedence: linked badges (`[![alt](img)](link)`), badge
@@ -825,7 +925,7 @@ object DocsMarkdownRender:
       * does not parse degrades to a single literal character via `recoverWith` +
       * `RecoverStrategy`, so the row never aborts.
       */
-    private def parseInline(text: String)(using Frame): Chunk[UI] =
+    private def parseInline(text: String)(using Frame, Maybe[LinkBase]): Chunk[UI] =
         if text.isEmpty then Chunk(Ast.Text(""))
         else runParser(text)(inlineNodes).getOrElse(Chunk(Ast.Text(text)))
 
@@ -839,7 +939,7 @@ object DocsMarkdownRender:
     /** The inline grammar: repeat a single inline token until end of input, then coalesce adjacent
       * literal characters into `Ast.Text` runs.
       */
-    private def inlineNodes(using Frame): Chunk[UI] < Parse[Char] =
+    private def inlineNodes(using Frame, Maybe[LinkBase]): Chunk[UI] < Parse[Char] =
         Parse.repeat(inlineToken).map(tokens => coalesceText(Chunk.from(tokens)))
 
     /** A single inline token, as a `Token`: `Lit(char)` is one literal character (a degrade unit);
@@ -847,7 +947,7 @@ object DocsMarkdownRender:
       * `firstOf` last branch, and any fatal failure is recovered to one literal character via
       * `recoverWith` + `RecoverStrategy`, so the inline row never aborts.
       */
-    private def inlineToken(using Frame): Token < Parse[Char] =
+    private def inlineToken(using Frame, Maybe[LinkBase]): Token < Parse[Char] =
         def node(p: UI < Parse[Char]): Token < Parse[Char] = p.map(Token.Node(_))
         val literalChar: Token < Parse[Char]               = Parse.any[Char].map(Token.Lit(_))
         Parse.recoverWith(
@@ -898,7 +998,7 @@ object DocsMarkdownRender:
         ).map(_.mkString)
 
     /** `[![alt](img)](link)` -> `UI.a.href(link)(UI.img(img, alt))`. */
-    private def linkedBadge(using Frame): UI < Parse[Char] =
+    private def linkedBadge(using Frame, Maybe[LinkBase]): UI < Parse[Char] =
         for
             _   <- Parse.literal("[![")
             alt <- readUntilChar(']')
@@ -920,7 +1020,7 @@ object DocsMarkdownRender:
         yield UI.img(ImgSrc.Path(url), alt)
 
     /** `[text](url)` -> `UI.a.href(url)(parseInline(text)*)`. */
-    private def link(using Frame): UI < Parse[Char] =
+    private def link(using Frame, Maybe[LinkBase]): UI < Parse[Char] =
         for
             _    <- Parse.literal('[')
             body <- readUntilString("](")
