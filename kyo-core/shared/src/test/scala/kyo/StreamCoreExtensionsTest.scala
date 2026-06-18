@@ -36,6 +36,50 @@ class StreamCoreExtensionsTest extends kyo.test.Test[Any]:
             }.unit
         }
 
+        // Deterministic repro for the CI scheduler freeze. collectAllHalting forks one producer per
+        // source: `source.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))`. When the
+        // finite source halts the merge the channel closes and `channel.put` returns Closed, but
+        // `Abort.run` swallows it, so an infinite, fully-synchronous producer keeps emitting and only
+        // stops if it is externally interrupted. Delivering that interrupt needs a free worker, so
+        // running more such merges than there are workers pins every worker in `Stream.handleLoop`
+        // and the scheduler livelocks (the production hang). A daemon thread force-stops the producers
+        // after a short delay so the test always terminates, then asserts the defect directly: with
+        // the bug every producer is still spinning at that point; once producers self-terminate on
+        // Closed, none are.
+        "collectAllHalting self-terminates infinite producers when the merge halts (freeze repro)".onlyJvm in {
+            val merges    = Math.max(16, Runtime.getRuntime.availableProcessors() * 4)
+            val forceStop = new java.util.concurrent.atomic.AtomicBoolean(false)
+            val spinning  = new java.util.concurrent.atomic.AtomicInteger(0)
+            val infinite = Stream(
+                Loop(())(_ =>
+                    if forceStop.get() then Sync.defer(spinning.incrementAndGet()).andThen(Loop.done)
+                    else Emit.valueWith(Chunk(100))(Loop.continue(()))
+                )
+            )
+            for
+                watchdog <- Sync.defer {
+                    val t = new Thread(() =>
+                        try Thread.sleep(2000)
+                        catch case _: InterruptedException => ()
+                        forceStop.set(true)
+                    )
+                    t.setDaemon(true)
+                    t.start()
+                    t
+                }
+                _ <- Async.foreach(1 to merges, merges)(_ =>
+                    Stream.collectAllHalting(Seq(Stream.init(0 to 50), infinite)).run
+                )
+                _ <- Async.sleep(3.seconds)
+            yield
+                watchdog.interrupt()
+                assert(
+                    spinning.get() == 0,
+                    s"${spinning.get()} of $merges infinite producers were still spinning after the merge halted"
+                )
+            end for
+        }
+
         "multiple effects".notNative in {
             // Env[Int] & Abort[String]
             val s1 = Stream:
