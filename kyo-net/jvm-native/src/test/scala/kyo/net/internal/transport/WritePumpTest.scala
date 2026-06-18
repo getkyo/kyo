@@ -164,12 +164,16 @@ class WritePumpTest extends Test:
             }
         }
 
-        // Anti-flakiness: a 1 MB payload on smallBufferedPair(2048, 2048) far exceeds the kernel send+recv buffers, so the first write hits
-        // EAGAIN and returns Partial and the pump parks in awaitWritable. The onAwaitWritable hook fires on the pump's carrier right after the
-        // writable promise is registered and before the poll loop can deliver a writable event; cancelling the handle there fails the pending
-        // writable promise with Closed deterministically (no readiness race), driving WritablePromise.onComplete's Failure arm into
-        // onWritableError -> teardown. closedLatch latches the teardown.
-        "a writable-wait failure tears down the pump (handle canceled while awaiting writable)" in {
+        // A 1 MB payload on smallBufferedPair(2048, 2048) far exceeds the kernel send+recv buffers, so the first write hits EAGAIN and returns
+        // Partial and the pump parks in awaitWritable. The onAwaitWritable hook fires on the pump's carrier right after the writable promise is
+        // registered and tears the handle down via closeHandle (the production teardown path: Connection.teardownHandle runs cancel + closeHandle).
+        // closeHandle BOTH fails the pending writable promise with Closed (driving WritablePromise.onComplete's Failure arm into onWritableError ->
+        // teardown) AND closes the fd, so the teardown is deterministic even when the poll loop delivers a writable Success that races the failure:
+        // a raced Success makes the pump retry the remaining write, which then fails on the closed fd and tears down. A bare driver.cancel (the prior
+        // version) was NOT deterministic once writable delivery worked: the poll loop can complete the writable Success before the cancel fails it,
+        // leaving the pump to re-arm awaitWritable with no further cancel. That version only passed because writable delivery was previously broken.
+        // closedLatch latches the teardown.
+        "a writable-wait failure tears down the pump (handle closed while awaiting writable)" in {
             assumePoller()
             val real        = PollerIoDriver.init(transportConfig)
             val spy         = new RecordingIoDriver(real)
@@ -188,10 +192,9 @@ class WritePumpTest extends Test:
                         closedLatch.completeDiscard(Result.succeed(()))
                 )
 
-                // The instant the pump registers its writable wait, cancel the handle: the real cancel fails the just-registered writable
-                // promise with Closed before any writable event can resolve it Success, so the pump's writable-wait failure path runs with no
-                // readiness race.
-                spy.onAwaitWritable = h => spy.cancel(h)
+                // The instant the pump registers its writable wait, close the handle: closeHandle fails the just-registered writable promise with
+                // Closed and closes the fd, so the pump's writable-wait failure path runs to teardown regardless of a racing writable event.
+                spy.onAwaitWritable = h => spy.closeHandle(h)
 
                 // 1 MB payload guarantees EAGAIN on the 2KB pair: the first write is Partial and the pump parks in awaitWritable.
                 val payload = Array.fill[Byte](1024 * 1024)(42)
@@ -202,8 +205,8 @@ class WritePumpTest extends Test:
                     assert(spy.awaitWritableCalls.get() >= 1, "pump must have registered a writable wait")
                     assert(closed.nonEmpty, "pump must tear down when the writable wait fails with Closed")
                     spy.close()
+                    // closeHandle closed clientFd; only peerFd remains to close.
                     discard(sock.close(peerFd))
-                    discard(sock.close(clientFd))
                     succeed
                 }
             }

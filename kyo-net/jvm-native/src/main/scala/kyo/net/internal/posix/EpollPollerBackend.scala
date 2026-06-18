@@ -128,36 +128,59 @@ private[net] object EpollPollerBackend extends PollerBackend:
         Frame
     ): Fiber.Unsafe[Int, Any] =
         // changelist / nChanges are unused: epoll has no changelist parameter in epoll_wait; changes go through epoll_ctl in drainChanges.
-        // Unsafe: the @Ffi.blocking wait fills scratch.eventsBuffer (the caller-owned per-driver reused buffer). Decode inline inside .map.
-        // The buffer is NOT closed here: it is the per-driver PollScratch.eventsBuffer, reused across poll cycles, freed via PollScratch.close.
-        // On JVM/Native the @Ffi.blocking fiber is already done and .map fires synchronously. On JS the fiber is genuinely pending.
+        // The eventsBuffer is NOT closed here: it is the per-driver PollScratch.eventsBuffer, reused across poll cycles, freed via PollScratch.close.
+        val evBuf = scratch.eventsBuffer
+        val fiber = ep.epoll_wait(pollerFd, evBuf, MaxEvents, timeoutMs)
+        fiber.poll() match
+            case Present(result) =>
+                // JVM/Native: the @Ffi.blocking epoll_wait ran synchronously on this carrier, so the fiber is already complete. Decode the result
+                // into scratch inline and return a fresh pre-completed fiber carrying the ready count. This deliberately avoids Fiber.Unsafe.map:
+                // the poll loop runs on a single long-lived IOTask carrier, and map composes the result through a kyo `< S` step that the carrier's
+                // Safepoint trampolines into a Defer the unsafe poll loop never evaluates, so the decode would silently never run and every
+                // readiness event would be dropped. eval forces the already-pure Outcome with no `< S` composition, and the returned fiber's value
+                // is the Int ready count the poll contract requires (decorators read it; the poll loop reads scratch.readyCount).
+                val n =
+                    result match
+                        case Result.Success(outcome) => decodeReady(outcome.eval, scratch)
+                        case _ =>
+                            scratch.readyCount = 0
+                            0
+                val completed = Promise.Unsafe.init[Int, Any]()
+                completed.completeDiscard(Result.succeed(n))
+                completed
+            case Absent =>
+                // JS: the call is genuinely pending on a libuv worker. Its completion callback runs on a fresh stack rather than the poll loop's
+                // Safepoint, so decoding inside map is safe and the decode runs before drainReady reads scratch.readyCount.
+                fiber.map(outcome => decodeReady(outcome, scratch))
+        end match
+    end poll
+
+    /** Decode the events epoll_wait wrote into `scratch.eventsBuffer` into the poll scratch (`readyCount`, `fds`, `flags`) and return the ready
+      * count. Each `epoll_event`'s `data` is the watched fd and its `events` bitmask carries readiness: `EPOLLIN`/`EPOLLOUT` map to read/write,
+      * `EPOLLERR`/`EPOLLHUP` to error, and `EPOLLRDHUP` (peer half-close, can co-occur with `EPOLLIN` when bytes are buffered before EOF) to eof.
+      */
+    private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch)(using AllowUnsafe): Int =
+        val raw   = outcome.value.toInt
+        val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags
         val evBuf = scratch.eventsBuffer
-        ep.epoll_wait(pollerFd, evBuf, MaxEvents, timeoutMs).map { ready =>
-            val raw = ready.value.toInt
-            val n   = if raw <= 0 then 0 else raw
-            // Publish the ready count as a raw int on the poll scratch BEFORE the fiber resolves, so the poll loop reads it without unwrapping
-            // the boxed Int fiber result. The decode below runs inline on JVM/Native (fiber already done) and on the JS libuv callback, so the
-            // field is set on every platform before drainReady reads it.
-            scratch.readyCount = n
-            var i = 0
-            while i < n do
-                val ev   = EpollEvent.decode(evBuf, i * EpollEvent.size)
-                val bits = ev.events
-                fds(i) = ev.data.toInt
-                var f = 0
-                if (bits & PosixConstants.EPOLLIN) != 0 then f |= PollFlags.Read
-                if (bits & PosixConstants.EPOLLOUT) != 0 then f |= PollFlags.Write
-                if (bits & (PosixConstants.EPOLLERR | PosixConstants.EPOLLHUP)) != 0 then f |= PollFlags.Error
-                // EPOLLRDHUP signals peer half-close; can co-occur with EPOLLIN when bytes are buffered before EOF.
-                if (bits & PosixConstants.EPOLLRDHUP) != 0 then f |= PollFlags.Eof
-                flags(i) = f
-                i += 1
-            end while
-            n
-        }
-    end poll
+        scratch.readyCount = n
+        var i = 0
+        while i < n do
+            val ev   = EpollEvent.decode(evBuf, i * EpollEvent.size)
+            val bits = ev.events
+            fds(i) = ev.data.toInt
+            var f = 0
+            if (bits & PosixConstants.EPOLLIN) != 0 then f |= PollFlags.Read
+            if (bits & PosixConstants.EPOLLOUT) != 0 then f |= PollFlags.Write
+            if (bits & (PosixConstants.EPOLLERR | PosixConstants.EPOLLHUP)) != 0 then f |= PollFlags.Error
+            if (bits & PosixConstants.EPOLLRDHUP) != 0 then f |= PollFlags.Eof
+            flags(i) = f
+            i += 1
+        end while
+        n
+    end decodeReady
 
     def newPollScratch()(using AllowUnsafe): PollScratch =
         // Unsafe: off-heap allocations at driver init (called once; closed in driver.close via PollScratch.close).

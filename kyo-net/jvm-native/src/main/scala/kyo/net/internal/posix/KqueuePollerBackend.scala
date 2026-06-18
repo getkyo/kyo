@@ -184,8 +184,6 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         scratch: PollScratch,
         data: KqueuePollData
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any] =
-        val fds   = scratch.fds
-        val flags = scratch.flags
         val timeout =
             if data.pollMemoMs == timeoutMs then data.pollMemoTs
             else
@@ -195,32 +193,57 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 ts
         // Submit the changelist alongside the wait; interest changes and the blocking wait happen atomically in one kevent syscall.
         data.nChanges = 0 // reset BEFORE the kevent call so disableWrite calls during drainReady accumulate into slots 0+
-        kq.kevent(pollerFd, changelist, nChanges, data.eventsBuffer, MaxEvents, timeout).map { ready =>
-            val raw = ready.value.toInt
-            val n   = if raw <= 0 then 0 else raw
-            // Publish the ready count as a raw int on the poll scratch BEFORE the fiber resolves (see EpollPollerBackend.poll). The decode runs
-            // inline on JVM/Native and on the JS libuv callback, so drainReady reads a written value on every platform.
-            scratch.readyCount = n
-            var i = 0
-            while i < n do
-                // Read the three needed fields directly from the byte buffer via the KEvent codec; no per-event KEvent is allocated
-                // and no Long field is boxed.
-                fds(i) = KEvent.ident(data.eventsBuffer, i).toInt
-                val evFilter = KEvent.filter(data.eventsBuffer, i)
-                val evFlags  = KEvent.flags(data.eventsBuffer, i)
-                var f        = 0
-                if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
-                if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
-                // EV_EOF signals peer half-close (distinct from EV_ERROR which is a hard error). Both can appear on EVFILT_READ/WRITE.
-                if (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Eof
-                if (evFlags & PosixConstants.EV_ERROR) != 0 then f |= PollFlags.Error
-                flags(i) = f
-                i += 1
-            end while
-            n
-            // eventsBuffer is NOT closed here: it is the caller-owned per-driver reused buffer.
-        }
+        val fiber = kq.kevent(pollerFd, changelist, nChanges, data.eventsBuffer, MaxEvents, timeout)
+        fiber.poll() match
+            case Present(result) =>
+                // JVM/Native: the @Ffi.blocking kevent ran synchronously on this carrier, so the fiber is already complete. Decode the result
+                // into scratch inline and return a fresh pre-completed fiber carrying the ready count. This deliberately avoids Fiber.Unsafe.map:
+                // the poll loop runs on a single long-lived IOTask carrier, and map composes the result through a kyo `< S` step that the carrier's
+                // Safepoint trampolines into a Defer the unsafe poll loop never evaluates, so the decode would silently never run and every
+                // readiness event would be dropped. eval forces the already-pure Outcome with no `< S` composition, and the returned fiber's value
+                // is the Int ready count the poll contract requires (decorators read it; the poll loop reads scratch.readyCount).
+                val n =
+                    result match
+                        case Result.Success(outcome) => decodeReady(outcome.eval, scratch, data)
+                        case _ =>
+                            scratch.readyCount = 0
+                            0
+                val completed = Promise.Unsafe.init[Int, Any]()
+                completed.completeDiscard(Result.succeed(n))
+                completed
+            case Absent =>
+                // JS: the call is genuinely pending on a libuv worker. Its completion callback runs on a fresh stack rather than the poll loop's
+                // Safepoint, so decoding inside map is safe and the decode runs before drainReady reads scratch.readyCount.
+                fiber.map(outcome => decodeReady(outcome, scratch, data))
+        end match
     end pollWithData
+
+    /** Decode the events the kevent call wrote into `data.eventsBuffer` into the poll scratch (`readyCount`, `fds`, `flags`) and return the ready
+      * count. The watched fd is each event's `ident`; readiness is the `filter` (`EVFILT_READ` / `EVFILT_WRITE`), with `EV_EOF` (peer half-close)
+      * and `EV_ERROR` (hard error) folded into the flags. The three needed fields are read directly through the codec's primitive readers, so no
+      * `KEvent` object is allocated and no `Long` field is boxed. `eventsBuffer` is NOT closed here: it is the caller-owned per-driver reused buffer.
+      */
+    private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch, data: KqueuePollData)(using AllowUnsafe): Int =
+        val raw   = outcome.value.toInt
+        val n     = if raw <= 0 then 0 else raw
+        val fds   = scratch.fds
+        val flags = scratch.flags
+        scratch.readyCount = n
+        var i = 0
+        while i < n do
+            fds(i) = KEvent.ident(data.eventsBuffer, i).toInt
+            val evFilter = KEvent.filter(data.eventsBuffer, i)
+            val evFlags  = KEvent.flags(data.eventsBuffer, i)
+            var f        = 0
+            if evFilter == PosixConstants.EVFILT_READ then f |= PollFlags.Read
+            if evFilter == PosixConstants.EVFILT_WRITE then f |= PollFlags.Write
+            if (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Eof
+            if (evFlags & PosixConstants.EV_ERROR) != 0 then f |= PollFlags.Error
+            flags(i) = f
+            i += 1
+        end while
+        n
+    end decodeReady
 
     /** Poll using freshly-allocated per-call buffers. Used when `PollScratch.kqueueData` is `Absent` (test callers that bypass the driver
       * scratch, e.g. `PollerBackendTest` direct calls). No per-driver scratch is available in this path, so a fresh [[Timespec]] is
