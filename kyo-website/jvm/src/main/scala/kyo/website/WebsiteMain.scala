@@ -49,9 +49,10 @@ object WebsiteMain extends KyoApp:
             _ <- Console.printLine(
                 s"WebsiteMain: out=$outDir bundleDir=$bundleDir repoRoot=$repoRoot"
             )
+            version <- currentVersion(repoRoot)
             result <- Abort.run[WebsiteException](
                 for
-                    content <- parseContent(theArgs, repoRoot)
+                    content <- parseContent(theArgs, repoRoot, version)
                     _ <- WebsiteGenerator.emit(
                         content,
                         Path(outDir),
@@ -72,11 +73,13 @@ object WebsiteMain extends KyoApp:
 
     /** Build the documentation content, FORWARD-ONLY.
       *
-      * The current version is read from the LIVE repo at `repoRoot` via `WebsiteContent.fromRepo`: the
-      * live root `README.md` `## Modules` table drives the sidebar and each live module README becomes a
-      * module page. The current version is flagged `latest = true`, so the generator serves it
-      * both at its own version path and mirrored under `latest/`. No git tags are iterated and no per-tag
-      * extraction runs; the docs reflect exactly what is checked out.
+      * The current `version` is supplied by the caller (`program` derives it from the live repo via
+      * [[currentVersion]]; tests inject a fixed value). Its content is read from the LIVE repo at
+      * `repoRoot` via `WebsiteContent.fromRepo`: the live root `README.md` `## Modules` table drives the
+      * sidebar and each live module README becomes a module page. The current version is flagged
+      * `latest = true`, so the generator serves it both at its own version path and mirrored under
+      * `latest/`. No git tags are iterated and no per-tag extraction runs; the docs reflect exactly what
+      * is checked out.
       *
       * Forward-append: when `--content <dir>` is supplied, each `<tag>/` subdirectory is appended as an
       * additional historical-snapshot version (read via `WebsiteContent.fromRepo`, ordered oldest-first
@@ -88,31 +91,39 @@ object WebsiteMain extends KyoApp:
       * The result is ordered oldest-first (appended snapshots first by semantic version, then the current
       * version last), matching the order `WebsiteGenerator` and the version dropdown expect.
       */
-    private[website] def parseContent(theArgs: Chunk[String], repoRoot: String)(using
+    private[website] def parseContent(theArgs: Chunk[String], repoRoot: String, version: WebsiteVersion)(using
         Frame
     ): Chunk[WebsiteContent] < (Sync & Abort[WebsiteException]) =
         for
-            version  <- currentVersion(repoRoot)
             current  <- WebsiteContent.fromRepo(Path(repoRoot), version)
             appended <- appendedSnapshots(theArgs, version.tag)
         yield appended.append(current)
 
-    /** The current documentation version label, derived from the current release. The newest release tag
-      * by git creation timestamp (`WebsiteVersion.pickLatestByTimestamp`, read from the repo at
-      * `repoRoot` via `tagTimestamps`) is the label, flagged `latest = true`. A newer pre-release wins
-      * over an older stable release, matching what the repo's most recent `git tag` actually is.
-      *
-      * Total fallback: when no release tag is available (git missing, not a repo, or no `v[0-9]*` tag),
-      * the version is `WebsiteVersion("current", "current", latest = true)`, so the build still renders
-      * the live docs under a clearly-current label rather than failing.
+    /** The current documentation version, read from the live repo at `repoRoot`: the impure git read
+      * ([[tagTimestamps]]) composed with the pure selection in [[currentVersionFrom]]. Kept thin so the
+      * selection logic stays testable against a fixed tag set; see [[currentVersionFrom]].
       */
     private[website] def currentVersion(repoRoot: String)(using Frame): WebsiteVersion < Sync =
-        tagTimestamps(repoRoot).map { timestamps =>
-            WebsiteVersion.pickLatestByTimestamp(Chunk.from(timestamps.keys), timestamps) match
-                case Present(tag) => WebsiteVersion(tag, tag.stripPrefix("v"), latest = true)
-                case Absent       => WebsiteVersion("current", "current", latest = true)
-        }
-    end currentVersion
+        tagTimestamps(repoRoot).map(currentVersionFrom)
+
+    /** Pick the current documentation version from a `tag -> git-creation-timestamp` map. The newest tag
+      * by timestamp (`WebsiteVersion.pickLatestByTimestamp`) is the version, flagged `latest = true`,
+      * labelled with the leading `v` dropped. A newer pre-release wins over an older stable release,
+      * matching what the repo's most recent `git tag` actually is.
+      *
+      * Total fallback: when the map is empty (no release tag: git missing, not a repo, or no `v[0-9]*`
+      * tag) the version is `WebsiteVersion("current", "current", latest = true)`, so the build still
+      * renders the live docs under a clearly-current label rather than failing.
+      *
+      * Pure and split from the impure git read so the selection can be tested with a fixed tag set,
+      * independent of the live repo's tags (which change with every release, so a test asserting a frozen
+      * tag against the live repo would break on the next release).
+      */
+    private[website] def currentVersionFrom(timestamps: Map[String, Long]): WebsiteVersion =
+        WebsiteVersion.pickLatestByTimestamp(Chunk.from(timestamps.keys), timestamps) match
+            case Present(tag) => WebsiteVersion(tag, tag.stripPrefix("v"), latest = true)
+            case Absent       => WebsiteVersion("current", "current", latest = true)
+    end currentVersionFrom
 
     /** Read the optional `--content <dir>` forward-append snapshots: one `WebsiteContent` per `<tag>/`
       * subdirectory, built via `WebsiteContent.fromRepo`, ordered oldest-first by semantic version. Only
