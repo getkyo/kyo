@@ -35,22 +35,18 @@ jobs:
         with:
           jvm: corretto:24
           apps: sbt
-      # JVM and Native generate per-module Scala 3 javadoc, and dottydoc crashes intermittently
-      # (null SignatureBuilder.content() NPE) while rendering signatures. That crash happens during
-      # `+publishSigned`, which only stages signed artifacts to target/sona-staging (no upload), so it
-      # is safe to retry. The close+promote (sonaRelease) uploads the staged bundle and must NOT be
-      # retried: a second upload collides on the Central Portal. So stage retriably, then release once.
-      #
-      # On a snapshot build (main push / `/release` PR comment) ci-release does `+publish` instead and
-      # there is no staging or promotion; the Release steps are guarded to tag pushes, the only case
-      # where ci-release itself would have run sonaRelease.
+      # Phase 1: build, sign, and stage EVERY platform into one local bundle (target/sona-staging).
+      # dottydoc crashes intermittently while rendering per-module javadoc; that happens here, inside
+      # +publishSigned (no upload), so each stage is independently retriable. CI_SONATYPE_RELEASE=""
+      # turns ci-release's close+promote into a no-op, so these steps only stage. The first stage
+      # cleans; the rest set CI_CLEAN="" so they do not wipe what earlier platforms staged. On a
+      # snapshot build (main push / `/release`) ci-release publishes snapshots via +publish instead,
+      # and the publish step below is skipped, matching the previous behavior.
       - name: Stage JVM (retriable)
         uses: nick-fields/retry@v4
         with:
           max_attempts: 3
           timeout_minutes: 120
-          # CI_SONATYPE_RELEASE="" replaces ci-release's close+promote command with a no-op, so on a tag
-          # it runs clean + +publishSigned (stage only) and on a snapshot it runs +publish unchanged.
           command: rm -rf target/sona-staging && sbt -Dplatform=JVM "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
@@ -58,27 +54,15 @@ jobs:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      - name: Release JVM
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Stage JS (retriable)
         uses: nick-fields/retry@v4
         with:
-          max_attempts: 1
+          max_attempts: 3
           timeout_minutes: 120
-          # Bundles the staged target/sona-staging and uploads+publishes it. No clean/rm: it reuses the
-          # artifacts staged above and does not re-run doc.
-          command: sbt -Dplatform=JVM "sonaRelease"
+          command: sbt -Dplatform=JS "ci-release"
         env:
-          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-          PGP_SECRET: ${{ secrets.PGP_SECRET }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      - name: Publish JS
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 1
-          timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=JS "ci-release"
-        env:
+          CI_SONATYPE_RELEASE: ""
+          CI_CLEAN: ""
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
@@ -88,31 +72,37 @@ jobs:
         with:
           max_attempts: 3
           timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=Native "ci-release"
+          command: sbt -Dplatform=Native "ci-release"
         env:
           CI_SONATYPE_RELEASE: ""
+          CI_CLEAN: ""
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      - name: Release Native
+      - name: Stage Wasm (retriable)
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          timeout_minutes: 120
+          command: sbt -Dplatform=Wasm "ci-release"
+        env:
+          CI_SONATYPE_RELEASE: ""
+          CI_CLEAN: ""
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+      # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
+      # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
+      # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.
+      - name: Publish all platforms
         if: startsWith(github.ref, 'refs/tags/v')
         uses: nick-fields/retry@v4
         with:
           max_attempts: 1
           timeout_minutes: 120
-          command: sbt -Dplatform=Native "sonaRelease"
-        env:
-          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-          PGP_SECRET: ${{ secrets.PGP_SECRET }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      - name: Publish Wasm
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 1
-          timeout_minutes: 120
-          command: rm -rf target/sona-staging && sbt -Dplatform=Wasm "ci-release"
+          command: sbt -Dplatform=JVM "sonaRelease"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
