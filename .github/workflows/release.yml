@@ -38,8 +38,8 @@ jobs:
       - name: Publish JVM
         uses: nick-fields/retry@v4
         with:
-          max_attempts: 3
-          timeout_minutes: 30
+          max_attempts: 1
+          timeout_minutes: 120
           command: rm -rf target/sona-staging && sbt -Dplatform=JVM "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
@@ -49,8 +49,8 @@ jobs:
       - name: Publish JS
         uses: nick-fields/retry@v4
         with:
-          max_attempts: 3
-          timeout_minutes: 30
+          max_attempts: 1
+          timeout_minutes: 120
           command: rm -rf target/sona-staging && sbt -Dplatform=JS "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
@@ -60,9 +60,20 @@ jobs:
       - name: Publish Native
         uses: nick-fields/retry@v4
         with:
-          max_attempts: 3
-          timeout_minutes: 30
+          max_attempts: 1
+          timeout_minutes: 120
           command: rm -rf target/sona-staging && sbt -Dplatform=Native "ci-release"
+        env:
+          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+      - name: Publish Wasm
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 1
+          timeout_minutes: 120
+          command: rm -rf target/sona-staging && sbt -Dplatform=Wasm "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
