@@ -7,37 +7,18 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.JSExportTopLevel
 import scala.scalajs.js.annotation.JSImport
 
-/** The browser entry point for the kyo-three visual-review harness.
+/** The browser entry points for the kyo-three behavioral browser tests.
   *
-  * `mountDemo` is linked as an ES module export and called from the harness page: it dispatches by
-  * demo name to the demo's own scene-graph builder (the same `*Scene` objects the demo `KyoApp`s
-  * use), mounts the compiled scene into the page canvas through the kyo runtime, and raises a
-  * page-visible flag once a frame has rendered. This drives the ACTUAL compiled reconciler, frame
-  * loop, raycast wiring, and (for the gallery) the `Three.toImage` capture path inside a real
-  * browser WebGL context; nothing is replicated in hand-written JavaScript.
+  * Each `@JSExportTopLevel` probe is linked as an ES module export and called from a harness page:
+  * it builds a scene or kyo-ui tree, mounts it through the real kyo runtime, and records a
+  * page-visible result the test reads back. This drives the ACTUAL compiled reconciler, frame loop,
+  * raycast wiring, renderer teardown, and `Three.embed` host mount inside a real browser WebGL
+  * context; nothing is replicated in hand-written JavaScript.
   *
-  * The entry lives outside package `kyo` because `@JSExportTopLevel` and the `Frame` macro both
+  * The entries live outside package `kyo` because `@JSExportTopLevel` and the `Frame` macro both
   * require it: inside package `kyo` the compiler rejects `Frame` derivation.
   */
 object DemoHarness:
-
-    /** Mounts the demo named `name` into the element at `selector`.
-      *
-      * The live-mount demos run `Three.runMount` with a geometry-free sentinel `Group.onFrame`
-      * appended to the scene that raises `window.__demoFrame` after the first frame renders. The
-      * headless `thumbnail-gallery` demo runs the `Three.toImage` path and paints the resulting PNG
-      * onto the canvas, raising the same flag when the image is drawn.
-      */
-    @JSExportTopLevel("mountDemo")
-    def mountDemo(name: String, selector: String): Unit =
-        // Unsafe: the page-to-kyo boundary. Launches the demo computation on a detached fiber whose
-        // ambient Scope stays open for the lifetime of the (infinite) frame loop; the AllowUnsafe is
-        // scoped to this single entry call.
-        import AllowUnsafe.embrace.danger
-        val _ = Sync.Unsafe.evalOrThrow(
-            Fiber.initUnscoped(Scope.run(Abort.run[ThreeException](dispatch(name, selector)))).unit
-        )
-    end mountDemo
 
     /** Mounts a one-frame ordering probe through the real `Three.runMount` and records what the FIRST
       * rendered frame actually drew at the canvas center.
@@ -427,68 +408,6 @@ object DemoHarness:
                 w.__orderingCenterLit = lit
                 w.__orderingReady = true
             end if
-
-    private def dispatch(name: String, selector: String)(using
-        Frame
-    ): Unit < (Async & Scope & Abort[ThreeException]) =
-        name match
-            case "solar-system" =>
-                SolarSystemScene.scene.map((scene, _) => mountLive(scene, SolarSystemScene.camera, selector, ThreeFrames.Raf))
-            case "bouncing-balls" =>
-                BouncingBallsScene.scene.map(mountLive(_, BouncingBallsScene.camera, selector, ThreeFrames.Raf))
-            case "reactive-cube-field" =>
-                ReactiveCubeFieldScene.scene.map(mountLive(_, ReactiveCubeFieldScene.camera, selector, ThreeFrames.Raf))
-            case "snake-3d" =>
-                Snake3DScene.scene.map(mountLive(_, Snake3DScene.camera, selector, Snake3DScene.frames))
-            case "gltf-viewer" =>
-                GltfViewerScene.scene(GltfViewerScene.defaultModelUrl)
-                    .map(mountLive(_, GltfViewerScene.camera, selector, ThreeFrames.Raf))
-            case "thumbnail-gallery" =>
-                mountImage(ThumbnailGalleryScene.representative, ThumbnailGalleryScene.camera, selector)
-            case other =>
-                Abort.fail(ThreeException.CanvasNotFound(s"unknown demo: $other"))
-
-    /** Mounts a live scene with a frame-flag sentinel appended and runs the frame loop. */
-    private def mountLive(
-        scene: Three.Ast.Scene,
-        camera: Three.Ast.Camera,
-        selector: String,
-        frames: ThreeFrames
-    )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
-        val flagged = scene.copy(children = scene.children :+ frameSentinel)
-        Three.runMount(flagged, camera, selector, frames)
-    end mountLive
-
-    /** A geometry-free `Group` whose `onFrame` raises the page render flag on the first frame. */
-    private def frameSentinel(using Frame): Three =
-        Three.group().onFrame(_ => Sync.defer(setFrameFlag()))
-
-    /** Renders a scene through `Three.toImage` and paints the PNG onto the canvas at `selector`. */
-    private def mountImage(
-        scene: Three,
-        camera: Three.Ast.Camera,
-        selector: String
-    )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
-        Three.toImage(scene, camera, 512, 512).map { img =>
-            Sync.defer(paintDataUrl(selector, s"data:image/png;base64,${img.base64}"))
-        }
-
-    /** Raises the page-visible render flag. */
-    private def setFrameFlag(): Unit =
-        // Side effect: a single window-property write signalling a frame rendered, read by the harness test.
-        dom.window.asInstanceOf[js.Dynamic].__demoFrame = true
-
-    /** Draws a data-URL image onto the 2D context of the canvas at `selector`, then raises the flag. */
-    private def paintDataUrl(selector: String, dataUrl: String): Unit =
-        // Side effect: DOM paint of the toImage PNG onto the visible canvas; the flag is raised on load.
-        val canvas = dom.document.querySelector(selector).asInstanceOf[dom.html.Canvas]
-        val ctx    = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
-        val image  = dom.document.createElement("img").asInstanceOf[dom.html.Image]
-        image.onload = (_: dom.Event) =>
-            ctx.drawImage(image, 0, 0, canvas.width.toDouble, canvas.height.toDouble)
-            setFrameFlag()
-        image.src = dataUrl
-    end paintDataUrl
 
 end DemoHarness
 

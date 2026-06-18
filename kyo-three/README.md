@@ -529,7 +529,7 @@ val solarSystem =
 
 ## Demos
 
-The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. They are browser apps (each needs a canvas and a WebGL context), so there is no JVM `runMain` launcher. They are compile-checked by kyo-three's own test on both the JS and Wasm backends, and driven through a real browser by the visual-review suite, which links them and screenshots each one: `sbt 'kyo-threeJS/test'`. To produce only the linkable browser bundle (the `mountDemo` ESModule the harness page imports), run `sbt 'kyo-three-demos/fastLinkJS'`.
+The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. They are browser apps (each needs a canvas and a WebGL context), so there is no JVM `runMain` launcher. They are compile-checked by kyo-three's own test on both the JS and Wasm backends.
 
 <table>
   <tr>
