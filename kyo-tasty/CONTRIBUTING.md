@@ -114,6 +114,15 @@ bump to this list.
   `initFallback` returns `Binding.empty` without I/O.
 - Location: `kyo/Tasty.scala`, the `private[kyo] lazy val global` under
   `object Tasty`.
+- Test rule: in the forked test JVM `java.class.path` is the full transitive
+  test classpath; cold-loading all of it exhausts the test heap, so forcing
+  `global` with it OOMs (the singleton then caches `Binding.empty`) or the leaf
+  goes STUCK and times out. Every JVM test that reads `Tasty.global`, directly or
+  through the scope-less fallback path of `Tasty.classpath` / a `Tasty.*` query,
+  MUST call `TestClasspaths.forceGlobalNarrowed()` first. It performs the one
+  real force under a `java.class.path` narrowed to the scala-library jar
+  (idempotent and thread-safe); the JS/Native impls are no-ops because their
+  `global` is the empty binding.
 
 **Site 3: `Tasty.bodyTree(symbol)`**
 - Effect: parses raw AST bytes on demand; result memoized per classpath instance
