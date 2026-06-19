@@ -53,6 +53,7 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 Global / commands += Repeat.command
 Global / commands += TestKyo.command
+Global / commands += TestBatchPlan.command
 
 // Serialize scaladoc generation. Scala 3 dottydoc runs in-process (the `doc` task is not
 // forked) and is not safe to run concurrently within one sbt JVM: parallel per-module `doc`

@@ -189,6 +189,12 @@ jobs:
           if [ "${{ matrix.target }}" = "Native" ]; then
             # Native tests need retry wrapper for libunwind crash tolerance
             ./scripts/native-test.sh "$cmd"
+          elif [ "${{ matrix.target }}" = "JVM" ] && [ "${{ inputs.test-command }}" = "test" ]; then
+            # Full JVM run: compile + test in dependency-aware, size-balanced batches, each in its own
+            # sbt process. One session compiling every module's main+test carries the whole codebase's
+            # compile heap at once and over-commits the 16GB runner (exit 143); per-batch process exit is
+            # what returns that heap. See scripts/test-batched.sh and project/TestBatchPlan.scala.
+            ./scripts/test-batched.sh JVM
           else
             sbt "$cmd"
           fi

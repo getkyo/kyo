@@ -102,7 +102,11 @@ jobs:
         env:
           SBT_COMMAND: ${{ inputs.command }}
         run: |
-          if [[ "$SBT_COMMAND" == *Native/* ]]; then
+          if [[ "$SBT_COMMAND" == test-batched* ]]; then
+            # Dependency-aware batched run: each batch in its own sbt process (memory isolation).
+            # e.g. command "test-batched JVM" runs ./scripts/test-batched.sh JVM.
+            ./scripts/test-batched.sh "${SBT_COMMAND#test-batched }"
+          elif [[ "$SBT_COMMAND" == *Native/* ]]; then
             ./scripts/native-test.sh "$SBT_COMMAND"
           else
             sbt "$SBT_COMMAND"
