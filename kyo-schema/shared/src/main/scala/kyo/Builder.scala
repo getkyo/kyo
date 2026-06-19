@@ -68,7 +68,7 @@ object Builder:
       * The `@implicitNotFound` message is shown at the call site when `.result` is invoked before setting all required fields.
       */
     @implicitNotFound(
-        "Cannot call .result — not all required fields have been set. Set every field on the builder before calling .result."
+        "Cannot call .result: not all required fields have been set. Set every field on the builder before calling .result."
     )
     sealed abstract class AllSet[Remaining]
 

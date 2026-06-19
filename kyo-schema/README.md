@@ -1099,7 +1099,7 @@ val tpe: Structure.Type = Structure.of[Person]
 // Structure.Type.Product with fields "name" (Str) and "age" (Integer)
 ```
 
-The type tree has variants for each category of Scala type: `Product` (case classes), `Sum` (sealed traits), `Collection` (lists, sets), `Mapping` (maps), `Optional` (Option/Maybe), and `Primitive` (scalars).
+The type tree has variants for each category of Scala type: `Product` (case classes), `Sum` (sealed traits), `Collection` (lists, sets), `Mapping` (maps), `Optional` (Option/Maybe), `Primitive` (scalars), and `Open` (a shape not fixed at compile time, such as `Structure.Value` itself or a hand-written codec built with `Schema.init`).
 
 `Structure.encode` converts a typed value into the untyped `Value` tree. `Structure.decode` converts it back:
 
@@ -1163,6 +1163,8 @@ abstract class Codec:
 The Reader also exposes `initFields(n)`, `clearFields(n)`, `droppedFieldsMask(n)`, and `release()` as overridable hooks for pooled / allocation-sensitive implementations. See `JsonReader` for an example that uses all of them.
 
 `fieldBytes(nameBytes, fieldId)` is available for codecs that want to avoid `String` allocation on hot paths. Protobuf uses the numeric `fieldId`; JSON uses the name bytes. Codecs that do not care about one side can ignore it.
+
+A self-describing format (one that can materialize an arbitrary wire value without a schema, such as JSON or YAML) additionally extends `Codec.IntrospectingReader` and implements `readStructure(): Structure.Value`. That capability is what lets `Schema[Structure.Value]` accept any shape on read. A binary format without per-value type tags (Protobuf) does not extend it, so the type system rejects an open-shape decode through such a codec at compile time rather than at runtime.
 
 ### A minimal codec
 

@@ -9,7 +9,7 @@ class JsonTest extends kyo.test.Test[Any]:
     given CanEqual[Any, Any] = CanEqual.derived
 
     // ===================================================================
-    // encode/decode — from FormatTest (JSON-only tests)
+    // encode/decode: from FormatTest (JSON-only tests)
     // ===================================================================
 
     "encode/decode" - {
@@ -148,7 +148,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // edge cases — from JsonEdgeCaseTest
+    // edge cases: from JsonEdgeCaseTest
     // ===================================================================
 
     "edge cases" - {
@@ -317,7 +317,7 @@ class JsonTest extends kyo.test.Test[Any]:
                 w.arrayStart(1)
                 i += 1
             w.int(1)
-            w.int(2) // second element at depth 64 — exercises setFlag/getFlag at slot 0 of word 1
+            w.int(2) // second element at depth 64; exercises setFlag/getFlag at slot 0 of word 1
             i = 0
             while i < depth do
                 w.arrayEnd()
@@ -337,7 +337,7 @@ class JsonTest extends kyo.test.Test[Any]:
                 w.arrayStart(1)
                 i += 1
             w.int(1)
-            w.int(2) // two comma-separated elements at depth 65 — slot 1 of word 1
+            w.int(2) // two comma-separated elements at depth 65, slot 1 of word 1
             i = 0
             while i < depth do
                 w.arrayEnd()
@@ -533,7 +533,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // JsonReader.float() and verify that the fallback produces the correct result.
 
         "Double with 20+ significant digits falls back and decodes correctly" in {
-            // 20 significant digits — the Eisel-Lemire scanner caps the mantissa at 19 digits and sets
+            // 20 significant digits; the Eisel-Lemire scanner caps the mantissa at 19 digits and sets
             // the truncation flag, triggering the mantissa+1 retry. If the two bounds disagree the fast
             // path returns DoubleBailOut and the fallback path must produce the correct value.
             val json   = "1.23456789012345678901"
@@ -868,7 +868,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // jsonSchema — from JsonSchemaTest
+    // jsonSchema: from JsonSchemaTest
     // ===================================================================
 
     "jsonSchema" - {
@@ -1058,22 +1058,26 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        "Json.jsonSchema[Unit] is JsonSchema.Null" in {
-            assert(Json.jsonSchema[Unit] == Json.JsonSchema.Null)
+        "Json.jsonSchema[Unit] is an empty object schema" in {
+            // Unit serializes as an empty JSON object (`{}`), so its JSON Schema description is an object
+            // shape with no properties, not `{"type":"null"}`. The MCP tool inputSchema and other JSON
+            // Schema consumers require the object form; the kyo-schema-wide convention is "Unit = empty
+            // object" (see Schema.unitSchema).
+            assert(Json.jsonSchema[Unit] == Json.JsonSchema.Obj(List.empty, List.empty))
         }
 
-        "Json.encode(()) emits null (regression)" in {
-            assert(Json.encode(()) == "null")
+        "Json.encode(()) emits an empty object" in {
+            assert(Json.encode(()) == "{}")
         }
 
-        "Json.decode[Unit](\"null\") returns ()" in {
-            assert(Json.decode[Unit]("null") == Result.Success(()))
+        "Json.decode[Unit](\"{}\") returns ()" in {
+            assert(Json.decode[Unit]("{}") == Result.Success(()))
         }
 
     }
 
     // ===================================================================
-    // BigDecimal — from BigNumberCodecTest
+    // BigDecimal: from BigNumberCodecTest
     // ===================================================================
 
     "BigDecimal" - {
@@ -1124,7 +1128,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // BigInt — from BigNumberCodecTest
+    // BigInt: from BigNumberCodecTest
     // ===================================================================
 
     "BigInt" - {
@@ -1156,7 +1160,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // numeric edge cases — from NumericEdgeTest
+    // numeric edge cases: from NumericEdgeTest
     // ===================================================================
 
     "numeric edge cases" - {
@@ -1271,7 +1275,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // Instant — from TimeCodecTest
+    // Instant: from TimeCodecTest
     // ===================================================================
 
     "Instant" - {
@@ -1334,7 +1338,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // Duration — from TimeCodecTest
+    // Duration: from TimeCodecTest
     // ===================================================================
 
     "Duration" - {
@@ -1381,7 +1385,7 @@ class JsonTest extends kyo.test.Test[Any]:
     }
 
     // ===================================================================
-    // recursive types — JSON tests from RecursiveTypeTest
+    // recursive types: JSON tests from RecursiveTypeTest
     // ===================================================================
 
     "recursive types" - {
@@ -1510,6 +1514,24 @@ class JsonTest extends kyo.test.Test[Any]:
                     assert(oneOf.variants.exists(_._1 == "Lit"))
                     assert(oneOf.variants.exists(_._1 == "Add"))
                     assert(oneOf.variants.exists(_._1 == "Neg"))
+                    // Recursive-variant field-shape preservation guard: `Add(left: Expr, right: Expr)` and
+                    // `Lit(value: Int)` must surface their non-recursive fields on the variant JsonSchema.
+                    // Internal helper schemas inside the macro use `Open(Tag[Any])` as structure but those
+                    // helpers are not visible here; the parent sum's `variants` carry the real Product shape
+                    // (via `summonFieldStructure` -> `deriveTypeFallback` for cyclic descent).
+                    val litVariant = oneOf.variants.find(_._1 == "Lit").get._2
+                    litVariant match
+                        case obj: JsonSchema.Obj =>
+                            assert(obj.properties.exists(_._1 == "value"))
+                        case other => fail(s"Expected Lit Obj with 'value' property, got $other")
+                    end match
+                    val addVariant = oneOf.variants.find(_._1 == "Add").get._2
+                    addVariant match
+                        case obj: JsonSchema.Obj =>
+                            assert(obj.properties.exists(_._1 == "left"))
+                            assert(obj.properties.exists(_._1 == "right"))
+                        case other => fail(s"Expected Add Obj with 'left'/'right' properties, got $other")
+                    end match
                 case other => fail(s"Expected OneOf, got $other")
             end match
         }
@@ -1604,7 +1626,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // STRING ESCAPING
         // -----------------------------------------------------------------
 
-        // simdjson #1870 — lone low surrogate produces invalid UTF-8
+        // simdjson #1870: lone low surrogate produces invalid UTF-8
         // https://github.com/simdjson/simdjson/issues/1870
         "lone low surrogate is rejected" in {
             val json   = "\"\\uDC00\""
@@ -1612,14 +1634,14 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(result.isFailure, "Lone low surrogate should be rejected")
         }
 
-        // simdjson #1870 — lone high surrogate
+        // simdjson #1870: lone high surrogate
         "lone high surrogate is rejected" in {
             val json   = "\"\\uD800\""
             val result = Json.decode[String](json)
             assert(result.isFailure, "Lone high surrogate should be rejected")
         }
 
-        // JSONTestSuite — surrogate pair with mixed-case hex digits
+        // JSONTestSuite: surrogate pair with mixed-case hex digits
         // https://github.com/nst/JSONTestSuite
         "surrogate pair with mixed-case hex digits" in {
             val json    = "\"\\uD834\\uDd1e\""
@@ -1627,7 +1649,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded.codePointAt(0) == 0x1d11e) // U+1D11E MUSICAL SYMBOL G CLEF
         }
 
-        // spray-json #254 — U+FFFF character causes parse failure
+        // spray-json #254: U+FFFF character causes parse failure
         // https://github.com/spray/spray-json/issues/254
         "U+FFFF noncharacter round-trips" in {
             val json    = "\"a\\uFFFFb\""
@@ -1635,7 +1657,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == "a\uFFFFb")
         }
 
-        // JSONTestSuite — null escape in string
+        // JSONTestSuite: null escape in string
         // https://github.com/nst/JSONTestSuite
         "null byte escape round-trips" in {
             val json    = "\"\\u0000\""
@@ -1643,7 +1665,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == "\u0000")
         }
 
-        // jackson-core #223 — supplementary characters must survive round-trip
+        // jackson-core #223: supplementary characters must survive round-trip
         // https://github.com/FasterXML/jackson-core/issues/223
         "supplementary character U+1F602 round-trips" in {
             val emoji   = new String(Character.toChars(0x1f602)) // 😂
@@ -1653,7 +1675,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded.codePointAt(0) == 0x1f602)
         }
 
-        // jackson-core #1359 — BMP chars above surrogate block misidentified
+        // jackson-core #1359: BMP chars above surrogate block misidentified
         // https://github.com/FasterXML/jackson-core/issues/1359
         "full-width comma U+FF0C round-trips" in {
             val s       = "foo\uFF0Cbar"
@@ -1662,7 +1684,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == s)
         }
 
-        // jackson-databind #4323 — U+2028 lost after round-trip
+        // jackson-databind #4323: U+2028 lost after round-trip
         // https://github.com/FasterXML/jackson-databind/issues/4323
         "U+2028 line separator preserved in round-trip" in {
             val s       = "before\u2028after"
@@ -1675,7 +1697,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // NUMBER PARSING
         // -----------------------------------------------------------------
 
-        // simdjson #2093 — decimal overflow during double parsing
+        // simdjson #2093: decimal overflow during double parsing
         // https://github.com/simdjson/simdjson/issues/2093
         "long decimal mantissa parses correctly" in {
             val json    = "0.95000000000000000000"
@@ -1683,7 +1705,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == 0.95)
         }
 
-        // simdjson #1415 — Long.MaxValue + 1 wraps instead of erroring
+        // simdjson #1415: Long.MaxValue + 1 wraps instead of erroring
         // https://github.com/simdjson/simdjson/issues/1415
         "Long.MaxValue + 1 as Long fails or returns correct BigInt" in {
             val json   = "9223372036854775808"
@@ -1696,7 +1718,7 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // upickle #259 — integer overflow silently wraps for narrow types
+        // upickle #259: integer overflow silently wraps for narrow types
         // https://github.com/com-lihaoyi/upickle/issues/259
         "Byte overflow is rejected" in {
             val result = Json.decode[Byte]("999")
@@ -1707,7 +1729,7 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // upickle #259 — Short overflow silently wraps
+        // upickle #259: Short overflow silently wraps
         "Short overflow is rejected" in {
             val result = Json.decode[Short]("99999")
             result match
@@ -1717,7 +1739,7 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // upickle #259 — Int overflow silently wraps
+        // upickle #259: Int overflow silently wraps
         "Int overflow is rejected" in {
             val result = Json.decode[Int]("9999999999")
             result match
@@ -1727,7 +1749,7 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // zio-json #221 — float parsing wrong for long mantissa
+        // zio-json #221: float parsing wrong for long mantissa
         // https://github.com/zio/zio-json/issues/221
         "float precision edge: 1.199999988079071" in {
             val json    = "1.199999988079071"
@@ -1735,21 +1757,21 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == 1.1999999f, s"Expected 1.1999999f, got $decoded")
         }
 
-        // zio-json #221 — near Float.MaxValue
+        // zio-json #221: near Float.MaxValue
         "float near MaxValue: 3.4028235677973366e38" in {
             val json    = "3.4028235677973366e38"
             val decoded = Json.decode[Float](json).getOrThrow
             assert(decoded == 3.4028235e38f, s"Expected Float.MaxValue, got $decoded")
         }
 
-        // zio-json #221 — near Float.MinPositiveValue
+        // zio-json #221: near Float.MinPositiveValue
         "float near min positive: 7.006492321624086e-46" in {
             val json    = "7.006492321624086e-46"
             val decoded = Json.decode[Float](json).getOrThrow
             assert(decoded == 1.4e-45f, s"Expected Float.MinPositiveValue, got $decoded")
         }
 
-        // simdjson #2099 — get_number().get_double() returns 0 for many-digit number
+        // simdjson #2099: get_number().get_double() returns 0 for many-digit number
         // https://github.com/simdjson/simdjson/issues/2099
         "many significant digits parse to correct double" in {
             val json    = "1000000000.000000001"
@@ -1757,7 +1779,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == 1e9, s"Expected 1e9, got $decoded")
         }
 
-        // play-json #241 — BigDecimal precision loss
+        // play-json #241: BigDecimal precision loss
         // https://github.com/playframework/play-json/issues/241
         "BigDecimal high precision round-trips" in {
             val json    = "\"2.2599999999999997868371792719699442386627197265625\""
@@ -1765,7 +1787,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(decoded == BigDecimal("2.2599999999999997868371792719699442386627197265625"))
         }
 
-        // JSONTestSuite / multiple libs — negative zero
+        // JSONTestSuite / multiple libs: negative zero
         // kotlinx.serialization #2599, Microsoft Bond #141
         "negative zero double preserves sign" in {
             val json    = "-0.0"
@@ -1773,7 +1795,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(1.0 / decoded == Double.NegativeInfinity, "Expected -0.0, got +0.0")
         }
 
-        // simdjson #187 — 19-digit integer with e0 exponent
+        // simdjson #187: 19-digit integer with e0 exponent
         // https://github.com/simdjson/simdjson/issues/187
         "19-digit number with e0 exponent" in {
             val json    = "1000000000000000000e0"
@@ -1785,7 +1807,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // INVALID NUMBER FORMATS (RFC 7159 compliance)
         // -----------------------------------------------------------------
 
-        // json-iterator/go #632 — accepts invalid number formats
+        // json-iterator/go #632: accepts invalid number formats
         // https://github.com/json-iterator/go/issues/632
         "leading zero in number rejected or parsed as 0" in {
             val result = Json.decode[Int]("01")
@@ -1800,7 +1822,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // STRUCTURE EDGE CASES
         // -----------------------------------------------------------------
 
-        // spray-json #286 (CVE-2018-18855) — stack overflow from deep nesting
+        // spray-json #286 (CVE-2018-18855): stack overflow from deep nesting
         // https://github.com/spray/spray-json/issues/286
         "very deep nesting via recursive type is rejected by depth limit" in {
             // Build deeply nested JSON matching EdgeTreeNode(value, children: List[EdgeTreeNode])
@@ -1826,9 +1848,9 @@ class JsonTest extends kyo.test.Test[Any]:
             end match
         }
 
-        // circe #1363 — BigDecimal with huge exponent causes DoS
+        // circe #1363: BigDecimal with huge exponent causes DoS
         // https://github.com/circe/circe/issues/1363
-        // spray-json #287 — BigDecimal with absurd scale accepted
+        // spray-json #287: BigDecimal with absurd scale accepted
         // https://github.com/spray/spray-json/issues/287
         "huge exponent BigDecimal does not hang" in {
             val start   = java.lang.System.currentTimeMillis()
@@ -1837,7 +1859,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 5000, s"BigDecimal with huge exponent took ${elapsed}ms")
         }
 
-        // circe #1040 — DoS with million-digit JSON numbers
+        // circe #1040: DoS with million-digit JSON numbers
         // https://github.com/circe/circe/issues/1040
         "million-digit number does not cause DoS" in {
             val json    = "1" + "0" * 999999
@@ -1851,7 +1873,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // DOUBLE/FLOAT SPECIAL VALUES
         // -----------------------------------------------------------------
 
-        // jsoniter-scala #1160 — buffer overrun serializing specific double
+        // jsoniter-scala #1160: buffer overrun serializing specific double
         // https://github.com/plokhotnyuk/jsoniter-scala/issues/1160
         "specific double from jsoniter-scala #1160 round-trips" in {
             val d       = java.lang.Double.longBitsToDouble(-6634365113987401870L)
@@ -1893,11 +1915,11 @@ class JsonTest extends kyo.test.Test[Any]:
         // SECURITY: HASH COLLISION DoS
         // -----------------------------------------------------------------
 
-        // json4s #553 — hash-colliding keys cause quadratic parsing
+        // json4s #553: hash-colliding keys cause quadratic parsing
         // https://github.com/json4s/json4s/issues/553
-        // argonaut #314 — same attack vector
+        // argonaut #314: same attack vector
         // https://github.com/argonaut-io/argonaut/issues/314
-        // jsoniter-scala PR #325 — demonstrated on uJson
+        // jsoniter-scala PR #325: demonstrated on uJson
         // https://github.com/plokhotnyuk/jsoniter-scala/pull/325
         "hash-colliding keys are rejected by collection size limit" in {
             // "Aa" and "BB" have the same Java String hashCode (2112).
@@ -1912,7 +1934,7 @@ class JsonTest extends kyo.test.Test[Any]:
             val hashes        = collidingKeys.iterator.take(100).map(_.hashCode).toSet
             assert(hashes.size == 1, s"Keys should all share same hashCode, got ${hashes.size} distinct hashes")
 
-            // Build a JSON object with 100K truly-colliding keys — same scale as original report
+            // Build a JSON object with 100K truly-colliding keys, same scale as original report
             val sb = new StringBuilder("{")
             var i  = 0
             while i < 100000 do
@@ -1935,7 +1957,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // SECURITY: NUMERIC DoS VARIANTS
         // -----------------------------------------------------------------
 
-        // jsoniter-scala #282 — BigDecimal with many fractional zeros
+        // jsoniter-scala #282: BigDecimal with many fractional zeros
         // https://github.com/plokhotnyuk/jsoniter-scala/issues/282
         "BigDecimal with many fractional zeros does not DoS" in {
             val json    = "\"0." + "0" * 100000 + "1\""
@@ -1945,7 +1967,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 5000, s"BigDecimal fractional zeros took ${elapsed}ms")
         }
 
-        // spray-json #287 — huge positive exponent BigDecimal
+        // spray-json #287: huge positive exponent BigDecimal
         // https://github.com/spray/spray-json/issues/287
         "huge positive exponent BigDecimal does not hang" in {
             val start   = java.lang.System.currentTimeMillis()
@@ -1954,7 +1976,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 5000, s"BigDecimal 1e1000000000 took ${elapsed}ms")
         }
 
-        // json4s #554 — unexpected field with big number in object
+        // json4s #554: unexpected field with big number in object
         // https://github.com/json4s/json4s/issues/554
         "object with unexpected large number field does not DoS" in {
             val bigNum  = "1" + "0" * 100000
@@ -1965,7 +1987,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 5000, s"Skipping large unexpected number took ${elapsed}ms")
         }
 
-        // play-json CVE-2020-26882 — data amplification via small JSON expanding to huge in-memory representation
+        // play-json CVE-2020-26882: data amplification via small JSON expanding to huge in-memory representation
         // https://www.playframework.com/security/vulnerability/CVE-2020-26882-JsonParseDataAmplification
         "small exponent notation does not amplify into huge BigDecimal" in {
             // "1e100000" is 8 bytes but BigDecimal("1e100000") has scale=-100000
@@ -1989,7 +2011,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // SECURITY: LARGE STRUCTURE DoS
         // -----------------------------------------------------------------
 
-        // General — large number of object fields (memory exhaustion)
+        // General: large number of object fields (memory exhaustion)
         "object with many fields does not exhaust memory" in {
             val json    = (0 until 100000).map(i => s""""k$i":$i""").mkString("{", ",", "}")
             val start   = java.lang.System.currentTimeMillis()
@@ -1998,7 +2020,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 10000, s"Parsing 100K fields took ${elapsed}ms")
         }
 
-        // General — large array
+        // General: large array
         "large array does not cause DoS" in {
             val json    = (0 until 100000).mkString("[", ",", "]")
             val start   = java.lang.System.currentTimeMillis()
@@ -2007,7 +2029,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 10000, s"Parsing 100K element array took ${elapsed}ms")
         }
 
-        // General — skip() handles deep nesting without stack overflow
+        // General: skip() handles deep nesting without stack overflow
         // When decoding a case class, unknown fields are skipped via skip() which
         // uses iterative depth tracking. Verify it works at extreme depth.
         "skip handles extremely deep nesting in unknown field" in {
@@ -2016,7 +2038,7 @@ class JsonTest extends kyo.test.Test[Any]:
             val json   = s"""{"name":"Alice","age":30,"nested":$nested}"""
             try
                 val result = Json.decode[MTPerson](json)
-                // MTPerson ignores unknown "nested" field — skip() handles the deep nesting
+                // MTPerson ignores unknown "nested" field; skip() handles the deep nesting
                 assert(result.isSuccess)
             catch
                 case _: StackOverflowError =>
@@ -2028,7 +2050,7 @@ class JsonTest extends kyo.test.Test[Any]:
         // SECURITY: STRING DoS
         // -----------------------------------------------------------------
 
-        // General — very long string
+        // General: very long string
         "very long string does not cause DoS" in {
             val longStr = "\"" + "a" * 1000000 + "\""
             val start   = java.lang.System.currentTimeMillis()
@@ -2037,7 +2059,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 5000, s"Parsing 1M char string took ${elapsed}ms")
         }
 
-        // General — string with many escape sequences
+        // General: string with many escape sequences
         "string with many escapes does not cause DoS" in {
             val escapedStr = "\"" + "\\n" * 100000 + "\""
             val start      = java.lang.System.currentTimeMillis()
@@ -2046,7 +2068,7 @@ class JsonTest extends kyo.test.Test[Any]:
             assert(elapsed < 5000, s"Parsing 100K escapes took ${elapsed}ms")
         }
 
-        // General — string with many unicode escapes
+        // General: string with many unicode escapes
         "string with many unicode escapes does not cause DoS" in {
             val unicodeStr = "\"" + "\\u0041" * 100000 + "\""
             val start      = java.lang.System.currentTimeMillis()
@@ -2171,7 +2193,7 @@ class JsonTest extends kyo.test.Test[Any]:
     case class EdgeRectangle(width: Double, height: Double) extends EdgeShape derives CanEqual
     case class EdgePoint()                                  extends EdgeShape derives CanEqual
 
-    case class EdgeTreeNode(value: Int, children: List[EdgeTreeNode]) derives CanEqual
+    case class EdgeTreeNode(value: Int, children: List[EdgeTreeNode]) derives CanEqual, Schema
 
     // From BigNumberCodecTest
     case class BigDecimalBox(value: BigDecimal) derives CanEqual
@@ -2185,5 +2207,51 @@ class JsonTest extends kyo.test.Test[Any]:
     // From TimeCodecTest
     case class InstantBox(instant: java.time.Instant) derives CanEqual
     case class DurationBox(duration: java.time.Duration) derives CanEqual
+
+    "Json.jsonSchema requires Schema in scope" - {
+
+        "fails to compile for a type with no Schema" in {
+            typeCheckFailure("""
+                class NoSchemaType
+                Json.jsonSchema[NoSchemaType]
+            """)("NoSchemaType")
+        }
+
+    }
+
+    "jsonSchema enrichment via JsonSchemaEnricher" - {
+
+        // Json.jsonSchema enriches the result via internal.JsonSchemaEnricher.enrichObj, so the
+        // root and field doc annotations carried by a Schema surface on the produced JsonSchema.
+
+        "jsonSchema carries root doc when Schema has doc annotation" in {
+            given schema: Schema[MTUser] = Schema[MTUser].doc("a person")
+            val js                       = Json.jsonSchema[MTUser]
+            js match
+                case obj: JsonSchema.Obj =>
+                    assert(obj.description == Maybe("a person"))
+                case other =>
+                    fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
+        "jsonSchema carries field doc for name field" in {
+            given schema: Schema[MTUser] = Schema[MTUser].doc(_.name)("person name")
+            val js                       = Json.jsonSchema[MTUser]
+            js match
+                case obj: JsonSchema.Obj =>
+                    val nameProp = obj.properties.find(_._1 == "name").map(_._2)
+                    nameProp match
+                        case Some(np: JsonSchema.Str) =>
+                            assert(np.description == Maybe("person name"))
+                        case other =>
+                            fail(s"Expected name property as Str with description, got $other")
+                    end match
+                case other =>
+                    fail(s"Expected JsonSchema.Obj, got $other")
+            end match
+        }
+
+    }
 
 end JsonTest
