@@ -31,7 +31,15 @@ final private[net] class PosixHandle private (
     // One-shot claim for closing the fd (see claimFdClose), so the fd shutdown/close happens exactly once even on a recycled fd.
     fdCloseClaimed: AtomicBoolean.Unsafe,
     // The close-ownership guard (packed holder count + close bit, see CloseBit/HolderMask): the last holder while closing runs closeNow exactly once.
-    guard: AtomicInt.Unsafe
+    guard: AtomicInt.Unsafe,
+    // The single atomic handoff slot for the STARTTLS-on-io_uring stale-recv bytes (see UpgradeHandoff). Replaces the former pair of independent
+    // @volatile upgradeCarryover / upgradeReadWaiter slots: those let the reap carrier (IoUringDriver.complete) and the handshake carrier
+    // (PosixTransport.driveUpgradeRead) each read-then-act without mutual exclusion, so the reap could stage the carryover while the handshake
+    // (having read the old Absent) parked its waiter, stranding the bytes against a parked waiter that nothing fulfilled and hanging the upgrade.
+    // Both sides now CAS this one slot, so exactly one side wins each transition and the loser's single re-read sees the winner's value and
+    // completes the other half (no spin, no thread block: the waiter is fiber-parking). The close path (freeResources) swings it to Idle and fails
+    // any parked waiter Closed.
+    val upgradeHandoff: AtomicRef.Unsafe[PosixHandle.UpgradeHandoff]
 ):
     /** The reused per-handle off-heap read buffer the driver recv's into. Grown on demand by the adaptive predictor (see
       * [[growReadBufferForFullRead]]): the field is `var` so the grow can swap in a larger buffer, but every read of it is a coherent snapshot
@@ -66,14 +74,12 @@ final private[net] class PosixHandle private (
       * `detachForUpgrade` that recv stays kernel-owned and consumes the peer's first post-signal handshake flight (the ClientHello) into the read
       * buffer; its CQE then lands on an already-settled (cancelled) promise and the bytes would be lost, hanging the handshake. While
       * [[upgradeActive]] is set the handshake does NOT issue its own recv (which would race the stale recv for the same byte stream and corrupt
-      * record order); it instead consumes [[upgradeCarryover]] (bytes the stale recv delivered before the handshake parked) or parks
-      * [[upgradeReadWaiter]] (which the stale recv's completion fulfils). Exactly one stale recv is in flight per upgrade, so the flag is cleared
-      * once its bytes are delivered and subsequent handshake reads arm normally. Never set on the poller (its reads are synchronous, no stale
-      * recv exists), so this whole path is io_uring-only.
+      * record order); it instead drives the single [[upgradeHandoff]] slot, consuming the stale recv's bytes when the reap staged them first or
+      * parking a fiber waiter that the reap fulfils. Exactly one stale recv is in flight per upgrade, so the flag is cleared once its bytes are
+      * delivered and subsequent handshake reads arm normally. Never set on the poller (its reads are synchronous, no stale recv exists), so this
+      * whole path is io_uring-only.
       */
-    @volatile var upgradeActive: Boolean                                                       = false
-    @volatile var upgradeCarryover: Maybe[Array[Byte]]                                         = Absent
-    @volatile var upgradeReadWaiter: Maybe[(Promise.Unsafe[Span[Byte], Abort[Closed]], Frame)] = Absent
+    @volatile var upgradeActive: Boolean = false
 
     /** Whether the peer's TLS close_notify alert was consumed on this handle's read side (a `readPlain == -3` clean-close return, RFC 8446 6.1).
       * Set true on the engine FIFO worker when the decrypt path observes the peer's close_notify; read by the connection's `closeReason`
@@ -527,6 +533,21 @@ private[net] object PosixHandle:
     // java.util.concurrent.atomic.AtomicLong (the type AtomicLong.Unsafe aliases) directly: a monotonic counter needs no capability.
     private val idGen = new java.util.concurrent.atomic.AtomicLong(0L)
 
+    /** The single atomic handoff state for the STARTTLS-on-io_uring stale-recv bytes (see [[PosixHandle.upgradeHandoff]]). The stale recv reaped on
+      * the io_uring reap carrier ([[IoUringDriver.complete]]) and the handshake-driving carrier ([[PosixTransport.driveUpgradeRead]]) run on
+      * different carriers; this one state, swung by CAS, replaces the two separate `@volatile` slots whose independent check-then-act let the two
+      * sides interleave and strand the bytes (the handshake parked a waiter while the reap had already staged the carryover, so neither fulfilled
+      * the other and the upgrade hung). Exactly one transition wins each side's CAS, so the bytes always meet the waiter:
+      *   - [[Idle]]: neither side has acted yet.
+      *   - [[Carryover]]: the reap delivered the stale recv's bytes before the handshake parked; the handshake's next read consumes them.
+      *   - [[Waiter]]: the handshake parked before the reap delivered; the reap fulfils this fiber-parking promise with the bytes.
+      */
+    private[posix] enum UpgradeHandoff:
+        case Idle
+        case Carryover(bytes: Array[Byte])
+        case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
+    end UpgradeHandoff
+
     /** Socket handle: one fd carries both directions, so `readFd == writeFd`. The optional `connectTarget` (an encoded `sockaddr` buffer and
       * its length) is stashed for the io_uring client-connect path: `IoUringDriver.awaitConnect` submits an `IORING_OP_CONNECT` SQE against it.
       * The readiness poller ignores it (epoll/kqueue signal connect via write-readiness), so it defaults to `Absent` for an already-connected
@@ -544,7 +565,8 @@ private[net] object PosixHandle:
             Absent,
             connectTarget,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
-            guard = AtomicInt.Unsafe.init(0)
+            guard = AtomicInt.Unsafe.init(0),
+            upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle)
         )
 
     /** stdio handle: split fds, read end 0 and write end 1 (the split-fd case). */
@@ -558,7 +580,8 @@ private[net] object PosixHandle:
             Absent,
             Absent,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
-            guard = AtomicInt.Unsafe.init(0)
+            guard = AtomicInt.Unsafe.init(0),
+            upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle)
         )
 
     /** Actually release the resources the handle owns: the TLS engine (if any) and the reused read buffer. Called exactly once, under the
@@ -624,13 +647,18 @@ private[net] object PosixHandle:
             )
         }
         h.backpressureWaiter = Absent
-        // Fail (not merely clear) a STARTTLS handshake parked on the stale-recv carry-over: if the handle closes mid-upgrade (a deadline reap or a
-        // peer reset) the stale recv may never deliver, so completing it Closed lets the handshake tear down instead of hanging on the waiter.
-        h.upgradeReadWaiter.foreach { (p, fr) =>
-            p.completeDiscard(Result.fail(kyo.Closed("PosixHandle", fr, s"fd=${h.readFd}/${h.writeFd} closed during upgrade")(using fr)))
-        }
-        h.upgradeReadWaiter = Absent
-        h.upgradeCarryover = Absent
+        // Fail (not merely clear) a STARTTLS handshake parked on the stale-recv handoff: if the handle closes mid-upgrade (a deadline reap or a
+        // peer reset) the stale recv may never deliver, so completing the parked waiter Closed lets the handshake tear down instead of hanging on
+        // it. Swing the one handoff slot to Idle and, if it held a parked Waiter, fail that promise with the frame captured when it parked. A
+        // Carryover (bytes the reap staged that no read ever consumed) just drops with the reference. freeResources runs under the guard once no op
+        // holds the resources, so this read-then-set never races a concurrent CAS from either carrier.
+        h.upgradeHandoff.getAndSet(PosixHandle.UpgradeHandoff.Idle) match
+            case PosixHandle.UpgradeHandoff.Waiter(p, fr) =>
+                p.completeDiscard(Result.fail(kyo.Closed("PosixHandle", fr, s"fd=${h.readFd}/${h.writeFd} closed during upgrade")(using
+                    fr
+                )))
+            case _ => ()
+        end match
         h.upgradeActive = false
         // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
         h.pendingReadPromise = Absent

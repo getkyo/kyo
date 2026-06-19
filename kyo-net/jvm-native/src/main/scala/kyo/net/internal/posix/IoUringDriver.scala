@@ -188,13 +188,27 @@ final private[net] class IoUringDriver private[posix] (
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}"
 
     def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        // Arm the recv on the reap carrier (via the engine queue) so get_sqe has a single producer. The closedFlag check runs there too: a submit
-        // on a ring being torn down is a use-after-free (#177), and once closing, the reap-loop exit drains this op and fails the promise. The
-        // reap loop's own -EINTR re-submit calls submitRecv directly, already on the reap carrier.
-        submitEngineOp { () =>
-            if closedFlag.get() then promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
-            else submitRecv(handle, promise, eintrRetries = 0)
-        }
+        // STARTTLS single-recv gate. While `upgradeActive` is set the handshake owns the fd's read side exclusively: the only recv that may be in
+        // flight is the one the plaintext ReadPump armed BEFORE the upgrade (kernel-owned, uncancellable, carrying the peer's first post-signal
+        // flight), which the reap routes through `upgradeHandoff`. Any recv arm REQUESTED while the flag is set is a stray plaintext-ReadPump re-arm
+        // racing the upgrade (the ReadPump's last plaintext read re-armed after detachForUpgrade cancelled it, on its reused callback-less promise);
+        // arming it would put a second recv on the fd that wins the peer's flight and drops the bytes onto the dead promise, stranding the handshake
+        // (the STARTTLS upgrade stall). Drop it at the source: the ReadPump is being torn down, so its promise never needing to complete is correct.
+        // The handshake's own ciphertext recv is never gated here: driveUpgradeRead clears `upgradeActive` BEFORE it calls awaitReadCiphertext, so
+        // the handshake arm always reads the flag false. The flag is volatile and read synchronously on the calling carrier, so the discriminator is
+        // "was the upgrade active at the instant this arm was requested", which a stray re-arm always satisfies and the handshake arm never does.
+        // False on the pollers (upgradeActive is never set there: synchronous reads hold no kernel-owned recv), so this is io_uring-only.
+        if handle.upgradeActive then ()
+        else
+            // Arm the recv on the reap carrier (via the engine queue) so get_sqe has a single producer. The closedFlag check runs there too: a submit
+            // on a ring being torn down is a use-after-free (#177), and once closing, the reap-loop exit drains this op and fails the promise. The
+            // reap loop's own -EINTR re-submit calls submitRecv directly, already on the reap carrier.
+            submitEngineOp { () =>
+                if closedFlag.get() then promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
+                else submitRecv(handle, promise, eintrRetries = 0)
+            }
+        end if
+    end awaitRead
 
     /** Submit one recv SQE for `promise`, recording `eintrRetries` (the count of prior re-submissions caused by a `-EINTR` read CQE) on the
       * pending op so the reap can bound the EINTR retry. The public [[awaitRead]] enters at 0; the reap's `-EINTR` re-submit enters at the
@@ -755,10 +769,14 @@ final private[net] class IoUringDriver private[posix] (
         }
     end closeListener
 
-    /** True when a recv SQE for `handle` is still kernel-owned (in `pending`). The STARTTLS upgrade consults this right after `detachForUpgrade`
-      * to learn whether the plaintext ReadPump left a stale recv in flight that will consume the peer's first handshake flight; if so the handshake
-      * routes through the handle's upgrade carry-over instead of issuing a second, racing recv. Scans `pending` (close-path cost, not the hot read
-      * path); a handle has at most one recv in flight at a time.
+    /** True when a recv SQE for `handle` is kernel-owned (registered in `pending`). The STARTTLS upgrade read path consults this ON THE REAP CARRIER
+      * (inside the handshake's `driveUpgradeRead`, which runs as an engine op) to learn whether the plaintext ReadPump left a stale recv that will
+      * consume the peer's first handshake flight; if so the handshake routes through the handle's `upgradeHandoff` instead of issuing a second, racing
+      * recv. `pending` alone is authoritative here: the genuine stale recv was armed BEFORE `upgradeActive` was set, so its `submitRecv` registered it
+      * on the reap carrier before this `driveUpgradeRead` op runs (FIFO). A stray ReadPump re-arm requested DURING the upgrade can never register a
+      * competing recv: `awaitRead`'s single-recv gate drops any arm requested while `upgradeActive` is set, so it never reaches `pending` (and the
+      * earlier queued-arm counting that guarded against it is no longer needed). Scans `pending` (close-path cost, not the hot read path); a handle
+      * has at most one recv in flight at a time.
       */
     override def hasInFlightRead(handle: PosixHandle)(using AllowUnsafe): Boolean =
         val it    = pending.values().iterator()
@@ -1094,30 +1112,50 @@ final private[net] class IoUringDriver private[posix] (
                             // maxTransientIoRetries via the carried count so an EINTR storm cannot spin: past the bound the `else` below fails Closed.
                             // Skipped when the handle is already closing (a concurrent close): re-arming a freed handle would be a use-after-free.
                             submitRecv(h, promise, eintrRetries + 1)
-                        else if h.upgradeActive && !h.isClosing() && promise.done() then
-                            // STARTTLS stale recv: this recv was armed by the plaintext ReadPump before detachForUpgrade cancelled it (so its
-                            // promise is already settled), but the handle is alive and mid-upgrade. io_uring cannot cancel that recv, so it just
-                            // consumed the peer's first post-signal flight (the ClientHello). Route those bytes to the handshake (the waiter it
-                            // parked on, or upgradeCarryover when it has not parked yet) instead of dropping them on the settled promise. Exactly
-                            // one stale recv is in flight, so clear the flag: later handshake reads arm a normal recv with no second racing recv.
-                            h.upgradeActive = false
+                        else if h.upgradeActive && !h.isClosing() then
+                            // STARTTLS stale recv: this recv was armed by the plaintext ReadPump before detachForUpgrade detached the connection, and
+                            // io_uring cannot cancel it, so it just consumed the peer's first post-signal flight (the ClientHello / ServerHello). The
+                            // discriminator is h.upgradeActive alone, NOT the recv promise state: the ReadPump reuses ONE promise object across reads
+                            // (becomeAvailable resets it and re-arms), so detachForUpgrade's cancel may fail one arming while the pump re-arms a fresh
+                            // one whose promise is still live when this CQE reaps. A `promise.done()` guard therefore mis-classifies that live-promise
+                            // stale recv as a normal read and feeds the flight to the torn-down ReadPump, stranding the handshake's parked waiter (the
+                            // residual stall). While upgradeActive is set the handshake never arms its own recv (it routes through driveUpgradeRead,
+                            // which issues none), so the ONLY recv in flight is the stale one and its bytes always belong to the handshake. Route them
+                            // through the single upgradeHandoff slot (fulfil the waiter it parked, or stage a Carryover when it has not parked yet)
+                            // instead of the settled/reused promise. upgradeActive is NOT cleared here: it must stay set until the handshake CARRIER
+                            // actually consumes the bytes (driveUpgradeRead), otherwise a recvAndFeed running between this clear and the consume would
+                            // read upgradeActive false, skip driveUpgradeRead, issue its own recv, and strand the staged Carryover. The handshake
+                            // clears it once it takes the bytes; exactly one stale recv exists, so this never re-fires on a later normal recv.
+                            import PosixHandle.UpgradeHandoff
                             if res > 0 then
                                 val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res)
-                                h.upgradeReadWaiter match
-                                    case Present((waiter, _)) =>
-                                        h.upgradeReadWaiter = Absent
-                                        waiter.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
-                                    case Absent =>
-                                        h.upgradeCarryover = Present(arr) // staged: the handshake's next read consumes it
+                                h.upgradeHandoff.get() match
+                                    case parked: UpgradeHandoff.Waiter =>
+                                        // The handshake already parked; claim the waiter by CAS to Idle (against the exact instance read: reference
+                                        // equality, and the handshake parks exactly once per upgrade so this cannot lose to another park) and fulfil it.
+                                        discard(h.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
+                                        parked.promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
+                                    case _ =>
+                                        // The handshake has not parked yet: stage the bytes for its next read. If the CAS loses, the handshake parked a
+                                        // Waiter in the window between the read above and this CAS; a SINGLE re-read then observes that Waiter and
+                                        // fulfils it (no loop, no spin: the handshake parks at most once per upgrade).
+                                        if !h.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, UpgradeHandoff.Carryover(arr)) then
+                                            h.upgradeHandoff.get() match
+                                                case parked: UpgradeHandoff.Waiter =>
+                                                    discard(h.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
+                                                    parked.promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
+                                                case _ => ()
                                 end match
                             else
                                 // EOF (res == 0) or error (res < 0) during the upgrade: fail the parked waiter so the handshake tears down. If it has
                                 // not parked yet there is nothing to stage; the handshake's own first read then observes the closed/EOF fd.
-                                h.upgradeReadWaiter.foreach { (waiter, _) =>
-                                    h.upgradeReadWaiter = Absent
-                                    if res == 0 then waiter.completeDiscard(Result.succeed(Span.empty[Byte]))
-                                    else waiter.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
-                                }
+                                h.upgradeHandoff.get() match
+                                    case parked: UpgradeHandoff.Waiter =>
+                                        discard(h.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
+                                        if res == 0 then parked.promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                                        else
+                                            parked.promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
+                                    case _ => ()
                             end if
                         else if res > 0 then
                             h.tls match
@@ -1173,6 +1211,7 @@ final private[net] class IoUringDriver private[posix] (
                             h.peerEof = true
                             promise.completeDiscard(Result.succeed(Span.empty[Byte])) // EOF
                         else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
+                        end if
                     case PendingOp.Write(h, _, _, len) =>
                         // The raw-send CQE was reaped: account for it (advance the pending tail, re-submit the remainder on a partial send or any
                         // coalesced bytes) on the engine FIFO worker so rawPending stays single-owner, mirroring the TlsWrite path. The pinned
