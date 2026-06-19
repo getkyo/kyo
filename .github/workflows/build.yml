@@ -47,11 +47,14 @@ jobs:
       # still runs the four targets on separate runners, so this costs no wall-clock on the JVM pole.
       SBT_TASK_LIMIT: 1
       # G1 is the JDK 24 default; pin it explicitly so the collector is fixed across JDK vendor/version.
-      # -Xmx12G is the safe ceiling on a 16GB runner (heap + 2G metaspace + OS + Node leave no room
-      # above it). macos-arm64 is a 14GB box that needs -Xmx6G; it is not in the active matrix, so
-      # re-add a per-os override here if that target is re-enabled.
-      JAVA_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-      JVM_OPTS:  '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      # -Xmx12G is the driver ceiling, needed by the compile/link phase (Scala plus Scala.js/Wasm link
+      # run in the driver heap). There is deliberately no -Xms floor: tests run in forked JVMs (sized via
+      # build.sbt Test/javaOptions), and SBT_TASK_LIMIT=1 keeps compile and test from overlapping, so a low
+      # floor lets G1 release the driver's compile heap back to the box during the test phase, leaving room
+      # for the forks. macos-arm64 is a 14GB box that needs a lower ceiling; it is not in the active matrix,
+      # so re-add a per-os override here if that target is re-enabled.
+      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
 
     steps:
       - uses: actions/checkout@v6.0.3

@@ -44,9 +44,11 @@ jobs:
       # exhaust the 12GB heap (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill,
       # exit 143). Mirrors build.yml; a single-module command has little parallelism to lose anyway.
       SBT_TASK_LIMIT: 1
-      # G1 is the JDK 24 default; pin it explicitly. -Xmx12G is the safe ceiling on a 16GB runner.
-      JAVA_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-      JVM_OPTS:  '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      # G1 is the JDK 24 default; pin it explicitly. -Xmx12G is the driver ceiling for the compile/link
+      # phase; no -Xms floor, so G1 releases that heap during the test phase, when the forked test JVMs
+      # (sized via build.sbt Test/javaOptions) do the work. Mirrors build.yml.
+      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
     steps:
       - uses: actions/checkout@v6.0.3
         with:
