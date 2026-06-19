@@ -208,7 +208,7 @@ object TestRunner:
                             leaf ++ synthetic,
                             duration,
                             effectiveConfig.leakCheck,
-                            effectiveConfig.leakCheckWhitelist
+                            effectiveConfig.leakCheckAllowlist
                         )
                         reporter.onSuiteComplete(suiteInfo, sr)
                         val report = TestReport(Chunk(sr))

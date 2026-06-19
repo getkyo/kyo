@@ -43,11 +43,11 @@ import kyo.minutes
   *   still running on the scheduler, a file descriptor opened during the run is still open, or a non-daemon thread the run started is still
   *   alive. Only active inside an sbt forked JVM (the one quiescent, isolated point); a no-op otherwise. Override per suite with
   *   `def config = super.config.leakCheck(false)` for a suite whose design legitimately holds a resource for the whole run.
-  * @param leakCheckWhitelist
+  * @param leakCheckAllowlist
   *   substring patterns that excuse an expected long-lived resource from [[leakCheck]] without disabling the whole check. A fiber finding is
   *   excused if any pattern appears in the offending worker's full stack; a thread finding if any pattern appears in the thread's name or
   *   stack; a descriptor finding if any pattern appears in the descriptor's target (e.g. a file path). A socket has no stable identifier to
-  *   match, so a suite holding a socket open for the whole run uses `leakCheck(false)` instead. Prefer the whitelist over disabling when an
+  *   match, so a suite holding a socket open for the whole run uses `leakCheck(false)` instead. Prefer the allowlist over disabling when an
   *   expected resource is identifiable: the suite keeps detecting every other leak.
   * @see
   *   `kyo.test.runner.TestRunner.runReport` which accepts a RunConfig as its second argument
@@ -71,7 +71,7 @@ final case class RunConfig(
     failOnNoAssertion: Boolean = true,
     heartbeatInterval: Duration = 1.minutes,
     leakCheck: Boolean = true,
-    leakCheckWhitelist: Chunk[String] = Chunk.empty
+    leakCheckAllowlist: Chunk[String] = Chunk.empty
 ) derives CanEqual:
 
     /** Returns a copy with the given reporter installed. */
@@ -122,16 +122,16 @@ final case class RunConfig(
       */
     def heartbeatInterval(heartbeatInterval: Duration): RunConfig = copy(heartbeatInterval = heartbeatInterval)
 
-    /** Returns a copy with end-of-run leak detection enabled or disabled. Prefer [[leakCheckWhitelist]] over disabling when only a specific
+    /** Returns a copy with end-of-run leak detection enabled or disabled. Prefer [[leakCheckAllowlist]] over disabling when only a specific
       * expected resource needs excusing.
       */
     def leakCheck(leakCheck: Boolean): RunConfig = copy(leakCheck = leakCheck)
 
-    /** Returns a copy with the given whitelist patterns ADDED to the existing ones (additive, so `super.config.leakCheckWhitelist(...)`
+    /** Returns a copy with the given allowlist patterns ADDED to the existing ones (additive, so `super.config.leakCheckAllowlist(...)`
       * accumulates). A fiber, thread, or descriptor leak whose stack, thread name, or descriptor target contains any pattern is excused from
       * [[leakCheck]].
       */
-    def leakCheckWhitelist(patterns: String*): RunConfig = copy(leakCheckWhitelist = leakCheckWhitelist ++ Chunk.from(patterns))
+    def leakCheckAllowlist(patterns: String*): RunConfig = copy(leakCheckAllowlist = leakCheckAllowlist ++ Chunk.from(patterns))
 
 end RunConfig
 

@@ -119,8 +119,8 @@ end TestReport
   * @param leakCheck
   *   the suite's effective `RunConfig.leakCheck` setting, carried here so the run-level end-of-run leak check (performed once per forked JVM
   *   after all suites finish) can honor each suite's override
-  * @param leakCheckWhitelist
-  *   the suite's effective `RunConfig.leakCheckWhitelist`, unioned across the fork's suites by the leak check
+  * @param leakCheckAllowlist
+  *   the suite's effective `RunConfig.leakCheckAllowlist`, unioned across the fork's suites by the leak check
   * @see
   *   [[kyo.test.TestReport]] which collects multiple SuiteReports into the run-level aggregate
   * @see
@@ -135,7 +135,7 @@ final case class SuiteReport(
     leafResults: Chunk[(Chunk[String], TestResult)],
     duration: Duration,
     leakCheck: Boolean = true,
-    leakCheckWhitelist: Chunk[String] = Chunk.empty
+    leakCheckAllowlist: Chunk[String] = Chunk.empty
 ) derives CanEqual
 
 /** Static description of a leaf test, passed to reporters before and after execution.

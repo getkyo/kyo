@@ -58,7 +58,7 @@ final private[runner] class SbtRunner(
         new java.util.concurrent.ConcurrentLinkedQueue[TestReport]()
 
     // End-of-run leak detection runs once per forked test JVM, the one place the probe is both sound (the fork holds only this
-    // run's resources) and safe to fail by exit. Enablement and the whitelist are per-suite RunConfig (default on), carried on
+    // run's resources) and safe to fail by exit. Enablement and the allowlist are per-suite RunConfig (default on), carried on
     // each SuiteReport and aggregated at done(); the fork check is resolved once here (cheap: `sun.java.command` is set at JVM
     // launch). The baseline is captured now, in the constructor, before any suite runs, so the diff at done() excludes the JVM's
     // own startup descriptors and threads (including the sbt.ForkMain socket). In the main sbt JVM `forked` is false: no
@@ -93,7 +93,7 @@ final private[runner] class SbtRunner(
 
     /** Runs the end-of-run leak probes once, only inside a forked test JVM, and throws [[LeakCheck.Detected]] on a leak so sbt fails the test
       * task. The leak settings are aggregated from the suites that ran in this fork (each [[TestReport]] carries its suite's effective
-      * `leakCheck` and `leakCheckWhitelist`): the check runs if any suite enabled it, against the union of their whitelists. sbt calls `done()`
+      * `leakCheck` and `leakCheckAllowlist`): the check runs if any suite enabled it, against the union of their allowlists. sbt calls `done()`
       * more than once per forked runner (once after execution, once from a shutdown hook), so the compare-and-set guard fires the probes and
       * any failure exactly once. Outside a fork (the main sbt JVM) `forked` is false, so this is a no-op.
       */
@@ -102,11 +102,11 @@ final private[runner] class SbtRunner(
             import scala.jdk.CollectionConverters.*
             val suites    = results.asScala.flatMap(_.suiteReports)
             val enabled   = suites.exists(_.leakCheck)
-            val whitelist = Chunk.from(suites.flatMap(_.leakCheckWhitelist)).distinct
+            val allowlist = Chunk.from(suites.flatMap(_.leakCheckAllowlist)).distinct
             if enabled then
                 LeakCheck.detect(
                     leakBaseline,
-                    whitelist = whitelist,
+                    allowlist = allowlist,
                     idleBudgetNanos = 2_000_000_000L,
                     settleNanos = 200_000_000L,
                     pollNanos = 10_000_000L

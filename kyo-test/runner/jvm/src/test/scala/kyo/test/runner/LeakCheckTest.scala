@@ -50,7 +50,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(!LeakCheck.benignFd("/tmp/data.txt"))
     }
 
-    test("fdLeaks reports only new, non-benign, non-whitelisted descriptors") {
+    test("fdLeaks reports only new, non-benign, non-allowlisted descriptors") {
         val baseline = Set("socket:[1]", "/app/lib/foo.jar", "pipe:[2]")
         val current = Set(
             "socket:[1]",             // in baseline -> not a leak (e.g. the sbt.ForkMain socket)
@@ -60,7 +60,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
             "/dev/random",            // new but benign
             "socket:[99]",            // NEW socket -> leak
             "/tmp/leaked.txt",        // NEW file -> leak
-            "/tmp/excused.txt"        // NEW file but whitelisted
+            "/tmp/excused.txt"        // NEW file but allowlisted
         )
         val leaks = LeakCheck.fdLeaks(baseline, current, Chunk("excused"))
         assert(leaks.toSet == Set("socket:[99]", "/tmp/leaked.txt"), s"got $leaks")
@@ -128,7 +128,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(drained <= ambient + 0.5, s"after cleanup the spinner's load should be gone (ambient=$ambient drained=$drained)")
     }
 
-    test("non-daemon thread probe detects a leaked thread, respects the whitelist, and clears after join") {
+    test("non-daemon thread probe detects a leaked thread, respects the allowlist, and clears after join") {
         val baseline = LeakCheck.liveNonDaemonThreads()
         assert(
             !LeakCheck.leakedNonDaemonThreads(baseline, Chunk.empty).exists(_.contains("leak-probe-thread")),
@@ -149,7 +149,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
             )
             assert(
                 !LeakCheck.leakedNonDaemonThreads(baseline, Chunk("leak-probe-thread")).exists(_.contains("leak-probe-thread")),
-                "a thread whose name matches a whitelist pattern must be excused"
+                "a thread whose name matches a allowlist pattern must be excused"
             )
         finally
             leaked.interrupt()
