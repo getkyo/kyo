@@ -21,14 +21,41 @@ class TransportLifecycleTest extends Test:
 
         "connecting to a port with no listener fails Closed" in {
             val transport = NetPlatform.transport
-            for
-                // Bind an ephemeral port through the transport, capture it, then close the listener so nothing is listening on that port.
-                listener <- transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get
-                port = listener.port
-                _    = listener.close()
-                outcome <- Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get)
-            yield assert(outcome.isFailure, s"expected Closed connecting to a port with no listener (port $port), got $outcome")
-            end for
+            // Derive a no-listener port by binding an ephemeral port through the transport, capturing it, then closing the listener. Once closed the
+            // port is unbound, so a connect to it must be refused (Closed). The catch: the suites run at `parallelism 4`, so between the close and the
+            // connect another suite's `listen("127.0.0.1", 0, ...)` can have the kernel re-assign that just-freed ephemeral port to ITS listener, and
+            // then the connect lands on that foreign listener and SUCCEEDS, which flaked the single-shot form (a captured run connected to a reused
+            // port 40971). Retry on that reuse: a connect that unexpectedly succeeds means the port was rebound by another suite, so close that
+            // connection and try a fresh port. The retry never weakens the contract: it asserts that a connect to a genuinely-unbound port fails, and
+            // a real bug (the product returning a live connection for an unbound port) would make every attempt "succeed" and exhaust the retries.
+            def attempt(remaining: Int): Unit < (Async & Abort[Closed]) =
+                transport.listen("127.0.0.1", 0, 128)(_ => ()).safe.get.map { listener =>
+                    val port = listener.port
+                    listener.close()
+                    Abort.run[Closed](transport.connect("127.0.0.1", port).safe.get).map { outcome =>
+                        val next: Unit < (Async & Abort[Closed]) =
+                            outcome match
+                                case Result.Success(conn) =>
+                                    // The port was reused by a concurrently-running suite's listener: close the connection and retry a fresh port.
+                                    // Past the retry budget, surface it as a failure (a product that hands back a live connection for an unbound port).
+                                    conn.close()
+                                    if remaining > 0 then attempt(remaining - 1)
+                                    else
+                                        Sync.defer(assert(
+                                            false,
+                                            s"connecting to an unbound port kept succeeding (port $port); product returned a live connection"
+                                        ))
+                                    end if
+                                case _ =>
+                                    // A Failure (the contract: refused) or a Panic both end the retry; assert the refusal.
+                                    Sync.defer(assert(
+                                        outcome.isFailure,
+                                        s"expected Closed connecting to a port with no listener (port $port), got $outcome"
+                                    ))
+                        next
+                    }
+                }
+            attempt(remaining = 16)
         }
 
         "closing one end surfaces Closed on the peer connection" in {
