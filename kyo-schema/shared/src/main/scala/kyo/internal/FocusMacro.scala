@@ -427,6 +427,21 @@ import scala.quoted.*
             end if
         }
 
+        // Hoist each distinct field-schema resolution to one lazy val shared by write, read, and
+        // structure. summonInline inline-expands a no-derives nested codec (and at runtime
+        // re-constructs it); hoisting fires it once per distinct field type and memoizes it per
+        // instance, instead of 3x per field plus a per-call reconstruction at every field site.
+        val hoistOwner     = Symbol.spliceOwner
+        val hoistedSchemas = scala.collection.mutable.ListBuffer.empty[(TypeRepr, Symbol)]
+        def hoistedSchemaSym(t: TypeRepr): Symbol =
+            hoistedSchemas.find((tt, _) => tt =:= t).map(_._2).getOrElse {
+                val schemaTpe = t.asType match
+                    case '[tt] => TypeRepr.of[Schema[tt]]
+                val s = Symbol.newVal(hoistOwner, s"_fieldSchema${hoistedSchemas.size}", schemaTpe, Flags.Lazy, Symbol.noSymbol)
+                hoistedSchemas += ((t, s))
+                s
+            }
+
         val tagExpr = summonSchemaTag(tpe)
 
         // Per-field flag: is the effective inner type itself nullable (Maybe[T] / Option[T])?
@@ -471,10 +486,10 @@ import scala.quoted.*
                 case Some((parentTpe, selfRef)) if eff =:= parentTpe =>
                     selfRef.asExprOf[Schema[T]]
                 case _ =>
-                    // A bare summon: the field's Schema given resolves at the generated-code typer
-                    // phase. No Frame is threaded into the codec, so the emitted per-field code
-                    // allocates no LazyRef.
-                    '{ summonInline[Schema[T]] }
+                    // Reference the hoisted lazy val for this field type: summoned once, shared by
+                    // write/read/structure, and constructed once per instance rather than rebuilt
+                    // at every per-field site.
+                    Ref(hoistedSchemaSym(eff)).asExprOf[Schema[T]]
             end match
         end fieldSchemaExprTyped
 
@@ -683,10 +698,11 @@ import scala.quoted.*
                 val idxExpr  = Expr(idx)
                 rawType.asType match
                     case '[ft] =>
+                        val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[ft]]
                         '{
                             kyo.Structure.Field(
                                 $nameExpr,
-                                summonInline[Schema[ft]].structure,
+                                $fieldSchemaRef.structure,
                                 kyo.Maybe.empty,
                                 $defVal($idxExpr)(),
                                 $optExpr
@@ -700,7 +716,7 @@ import scala.quoted.*
                     val perParam: List[Expr[Structure.Type]] = tpe.typeArgs.map { tp =>
                         tp.asType match
                             case '[t] =>
-                                '{ summonInline[Schema[t]].structure }
+                                '{ ${ Ref(hoistedSchemaSym(tp)).asExprOf[Schema[t]] }.structure }
                     }
                     '{ kyo.Chunk.from[Structure.Type](Array[Structure.Type](${ Varargs(perParam) }*)) }
             val nameExprS = Expr(typeName)
@@ -714,14 +730,23 @@ import scala.quoted.*
             }
         end structureExpr
 
-        '{
-            Schema.init[A](
-                writeFn = (v, w) => ${ writeBody('v, 'w) },
-                readFn = r => ${ readBody('r) },
-                sourceFields = $sourceFields,
-                structure = ${ structureExpr }
-            )
+        // Build the Schema.init term first so every fieldSchemaExprTyped / structure call has
+        // populated `hoistedSchemas`, then prepend the hoisted lazy vals as a wrapping block.
+        val schemaInitTerm: Term =
+            '{
+                Schema.init[A](
+                    writeFn = (v, w) => ${ writeBody('v, 'w) },
+                    readFn = r => ${ readBody('r) },
+                    sourceFields = $sourceFields,
+                    structure = ${ structureExpr }
+                )
+            }.asTerm
+        val hoistedValDefs: List[Statement] = hoistedSchemas.toList.map { (t, sym) =>
+            t.asType match
+                case '[tt] => ValDef(sym, Some('{ summonInline[Schema[tt]] }.asTerm))
         }
+        if hoistedValDefs.isEmpty then schemaInitTerm.asExprOf[Schema[A]]
+        else Block(hoistedValDefs, schemaInitTerm).asExprOf[Schema[A]]
     end emitProductSchemaStatic
 
     // ==========================================================================
