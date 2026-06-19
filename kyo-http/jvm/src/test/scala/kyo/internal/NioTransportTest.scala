@@ -290,4 +290,43 @@ class NioTransportTest extends kyo.BaseHttpTest:
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Accepted-connection cleanup on server close (socket leak regression)
+    // -----------------------------------------------------------------------
+
+    // Reproduces the kyo-caliban socket leak: each iteration scopes an ephemeral server and makes one request through
+    // the process-global default HttpClient (whose pooled connection is kept alive, not closed per leaf, exactly like
+    // caliban's static HttpClient.getText/postText usage). Before the fix the server's Scope finalizer closed only the
+    // listening socket and left every accepted connection open, so the accepted socket plus its still-pooled client peer
+    // accumulated across iterations (closed only by a 60s idle timer). After the fix the listener closes its accepted
+    // connections on close, whose FIN also clears the client's stale pooled connection, so the open-fd count is stable.
+    // JVM-only: the open-descriptor count comes from the Unix OS MXBean.
+    "closing a server releases its accepted connections (no socket accumulation)" in {
+        given Frame = Frame.internal
+        java.lang.management.ManagementFactory.getOperatingSystemMXBean match
+            case osBean: com.sun.management.UnixOperatingSystemMXBean =>
+                val route   = HttpRoute.getRaw("hello").response(_.bodyText)
+                val handler = route.handler(_ => HttpResponse.ok("world"))
+                def cycle: Unit < (Async & Abort[Any]) =
+                    Scope.run {
+                        HttpServer.init(0, "localhost")(handler).map { server =>
+                            HttpClient.getText(s"http://localhost:${server.port}/hello").unit
+                        }
+                    }
+                for
+                    _      <- cycle                   // warm up lazy infra (default client, transport, classloading)
+                    before <- Sync.defer { java.lang.System.gc(); osBean.getOpenFileDescriptorCount }
+                    _      <- Kyo.foreachDiscard(1 to 20)(_ => cycle)
+                    _      <- Async.sleep(500.millis) // let any async connection closes settle
+                    after  <- Sync.defer { java.lang.System.gc(); osBean.getOpenFileDescriptorCount }
+                yield assert(
+                    after - before <= 8,
+                    s"sockets accumulated across 20 server+client cycles: before=$before after=$after delta=${after - before}"
+                )
+                end for
+            case _ =>
+                cancel("UnixOperatingSystemMXBean unavailable on this JVM")
+        end match
+    }
+
 end NioTransportTest

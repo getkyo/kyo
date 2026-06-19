@@ -5,6 +5,7 @@ import kyo.internal.HttpPlatformTransport
 import kyo.internal.codec.OpenApiGenerator
 import kyo.internal.server.HttpRouter
 import kyo.internal.server.UnsafeServerDispatch
+import kyo.internal.transport.Connection
 import kyo.internal.transport.Transport
 
 /** HTTP server that binds one or more handlers to a port and manages the server lifecycle.
@@ -187,30 +188,39 @@ object HttpServer:
             handlers: Seq[HttpHandler[?, ?, ?]]
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
             val router = HttpRouter(handlers, config.cors)
+            // Track every accepted connection so the server can close them on shutdown. The transport listener owns only the
+            // listening socket; without this, an accepted keep-alive connection stays open until a 60s idle timer fires, which
+            // leaks the socket whenever the peer keeps its side pooled (the process-global default HttpClient) instead of
+            // sending an EOF. This is the server-side mirror of HttpClientBackend.allConnections, kept at the kyo-http layer so
+            // the transport stays unaware of connection ownership.
+            val connections =
+                java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[Connection[H], java.lang.Boolean]())
+            def tracked(conn: Connection[H]): Unit < Async =
+                // Drop already-closed connections, then record this one. Pruning on accept keeps the set bounded to live
+                // connections without a per-connection close hook, so the transport's Connection needs no new surface.
+                connections.removeIf(c => !c.isOpen)
+                discard(connections.add(conn))
+                UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
+            end tracked
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
-                    transport.listenUnix(path, config.backlog) { conn =>
-                        UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
-                    }
+                    transport.listenUnix(path, config.backlog)(tracked)
                 case (Absent, Present(tls)) =>
-                    transport.listen(config.host, config.port, config.backlog, tls) { conn =>
-                        UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
-                    }
+                    transport.listen(config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
-                    transport.listen(config.host, config.port, config.backlog) { conn =>
-                        UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
-                    }
+                    transport.listen(config.host, config.port, config.backlog)(tracked)
             listenFiber.map { listener =>
-                new ListenerUnsafe(listener)
+                new ListenerUnsafe(listener, connections)
             }
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport. */
-    final private class ListenerUnsafe(
-        listener: kyo.internal.transport.Listener
+    /** Unsafe implementation wrapping a Listener from Transport, plus the set of accepted connections it owns. */
+    final private class ListenerUnsafe[H](
+        listener: kyo.internal.transport.Listener,
+        connections: java.util.Set[Connection[H]]
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise = Promise.Unsafe.init[Unit, Any]()
 
@@ -225,8 +235,25 @@ object HttpServer:
         def address: HttpAddress = listener.address
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-            listener.close()
-            discard(closedPromise.completeDiscard(Result.succeed(())))
+            listener.close() // stop accepting new connections first
+
+            def forceCloseAndComplete(): Unit =
+                connections.forEach { conn =>
+                    try conn.close()
+                    catch case _: Throwable => ()
+                }
+                connections.clear()
+                discard(closedPromise.completeDiscard(Result.succeed(())))
+            end forceCloseAndComplete
+
+            if gracePeriod <= Duration.Zero then
+                // closeNow: force-close every accepted connection at once. This is the leak fix and the path the Scope
+                // finalizer (`_.closeNow`) takes.
+                forceCloseAndComplete()
+            else
+                // Graceful: let in-flight connections run for the grace period, then force-close whatever remains.
+                discard(Clock.live.unsafe.sleep(gracePeriod).onComplete(_ => forceCloseAndComplete()))
+            end if
             closedPromise
         end closeFiber
 
