@@ -1,7 +1,10 @@
 package kyo
 
+import kyo.internal.CameraDescriptor
+import kyo.internal.GeometryDescriptor
 import kyo.internal.HostPayload
 import kyo.internal.HostValue
+import kyo.internal.MaterialKind
 import kyo.internal.PointerData
 import kyo.internal.SceneDescriptor
 import kyo.internal.StructuralOp
@@ -65,23 +68,28 @@ private[kyo] object ThreeBridge:
 
     // ---- Flatten (server -> wire) ---------------------------------------------------
 
-    /** The inline boot payload for a scene: the full tree flattened to one
-      * `HostPayload.Structural(Insert(rootId, 0, descriptor))`, with every `Bound.Ref` resolved to
-      * its current server-side value. The island decodes it and reconstitutes the client scene. The
-      * boot path is the documented-drop side of the closure-drop boundary: an unserializable node
-      * reached while flattening is logged and the boot falls back to an empty scene, so a malformed
-      * scene boots nothing rather than throwing into the SSR render; the hard-failing side is the
-      * structural Insert diff, which propagates the typed failure.
+    /** The inline boot payload for a scene and its camera: the full tree flattened to one
+      * `StructuralOp.Insert(rootId, 0, descriptor)` plus the serializable [[CameraDescriptor]] of the
+      * embed's camera, wrapped in a `HostPayload.Boot`, with every `Bound.Ref` resolved to its current
+      * server-side value. The island decodes it and reconstitutes the client scene AND the server's
+      * actual viewpoint (not a hardcoded default). The boot path is the documented-drop side of the
+      * closure-drop boundary: an unserializable node reached while flattening is logged and the boot
+      * falls back to an empty scene, so a malformed scene boots nothing rather than throwing into the
+      * SSR render; the hard-failing side is the structural Insert diff, which propagates the typed
+      * failure.
       */
-    def flattenInit(scene: Three)(using Frame): HostPayload < Sync =
-        Abort.run[UnserializableNode](flattenNode(scene)).map {
-            case Result.Success(d) => HostPayload.Structural(StructuralOp.Insert(rootId, 0, d))
-            case Result.Failure(e) =>
-                Log.error(s"host boot scene carries an unserializable node: ${e.getMessage}").andThen {
-                    HostPayload.Structural(StructuralOp.Insert(rootId, 0, SceneDescriptor("scene", Seq.empty, Seq.empty)))
-                }
-            case Result.Panic(e) => Abort.panic(e)
+    def flattenInit(scene: Three, camera: Three.Ast.Camera)(using Frame): HostPayload < Sync =
+        cameraDescriptor(camera).map { cam =>
+            Abort.run[UnserializableNode](flattenNode(scene)).map {
+                case Result.Success(d) => HostPayload.Boot(StructuralOp.Insert(rootId, 0, d), cam)
+                case Result.Failure(e) =>
+                    Log.error(s"host boot scene carries an unserializable node: ${e.getMessage}").andThen {
+                        HostPayload.Boot(StructuralOp.Insert(rootId, 0, SceneDescriptor("scene", Seq.empty, Seq.empty)), cam)
+                    }
+                case Result.Panic(e) => Abort.panic(e)
+            }
         }
+    end flattenInit
 
     // The serializable placeholder a structural reactive region (Foreach/Reactive) flattens to: an
     // empty "group" holder occupying the region's deterministic node-id position. The client
@@ -112,17 +120,36 @@ private[kyo] object ThreeBridge:
                         resolveProps(node).map { props =>
                             val kind = kindOf(node)
                             Kyo.foreach(childrenOf(node))(flattenNode).map { kids =>
-                                SceneDescriptor(kind, props, kids.toSeq)
+                                node match
+                                    case m: Three.Ast.Mesh =>
+                                        SceneDescriptor(
+                                            kind,
+                                            props,
+                                            kids.toSeq,
+                                            geometry = geometryDescriptor(m.geometry),
+                                            material = Present(materialKind(m.material))
+                                        )
+                                    case _ =>
+                                        SceneDescriptor(kind, props, kids.toSeq)
                             }
                         }
 
     // The kind tag of a node that cannot cross the wire (a closure or a js.Dynamic), or Absent when the
-    // node serializes. Only `Custom` is dropped: a `Reactive`/`Foreach` is serializable as an empty
-    // holder placeholder (its children stream over the structural channel), handled in flattenNode.
+    // node serializes. A `Custom` node is dropped (it carries a closure). A `Mesh` whose geometry or
+    // material is `Custom` is also dropped: the closure/js.Dynamic build seam stays server-side, the same
+    // closure-drop boundary as a Custom node. A `Reactive`/`Foreach` is serializable as an empty holder
+    // placeholder (its children stream over the structural channel), handled in flattenNode.
     private def unserializableKind(node: Three): Maybe[String] =
         node match
             case _: Three.Ast.Custom[?] => Present("custom")
-            case _                      => Absent
+            case m: Three.Ast.Mesh =>
+                m.geometry match
+                    case _: Three.Ast.Geometry.Custom[?] => Present("custom-geometry")
+                    case _ =>
+                        m.material match
+                            case _: Three.Ast.Material.Custom[?] => Present("custom-material")
+                            case _                               => Absent
+            case _ => Absent
 
     private def kindOf(node: Three): String =
         node match
@@ -137,26 +164,48 @@ private[kyo] object ThreeBridge:
             case _                              => "group"
 
     // Resolves the reactive-or-const prop values of one node to a Seq[(slot, HostValue)], reading the
-    // current value of any Bound.Ref. Only the prop kinds the client mirror can patch are emitted.
+    // current value of any Bound.Ref. Only the prop kinds the client mirror can patch are emitted. The
+    // slot, known here from collectBounds, drives the HostValue tagging (not a runtime isInstanceOf):
+    // see toHostValue.
     private def resolveProps(node: Three)(using Frame): Seq[(String, HostValue)] < Sync =
         val acc = collectBounds(node)
         Kyo.foreach(acc) { case (slot, bound) =>
-            currentValue(bound).map(hv => (slot, hv))
+            currentValue(slot, bound).map(hv => (slot, hv))
         }.map(_.toSeq)
     end resolveProps
 
-    private def currentValue(bound: Bound[Any])(using Frame): HostValue < Sync =
+    private def currentValue(slot: String, bound: Bound[Any])(using Frame): HostValue < Sync =
         bound match
-            case Bound.Const(v) => Sync.defer(toHostValue(v))
-            case Bound.Ref(sig) => sig.current.map(toHostValue)
+            case Bound.Const(v) => Sync.defer(toHostValue(slot, v))
+            case Bound.Ref(sig) => sig.current.map(toHostValue(slot, _))
 
-    private def toHostValue(v: Any): HostValue =
+    // The slots whose value is a Vec3 (transform vectors), a Color (an opaque Int), or a scalar Double
+    // (a Normal/Radians/Double fraction). Tagging by SLOT is correct where tagging by runtime type is
+    // not: on Scala.js a whole-number Double (opacity/metalness/roughness/intensity = 0.0/1.0) boxes to
+    // an Int and would satisfy isInstanceOf[Int], mis-tagging a scalar as a Color. The slot is known at
+    // collectBounds time, so it disambiguates without inspecting the runtime value.
+    private val vec3Slots: Set[String]  = Set(slotPosition, slotRotation, slotScale)
+    private val colorSlots: Set[String] = Set(slotColor, slotEmissive)
+
+    private def toHostValue(slot: String, v: Any): HostValue =
+        if vec3Slots.contains(slot) then
+            val c = v.asInstanceOf[Vec3]
+            HostValue.V3(c.x, c.y, c.z)
+        else if colorSlots.contains(slot) then
+            // Color is an opaque Int; at runtime it erases to a boxed Int.
+            HostValue.Col(v.asInstanceOf[Int])
+        else
+            // opacity/metalness/roughness/intensity: Normal/Radians/Double opaque wrappers erase to Double.
+            HostValue.Num(numericValue(v))
+
+    // Reads a scalar slot's raw value as a Double. On Scala.js a whole-number Double boxes to a
+    // java.lang.Integer, so a direct asInstanceOf[Double] can throw; doubleValue on the boxed Number
+    // recovers the value uniformly across a Double or an int-boxed whole number.
+    private def numericValue(v: Any): Double =
         v match
-            case c: Vec3   => HostValue.V3(c.x, c.y, c.z)
-            case col: Int  => HostValue.Col(col)
-            case d: Double => HostValue.Num(d)
-            // Normal and Radians are opaque Double wrappers; at runtime they erase to Double.
-            case other => HostValue.Num(other.asInstanceOf[Double])
+            case d: Double => d
+            case n: Number => n.doubleValue
+            case other     => other.asInstanceOf[Double]
 
     // Collects the (slot, Bound) pairs the channel mirrors for a node: transform vec3 slots, plus the
     // material/light color/scalar slots. Color is an opaque Int and Normal/Double a Double, so each
@@ -215,6 +264,96 @@ private[kyo] object ThreeBridge:
                 Seq(slotColor -> m.color.asInstanceOf[Bound[Any]], slotOpacity -> m.opacity.asInstanceOf[Bound[Any]])
             case _ => Seq.empty
 
+    // ---- Geometry / material serialization (mesh shape across the wire) --------------
+
+    // Serializes a mesh's geometry to its typed kind + numeric params, one leaf per Three.Geometry.*
+    // factory. A Custom geometry returns Absent (it stays server-side, caught at flatten by
+    // unserializableKind); a flattened mesh thus always carries a non-Custom geometry here, so Absent is
+    // unreachable on the flatten path and the client falls back to a box only for a legacy descriptor
+    // that carried no geometry.
+    private def geometryDescriptor(geom: Three.Ast.Geometry): Maybe[GeometryDescriptor] =
+        geom match
+            case g: Three.Ast.Geometry.Box =>
+                Present(GeometryDescriptor.Box(g.width, g.height, g.depth))
+            case g: Three.Ast.Geometry.Sphere =>
+                Present(GeometryDescriptor.Sphere(g.radius, g.widthSegments, g.heightSegments))
+            case g: Three.Ast.Geometry.Plane =>
+                Present(GeometryDescriptor.Plane(g.width, g.height))
+            case g: Three.Ast.Geometry.Cylinder =>
+                Present(GeometryDescriptor.Cylinder(g.radiusTop, g.radiusBottom, g.height, g.radialSegments))
+            case g: Three.Ast.Geometry.Cone =>
+                Present(GeometryDescriptor.Cone(g.radius, g.height, g.radialSegments))
+            case g: Three.Ast.Geometry.Torus =>
+                Present(GeometryDescriptor.Torus(g.radius, g.tube, g.radialSegments, g.tubularSegments))
+            case _: Three.Ast.Geometry.Custom[?] => Absent
+
+    // Serializes a mesh's material to its class tag, one leaf per Three.Material.* factory. The prop
+    // VALUES (color/opacity/metalness/roughness/emissive) cross as descriptor props via collectBounds;
+    // this tag carries only the class plus a Points material's non-bound point size. A Custom material is
+    // caught at flatten by unserializableKind, so it never reaches here; Standard is the safe default.
+    private def materialKind(material: Three.Ast.Material): MaterialKind =
+        material match
+            case _: Three.Ast.Material.Basic    => MaterialKind.Basic
+            case _: Three.Ast.Material.Standard => MaterialKind.Standard
+            case _: Three.Ast.Material.Line     => MaterialKind.Line
+            case m: Three.Ast.Material.Points   => MaterialKind.Points(m.size)
+            case _                              => MaterialKind.Standard
+
+    // ---- Camera serialization (boot viewpoint across the wire) ----------------------
+
+    // Serializes the embed's camera to its typed kind + numeric params, reading its position transform
+    // and lookAt target as plain V3 triples (a const value directly, a Ref resolved to its current
+    // value). The factories build a const position/lookAt, so the common case reads no signal; a reactive
+    // camera reads its current value. Mirrors makeCamera's params: fov in radians, near/far, plus the
+    // perspective vs orthographic discriminator.
+    private def cameraDescriptor(camera: Three.Ast.Camera)(using Frame): CameraDescriptor < Sync =
+        camera match
+            case c: Three.Ast.Camera.Perspective =>
+                positionV3(c.transform).map { pos =>
+                    lookAtV3(c.lookAt).map(la => CameraDescriptor.Perspective(c.fov.toDouble, c.near, c.far, pos, la))
+                }
+            case c: Three.Ast.Camera.Orthographic =>
+                positionV3(c.transform).map { pos =>
+                    lookAtV3(c.lookAt).map(la => CameraDescriptor.Orthographic(c.viewSize, c.near, c.far, pos, la))
+                }
+
+    // The camera's position transform as a plain V3 (origin when absent), resolving any Ref to its
+    // current value.
+    private def positionV3(transform: Three.Ast.Transform)(using Frame): HostValue.V3 < Sync =
+        transform.position match
+            case Present(b) => vec3Value(b)
+            case Absent     => Sync.defer(HostValue.V3(0.0, 0.0, 0.0))
+
+    private def lookAtV3(lookAt: Bound[Vec3])(using Frame): HostValue.V3 < Sync =
+        vec3Value(lookAt)
+
+    private def vec3Value(bound: Bound[Vec3])(using Frame): HostValue.V3 < Sync =
+        bound match
+            case Bound.Const(v) => Sync.defer(HostValue.V3(v.x, v.y, v.z))
+            case Bound.Ref(sig) => sig.current.map(v => HostValue.V3(v.x, v.y, v.z))
+
+    // Rebuilds the camera the boot payload carried, one factory call per CameraDescriptor leaf, so the
+    // client mounts the server's actual viewpoint. The factories take degrees for fov, so the radian
+    // wire value is converted back via Radians.rad (makeCamera then re-converts to degrees for three.js).
+    private[kyo] def materializeCamera(descriptor: CameraDescriptor)(using Frame): Three.Ast.Camera =
+        descriptor match
+            case CameraDescriptor.Perspective(fovRadians, near, far, position, lookAt) =>
+                Three.Camera.perspective(
+                    fov = Radians.rad(fovRadians),
+                    near = near,
+                    far = far,
+                    position = Vec3(position.x, position.y, position.z),
+                    lookAt = Vec3(lookAt.x, lookAt.y, lookAt.z)
+                )
+            case CameraDescriptor.Orthographic(viewSize, near, far, position, lookAt) =>
+                Three.Camera.orthographic(
+                    viewSize = viewSize,
+                    near = near,
+                    far = far,
+                    position = Vec3(position.x, position.y, position.z),
+                    lookAt = Vec3(lookAt.x, lookAt.y, lookAt.z)
+                )
+
     // ---- Server-side observation (server -> client over the channel) ----------------
 
     /** Forks one observe fiber per server-owned `Bound.Ref` prop in the scene: each emission encodes
@@ -227,7 +366,7 @@ private[kyo] object ThreeBridge:
         Kyo.foreachDiscard(mirrorRefs(rootId, scene)) { case (nodeId, slot, sig) =>
             Fiber.init {
                 sig.observe { value =>
-                    emit(HostPayload.Prop(nodeId, slot, toHostValue(value)))
+                    emit(HostPayload.Prop(nodeId, slot, toHostValue(slot, value)))
                 }
             }.unit
         }
@@ -455,10 +594,16 @@ private[kyo] object ThreeBridge:
     /** Reconstitutes a client-side scene from the boot payload, allocating one mirror `SignalRef` per
       * prop slot seeded with the boot value, and returns the scene plus the `(nodeId, slot) -> mirror`
       * map. The client reconciler observes the mirrors; an inbound `HostPayload.Prop` write feeds them.
-      * A boot payload that is not the expected `Structural(Insert(...))` reconstitutes an empty scene.
+      * Accepts both the `Boot` envelope (the page-load payload carrying the scene insert and the camera)
+      * and a bare `Structural(Insert(...))` (the channel/test shape). A payload of any other shape
+      * reconstitutes an empty scene.
       */
     def reconstitute(payload: HostPayload)(using Frame): (Three, Map[(String, String), SignalRef[Any]]) < Sync =
         payload match
+            case HostPayload.Boot(StructuralOp.Insert(_, _, descriptor), _) =>
+                buildNode(rootId, descriptor).map { case (node, mirrors) =>
+                    (node, mirrors.toMap)
+                }
             case HostPayload.Structural(StructuralOp.Insert(_, _, descriptor), _) =>
                 buildNode(rootId, descriptor).map { case (node, mirrors) =>
                     (node, mirrors.toMap)
@@ -551,16 +696,12 @@ private[kyo] object ThreeBridge:
             case "group" =>
                 Three.Ast.Group(Three.Ast.MeshProps(transform = transform), children)
             case "mesh" =>
-                val material =
-                    Three.Ast.Material.Standard(
-                        color = colorRef(slotColor, Color(0xffffff)),
-                        metalness = normalRef(slotMetalness, Normal(0.0)),
-                        roughness = normalRef(slotRoughness, Normal(1.0)),
-                        opacity = normalRef(slotOpacity, Normal(1.0)),
-                        map = Absent,
-                        emissive = colorRef(slotEmissive, Color(0x000000))
-                    )
-                Three.Ast.Mesh(Three.Geometry.box(), material, Three.Ast.MeshProps(transform = transform), children)
+                Three.Ast.Mesh(
+                    materializeGeometry(d.geometry),
+                    materializeMaterial(d.material, colorRef, normalRef),
+                    Three.Ast.MeshProps(transform = transform),
+                    children
+                )
             case "light.ambient" =>
                 Three.Ast.Light.Ambient(colorRef(slotColor, Color(0xffffff)), doubleRef(slotIntensity, 1.0), transform)
             case "light.directional" =>
@@ -586,6 +727,49 @@ private[kyo] object ThreeBridge:
                 Three.Ast.Group(Three.Ast.MeshProps(transform = transform), children)
         end match
     end materializeNode
+
+    // Rebuilds the exact geometry the descriptor carries, one factory call per GeometryDescriptor leaf.
+    // A descriptor with no geometry (a legacy mesh descriptor or a non-mesh kind that reached here)
+    // falls back to a unit box, the prior behaviour for an unparameterized mesh.
+    private def materializeGeometry(geometry: Maybe[GeometryDescriptor])(using Frame): Three.Ast.Geometry =
+        geometry match
+            case Present(GeometryDescriptor.Box(w, h, d))            => Three.Geometry.box(w, h, d)
+            case Present(GeometryDescriptor.Sphere(r, ws, hs))       => Three.Geometry.sphere(r, ws, hs)
+            case Present(GeometryDescriptor.Plane(w, h))             => Three.Geometry.plane(w, h)
+            case Present(GeometryDescriptor.Cylinder(rt, rb, h, rs)) => Three.Geometry.cylinder(rt, rb, h, rs)
+            case Present(GeometryDescriptor.Cone(r, h, rs))          => Three.Geometry.cone(r, h, rs)
+            case Present(GeometryDescriptor.Torus(r, t, rs, ts))     => Three.Geometry.torus(r, t, rs, ts)
+            case Absent                                              => Three.Geometry.box()
+
+    // Rebuilds the exact material CLASS the descriptor's tag names, binding each material's prop slots to
+    // the same per-slot mirrors as the prior Standard-only path. A descriptor with no material tag (a
+    // legacy mesh descriptor) falls back to a Standard material, the prior behaviour. The bound prop
+    // VALUES arrive via the colorRef/normalRef mirrors; only the class differs by tag.
+    private def materializeMaterial(
+        material: Maybe[MaterialKind],
+        colorRef: (String, Color) => Bound[Color],
+        normalRef: (String, Normal) => Bound[Normal]
+    )(using Frame): Three.Ast.Material =
+        def standard: Three.Ast.Material.Standard =
+            Three.Ast.Material.Standard(
+                color = colorRef(slotColor, Color(0xffffff)),
+                metalness = normalRef(slotMetalness, Normal(0.0)),
+                roughness = normalRef(slotRoughness, Normal(1.0)),
+                opacity = normalRef(slotOpacity, Normal(1.0)),
+                map = Absent,
+                emissive = colorRef(slotEmissive, Color(0x000000))
+            )
+        material match
+            case Present(MaterialKind.Basic) =>
+                Three.Ast.Material.Basic(colorRef(slotColor, Color(0xffffff)), normalRef(slotOpacity, Normal(1.0)), Absent)
+            case Present(MaterialKind.Standard) | Absent =>
+                standard
+            case Present(MaterialKind.Line) =>
+                Three.Ast.Material.Line(colorRef(slotColor, Color(0xffffff)), normalRef(slotOpacity, Normal(1.0)))
+            case Present(MaterialKind.Points(size)) =>
+                Three.Ast.Material.Points(colorRef(slotColor, Color(0xffffff)), size, normalRef(slotOpacity, Normal(1.0)))
+        end match
+    end materializeMaterial
 
     // ---- Pick (client pick -> server closure) ---------------------------------------
 

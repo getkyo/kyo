@@ -64,12 +64,15 @@ final private[kyo] class HostChannel private (
         inbox.updateAndGet(_.appended((regionId, op))).unit
 
     /** Applies one inbound payload synchronously (the `< Sync` path the JS WS-callback receiver runs
-      * via `evalOrThrow`). A `Prop` writes its mirror; a `Structural` appends to the inbox.
+      * via `evalOrThrow`). A `Prop` writes its mirror; a `Structural` appends to the inbox. A `Boot`
+      * envelope is only ever the page-load island payload consumed by `readHostInit`, never delivered
+      * over the live channel, so it is a no-op here.
       */
     private[kyo] def apply(payload: HostPayload)(using Frame): Unit < Sync =
         payload match
             case HostPayload.Prop(nodeId, slot, value) => writeProp(nodeId, slot, value)
             case HostPayload.Structural(op, regionId)  => writeStructural(regionId, op)
+            case _: HostPayload.Boot                   => Kyo.unit
 
     /** The structural inbox the keyed reconciler observes (read by the later structural phase). Each
       * entry pairs a `regionId` (the target holder node id) with the op to apply there.

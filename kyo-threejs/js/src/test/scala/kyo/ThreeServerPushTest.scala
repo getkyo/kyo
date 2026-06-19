@@ -13,12 +13,16 @@ import demo.Snake3DScene
   *
   * Each scenario serves a real self-serving demo in process: `UI.runHandlers("/", DemoServe.head)`
   * over `HttpServer.init`, with `DemoServe.islandHandler` serving the linked `kyoThreeIsland` bundle.
-  * The served page carries three browser-environment shims a real browser deployment of the ESModule
-  * island must also provide: an import map resolving the bundle's bare `three` import to the served
-  * three.js build, a bootstrap module that imports and calls `kyoThreeIsland()` (the bundle exports
-  * the entry but does not self-run it), and a `getContext` patch forcing `preserveDrawingBuffer` so
-  * the external pixel readback can sample the production renderer's framebuffer after a frame. None of
-  * the shims touch a product code path; they reconstruct the browser environment the island expects.
+  * The served page carries browser-environment shims a real browser deployment of the ESModule island
+  * must also provide: an import map resolving the bundle's bare `three` import to a thin wrapper module
+  * over the served three.js build, a bootstrap module that imports and calls `kyoThreeIsland()` (the
+  * bundle exports the entry but does not self-run it), and a `getContext` patch forcing
+  * `preserveDrawingBuffer` so the external pixel readback can sample the production renderer's
+  * framebuffer after a frame. The `three` wrapper additionally records the rendered scene on
+  * `window.__kyoLastScene` (overriding only `WebGLRenderer`, re-exporting everything else verbatim) so a
+  * scenario can traverse the live three.js scene graph and assert on the reconstituted object types,
+  * which pixels alone cannot tell reliably. None of the shims touch a product code path; they
+  * reconstruct the browser environment the island expects.
   *
   * Scenario 1 drives [[ServerClockScene]], whose tick is advanced by a SERVER-SIDE fiber (not a client
   * `onFrame`) and bound to a cube's color and rotation:
@@ -39,10 +43,12 @@ import demo.Snake3DScene
   * WebSocket, corroborates the server-owned list value.
   *
   * Scenario 3 drives [[EmbeddedSceneScene]] (a lit sun/earth scene with per-mesh server-side onClick
-  * closures and a `#selected-label` HUD) to prove the client to server interactivity leg: it dispatches
-  * a raycast pick over the WebSocket exactly as the island's pointer handler does (a `HostPick` for the
-  * earth, then the sun mesh node id), and asserts each server-side onClick ran by the HUD label flipping
-  * to "Earth" then back to "Sun" over the same WebSocket.
+  * closures and a `#selected-label` HUD) to prove the client to server interactivity leg and the
+  * geometry-fidelity of the boot reconstitution: it asserts the reconstituted live mesh geometry is a
+  * SphereGeometry (the demo's meshes are spheres, so a lossy boot rendering them as boxes is caught),
+  * then dispatches a raycast pick over the WebSocket exactly as the island's pointer handler does (a
+  * `HostPick` for the earth, then the sun mesh node id), and asserts each server-side onClick ran by the
+  * HUD label flipping to "Earth" then back to "Sun" over the same WebSocket.
   *
   * Scenario 4 boots the shipped [[Snake3DScene]] over server-push: a scene mixing two static lights, a
   * `foreachKeyed` body region, a `reactive` food region, and a static ticker at the root. It asserts the
@@ -221,6 +227,13 @@ class ThreeServerPushTest extends WebGLSceneHarness:
                                 // The lit sun/earth scene boots non-empty (no foreach), so the canvas renders.
                                 _        <- Browser.waitFor(s"window.__readDistinct() >= $renderThreshold").handle(diagnoseTimeout)
                                 distinct <- Browser.evalInt("window.__readDistinct()")
+                                // Geometry fidelity (D-7a): EmbeddedScene's meshes are SPHERES (sun + earth). The
+                                // reconstituted live three.js mesh geometry must be a SphereGeometry, not a box.
+                                // Pixels cannot tell shape reliably, so assert via the live object's geometry type.
+                                _ <- Browser.waitFor(
+                                    "window.__kyoLastScene !== undefined && window.__kyoLastScene !== null"
+                                ).handle(diagnoseTimeout)
+                                geomType <- Browser.eval(geometryTypeContainingJs("Sphere"))
                                 // The HUD starts at the initial selection "Sun".
                                 _ <- Browser.waitFor("""document.querySelector('#selected-label')?.textContent?.includes('Sun')""")
                                     .handle(diagnoseTimeout)
@@ -245,6 +258,10 @@ class ThreeServerPushTest extends WebGLSceneHarness:
                                 assert(
                                     distinct >= renderThreshold,
                                     s"the embedded sun/earth scene must render a non-blank frame, got $distinct distinct pixels"
+                                )
+                                assert(
+                                    geomType.contains("Sphere"),
+                                    s"the reconstituted EmbeddedScene mesh must be a SphereGeometry, not a box; got '$geomType'"
                                 )
                                 assert(
                                     label0.contains("Sun"),
@@ -324,6 +341,7 @@ class ThreeServerPushTest extends WebGLSceneHarness:
                 wsHandler,
                 WebGLSceneHarness.jsHandler("three.module.js", module),
                 WebGLSceneHarness.jsHandler("three.core.js", core),
+                threeWrapHandler,
                 bootstrapHandler,
                 DemoServe.islandHandler
             )
@@ -387,9 +405,11 @@ class ThreeServerPushTest extends WebGLSceneHarness:
                 distinct   <- Browser.eval("String(typeof window.__readDistinct === 'function' ? window.__readDistinct() : 'no-sampler')")
                 tick       <- Browser.eval("""String(document.querySelector('#tick-label')?.textContent || 'none')""")
                 ids        <- Browser.eval("""String(document.querySelector('#ids-label')?.textContent || 'none')""")
+                selected   <- Browser.eval("""String(document.querySelector('#selected-label')?.textContent || 'none')""")
+                lastScene  <- Browser.eval("String(window.__kyoLastScene ? 'set' : 'unset')")
                 consoleErr <- Browser.eval("String((window.__consoleErrors||[]).join(' || '))")
             yield Abort.fail(BrowserScriptErrorException(
-                s"server-push wait timed out: islandError='$err' channels=$channels hasCanvas=$hasCanvas distinct=$distinct tick='$tick' ids='$ids' consoleErrors='$consoleErr'"
+                s"server-push wait timed out: islandError='$err' channels=$channels hasCanvas=$hasCanvas distinct=$distinct tick='$tick' ids='$ids' selected='$selected' lastScene=$lastScene consoleErrors='$consoleErr'"
             ))
         }(wait)
 
@@ -504,6 +524,51 @@ object ThreeServerPushTest:
                |""".stripMargin
         )
 
+    /** The import-map URL the bundle's bare `three` import resolves to: a TEST-ONLY wrapper ESModule
+      * (served at [[threeWrapPath]]) that re-exports the real three.js build verbatim, overriding only
+      * `WebGLRenderer` with a subclass that records the rendered scene on `window.__kyoLastScene`. The
+      * subclass wraps the per-instance `render` AFTER `super()` (three.js assigns `render` as an instance
+      * property in the constructor, so a prototype patch cannot intercept it), so a scenario can traverse
+      * the live three.js scene graph and assert on the reconstituted object types (a mesh's geometry
+      * constructor name), which pixels alone cannot tell reliably. It touches no product code.
+      */
+    private[kyo] val threeWrapPath: String = "/three.wrap.js"
+
+    private[kyo] def threeWrapHandler(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =
+        WebGLSceneHarness.jsHandler(
+            threeWrapPath,
+            """export * from "/three.module.js";
+              |import { WebGLRenderer as __KyoBaseRenderer } from "/three.module.js";
+              |export class WebGLRenderer extends __KyoBaseRenderer {
+              |  constructor() {
+              |    super(...arguments);
+              |    const orig = this.render.bind(this);
+              |    this.render = function(scene, camera){ window.__kyoLastScene = scene; return orig(scene, camera); };
+              |  }
+              |}
+              |""".stripMargin
+        )
+
+    /** A JS expression yielding the geometry constructor name of the first mesh in the last-rendered
+      * three.js scene whose geometry constructor name contains `needle` (e.g. "Sphere"), or a sentinel
+      * describing what was found. Traverses `window.__kyoLastScene` (recorded by the test render shim),
+      * matching on `geometry.type` (three.js sets it to the constructor name, e.g. "SphereGeometry").
+      */
+    private[kyo] def geometryTypeContainingJs(needle: String): String =
+        s"""(function(){
+           |  var scene = window.__kyoLastScene;
+           |  if (!scene) return 'no-scene';
+           |  var found = [];
+           |  scene.traverse(function(o){
+           |    if (o && o.isMesh && o.geometry) {
+           |      var t = o.geometry.type || (o.geometry.constructor && o.geometry.constructor.name) || 'unknown';
+           |      found.push(t);
+           |    }
+           |  });
+           |  var hit = found.filter(function(t){ return t.indexOf('$needle') >= 0; });
+           |  return hit.length > 0 ? hit[0] : ('none-of:' + found.join(','));
+           |})()""".stripMargin
+
     /** Injects the browser-environment shims into the genuine SSR page, at the start of `<body>` so
       * the import map and the preserve-buffer patch are in place before the inline WS client and the
       * island module script that follow it: (1) an import map resolving the bundle's bare `three`
@@ -513,7 +578,7 @@ object ThreeServerPushTest:
     private[kyo] def augmentPage(page: String): String =
         val head =
             """<script type="importmap">
-              |{ "imports": { "three": "/three.module.js" } }
+              |{ "imports": { "three": "/three.wrap.js" } }
               |</script>
               |<script>
               |window.__consoleErrors = [];

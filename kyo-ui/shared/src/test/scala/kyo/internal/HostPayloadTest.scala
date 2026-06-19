@@ -90,6 +90,70 @@ class HostPayloadTest extends kyo.test.Test[Any]:
         end match
     }
 
+    "Structural(Insert) round-trip carrying a mesh with geometry and material" in {
+        // The mesh descriptor now carries the typed geometry shape + params and the material class tag,
+        // so the server's actual sphere/torus/basic-material reconstitutes faithfully. Both must survive
+        // the codec field-exact, alongside the existing color/transform props.
+        val descriptor = SceneDescriptor(
+            "mesh",
+            Seq(
+                "color"   -> HostValue.Col(0x2244ff),
+                "opacity" -> HostValue.Num(1.0)
+            ),
+            Seq.empty,
+            geometry = Present(GeometryDescriptor.Sphere(2.5, 24, 12)),
+            material = Present(MaterialKind.Basic)
+        )
+        val original: HostPayload = HostPayload.Structural(StructuralOp.Insert("mesh0", 0, descriptor))
+        val encoded               = Json.encode[HostPayload](original)
+        val decoded               = Json.decode[HostPayload](encoded)
+        assert(decoded == Result.Success(original))
+        decoded match
+            case Result.Success(HostPayload.Structural(StructuralOp.Insert(_, _, d), _)) =>
+                assert(d.kind == "mesh")
+                // The geometry shape + params survive exactly.
+                assert(d.geometry == Present(GeometryDescriptor.Sphere(2.5, 24, 12)), s"geometry must survive, got ${d.geometry}")
+                // The material class tag survives.
+                assert(d.material == Present(MaterialKind.Basic), s"material must survive, got ${d.material}")
+                // The whole-number opacity survives as a Num (not a Col): the D-9 slot-typed wire value.
+                assert(d.props.contains("opacity" -> HostValue.Num(1.0)))
+            case other => fail(s"unexpected: $other")
+        end match
+    }
+
+    "Boot envelope round-trip carrying the scene insert and a non-default camera" in {
+        // The page-load boot envelope carries the scene's root insert AND the embed's camera, so the
+        // client reconstitutes the server's actual viewpoint. Every camera field must survive field-exact.
+        val sceneDesc = SceneDescriptor("scene", Seq.empty, Seq.empty)
+        val camera = CameraDescriptor.Perspective(
+            fovRadians = 0.7853981633974483,
+            near = 0.25,
+            far = 250.0,
+            position = HostValue.V3(3.0, 7.0, -2.0),
+            lookAt = HostValue.V3(1.0, 0.0, 1.0)
+        )
+        val original: HostPayload = HostPayload.Boot(StructuralOp.Insert("r", 0, sceneDesc), camera)
+        val encoded               = Json.encode[HostPayload](original)
+        val decoded               = Json.decode[HostPayload](encoded)
+        assert(decoded == Result.Success(original))
+        decoded match
+            case Result.Success(HostPayload.Boot(StructuralOp.Insert(k, idx, d), cam)) =>
+                assert(k == "r")
+                assert(idx == 0)
+                assert(d.kind == "scene")
+                cam match
+                    case CameraDescriptor.Perspective(fov, near, far, pos, lookAt) =>
+                        assert(fov == 0.7853981633974483, s"fov must survive, got $fov")
+                        assert(near == 0.25)
+                        assert(far == 250.0)
+                        assert(pos == HostValue.V3(3.0, 7.0, -2.0), s"camera position must survive, got $pos")
+                        assert(lookAt == HostValue.V3(1.0, 0.0, 1.0), s"camera lookAt must survive, got $lookAt")
+                    case other => fail(s"unexpected camera: $other")
+                end match
+            case other => fail(s"unexpected: $other")
+        end match
+    }
+
     "Structural(Remove) round-trip" in {
         val original: HostPayload = HostPayload.Structural(StructuralOp.Remove("k3"))
         val encoded               = Json.encode[HostPayload](original)

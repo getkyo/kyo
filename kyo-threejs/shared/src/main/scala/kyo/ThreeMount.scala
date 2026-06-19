@@ -187,8 +187,10 @@ object ThreeMount:
     /** Reads the inline boot init for a host element: parses the nested
       * `<script type="application/json" data-kyo-host-init>` data island the SSR page emitted (a
       * `Json`-encoded [[kyo.internal.HostPayload]] boot payload) and reconstitutes the client scene
-      * with one mirror `SignalRef` per prop slot, plus the camera and frame mode. A host with no init
-      * island reconstitutes an empty scene, so a malformed page mounts nothing rather than throwing.
+      * with one mirror `SignalRef` per prop slot, plus the server's actual camera (from the `Boot`
+      * envelope's [[kyo.internal.CameraDescriptor]]) and frame mode. A host with no init island, a
+      * malformed payload, or a legacy payload that carries no camera falls back to the default
+      * perspective camera, so a malformed page mounts an empty scene rather than throwing.
       */
     private[kyo] def readHostInit(el: org.scalajs.dom.Element)(using Frame): kyo.internal.HostInit < Sync =
         // Unsafe: a one-shot DOM read of the nested init script's text content at mount.
@@ -197,25 +199,43 @@ object ThreeMount:
             script.map(_.textContent).getOrElse("")
         }.map { json =>
             val payload =
-                if json.isEmpty then
-                    kyo.internal.HostPayload.Structural(
-                        kyo.internal.StructuralOp.Insert(ThreeBridge.rootId, 0, kyo.internal.SceneDescriptor("scene", Seq.empty, Seq.empty))
-                    )
+                if json.isEmpty then emptyBoot
                 else
                     Json.decode[kyo.internal.HostPayload](json) match
                         case Result.Success(p) => p
-                        case _ => kyo.internal.HostPayload.Structural(
-                                kyo.internal.StructuralOp.Insert(
-                                    ThreeBridge.rootId,
-                                    0,
-                                    kyo.internal.SceneDescriptor("scene", Seq.empty, Seq.empty)
-                                )
-                            )
+                        case _                 => emptyBoot
             ThreeBridge.reconstitute(payload).map { case (scene, _) =>
-                kyo.internal.HostInit(scene, Three.Camera.perspective(), ThreeFrames.Raf)
+                kyo.internal.HostInit(scene, bootCamera(payload), ThreeFrames.Raf)
             }
         }
     end readHostInit
+
+    // The empty boot payload a missing or malformed init island falls back to: an empty scene with the
+    // default perspective camera descriptor, so the host mounts nothing rather than throwing.
+    private def emptyBoot(using Frame): kyo.internal.HostPayload =
+        kyo.internal.HostPayload.Boot(
+            kyo.internal.StructuralOp.Insert(ThreeBridge.rootId, 0, kyo.internal.SceneDescriptor("scene", Seq.empty, Seq.empty)),
+            defaultCameraDescriptor
+        )
+
+    // The camera the boot payload carries, reconstituted via the bridge. A `Boot` envelope carries the
+    // server's actual camera; any other payload shape (a bare structural insert, a legacy payload) falls
+    // back to the default perspective camera.
+    private def bootCamera(payload: kyo.internal.HostPayload)(using Frame): Three.Ast.Camera =
+        payload match
+            case kyo.internal.HostPayload.Boot(_, camera) => ThreeBridge.materializeCamera(camera)
+            case _                                        => Three.Camera.perspective()
+
+    // The serializable form of the default perspective camera, matching Three.Camera.perspective()'s
+    // defaults (fov 75deg, near 0.1, far 1000, position (0,0,5), lookAt origin).
+    private def defaultCameraDescriptor: kyo.internal.CameraDescriptor =
+        kyo.internal.CameraDescriptor.Perspective(
+            fovRadians = Radians.deg(75).toDouble,
+            near = 0.1,
+            far = 1000.0,
+            position = kyo.internal.HostValue.V3(0.0, 0.0, 5.0),
+            lookAt = kyo.internal.HostValue.V3(0.0, 0.0, 0.0)
+        )
 
     /** The host's path segments, read from its `data-kyo-path` attribute (the same scheme the inline
       * clientJs routes a HostUpdate by). An empty attribute is the root path.
@@ -327,7 +347,7 @@ object ThreeMount:
     private[kyo] def serverBridge(scene: Three, camera: Three.Ast.Camera)(using Frame): UI.Ast.HostBridge =
         new UI.Ast.HostBridge:
             def serverInit(path: Seq[String]): kyo.internal.HostPayload < Sync =
-                ThreeBridge.flattenInit(scene)
+                ThreeBridge.flattenInit(scene, camera)
             def subscriptions(
                 path: Seq[String],
                 emit: kyo.internal.HostPayload => Unit < Async
@@ -1094,6 +1114,10 @@ object ThreeMount:
                 // resources once), and a Move reuses the live node (GPU buffers survive); each op
                 // applies into the holder named by regionId, not the host root.
                 channel.writeStructural(regionId, op)
+            case _: kyo.internal.HostPayload.Boot =>
+                // The boot envelope is consumed once at island mount via readHostInit; it never arrives
+                // over the live channel, so a stray Boot is a silent no-op.
+                Kyo.unit
     end applyHostUpdate
 
 end ThreeMount

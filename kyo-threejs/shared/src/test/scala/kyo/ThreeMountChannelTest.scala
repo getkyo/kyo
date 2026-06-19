@@ -1,9 +1,12 @@
 package kyo
 
 import kyo.Three.foreachKeyed
+import kyo.internal.CameraDescriptor
+import kyo.internal.GeometryDescriptor
 import kyo.internal.HostInit
 import kyo.internal.HostPayload
 import kyo.internal.HostValue
+import kyo.internal.MaterialKind
 import kyo.internal.Reconciler
 import kyo.internal.SceneDescriptor
 import kyo.internal.StructuralOp
@@ -45,7 +48,7 @@ class ThreeMountChannelTest extends ThreeTest:
                     serverColor <- Signal.initRef(Color.white)
                     _           <- serverColor.set(Color.blue)
                     // Server side: flatten the scene to the inline boot payload (the SSR init island body).
-                    boot <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    boot <- ThreeBridge.flattenInit(serverScene(serverColor), Three.Camera.perspective())
                     // Client side: reconstitute into a scene with per-slot mirrors + build the channel.
                     rec <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
@@ -82,7 +85,7 @@ class ThreeMountChannelTest extends ThreeTest:
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
                     serverColor <- Signal.initRef(Color.white)
-                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor), Three.Camera.perspective())
                     rec         <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
                     channel     <- HostChannel.init(init = HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
@@ -118,7 +121,7 @@ class ThreeMountChannelTest extends ThreeTest:
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
                     serverColor <- Signal.initRef(Color.green)
-                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor), Three.Camera.perspective())
                     rec         <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
                     channel     <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
@@ -190,7 +193,7 @@ class ThreeMountChannelTest extends ThreeTest:
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
                     serverColor <- Signal.initRef(Color.white)
-                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor), Three.Camera.perspective())
                     rec         <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
                     channel <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
@@ -402,7 +405,7 @@ class ThreeMountChannelTest extends ThreeTest:
                 for
                     // The boot seeds the mirror (and the live color) to blue.
                     serverColor <- Signal.initRef(Color.blue)
-                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor), Three.Camera.perspective())
                     rec         <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
                     channel     <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
@@ -443,7 +446,7 @@ class ThreeMountChannelTest extends ThreeTest:
                 for
                     // A channel over the server scene (mesh node id r.0), plus a materialized splice root.
                     serverColor <- Signal.initRef(Color.green)
-                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor), Three.Camera.perspective())
                     rec         <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
                     channel    <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
@@ -571,12 +574,11 @@ class ThreeMountChannelTest extends ThreeTest:
                     Three.Light.directional(position = Vec3(4, 8, 6)),
                     cubes
                 )
-                boot <- ThreeBridge.flattenInit(scene)
+                boot <- ThreeBridge.flattenInit(scene, Three.Camera.perspective())
             yield boot match
-                case HostPayload.Structural(StructuralOp.Insert(rootKey, idx, sceneDesc), regionId) =>
+                case HostPayload.Boot(StructuralOp.Insert(rootKey, idx, sceneDesc), _) =>
                     assert(rootKey == ThreeBridge.rootId, s"the boot inserts the root, got key '$rootKey'")
                     assert(idx == 0, s"the boot inserts at index 0, got $idx")
-                    assert(regionId == "r", s"the boot targets the host root region, got '$regionId'")
                     assert(sceneDesc.kind == "scene", s"the boot root must be a scene, got '${sceneDesc.kind}'")
                     // The scene keeps all three children: two lights AND the foreach holder. The bug
                     // dropped to a childless empty scene; the fix preserves siblings.
@@ -600,7 +602,7 @@ class ThreeMountChannelTest extends ThreeTest:
                     val holder = sceneDesc.children(2)
                     assert(holder.props.isEmpty, s"the region holder carries no props, got ${holder.props}")
                     assert(holder.children.isEmpty, s"the region holder boots empty, got ${holder.children}")
-                case other => fail(s"the boot must be a Structural(Insert(scene...)); got $other")
+                case other => fail(s"the boot must be a Boot(Insert(scene...)); got $other")
             end for
         }
     }
@@ -638,7 +640,7 @@ class ThreeMountChannelTest extends ThreeTest:
                         Three.Light.directional(position = Vec3(4, 8, 6)),
                         cubes
                     )
-                    boot <- ThreeBridge.flattenInit(scene)
+                    boot <- ThreeBridge.flattenInit(scene, Three.Camera.perspective())
                     rec  <- ThreeBridge.reconstitute(boot)
                     (clientScene, _) = rec
                     mountResult <- Reconciler.mount(clientScene)
@@ -667,6 +669,171 @@ class ThreeMountChannelTest extends ThreeTest:
                     )
                 end for
             }
+        }
+    }
+
+    // ---- Geometry / material / camera fidelity over the boot wire (D-7, D-8) -------------
+    //
+    // The server-push boot must reconstitute the server's ACTUAL geometry shape, material class, and
+    // camera, not a hardcoded unit box + standard material + default perspective. These leaves flatten a
+    // real scene/camera to the wire and reconstitute it, asserting the rebuilt AST matches the source.
+
+    "a sphere mesh flattens and reconstitutes as a sphere with its radius, not a box" in {
+        // D-7a: the geometry type + params cross the wire. A sphere of radius 2.5 must reconstitute as a
+        // sphere of radius 2.5, never a box (the prior lossy behaviour rendered every mesh as a unit box).
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    serverColor <- Signal.initRef(Color.white)
+                    scene = Three.scene(
+                        Three.mesh(Three.Geometry.sphere(2.5, 24, 12), Three.Material.standard().color(serverColor))
+                    )
+                    boot <- ThreeBridge.flattenInit(scene, Three.Camera.perspective())
+                    // The flattened mesh descriptor carries the typed sphere geometry, not a box.
+                    flattenedGeometry = boot match
+                        case HostPayload.Boot(StructuralOp.Insert(_, _, sceneDesc), _) => sceneDesc.children.head.geometry
+                        case other                                                     => fail(s"expected a Boot envelope, got $other")
+                    rec <- ThreeBridge.reconstitute(boot)
+                    (clientScene, _) = rec
+                yield
+                    assert(
+                        flattenedGeometry == Present(GeometryDescriptor.Sphere(2.5, 24, 12)),
+                        s"the wire must carry the sphere geometry + params, got $flattenedGeometry"
+                    )
+                    // The reconstituted client AST is a Mesh whose geometry is a Sphere of radius 2.5.
+                    val meshGeometry = clientScene match
+                        case s: Three.Ast.Scene =>
+                            s.children.head match
+                                case m: Three.Ast.Mesh => m.geometry
+                                case other             => fail(s"expected a mesh child, got $other")
+                        case other => fail(s"expected a scene, got $other")
+                    meshGeometry match
+                        case sph: Three.Ast.Geometry.Sphere =>
+                            assert(sph.radius == 2.5, s"the reconstituted sphere radius must be 2.5, got ${sph.radius}")
+                            assert(sph.widthSegments == 24, s"the sphere widthSegments must survive, got ${sph.widthSegments}")
+                            assert(sph.heightSegments == 12, s"the sphere heightSegments must survive, got ${sph.heightSegments}")
+                        case other =>
+                            fail(s"the reconstituted mesh must be a sphere, not a box; got ${other.getClass.getSimpleName}")
+                    end match
+                end for
+            }
+        }
+    }
+
+    "a Basic-material mesh reconstitutes as Basic, not Standard" in {
+        // D-7b: the material CLASS crosses the wire. A Basic material must reconstitute as a Basic
+        // material, never coerced to Standard (the prior lossy behaviour hardcoded Material.Standard).
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    serverColor <- Signal.initRef(Color.red)
+                    scene = Three.scene(
+                        Three.mesh(Three.Geometry.box(), Three.Material.basic().color(serverColor))
+                    )
+                    boot <- ThreeBridge.flattenInit(scene, Three.Camera.perspective())
+                    flattenedMaterial = boot match
+                        case HostPayload.Boot(StructuralOp.Insert(_, _, sceneDesc), _) => sceneDesc.children.head.material
+                        case other                                                     => fail(s"expected a Boot envelope, got $other")
+                    rec <- ThreeBridge.reconstitute(boot)
+                    (clientScene, _) = rec
+                yield
+                    assert(
+                        flattenedMaterial == Present(MaterialKind.Basic),
+                        s"the wire must carry the Basic material tag, got $flattenedMaterial"
+                    )
+                    val meshMaterial = clientScene match
+                        case s: Three.Ast.Scene =>
+                            s.children.head match
+                                case m: Three.Ast.Mesh => m.material
+                                case other             => fail(s"expected a mesh child, got $other")
+                        case other => fail(s"expected a scene, got $other")
+                    meshMaterial match
+                        case _: Three.Ast.Material.Basic => succeed
+                        case other =>
+                            fail(s"the reconstituted material must be Basic, not Standard; got ${other.getClass.getSimpleName}")
+                    end match
+                end for
+            }
+        }
+    }
+
+    "a non-default camera round-trips through the boot payload" in {
+        // D-8: the embed's actual camera (fov/near/far/position/lookAt) crosses the wire, so the client
+        // mounts the server's viewpoint, not a default perspective.
+        Scope.run {
+            for
+                serverColor <- Signal.initRef(Color.white)
+                scene = Three.scene(Three.mesh(Three.Geometry.box(), Three.Material.standard().color(serverColor)))
+                camera = Three.Camera.perspective(
+                    fov = Radians.deg(42),
+                    near = 0.25,
+                    far = 250.0,
+                    position = Vec3(3, 7, -2),
+                    lookAt = Vec3(1, 0, 1)
+                )
+                boot <- ThreeBridge.flattenInit(scene, camera)
+            yield boot match
+                case HostPayload.Boot(_, cam) =>
+                    cam match
+                        case CameraDescriptor.Perspective(fovRadians, near, far, position, lookAt) =>
+                            assert(math.abs(fovRadians - Radians.deg(42).toDouble) < 1e-9, s"fov must survive, got $fovRadians")
+                            assert(near == 0.25, s"near must survive, got $near")
+                            assert(far == 250.0, s"far must survive, got $far")
+                            assert(position == HostValue.V3(3.0, 7.0, -2.0), s"camera position must survive, got $position")
+                            assert(lookAt == HostValue.V3(1.0, 0.0, 1.0), s"camera lookAt must survive, got $lookAt")
+                        case other => fail(s"the boot camera must be a Perspective descriptor, got $other")
+                    end match
+                    // The reconstituted camera is a perspective at the served fov/near/far/position/lookAt.
+                    val rebuilt = ThreeBridge.materializeCamera(cam)
+                    rebuilt match
+                        case p: Three.Ast.Camera.Perspective =>
+                            assert(math.abs(p.fov.toDegrees - 42.0) < 1e-9, s"rebuilt fov must be 42deg, got ${p.fov.toDegrees}")
+                            assert(p.near == 0.25, s"rebuilt near must be 0.25, got ${p.near}")
+                            assert(p.far == 250.0, s"rebuilt far must be 250, got ${p.far}")
+                            assert(p.lookAt == Bound.Const(Vec3(1, 0, 1)), s"rebuilt lookAt must be (1,0,1), got ${p.lookAt}")
+                            assert(
+                                p.transform.position.contains(Bound.Const(Vec3(3, 7, -2))),
+                                s"rebuilt camera position must be (3,7,-2), got ${p.transform.position}"
+                            )
+                        case other => fail(s"the rebuilt camera must be a Perspective, got $other")
+                    end match
+                case other => fail(s"the boot must be a Boot envelope carrying the camera, got $other")
+            end for
+        }
+    }
+
+    "toHostValue tags a whole-number opacity as Num, not Col (slot-typed, not isInstanceOf)" in {
+        // D-9: on Scala.js a whole-number Double (opacity = 1.0) boxes to an Int and satisfies
+        // isInstanceOf[Int], so the prior runtime-type dispatch mis-tagged it as a Color. The slot is
+        // known at flatten time, so opacity/metalness/roughness/intensity tag as Num regardless of value.
+        Scope.run {
+            for
+                // A material with whole-number opacity (1.0) and metalness (0.0): the exact values that
+                // box to Int on Scala.js and would corrupt under isInstanceOf dispatch.
+                scene = Three.scene(
+                    Three.mesh(
+                        Three.Geometry.box(),
+                        Three.Material.standard(opacity = Normal.one, metalness = Normal.zero, roughness = Normal.one)
+                    )
+                )
+                boot <- ThreeBridge.flattenInit(scene, Three.Camera.perspective())
+                meshProps = boot match
+                    case HostPayload.Boot(StructuralOp.Insert(_, _, sceneDesc), _) => sceneDesc.children.head.props.toMap
+                    case other                                                     => fail(s"expected a Boot envelope, got $other")
+            yield
+                assert(
+                    meshProps.get(ThreeBridge.slotOpacity) == Some(HostValue.Num(1.0)),
+                    s"a whole-number opacity (1.0) must tag as Num, not Col; got ${meshProps.get(ThreeBridge.slotOpacity)}"
+                )
+                assert(
+                    meshProps.get(ThreeBridge.slotMetalness) == Some(HostValue.Num(0.0)),
+                    s"a whole-number metalness (0.0) must tag as Num, not Col; got ${meshProps.get(ThreeBridge.slotMetalness)}"
+                )
+                assert(
+                    meshProps.get(ThreeBridge.slotRoughness) == Some(HostValue.Num(1.0)),
+                    s"a whole-number roughness (1.0) must tag as Num, not Col; got ${meshProps.get(ThreeBridge.slotRoughness)}"
+                )
+            end for
         }
     }
 

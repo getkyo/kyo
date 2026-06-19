@@ -112,15 +112,26 @@ the structural inbox, which the `subscribeStructuralInbox` drain loop processes 
 The wire is **fully typed, closure-free, and `js.Dynamic`-free**. All types derive `Schema` and
 live in `kyo-ui/shared/src/main/scala/kyo/internal/HostPayload.scala`:
 
-- `HostPayload`: two leaves. `Prop(nodeId, slot, value)` for one targeted prop push;
-  `Structural(op)` for one keyed splice instruction.
-- `HostValue`: the value union. `V3(x, y, z)` for position/rotation/scale; `Col(rgb)` for a
-  `Color`; `Num(value)` for opacity/intensity/radians scalars.
+- `HostPayload`: three leaves. `Prop(nodeId, slot, value)` for one targeted prop push;
+  `Structural(op)` for one keyed splice instruction; `Boot(insert, camera)` for the page-load boot
+  envelope, carrying the scene's root insert alongside the embed's `CameraDescriptor` so the client
+  reconstitutes the server's actual viewpoint, not a default one.
+- `HostValue`: the value union, tagged by SLOT (not runtime type, which mis-tags a whole-number
+  scalar that boxes to an `Int` on Scala.js). `V3(x, y, z)` for position/rotation/scale; `Col(rgb)`
+  for color/emissive; `Num(value)` for opacity/metalness/roughness/intensity scalars.
 - `StructuralOp`: three leaves. `Insert(key, index, descriptor)` to splice a new subtree;
   `Remove(key)` to dispose one; `Move(key, toIndex)` to reorder without dispose.
 - `SceneDescriptor`: the serializable declarative form of a spliced subtree: kind tag, resolved
-  prop values, and children recursively. Carries no closure, no signal ref, and no `Custom`,
-  `Reactive`, or `Foreach` node.
+  prop values, and children recursively. A `mesh` kind also carries its typed `GeometryDescriptor`
+  (the geometry shape + numeric params, one leaf per `Three.Geometry.*`) and `MaterialKind` tag (the
+  material class, one leaf per `Three.Material.*`), so the client rebuilds the exact sphere/torus and
+  basic/standard/line/points material, not a hardcoded box + standard. Carries no closure, no signal
+  ref, and no `Custom`, `Reactive`, or `Foreach` node; a `Custom` geometry or material drops at
+  flatten time.
+- `GeometryDescriptor` / `MaterialKind` / `CameraDescriptor`: the typed, FFI-free shapes a mesh's
+  geometry, a mesh's material class, and the embed's camera flatten to, one leaf per `Three.Geometry.*`,
+  `Three.Material.*`, and `Three.Camera.*` factory the AST supports. A `Custom` geometry/material has
+  no leaf (it stays server-side).
 - `PointerData`: the FFI-free wire form of a raycast-hit pointer, carried client-to-server for
   pick routing. Plain `Double` fields; no three.js object crosses the wire.
 
