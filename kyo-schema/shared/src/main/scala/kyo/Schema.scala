@@ -1259,6 +1259,46 @@ object Schema:
     given kyoDurationSchema: Schema[kyo.Duration] =
         longSchema.transform[kyo.Duration](kyo.Duration.fromNanos)(_.toNanos)
 
+    /** Schema for scala.concurrent.duration.FiniteDuration values.
+      *
+      * Encodes via the same wire primitive as `java.time.Duration` (so format codecs apply their own duration shape), round-tripping by
+      * total nanoseconds. The decoded value is normalized to the coarsest exact unit, matching how other libraries (e.g. upickle) decode.
+      */
+    given finiteDurationSchema: Schema[scala.concurrent.duration.FiniteDuration] =
+        durationSchema.transform[scala.concurrent.duration.FiniteDuration](jd => scala.concurrent.duration.Duration.fromNanos(jd.toNanos))(
+            fd => java.time.Duration.ofNanos(fd.toNanos)
+        )
+
+    /** Schema for scala.concurrent.duration.Duration values (the possibly-infinite abstract type).
+      *
+      * Always encoded as a string: the total nanoseconds for a finite value, or `"inf"`/`"-inf"`/`"undef"` for the infinite and undefined
+      * cases. This is the upickle/weePickle wire form, the only representation that can carry the infinite cases, so it is used regardless of
+      * any format-specific duration setting.
+      */
+    given scalaDurationSchema: Schema[scala.concurrent.duration.Duration] =
+        Schema.init[scala.concurrent.duration.Duration](
+            writeFn = (v, w) =>
+                w.string(
+                    if v eq scala.concurrent.duration.Duration.Undefined then "undef"
+                    else if v eq scala.concurrent.duration.Duration.Inf then "inf"
+                    else if v eq scala.concurrent.duration.Duration.MinusInf then "-inf"
+                    else v.toNanos.toString
+                ),
+            readFn = r =>
+                r.string() match
+                    case "inf"   => scala.concurrent.duration.Duration.Inf
+                    case "-inf"  => scala.concurrent.duration.Duration.MinusInf
+                    case "undef" => scala.concurrent.duration.Duration.Undefined
+                    case s =>
+                        try scala.concurrent.duration.Duration.fromNanos(s.toLong)
+                        catch case _: NumberFormatException => throw TypeMismatchException(Seq.empty, "Duration", s)(using r.frame)
+            ,
+            structure = Structure.Type.Primitive(
+                Structure.PrimitiveKind.String,
+                Tag[scala.concurrent.duration.Duration].asInstanceOf[Tag[Any]]
+            )
+        )
+
     /** Schema for kyo.Schedule values. Walks the sealed hierarchy via the generic macro derivation. */
     given scheduleSchema: Schema[kyo.Schedule] = Schema.derived
 
