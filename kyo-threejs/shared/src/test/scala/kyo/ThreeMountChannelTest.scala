@@ -195,11 +195,13 @@ class ThreeMountChannelTest extends ThreeTest:
                     (clientScene, _) = rec
                     channel <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
                     op = StructuralOp.Remove("k1")
+                    // A Structural HostUpdate with the default region id (the host root) appends a
+                    // (regionId, op) pair to the inbox; the default region id is "r".
                     _     <- ThreeMount.applyHostUpdate(channel, HostPayload.Structural(op))
                     inbox <- channel.structuralInbox.current
                 yield assert(
-                    inbox == Chunk(op),
-                    s"a Structural HostUpdate must append to the inbox, got $inbox"
+                    inbox == Chunk(("r", op)),
+                    s"a Structural HostUpdate must append (regionId, op) to the inbox, got $inbox"
                 )
             }
         }
@@ -349,6 +351,133 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
+    "a Move or Remove for a key absent from the keyed list is a no-op (no throw, no dispose)" in {
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    rootResult <- Reconciler.mount(Three.scene())
+                    (rootLive, mounted) = rootResult
+                    s0 <-
+                        ThreeMount.applyStructuralOp(StructuralOp.Insert("k0", 0, meshDescriptor(0xff0000)), Chunk.empty, rootLive, mounted)
+                    s1 <- ThreeMount.applyStructuralOp(StructuralOp.Insert("k1", 1, meshDescriptor(0x00ff00)), s0, rootLive, mounted)
+                    // Dispose counters on both present children, so a spurious dispose on the absent-key op is caught.
+                    countersK0 <- Sync.Unsafe.defer(disposeCounters(s1.find(_._1 == "k0").get._2))
+                    countersK1 <- Sync.Unsafe.defer(disposeCounters(s1.find(_._1 == "k1").get._2))
+                    refK0 = s1.find(_._1 == "k0").get._2.obj
+                    refK1 = s1.find(_._1 == "k1").get._2.obj
+                    childCountBefore <- Sync.Unsafe.defer(rootLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                    // A Move for a key that was never inserted: the live list is unchanged, nothing disposes.
+                    sMove <- ThreeMount.applyStructuralOp(StructuralOp.Move("missing", 0), s1, rootLive, mounted)
+                    // A Remove for a key that was never inserted: same no-op posture (no entry to dispose).
+                    sRemove         <- ThreeMount.applyStructuralOp(StructuralOp.Remove("missing"), sMove, rootLive, mounted)
+                    childCountAfter <- Sync.Unsafe.defer(rootLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                yield
+                    assert(sMove.map(_._1) == Chunk("k0", "k1"), s"a Move for an absent key must not reorder, got ${sMove.map(_._1)}")
+                    assert(
+                        sRemove.map(_._1) == Chunk("k0", "k1"),
+                        s"a Remove for an absent key must not drop a key, got ${sRemove.map(_._1)}"
+                    )
+                    assert(sRemove.find(_._1 == "k0").get._2.obj eq refK0, "k0's live object must be untouched by absent-key ops")
+                    assert(sRemove.find(_._1 == "k1").get._2.obj eq refK1, "k1's live object must be untouched by absent-key ops")
+                    assert(
+                        countersK0._1() == 0 && countersK0._2() == 0,
+                        s"no dispose may fire on k0: geom=${countersK0._1()} mat=${countersK0._2()}"
+                    )
+                    assert(
+                        countersK1._1() == 0 && countersK1._2() == 0,
+                        s"no dispose may fire on k1: geom=${countersK1._1()} mat=${countersK1._2()}"
+                    )
+                    assert(
+                        childCountAfter == childCountBefore,
+                        s"the root child count must be unchanged by absent-key ops: $childCountBefore -> $childCountAfter"
+                    )
+                end for
+            }
+        }
+    }
+
+    "re-applying a Prop with the live mirror's current value is idempotent (no spurious change)" in {
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    // The boot seeds the mirror (and the live color) to blue.
+                    serverColor <- Signal.initRef(Color.blue)
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    rec         <- ThreeBridge.reconstitute(boot)
+                    (clientScene, _) = rec
+                    channel     <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
+                    mountResult <- Reconciler.mount(clientScene)
+                    (_, mounted) = mountResult
+                    _           <- ThreeMount.fillBoundRefsOnce(mounted)
+                    seededHex   <- liveColorHex(mounted)
+                    countBefore <- Sync.Unsafe.defer(mounted.live.size)
+                    // Push the SAME value the mirror already holds, twice: a same-value set is a no-op on the
+                    // live object, distinct from the distinct-value pushes the live-map-stability leaf covers.
+                    _ <- ThreeMount.applyHostUpdate(
+                        channel,
+                        HostPayload.Prop(meshNodeId, ThreeBridge.slotColor, HostValue.Col(Color.blue.packed))
+                    )
+                    _ <- ThreeMount.fillBoundRefsOnce(mounted)
+                    _ <- ThreeMount.applyHostUpdate(
+                        channel,
+                        HostPayload.Prop(meshNodeId, ThreeBridge.slotColor, HostValue.Col(Color.blue.packed))
+                    )
+                    _          <- ThreeMount.fillBoundRefsOnce(mounted)
+                    afterHex   <- liveColorHex(mounted)
+                    countAfter <- Sync.Unsafe.defer(mounted.live.size)
+                yield
+                    assert(seededHex == Color.blue.packed, s"boot must seed the live color to blue, got 0x${seededHex.toHexString}")
+                    assert(
+                        afterHex == Color.blue.packed,
+                        s"re-applying the current value must leave the live color at blue, got 0x${afterHex.toHexString}"
+                    )
+                    assert(countAfter == countBefore, s"a same-value Prop must not re-materialize: live count $countBefore -> $countAfter")
+                end for
+            }
+        }
+    }
+
+    "a Remove interleaved with a Prop push for the same subtree disposes once and leaves a consistent map" in {
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    // A channel over the server scene (mesh node id r.0), plus a materialized splice root.
+                    serverColor <- Signal.initRef(Color.green)
+                    boot        <- ThreeBridge.flattenInit(serverScene(serverColor))
+                    rec         <- ThreeBridge.reconstitute(boot)
+                    (clientScene, _) = rec
+                    channel    <- HostChannel.init(HostInit(clientScene, Three.Camera.perspective(), ThreeFrames.Raf))
+                    rootResult <- Reconciler.mount(Three.scene())
+                    (rootLive, mounted) = rootResult
+                    // Splice one keyed element, then attach dispose counters to its GL resources.
+                    s0 <-
+                        ThreeMount.applyStructuralOp(StructuralOp.Insert("k1", 0, meshDescriptor(0x0000ff)), Chunk.empty, rootLive, mounted)
+                    counters <- Sync.Unsafe.defer(disposeCounters(s0.find(_._1 == "k1").get._2))
+                    (k1Geom, k1Mat) = counters
+                    // Interleave a channel Prop push (writes the channel mirror, a separate grain) with the
+                    // structural Remove of k1 and a stale second Remove: the two grains must not interfere.
+                    _ <- ThreeMount.applyHostUpdate(
+                        channel,
+                        HostPayload.Prop(meshNodeId, ThreeBridge.slotColor, HostValue.Col(Color.red.packed))
+                    )
+                    s1 <- ThreeMount.applyStructuralOp(StructuralOp.Remove("k1"), s0, rootLive, mounted)
+                    _ <- ThreeMount.applyHostUpdate(
+                        channel,
+                        HostPayload.Prop(meshNodeId, ThreeBridge.slotColor, HostValue.Col(Color.green.packed))
+                    )
+                    s2              <- ThreeMount.applyStructuralOp(StructuralOp.Remove("k1"), s1, rootLive, mounted)
+                    childCountAfter <- Sync.Unsafe.defer(rootLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                yield
+                    assert(s1.isEmpty, s"the Remove must clear k1, got ${s1.map(_._1)}")
+                    assert(s2.isEmpty, s"the stale Remove must stay a no-op, got ${s2.map(_._1)}")
+                    assert(k1Geom() == 1, s"k1 geometry must dispose exactly once despite the interleaved Prop, got ${k1Geom()}")
+                    assert(k1Mat() == 1, s"k1 material must dispose exactly once despite the interleaved Prop, got ${k1Mat()}")
+                    assert(childCountAfter == 0, s"the splice root must hold no children after the Remove, got $childCountAfter")
+                end for
+            }
+        }
+    }
+
     "the server-side keyed diff emits the minimal op set" in {
         Channel.initWith[HostPayload](32) { emitted =>
             Scope.run {
@@ -370,17 +499,26 @@ class ThreeMountChannelTest extends ThreeTest:
                     op2 <- emitted.take
                     op3 <- emitted.take
                 yield
+                    // The foreach is the sole scene child, so every op targets region id "r.0".
+                    def regionOf(p: HostPayload): String = p match
+                        case HostPayload.Structural(_, regionId) => regionId
+                        case other                               => s"not-structural:$other"
+                    assert(
+                        List(ins0, ins1, ins2, op1, op2, op3).forall(regionOf(_) == "r.0"),
+                        s"every op must target the foreach region 'r.0'; got ${List(ins0, ins1, ins2, op1, op2, op3).map(regionOf)}"
+                    )
                     // The boot batch is three Inserts (a@0, b@1, c@2).
                     def insertKey(p: HostPayload): String = p match
-                        case HostPayload.Structural(StructuralOp.Insert(k, _, _)) => k
-                        case other                                                => s"not-insert:$other"
+                        case HostPayload.Structural(StructuralOp.Insert(k, _, _), _) => k
+                        case other                                                   => s"not-insert:$other"
                     assert(
                         Set(insertKey(ins0), insertKey(ins1), insertKey(ins2)) == Set("a", "b", "c"),
                         s"the boot batch must insert a,b,c; got ${List(ins0, ins1, ins2)}"
                     )
                     // The diff batch is exactly Remove(b), Move(c, 1), Insert(d, 2, descriptor): the
                     // minimal op set, NOT a full re-materialize of [a,c,d].
-                    val diffOps = List(op1, op2, op3).map { case HostPayload.Structural(op) => op; case p => fail(s"non-structural: $p") }
+                    val diffOps =
+                        List(op1, op2, op3).map { case HostPayload.Structural(op, _) => op; case p => fail(s"non-structural: $p") }
                     assert(
                         diffOps.contains(StructuralOp.Remove("b")),
                         s"the diff must Remove b, got $diffOps"
@@ -416,6 +554,119 @@ class ThreeMountChannelTest extends ThreeTest:
                 case other =>
                     fail(s"flattening a Custom subtree must yield a typed UnserializableNode failure, got $other")
             end for
+        }
+    }
+
+    "flattenInit of a scene mixing static lights with a foreach preserves the lights and represents the region" in {
+        // The boot regression: a foreach anywhere in the scene must NOT collapse the whole boot to an
+        // empty scene. The lights survive at their positions, the foreach flattens to an empty "group"
+        // holder placeholder occupying its node-id slot (its children stream over the structural channel),
+        // and the deterministic node-id path is preserved so the structural ops address "r.2".
+        Scope.run {
+            for
+                ids <- Signal.initRef(Chunk(0, 1, 2))
+                cubes = ids.foreachKeyed(_.toString)(_ => Three.mesh(Three.Geometry.box(), Three.Material.standard()))
+                scene = Three.scene(
+                    Three.Light.ambient(intensity = 0.5),
+                    Three.Light.directional(position = Vec3(4, 8, 6)),
+                    cubes
+                )
+                boot <- ThreeBridge.flattenInit(scene)
+            yield boot match
+                case HostPayload.Structural(StructuralOp.Insert(rootKey, idx, sceneDesc), regionId) =>
+                    assert(rootKey == ThreeBridge.rootId, s"the boot inserts the root, got key '$rootKey'")
+                    assert(idx == 0, s"the boot inserts at index 0, got $idx")
+                    assert(regionId == "r", s"the boot targets the host root region, got '$regionId'")
+                    assert(sceneDesc.kind == "scene", s"the boot root must be a scene, got '${sceneDesc.kind}'")
+                    // The scene keeps all three children: two lights AND the foreach holder. The bug
+                    // dropped to a childless empty scene; the fix preserves siblings.
+                    assert(
+                        sceneDesc.children.map(_.kind) == Seq("light.ambient", "light.directional", "group"),
+                        s"the boot must keep both lights and represent the foreach as a group holder, got ${sceneDesc.children.map(_.kind)}"
+                    )
+                    // The ambient light's intensity survives as a Num prop (the static sibling is intact).
+                    val ambient = sceneDesc.children.head
+                    assert(
+                        ambient.props.contains(ThreeBridge.slotIntensity -> HostValue.Num(0.5)),
+                        s"the ambient light must keep its intensity prop, got ${ambient.props}"
+                    )
+                    // The directional light keeps its position transform.
+                    val directional = sceneDesc.children(1)
+                    assert(
+                        directional.props.contains(ThreeBridge.slotPosition -> HostValue.V3(4.0, 8.0, 6.0)),
+                        s"the directional light must keep its position prop, got ${directional.props}"
+                    )
+                    // The foreach holder is an empty group: no baked children (they arrive over the channel).
+                    val holder = sceneDesc.children(2)
+                    assert(holder.props.isEmpty, s"the region holder carries no props, got ${holder.props}")
+                    assert(holder.children.isEmpty, s"the region holder boots empty, got ${holder.children}")
+                case other => fail(s"the boot must be a Structural(Insert(scene...)); got $other")
+            end for
+        }
+    }
+
+    "flattenNode of a reactive region yields an empty group holder, not a failure" in {
+        // A Reactive (`render`/`when`/`reactive`) is serializable as an empty holder placeholder, exactly
+        // like a foreach, so a scene carrying one boots its siblings rather than collapsing.
+        Scope.run {
+            for
+                sig <- Signal.initRef(Three.mesh(Three.Geometry.sphere(), Three.Material.standard()): Three)
+                reactive = Three.reactive(sig)
+                desc <- Abort.run[ThreeBridge.UnserializableNode](ThreeBridge.flattenNode(reactive))
+            yield desc match
+                case Result.Success(d) =>
+                    assert(d.kind == "group", s"a reactive region flattens to a group holder, got '${d.kind}'")
+                    assert(d.children.isEmpty, s"the reactive holder boots empty, got ${d.children}")
+                    assert(d.props.isEmpty, s"the reactive holder carries no props, got ${d.props}")
+                case other => fail(s"a reactive region must flatten to a holder, not fail; got $other")
+            end for
+        }
+    }
+
+    "the structural inbox routes each op into its own region holder, not the host root" in {
+        // A scene mixing two lights with a foreach: the boot materializes the lights plus an empty holder
+        // at node id r.2. A structural Insert tagged regionId r.2 splices a cube INTO that holder, leaving
+        // the root's static children (the two lights) untouched. This is the multi-sibling routing the bug
+        // broke (splicing into the root collided with the lights).
+        Scope.run {
+            Abort.recover[ThreeException](e => Abort.panic(e)) {
+                for
+                    ids <- Signal.initRef(Chunk(0))
+                    cubes = ids.foreachKeyed(_.toString)(_ => Three.mesh(Three.Geometry.box(), Three.Material.standard()))
+                    scene = Three.scene(
+                        Three.Light.ambient(intensity = 0.5),
+                        Three.Light.directional(position = Vec3(4, 8, 6)),
+                        cubes
+                    )
+                    boot <- ThreeBridge.flattenInit(scene)
+                    rec  <- ThreeBridge.reconstitute(boot)
+                    (clientScene, _) = rec
+                    mountResult <- Reconciler.mount(clientScene)
+                    (rootLive, mounted) = mountResult
+                    // The root holds three children: ambient, directional, the holder at index 2.
+                    rootChildCount <- Sync.Unsafe.defer(rootLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                    holderLive = ThreeMount.liveByNodeId(rootLive, "r.2").get
+                    holderChildrenBefore <- Sync.Unsafe.defer(holderLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                    // Splice a cube into region r.2 via applyStructuralOp against the HOLDER live node.
+                    spliced <- ThreeMount.applyStructuralOp(
+                        StructuralOp.Insert("0", 0, meshDescriptor(0x00ff00)),
+                        Chunk.empty,
+                        holderLive,
+                        mounted
+                    )
+                    holderChildrenAfter <- Sync.Unsafe.defer(holderLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                    rootChildAfter      <- Sync.Unsafe.defer(rootLive.obj.children.asInstanceOf[sjs.Array[sjs.Dynamic]].length)
+                yield
+                    assert(rootChildCount == 3, s"the boot must materialize two lights plus the holder, got $rootChildCount root children")
+                    assert(holderChildrenBefore == 0, s"the region holder must boot empty, got $holderChildrenBefore")
+                    assert(spliced.map(_._1) == Chunk("0"), s"the cube must splice into the region, got ${spliced.map(_._1)}")
+                    assert(holderChildrenAfter == 1, s"the cube must attach to the holder, got $holderChildrenAfter holder children")
+                    assert(
+                        rootChildAfter == 3,
+                        s"splicing into the holder must NOT change the root's static child count, got $rootChildAfter"
+                    )
+                end for
+            }
         }
     }
 

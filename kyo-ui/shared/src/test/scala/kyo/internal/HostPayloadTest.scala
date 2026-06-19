@@ -44,11 +44,48 @@ class HostPayloadTest extends kyo.test.Test[Any]:
         val decoded               = Json.decode[HostPayload](encoded)
         assert(decoded == Result.Success(original))
         decoded match
-            case Result.Success(HostPayload.Structural(StructuralOp.Insert(k, idx, d))) =>
+            case Result.Success(HostPayload.Structural(StructuralOp.Insert(k, idx, d), regionId)) =>
                 assert(k == "k7")
                 assert(idx == 2)
                 assert(d.kind == "mesh")
                 assert(d.children == Seq.empty)
+                // The default region id (the host root) survives the round-trip.
+                assert(regionId == "r")
+            case other => fail(s"unexpected: $other")
+        end match
+    }
+
+    "Structural(Insert) round-trip carrying a directional light with a transform" in {
+        // A light descriptor with a color, an intensity, and position/rotation transform slots: the
+        // wire must carry geometry/material/transform AND light fields, so every slot must survive the
+        // codec field-exact (V3 transforms and a Col/Num light are all serializable HostValues).
+        val descriptor = SceneDescriptor(
+            "light.directional",
+            Seq(
+                "color"     -> HostValue.Col(0xffeeaa),
+                "intensity" -> HostValue.Num(0.75),
+                "position"  -> HostValue.V3(1.0, 10.0, -4.0),
+                "rotation"  -> HostValue.V3(0.0, 1.5707963, 0.0)
+            ),
+            Seq.empty
+        )
+        val original: HostPayload = HostPayload.Structural(StructuralOp.Insert("light0", 0, descriptor))
+        val encoded               = Json.encode[HostPayload](original)
+        val decoded               = Json.decode[HostPayload](encoded)
+        assert(decoded == Result.Success(original))
+        decoded match
+            case Result.Success(HostPayload.Structural(StructuralOp.Insert(k, idx, d), _)) =>
+                assert(k == "light0")
+                assert(idx == 0)
+                assert(d.kind == "light.directional")
+                // The color survives as the exact RGB bit-pattern.
+                assert(d.props.contains("color" -> HostValue.Col(0xffeeaa)))
+                // The scalar intensity survives exactly.
+                assert(d.props.contains("intensity" -> HostValue.Num(0.75)))
+                // The position transform survives as a field-exact V3.
+                assert(d.props.contains("position" -> HostValue.V3(1.0, 10.0, -4.0)))
+                // The rotation transform survives as a field-exact V3.
+                assert(d.props.contains("rotation" -> HostValue.V3(0.0, 1.5707963, 0.0)))
             case other => fail(s"unexpected: $other")
         end match
     }

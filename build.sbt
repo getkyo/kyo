@@ -1868,6 +1868,14 @@ addCommandAlias(
     "demoEmbeddedScene",
     """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.EmbeddedScene") ; kyo-threejs-demo-runner/run"""
 )
+addCommandAlias(
+    "demoServerClock",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ServerClock") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoServerStructure",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ServerStructure") ; kyo-threejs-demo-runner/run"""
+)
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)

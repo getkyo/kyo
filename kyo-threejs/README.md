@@ -584,6 +584,14 @@ The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as 
       <a href="shared/src/test/scala/demo/GltfViewer.scala"><strong>GltfViewer</strong></a>: <code>loadGltf</code> with <code>Async</code>, the loaded subtree in a rotating group, and pointer handlers attached directly on <code>asset.root</code> (a typed <code>Custom</code>, no cast). (no preview: the test serves a minimal inline model)
     </td>
   </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="shared/src/test/scala/demo/ServerClock.scala"><strong>ServerClock</strong></a>: a server-owned tick advanced by a <em>server-side</em> fiber (not a client <code>onFrame</code>), bound to a cube's color and rotation; every advance is pushed over the WebSocket and a kyo-ui HUD echoes the tick. The server-driven counterpart to <code>ReactiveCubeField</code>. (no preview: a live server-driven scene)
+    </td>
+    <td width="50%" valign="top">
+      <a href="shared/src/test/scala/demo/ServerStructure.scala"><strong>ServerStructure</strong></a>: a server-owned id list rendered with <code>foreachKeyed</code>; Add / Remove / Reverse buttons mutate it server-side, pushing new scene <em>structure</em> over the WebSocket (splice-in, dispose-once, identity-preserving reorder). (no preview: a live server-driven scene)
+    </td>
+  </tr>
 </table>
 
 ### Running the demos
@@ -607,5 +615,7 @@ The live-scene demos print a `http://localhost:<port>/` URL; open it to see the 
 | `sbt demoSnake3D` | Snake3D |
 | `sbt demoGltfViewer` | GltfViewer |
 | `sbt demoEmbeddedScene` | EmbeddedScene |
+| `sbt demoServerClock` | ServerClock |
+| `sbt demoServerStructure` | ServerStructure |
 
 `ThumbnailGallery` uses `Three.toImage`, which requires a browser WebGL context and cannot run via the Node demo runner. Its rendered output is the committed `docs/images/*.png` thumbnails in this repository. The `toImage` primitive is validated by `ThreeToImageBrowserTest` and `WebGLAcceptanceTest` in a real software-WebGL Chrome.

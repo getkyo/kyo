@@ -92,6 +92,22 @@ class ThreeMountCompositionTest extends ThreeTest:
         assert(app eq demo.EmbeddedScene)
     }
 
+    "ServerClock is a self-serving KyoApp driving a 3D prop from a server-owned tick" in {
+        val app: KyoApp = demo.ServerClock
+        // The builder forks a server-side engine fiber, so its row is < Async (not the pure < Sync
+        // of the client-onFrame demos): the server owns the clock and pushes each tick.
+        val _: UI < Async = demo.ServerClockScene.ui
+        assert(app eq demo.ServerClock)
+    }
+
+    "ServerStructure is a self-serving KyoApp pushing scene structure from a server-owned id list" in {
+        val app: KyoApp = demo.ServerStructure
+        // The builder is a plain Sync value (server-owned id list mutated by buttons); the structural
+        // change is pushed over the wire, not driven by a client onFrame.
+        val _: UI < Sync = demo.ServerStructureScene.ui
+        assert(app eq demo.ServerStructure)
+    }
+
     "the island handler serves the demos bundle bytes with the right shape and head link" in {
         // The head links the island at the route the handler serves, and the handler is the
         // binary route serving those bytes (Content-Type set on the response when the bundle is
@@ -112,7 +128,7 @@ class ThreeMountCompositionTest extends ThreeTest:
     }
 
     "no god dispatcher: each demo is its own KyoApp, not one shared entry" in {
-        // The demos are seven distinct KyoApp singletons, each its own independent entry; there is
+        // The demos are nine distinct KyoApp singletons, each its own independent entry; there is
         // no single object that mounts or dispatches all of them.
         val apps: Seq[KyoApp] = Seq(
             demo.BouncingBalls,
@@ -121,10 +137,12 @@ class ThreeMountCompositionTest extends ThreeTest:
             demo.Snake3D,
             demo.GltfViewer,
             demo.EmbeddedScene,
-            demo.ThumbnailGallery
+            demo.ThumbnailGallery,
+            demo.ServerClock,
+            demo.ServerStructure
         )
         assert(apps.distinct.length == apps.length)
-        assert(apps.length == 7)
+        assert(apps.length == 9)
     }
 
 end ThreeMountCompositionTest

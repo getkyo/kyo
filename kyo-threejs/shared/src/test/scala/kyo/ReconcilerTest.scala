@@ -148,6 +148,38 @@ class ReconcilerTest extends ThreeTest:
         }
     }
 
+    "keyed diff with a duplicate key has defined behavior: both slots materialize, then last-wins on reuse" in {
+        val nodeA = Three.mesh(Three.Geometry.box(1, 1, 1), Three.Material.basic())
+        val nodeB = Three.mesh(Three.Geometry.box(2, 2, 2), Three.Material.basic())
+        Scope.run {
+            val mounted = new Reconciler.Mounted
+            for
+                // Two entries share the key "dup": the first diff materializes both as distinct live
+                // objects (no silent collapse, no corrupt map), so the result is a stable 2-element list.
+                first <- Reconciler.diffKeyed(
+                    Chunk.empty,
+                    Chunk.from(List(("dup", nodeA: Three), ("dup", nodeB: Three))),
+                    mounted
+                )
+                // Feed the prior keyed list (two "dup" entries) back in. The prev-by-key map is last-wins,
+                // so both next slots reuse the LAST prior live object; nothing throws and the map stays stable.
+                prevKeyed = Chunk.from(List(("dup", first(0)), ("dup", first(1))))
+                second <- Reconciler.diffKeyed(
+                    prevKeyed,
+                    Chunk.from(List(("dup", nodeA: Three), ("dup", nodeB: Three))),
+                    mounted
+                )
+            yield
+                assert(first.size == 2, s"a duplicate key must still materialize both slots, got ${first.size}")
+                assert(!(first(0).obj eq first(1).obj), "the two duplicate-key slots must be distinct live objects")
+                assert(second.size == 2, s"the re-diff must keep both slots, got ${second.size}")
+                // Last-wins: both reused slots resolve to the LAST prior live object for the key.
+                assert(second(0).obj eq first(1).obj, "the first slot must reuse the last prior live object (last-wins)")
+                assert(second(1).obj eq first(1).obj, "the second slot must reuse the last prior live object (last-wins)")
+            end for
+        }
+    }
+
     "positional materialize of identical empty groups yields distinct live objects" in {
         val groupA = Three.empty
         val groupB = Three.empty

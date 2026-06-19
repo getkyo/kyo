@@ -78,6 +78,68 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
         end for
     }
 
+    "a non-default head changes only the head and the module-script injection, never the body bytes".notNative in {
+        // The body region (the host/body HTML plus the inline server-push client <script>) must be
+        // byte-identical between the 1-arg default render and a 2-arg render with a non-default head
+        // (custom title/css + a module script). The 2-arg form is allowed to change ONLY the <head>
+        // block and the appended module <script>; the body bytes are pinned.
+        val ui = UI.div("hi")
+        val nonDefaultHead = UI.PageHead(
+            "custom-title",
+            css = ".x{color:red}",
+            moduleScript = Present("/_kyo/island.js")
+        )
+        // The body content sits between <body> and the close of the inline client <script>; that span is
+        // head-independent. Extract it from both renders and require an exact match.
+        def bodyRegion(page: String): String =
+            val start = page.indexOf("<body>")
+            val end   = page.indexOf("</script>", start)
+            assert(start >= 0 && end >= 0, s"page must have a <body> and an inline client </script>; got:\n$page")
+            page.substring(start, end + "</script>".length)
+        end bodyRegion
+        for
+            oneArg <- fetchPage(ui, Absent)
+            twoArg <- fetchPage(ui, Present(nonDefaultHead))
+        yield
+            assert(
+                bodyRegion(oneArg) == bodyRegion(twoArg),
+                s"the body region must be byte-identical across heads; 1-arg:\n${bodyRegion(oneArg)}\n2-arg:\n${bodyRegion(twoArg)}"
+            )
+            // The head DID change: the non-default title is present only in the 2-arg render.
+            assert(twoArg.contains("<title>custom-title</title>"), "the 2-arg head must carry the custom title")
+            assert(!oneArg.contains("<title>custom-title</title>"), "the 1-arg default head must NOT carry the custom title")
+            assert(twoArg.contains(".x{color:red}"), "the 2-arg head must carry the custom css")
+            // The module-script injection appears only in the 2-arg render, after the body region.
+            assert(
+                twoArg.contains("""<script type="module" src="/_kyo/island.js"></script>"""),
+                "the 2-arg form must link the module script"
+            )
+            assert(!oneArg.contains("""<script type="module""""), "the 1-arg form must link no module script")
+        end for
+    }
+
+    "a page with no host links the module script but emits no host-init island".notNative in {
+        // A UI with NO host at all, served with a module script: the page must link the bundle yet emit
+        // no data-kyo-host-init boot payload (there is no host to boot), and stay a valid server-push page.
+        fetchPage(
+            UI.div("hi"),
+            Present(UI.PageHead("app", moduleScript = Present("/_kyo/island.js")))
+        ).map { body =>
+            assert(
+                body.contains("""<script type="module" src="/_kyo/island.js"></script>"""),
+                s"the page must link the module script; body was:\n$body"
+            )
+            assert(
+                !body.contains("data-kyo-host-init"),
+                s"a page with no host must emit no host-init island; body was:\n$body"
+            )
+            assert(!body.contains("data-kyo-host"), s"a page with no host must carry no data-kyo-host marker; body was:\n$body")
+            // Still a valid server-push page: the inline client script is present and the document is well-formed.
+            assert(body.contains("<script>"), "the inline server-push client script must still be present")
+            assert(body.startsWith("<!DOCTYPE html>"), "the served document must be a valid HTML page")
+        }
+    }
+
     "the served page emits a data-kyo-host-init island for a host carrying a bridge".notNative in {
         val boot = HostPayload.Prop("r.0", "color", HostValue.Col(0x00ff00))
         val app  = UI.div(UI.host("canvas").withServerBridge(BootBridge(boot)))

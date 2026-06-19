@@ -9,7 +9,11 @@ import kyo.*
   *
   * Two leaves. `Prop` carries a single targeted prop push: a node id within the host subtree,
   * the prop slot name, and a typed value. `Structural` carries one keyed splice instruction the
-  * host's reconciler applies. Every leaf is `Schema`-serializable and carries no `js.Dynamic`
+  * host's reconciler applies, plus the `regionId` node id of the host-subtree region (a
+  * `foreach`/`reactive` holder) the splice targets, so a scene that mixes static siblings with
+  * several reactive regions routes each op to the right holder rather than the host root. The
+  * `regionId` defaults to the host root (`"r"`) so a single-region-at-root scene carries the
+  * same wire shape as before. Every leaf is `Schema`-serializable and carries no `js.Dynamic`
   * and no closure, so the wire stays typed Scala (the wire never carries a function or a raw
   * three.js object).
   */
@@ -17,7 +21,7 @@ sealed private[kyo] trait HostPayload derives CanEqual, Schema
 
 private[kyo] object HostPayload:
     final case class Prop(nodeId: String, slot: String, value: HostValue) extends HostPayload
-    final case class Structural(op: StructuralOp)                         extends HostPayload
+    final case class Structural(op: StructuralOp, regionId: String = "r") extends HostPayload
 end HostPayload
 
 /** The typed, FFI-free value union for a prop push. One leaf per value kind the bound setters

@@ -197,20 +197,87 @@ class ThreeMountTest extends ThreeTest:
     }
 
     "interrupt cascades: loop stops when scope closes" in {
+        // A handshake-driven runLoop: the Manual driver advances one tick per `proceed` token and the
+        // onFrame closure signals `done` after each tick, so the test steps the loop deterministically
+        // (no sleep) and knows the exact step count. After the scope closes (interrupting the forked
+        // loop fiber), the test puts another `proceed` and polls for a `done` over a bounded set of
+        // scheduler yields: if the loop had survived the close it would tick once more and the count
+        // would grow. A frozen count proves the close actually halted the loop.
         var steps = 0
+        val n     = 5
         val mesh = Three.mesh(Three.Geometry.box(), Three.Material.standard())
             .onFrame(_ => Sync.defer { steps += 1 })
         val scene = Three.scene(mesh)
-        Scope.run {
-            Three.testDriver(scene, baseCamera).map { driver =>
-                driver.step(16.millis).map { _ =>
-                    val stepsBefore = steps
-                    assert(stepsBefore >= 1)
+        for
+            proceed      <- Channel.initUnscoped[Unit](1)
+            done         <- Channel.initUnscoped[Unit](1)
+            stubRenderer <- Sync.Unsafe.defer(sjs.Dynamic.literal(render = (_: sjs.Dynamic, _: sjs.Dynamic) => ()))
+            stepsAtClose <- Scope.run {
+                Abort.recover[ThreeException](e => Abort.panic(e)) {
+                    for
+                        mountResult <- Reconciler.mount(scene)
+                        (rootLive, mounted) = mountResult
+                        cam <- ThreeFacadeOps.makeCamera(baseCamera)
+                        _   <- ThreeMount.subscribeRegions(mounted)
+                        // Fork the real frame loop with a driver that ticks once per `proceed` token. The
+                        // onFrame closure (which increments `steps`) runs inside each tick, then signals `done`.
+                        _ <- Fiber.init {
+                            Abort.run[ThreeException](
+                                ThreeMount.runLoop(
+                                    mounted,
+                                    rootLive,
+                                    cam,
+                                    stubRenderer,
+                                    ThreeFrames.Manual { driver =>
+                                        Loop.foreach {
+                                            Abort.run[Closed](proceed.take).map {
+                                                case Result.Success(_) =>
+                                                    Abort.run[ThreeException](driver.step(16.millis)).andThen {
+                                                        Abort.run[Closed](done.put(())).andThen(Loop.continue)
+                                                    }
+                                                case _ => Loop.done
+                                            }
+                                        }
+                                    }
+                                )
+                            ).map {
+                                case Result.Success(_) => (): Unit < Sync
+                                case Result.Failure(e) => Log.error(s"frame loop failed: ${e.getMessage}")
+                                case Result.Panic(e) =>
+                                    if e.isInstanceOf[Interrupted] then (): Unit < Sync
+                                    else Log.error("frame loop panicked", e)
+                            }
+                        }.unit
+                        // Drive exactly n ticks: each (proceed, done) handshake advances the loop one tick.
+                        _ <- Kyo.foreachDiscard(Chunk.from(0 until n)) { _ =>
+                            Abort.run[Closed](proceed.put(())).andThen(Abort.run[Closed](done.take)).unit
+                        }
+                        captured <- Sync.defer(steps)
+                    yield captured
                 }
             }
-        }.map { _ =>
-            assert(steps >= 1)
-        }
+            // The scope is now closed; the forked loop fiber has been interrupted by Scope.run teardown.
+            // Offer one more tick and poll for a `done` across a bounded set of scheduler yields; a halted
+            // loop never consumes the token, so `steps` cannot grow.
+            _ <- Abort.run[Closed](proceed.put(()))
+            leaked <- Loop.indexed { i =>
+                if i >= 50 then Loop.done(false)
+                else
+                    // Yield the scheduler (an unscoped trivial fiber) so a surviving loop fiber would get to
+                    // run, then check whether it produced another tick.
+                    Fiber.initUnscoped(Kyo.unit).map(_.get).andThen {
+                        Abort.run[Closed](done.poll).map {
+                            case Result.Success(Present(_)) => Loop.done(true)
+                            case _                          => Loop.continue
+                        }
+                    }
+            }
+            stepsAfter <- Sync.defer(steps)
+        yield
+            assert(stepsAtClose == n, s"the loop must run exactly $n ticks while the scope is open, got $stepsAtClose")
+            assert(!leaked, "no further tick may complete after the scope closes (the loop must be halted)")
+            assert(stepsAfter == stepsAtClose, s"the step count must not grow after the scope closes: $stepsAtClose -> $stepsAfter")
+        end for
     }
 
     "ThreeFrames.Manual driver yields onFrame closures in step order" in {

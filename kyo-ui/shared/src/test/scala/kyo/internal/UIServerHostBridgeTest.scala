@@ -426,4 +426,127 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
         end for
     }
 
+    // ============ a HostPick for an absent path is a silent no-op ============
+
+    // notNative: WS-behavior leaf; see class scaladoc.
+    "a HostPick for a path with no registered host is a silent no-op; a later valid pick still routes".notNative in {
+        for
+            invoked   <- Channel.initUnscoped[String](64)
+            ready     <- Channel.initUnscoped[Unit](4)
+            ran       <- Channel.initUnscoped[Unit](4)
+            pickCount <- AtomicInt.init(0)
+            stub = StubBridge(
+                invoked,
+                onSubscribe = (_, _) => latch(ready, ()),
+                onPickFn = (_, _, _) => pickCount.incrementAndGet.andThen(latch(ran, ()))
+            )
+            // The only host is at index 0; path Seq("9") names no host.
+            app = UI.div(hostWith(stub))
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            _ <- ready.take
+                            // A pick for a path that was never registered: it routes to no host's onPick.
+                            stalePick <- Kyo.lift(UIEvent.HostPick(Seq("9"), "ghost", pointer))
+                            _         <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](stalePick)))
+                            // The session is intact: a valid pick for the registered host still runs its onPick.
+                            validPick <- Kyo.lift(UIEvent.HostPick(Seq("0"), "node-0", pointer))
+                            _         <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](validPick)))
+                            _         <- ran.take
+                        yield ()
+                )
+            }
+            count <- pickCount.get
+        yield
+            // Exactly one onPick ran (the valid pick); the stale pick fired no onPick and did not tear down.
+            assert(count == 1, s"only the valid pick may run an onPick; the stale pick must be a no-op, got count=$count")
+        end for
+    }
+
+    // ============ a malformed inbound frame is dropped, not a teardown ============
+
+    "a malformed inbound frame returns Absent from the codec and does not tear down the session".notNative in {
+        // The pure codec drops non-Text and undecodable payloads to Absent (the test's own inbound decoder
+        // posture); the wire path proves a malformed UIEvent frame is dropped without tearing down the
+        // session: a subsequent valid HostPick still routes.
+        assert(decodeHtmlOp(HttpWebSocket.Payload.Binary(Span.empty[Byte])) == Absent, "a Binary payload must decode to Absent")
+        assert(decodeHtmlOp(HttpWebSocket.Payload.Text("{not json")) == Absent, "an undecodable Text payload must decode to Absent")
+        for
+            invoked   <- Channel.initUnscoped[String](64)
+            ready     <- Channel.initUnscoped[Unit](4)
+            ran       <- Channel.initUnscoped[Unit](4)
+            pickCount <- AtomicInt.init(0)
+            stub = StubBridge(
+                invoked,
+                onSubscribe = (_, _) => latch(ready, ()),
+                onPickFn = (_, _, _) => pickCount.incrementAndGet.andThen(latch(ran, ()))
+            )
+            app = UI.div(hostWith(stub))
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            _ <- ready.take
+                            // A garbage frame that does not decode to a UIEvent: the server must drop it,
+                            // never panic or tear down (a buggy client cannot kill the session).
+                            _ <- clientWs.put(HttpWebSocket.Payload.Text("{\"this\":\"is not a UIEvent\"}"))
+                            // The session survives: a valid HostPick after the garbage frame still routes.
+                            pick <- Kyo.lift(UIEvent.HostPick(Seq("0"), "node-0", pointer))
+                            _    <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](pick)))
+                            _    <- ran.take
+                        yield ()
+                )
+            }
+            count <- pickCount.get
+        yield
+            // The valid pick ran exactly once after the malformed frame: the garbage frame produced no
+            // spurious onPick and did not tear down the session.
+            assert(count == 1, s"the valid pick must run exactly one onPick after the malformed frame, got $count")
+        end for
+    }
+
+    // ============ a bridgeless host under a session ignores a pick ============
+
+    // notNative: WS-behavior leaf; see class scaladoc.
+    "a HostPick for a host with no serverBridge runs no server effect and keeps the session alive".notNative in {
+        for
+            invoked   <- Channel.initUnscoped[String](64)
+            ready     <- Channel.initUnscoped[Unit](4)
+            ran       <- Channel.initUnscoped[Unit](4)
+            pickCount <- AtomicInt.init(0)
+            // A bridged host at index 1 gives a readiness latch and a routable onPick; the host at index 0
+            // carries NO serverBridge, so it never appears in the host-bridge registry.
+            stub = StubBridge(
+                invoked,
+                onSubscribe = (_, _) => latch(ready, ()),
+                onPickFn = (_, _, _) => pickCount.incrementAndGet.andThen(latch(ran, ()))
+            )
+            app = UI.div(UI.host("div"), hostWith(stub))
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            _ <- ready.take
+                            // A pick aimed at the bridgeless host (index 0): there is no bridge to route to,
+                            // so no server effect runs.
+                            bridgeless <- Kyo.lift(UIEvent.HostPick(Seq("0"), "node-0", pointer))
+                            _          <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](bridgeless)))
+                            // The session is alive: the bridged sibling (index 1) still routes its onPick.
+                            bridged <- Kyo.lift(UIEvent.HostPick(Seq("1"), "node-1", pointer))
+                            _       <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](bridged)))
+                            _       <- ran.take
+                        yield ()
+                )
+            }
+            count <- pickCount.get
+        yield
+            // The bridgeless pick ran no onPick; only the bridged sibling's onPick ran, exactly once.
+            assert(count == 1, s"the bridgeless host must run no onPick; only the bridged sibling routes, got count=$count")
+        end for
+    }
+
 end UIServerHostBridgeTest

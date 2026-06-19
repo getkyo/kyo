@@ -243,8 +243,19 @@ object ThreeMount:
             Json.decode[kyo.internal.HostPayload](json) match
                 case Result.Success(p) => Sync.Unsafe.evalOrThrow(channel.apply(p))
                 case _                 => ()
-        val channels = window_kyoHostChannels()
-        channels.update(path.mkString("."), rx)
+        // Register through the inline clientJs helper, which sets the receiver AND flushes any
+        // HostUpdate payloads the WS delivered for this path before the island registered: a host's
+        // one-shot initial structure (a foreach's initial children) is pushed when the WS session
+        // starts, which can precede the island mount, so a direct set would drop it. The flushing
+        // register closes that startup race. Falls back to a direct set if the inline client predates
+        // the helper.
+        val w = dom.window.asInstanceOf[js.Dynamic]
+        if js.isUndefined(w.__kyoHostChannelRegister) then
+            val channels = window_kyoHostChannels()
+            channels.update(path.mkString("."), rx)
+        else
+            discard(w.__kyoHostChannelRegister(path.mkString("."), rx))
+        end if
     end registerChannelReceiver
 
     /** Drops the per-path receiver on scope close so a closed page leaves no stale entry. */
@@ -869,50 +880,98 @@ object ThreeMount:
         yield ()
     end islandMount
 
-    /** Observes the channel's structural inbox and applies each newly-appended `StructuralOp` to the
-      * live root's children in FIFO order, the client half of structural reactivity. The inbox is a
-      * `SignalRef[Chunk[StructuralOp]]` the WS receiver appends to; this forks one observe fiber under
-      * the island's ambient Scope that tracks how many ops it has already drained (a single-owner cursor
-      * on the observe loop), so each op applies exactly once even as the accumulated chunk grows. An
-      * `Insert` reconstitutes the descriptor and materializes it under a fresh per-element scope, then
-      * splices it into the root at the given index; a `Remove` closes that key's element scope exactly
-      * once (disposing its GL resources) and a stale second `Remove` for the same key is a no-op; a
-      * `Move` reuses the live node (no dispose, the GPU buffers survive) and relinks the children in the
-      * new order. The keyed live map and the ordered child list are single-owner on this fiber.
+    /** Resolves a host-subtree node id (`"r"`, `"r.0"`, `"r.2.1"`, the depth-first index path the
+      * flatten/reconstitute scheme assigns) to its live object by walking `rootLive`'s children
+      * positionally. The reconstituted client tree materializes children in AST order, so the same
+      * index path that names a server node names the matching live node. A path that runs past the
+      * live tree (a stale region id) resolves to `Absent`, so an op for an unknown region is a no-op.
+      */
+    private[kyo] def liveByNodeId(rootLive: Reconciler.Live, nodeId: String): Maybe[Reconciler.Live] =
+        val parts = nodeId.split('.').toList
+        parts match
+            case "r" :: rest =>
+                @scala.annotation.tailrec
+                def walk(live: Reconciler.Live, indices: List[String]): Maybe[Reconciler.Live] =
+                    indices match
+                        case Nil => Present(live)
+                        case head :: tail =>
+                            head.toIntOption match
+                                case Some(i) if i >= 0 && i < live.children.length =>
+                                    walk(live.children(i), tail)
+                                case _ => Absent
+                walk(rootLive, rest)
+            case _ => Absent
+        end match
+    end liveByNodeId
+
+    /** Observes the channel's structural inbox and applies each newly-appended `(regionId, StructuralOp)`
+      * to the live holder named by `regionId` in FIFO order, the client half of structural reactivity.
+      * The inbox is a `SignalRef[Chunk[(regionId, StructuralOp)]]` the WS receiver appends to; this forks
+      * one observe fiber under the island's ambient Scope that tracks how many ops it has already drained
+      * (a single-owner cursor on the observe loop), so each op applies exactly once even as the
+      * accumulated chunk grows. The ordered keyed children are tracked PER REGION, so a scene with several
+      * `foreach`/`reactive` regions (and static siblings) splices each region's ops into its own holder
+      * without colliding. An `Insert` reconstitutes the descriptor and materializes it under a fresh
+      * per-element scope, then splices it into that region holder at the given index; a `Remove` closes
+      * that key's element scope exactly once (disposing its GL resources) and a stale second `Remove` for
+      * the same key is a no-op; a `Move` reuses the live node (no dispose, the GPU buffers survive) and
+      * relinks the holder's children in the new order. The per-region keyed live map is single-owner on
+      * this fiber. An op whose `regionId` resolves to no live holder is a logged no-op.
       */
     private[kyo] def subscribeStructuralInbox(
         channel: HostChannel,
         mounted: Reconciler.Mounted,
         rootLive: Reconciler.Live
     )(using Frame): Unit < (Async & Scope) =
-        // The ordered keyed children spliced onto the root, single-owner on the drain loop. A Remove
-        // drops its entry (and closes its scope once); a Move reorders it; an Insert adds one. The key
-        // identifies a node so a Move/Remove finds it without re-walking the tree. The cursor counts the
-        // ops already drained so each accumulated op applies exactly once.
+        // The ordered keyed children per region, single-owner on the drain loop. A Remove drops its entry
+        // (and closes its scope once); a Move reorders it; an Insert adds one. The cursor counts the ops
+        // already drained so each accumulated op applies exactly once.
         //
         // The drain loop reads the inbox via `next` rather than `Signal.observe`, deliberately: observe
         // runs each value inside a fresh per-value Scope that closes when the value changes, which would
         // dispose an inserted element's per-element scope on the next op. The `next`-driven loop runs the
         // splice under the island's long-lived ambient Scope, so an inserted subtree lives until its
         // Remove closes its own per-element scope.
-        AtomicRef.init(Chunk.empty[(String, Reconciler.Live)]).map { spliced =>
+        AtomicRef.init(Map.empty[String, Chunk[(String, Reconciler.Live)]]).map { byRegion =>
             AtomicInt.init(0).map { drained =>
-                def drainOnce(ops: Chunk[kyo.internal.StructuralOp]): Unit < (Async & Scope & Abort[ThreeException]) =
+                def applyOne(regionId: String, op: kyo.internal.StructuralOp): Unit < (Async & Scope & Abort[ThreeException]) =
+                    liveByNodeId(rootLive, regionId) match
+                        case Present(regionLive) =>
+                            byRegion.get.map { regions =>
+                                val current = regions.getOrElse(regionId, Chunk.empty[(String, Reconciler.Live)])
+                                val binding = Present(RegionBinding(channel, regionId))
+                                applyStructuralOp(op, current, regionLive, mounted, binding).map { next =>
+                                    byRegion.updateAndGet(_.updated(regionId, next)).unit
+                                }
+                            }
+                        case Absent =>
+                            // A region id with no live holder (a stale or unmatched path): log and skip,
+                            // never throw into the drain loop.
+                            Log.error(s"structural op for unknown region '$regionId' dropped")
+                def drainOnce(ops: Chunk[(String, kyo.internal.StructuralOp)]): Unit < (Async & Scope & Abort[ThreeException]) =
                     drained.get.map { already =>
                         val pending = ops.drop(already)
-                        Kyo.foreachDiscard(pending) { op =>
-                            spliced.get.map { current =>
-                                applyStructuralOp(op, current, rootLive, mounted).map(spliced.set)
-                            }
+                        Kyo.foreachDiscard(pending) { case (regionId, op) =>
+                            applyOne(regionId, op)
                         }.andThen(drained.set(already + pending.size))
                     }
                 Fiber.init {
                     Abort.run[Throwable] {
                         // Drain the current accumulation first (ops that arrived before this fiber started),
-                        // then loop on each subsequent emission.
+                        // then loop: wait for the next emission, then re-read `current` and drain the latest
+                        // accumulated chunk. Reading `current` after each wakeup (rather than draining the
+                        // value `next` yields) is lossless under a burst: several appends between two wakeups
+                        // coalesce into one `next`, and re-reading `current` recovers every appended op (the
+                        // cursor drops the already-drained prefix), so a boot that splices N children in a
+                        // burst applies all N rather than only the one `next` happened to observe.
                         Abort.recover[ThreeException](e => Abort.panic(e)) {
                             channel.structuralInbox.current.map(drainOnce).andThen {
-                                Loop.foreach(channel.structuralInbox.next.map(drainOnce).andThen(Loop.continue))
+                                Loop.foreach {
+                                    channel.structuralInbox.next
+                                        .andThen(channel.structuralInbox.current)
+                                        .map(drainOnce)
+                                        .andThen(Loop.continue)
+                                }
                             }
                         }
                     }.map { result =>
@@ -929,36 +988,57 @@ object ThreeMount:
         }
     end subscribeStructuralInbox
 
+    /** The channel binding that gives a spliced region child its own per-slot mirrors: the host
+      * `channel` whose mirror map an Insert grows and a Remove shrinks, and the `regionId` of the holder
+      * the child is spliced into. The child's node ids are `s"$regionId#$key"`, the stable per-key id the
+      * server emits its `HostPayload.Prop` pushes against, so a `foreach` child's bound prop (a cube's
+      * index-driven position) updates over the channel exactly like a static node's. Absent on the
+      * isolated test path, which splices structure without per-child prop reactivity.
+      */
+    final private[kyo] case class RegionBinding(channel: HostChannel, regionId: String):
+        def childId(key: String): String = s"$regionId#$key"
+
     /** Applies one `StructuralOp` against the current ordered keyed children, returning the next ordered
       * list. `Insert` reconstitutes + materializes the descriptor under a per-element scope and splices
       * it at the index; `Remove` disposes the key's element scope exactly once (a missing key is a
       * no-op, so a stale second Remove cannot double-dispose); `Move` reorders the existing live node
       * with no dispose (the live object reference is preserved, GPU buffers survive). After each op the
-      * root's children are relinked in the new order.
+      * root's children are relinked in the new order. When a `binding` is present, an Insert registers
+      * the child's reconstituted mirrors on the channel (keyed by the child's `regionId#key` node id) and
+      * a Remove unregisters them, so the child's bound props update over the channel; the isolated test
+      * path passes `Absent` and reconstitutes the child at the host root with no channel side effect.
       */
     private[kyo] def applyStructuralOp(
         op: kyo.internal.StructuralOp,
         current: Chunk[(String, Reconciler.Live)],
         rootLive: Reconciler.Live,
-        mounted: Reconciler.Mounted
+        mounted: Reconciler.Mounted,
+        binding: Maybe[RegionBinding] = Absent
     )(using Frame): Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException]) =
         op match
             case kyo.internal.StructuralOp.Insert(key, index, descriptor) =>
-                ThreeBridge.reconstitute(kyo.internal.HostPayload.Structural(
-                    kyo.internal.StructuralOp.Insert(ThreeBridge.rootId, 0, descriptor)
-                )).map { case (node, _) =>
-                    Reconciler.materializeInElemScope(node, mounted).map { live =>
-                        val clamped = math.max(0, math.min(index, current.size))
-                        val next    = current.take(clamped).appended((key, live)).concat(current.drop(clamped))
-                        relinkRoot(rootLive, current, next).andThen(next)
+                // Reconstitute the child under its stable per-key node id when bound (so its mirrors match
+                // the ids the server pushes props against), otherwise at the host root (the test path).
+                val baseId = binding.fold(ThreeBridge.rootId)(_.childId(key))
+                ThreeBridge.reconstituteAt(baseId, descriptor).map { case (node, mirrors) =>
+                    val register = binding.fold(Kyo.unit: Unit < Sync)(_.channel.registerMirrors(mirrors.toSeq))
+                    register.andThen {
+                        Reconciler.materializeInElemScope(node, mounted).map { live =>
+                            val clamped = math.max(0, math.min(index, current.size))
+                            val next    = current.take(clamped).appended((key, live)).concat(current.drop(clamped))
+                            relinkRoot(rootLive, current, next).andThen(next)
+                        }
                     }
                 }
             case kyo.internal.StructuralOp.Remove(key) =>
                 Maybe.fromOption(current.find(_._1 == key)) match
                     case Present((_, live)) =>
-                        Reconciler.disposeElemScope(live, mounted).andThen {
-                            val next = current.filterNot(_._1 == key)
-                            relinkRoot(rootLive, current, next).andThen(next)
+                        val unregister = binding.fold(Kyo.unit: Unit < Sync)(b => b.channel.unregisterMirrors(b.childId(key)))
+                        unregister.andThen {
+                            Reconciler.disposeElemScope(live, mounted).andThen {
+                                val next = current.filterNot(_._1 == key)
+                                relinkRoot(rootLive, current, next).andThen(next)
+                            }
                         }
                     case Absent =>
                         // A stale Remove for a key already removed: no live entry, so no dispose. This is
@@ -1006,13 +1086,14 @@ object ThreeMount:
         payload match
             case kyo.internal.HostPayload.Prop(nodeId, slot, value) =>
                 channel.writeProp(nodeId, slot, value)
-            case kyo.internal.HostPayload.Structural(op) =>
-                // A keyed splice instruction: appended to the structural inbox, a
-                // Signal[Chunk[StructuralOp]] the subscribeStructuralInbox drain observes. On the
-                // next drain tick an Insert materializes the descriptor under a fresh per-element
-                // scope, a Remove closes exactly one element scope (disposing its GL resources
-                // once), and a Move reuses the live node (GPU buffers survive).
-                channel.writeStructural(op)
+            case kyo.internal.HostPayload.Structural(op, regionId) =>
+                // A keyed splice instruction for one region: appended to the structural inbox, a
+                // Signal[Chunk[(regionId, StructuralOp)]] the subscribeStructuralInbox drain observes.
+                // On the next drain tick an Insert materializes the descriptor under a fresh
+                // per-element scope, a Remove closes exactly one element scope (disposing its GL
+                // resources once), and a Move reuses the live node (GPU buffers survive); each op
+                // applies into the holder named by regionId, not the host root.
+                channel.writeStructural(regionId, op)
     end applyHostUpdate
 
 end ThreeMount

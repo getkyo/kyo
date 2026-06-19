@@ -771,13 +771,28 @@ private[kyo] object HtmlRenderer:
            |  }else if(op.HostUpdate){
            |    var p=op.HostUpdate.path.join(".");
            |    var rx=window.__kyoHostChannels&&window.__kyoHostChannels[p];
-           |    if(rx)rx(op.HostUpdate.payload);
+           |    if(rx){rx(op.HostUpdate.payload);}
+           |    else{
+           |      // The host's island receiver has not registered yet (the WS session can push a host's
+           |      // initial state before the client island mounts and registers). Buffer the payload by
+           |      // path; __kyoHostChannelRegister flushes it in order when the receiver registers, so a
+           |      // host's first structural/prop pushes are never lost to that startup race.
+           |      window.__kyoHostPending[p]=window.__kyoHostPending[p]||[];
+           |      window.__kyoHostPending[p].push(op.HostUpdate.payload);
+           |    }
            |  }
            |};
            |// The island registers a receiver per host path here; a HostUpdate for an unregistered
-           |// path is a silent no-op (rx is undefined). The island also calls window.__kyoPostPick to
-           |// send a HostPick back over this same WS.
+           |// path is buffered (see above) and flushed on registration. The island also calls
+           |// window.__kyoPostPick to send a HostPick back over this same WS.
            |window.__kyoHostChannels=window.__kyoHostChannels||{};
+           |window.__kyoHostPending=window.__kyoHostPending||{};
+           |// Registers a host receiver and flushes any payloads buffered before it registered, in order.
+           |window.__kyoHostChannelRegister=function(p,rx){
+           |  window.__kyoHostChannels[p]=rx;
+           |  var pend=window.__kyoHostPending[p];
+           |  if(pend){delete window.__kyoHostPending[p];for(var i=0;i<pend.length;i++)rx(pend[i]);}
+           |};
            |window.__kyoPostPick=function(path,nodeId,pointer){post({HostPick:{path:path,nodeId:nodeId,pointer:pointer}});};
            |function fp(el){
            |  while(el&&el!==document.body){

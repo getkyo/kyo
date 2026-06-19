@@ -83,32 +83,46 @@ private[kyo] object ThreeBridge:
             case Result.Panic(e) => Abort.panic(e)
         }
 
+    // The serializable placeholder a structural reactive region (Foreach/Reactive) flattens to: an
+    // empty "group" holder occupying the region's deterministic node-id position. The client
+    // reconstitutes the same empty holder, and the region's children arrive over the structural
+    // channel (observeStructure's initial diff splices them into this holder). This mirrors the
+    // client-direct reconciler, which materializes a Foreach/Reactive as an empty holder Group at the
+    // node's position, so the boot preserves the region's siblings (lights, static meshes) and the
+    // node-id path stays identical across flatten, reconstitute, and the structural ops' region ids.
+    private val regionPlaceholder: SceneDescriptor = SceneDescriptor("group", Seq.empty, Seq.empty)
+
     /** Flattens one node (and its subtree) to a [[SceneDescriptor]]: the kind tag, the resolved prop
       * values, and children recursively. Each `Bound.Ref` is resolved to its current value via
-      * `signal.current`. A node that cannot cross the wire (a `Custom` carrying a closure or a raw
-      * three.js object, or a `Reactive`/`Foreach` carrying a server-side signal) fails with a typed
+      * `signal.current`. A `Reactive`/`Foreach` flattens to an empty "group" placeholder holding the
+      * region's node-id position (its children arrive over the structural channel). A `Custom` carrying
+      * a closure or a raw three.js object cannot cross the wire and fails with a typed
       * [[UnserializableNode]] rather than a silently empty descriptor, so a Custom subtree spliced
-      * server-side is caught at flatten time.
+      * server-side is caught at flatten time (the closure-drop boundary).
       */
     def flattenNode(node: Three)(using Frame): SceneDescriptor < (Sync & Abort[UnserializableNode]) =
         unserializableKind(node) match
             case Present(kind) => Abort.fail(new UnserializableNode(kind))
             case Absent =>
-                resolveProps(node).map { props =>
-                    val kind = kindOf(node)
-                    Kyo.foreach(childrenOf(node))(flattenNode).map { kids =>
-                        SceneDescriptor(kind, props, kids.toSeq)
-                    }
-                }
+                node match
+                    case _: Three.Ast.Reactive | _: Three.Ast.Foreach[?] =>
+                        // A structural reactive region: a position-preserving empty holder placeholder.
+                        regionPlaceholder: SceneDescriptor < (Sync & Abort[UnserializableNode])
+                    case _ =>
+                        resolveProps(node).map { props =>
+                            val kind = kindOf(node)
+                            Kyo.foreach(childrenOf(node))(flattenNode).map { kids =>
+                                SceneDescriptor(kind, props, kids.toSeq)
+                            }
+                        }
 
-    // The kind tag of a node that cannot cross the wire (closure / js.Dynamic / server-side signal),
-    // or Absent when the node serializes. Custom (node), Reactive, and Foreach are the dropped kinds.
+    // The kind tag of a node that cannot cross the wire (a closure or a js.Dynamic), or Absent when the
+    // node serializes. Only `Custom` is dropped: a `Reactive`/`Foreach` is serializable as an empty
+    // holder placeholder (its children stream over the structural channel), handled in flattenNode.
     private def unserializableKind(node: Three): Maybe[String] =
         node match
-            case _: Three.Ast.Custom[?]  => Present("custom")
-            case _: Three.Ast.Reactive   => Present("reactive")
-            case _: Three.Ast.Foreach[?] => Present("foreach")
-            case _                       => Absent
+            case _: Three.Ast.Custom[?] => Present("custom")
+            case _                      => Absent
 
     private def kindOf(node: Three): String =
         node match
@@ -218,44 +232,104 @@ private[kyo] object ThreeBridge:
             }.unit
         }
 
-    /** Forks one observe fiber per server-owned structural region (`Three.Ast.Foreach`, the node
-      * `foreach`/`foreachKeyed` produce): each emission of the region's `Signal[Chunk[A]]` is diffed by
-      * key against the prior emission, and the resulting minimal op set (`Remove`/`Move`/`Insert`) is
-      * encoded as a `HostPayload.Structural` and pushed through `emit`. An `Insert` flattens the new
-      * child subtree to a `SceneDescriptor` (resolving every `Bound.Ref` to its current server-side
-      * value); `Remove` and `Move` carry only the key, so a reorder reuses the client's live node and a
-      * removed key disposes once. The diff is pure over the declarative children and the key function;
-      * only the typed structural op crosses the wire. This is the structural half of
-      * `HostBridge.subscriptions`; the prop half is `observeProps`.
+    /** Forks one observe fiber per server-owned structural region of the scene, both
+      * `Three.Ast.Foreach` (`foreach`/`foreachKeyed`) and `Three.Ast.Reactive` (`reactive`/`render`/
+      * `when`). Each emitted op is a `HostPayload.Structural(op, regionId)` whose `regionId` is the
+      * region holder's deterministic node id (the same index path flatten and reconstitute assign), so
+      * the client splices into the matching holder rather than the host root, and a scene that mixes a
+      * region with static siblings (lights, meshes) routes each op to the right place.
+      *
+      * A `Foreach` region diffs its `Signal[Chunk[A]]` by key against the prior emission and emits the
+      * minimal op set (`Remove`/`Move`/`Insert`). A `Reactive` region holds a `Signal[Three]`; it
+      * flattens the new subtree and, when the descriptor changed, emits `Remove` of the prior child and
+      * `Insert` of the new one under a stable single key (the swap-on-change semantics the client-direct
+      * reconciler's `reactiveStep` mirrors). An `Insert` flattens the new subtree to a `SceneDescriptor`
+      * (resolving every `Bound.Ref` to its current server-side value); `Remove` and `Move` carry only the
+      * key. The diff is pure over the declarative children and the key function; only the typed
+      * structural op crosses the wire. This is the structural half of `HostBridge.subscriptions`; the
+      * prop half is `observeProps`.
       */
     def observeStructure(scene: Three, emit: HostPayload => Unit < Async)(using Frame): Unit < (Async & Scope) =
-        Kyo.foreachDiscard(foreachRegions(scene)) { region =>
-            // The prior keyed snapshot is single-owner: it lives on this region's observe loop and is
-            // never read or written by another fiber. It carries the flattened descriptors so a Move
-            // (key present at a new index) reuses the prior descriptor without re-flattening, and an
-            // Insert (a new key) flattens its rendered subtree once.
-            AtomicRef.init(Chunk.empty[(String, SceneDescriptor)]).map { prior =>
-                Fiber.init {
-                    region.signal.observe { items =>
-                        prior.get.map { snapshot =>
-                            // A Custom/closure subtree rendered into the region aborts the flatten with a
-                            // typed UnserializableNode (the closure-drop boundary); on the live observe path
-                            // it is logged and the snapshot is left unchanged, the documented-drop side of the
-                            // boundary. The hard-failing side is the flatten/diff seam tests assert against.
-                            Abort.run[UnserializableNode](diffKeyedServer(region, snapshot, items)).map {
-                                case Result.Success((ops, nextSnapshot)) =>
-                                    prior.set(nextSnapshot).andThen {
-                                        Kyo.foreachDiscard(ops)(op => emit(HostPayload.Structural(op)))
-                                    }
-                                case Result.Failure(e) =>
-                                    Log.error(s"structural diff dropped an unserializable subtree: ${e.getMessage}")
-                                case Result.Panic(e) =>
-                                    Log.error("structural diff panicked", e)
-                            }
+        Kyo.foreachDiscard(structuralRegions(rootId, scene)) { regionEntry =>
+            val (regionId, region) = regionEntry
+            region match
+                case foreach: ForeachRegion[Any] @unchecked => observeForeachRegion(regionId, foreach, emit)
+                case reactive: ReactiveRegion               => observeReactiveRegion(regionId, reactive, emit)
+        }
+
+    // Observes one Foreach region: the prior keyed snapshot is single-owner on this region's observe
+    // loop. It carries the flattened descriptors so the diff emits a Move for a surviving key whose index
+    // changed and an Insert for a new key, plus a Prop push for any surviving child whose flattened prop
+    // value changed (a cube's index-driven position, addressed by the child's stable `regionId#key` node
+    // id, so the client patches the live object without re-materializing it). Each structural op is
+    // tagged with the region's node id; each Prop carries the child node id.
+    private def observeForeachRegion(
+        regionId: String,
+        region: ForeachRegion[Any],
+        emit: HostPayload => Unit < Async
+    )(using Frame): Unit < (Async & Scope) =
+        AtomicRef.init(Chunk.empty[(String, SceneDescriptor)]).map { prior =>
+            Fiber.init {
+                region.signal.observe { items =>
+                    prior.get.map { snapshot =>
+                        // A Custom/closure subtree rendered into the region aborts the flatten with a
+                        // typed UnserializableNode (the closure-drop boundary); on the live observe path
+                        // it is logged and the snapshot is left unchanged, the documented-drop side of the
+                        // boundary. The hard-failing side is the flatten/diff seam tests assert against.
+                        Abort.run[UnserializableNode](diffKeyedServer(regionId, region, snapshot, items)).map {
+                            case Result.Success((ops, propPushes, nextSnapshot)) =>
+                                prior.set(nextSnapshot).andThen {
+                                    Kyo.foreachDiscard(ops)(op => emit(HostPayload.Structural(op, regionId)))
+                                        .andThen(Kyo.foreachDiscard(propPushes)(emit))
+                                }
+                            case Result.Failure(e) =>
+                                Log.error(s"structural diff dropped an unserializable subtree: ${e.getMessage}")
+                            case Result.Panic(e) =>
+                                Log.error("structural diff panicked", e)
                         }
                     }
-                }.unit
-            }
+                }
+            }.unit
+        }
+
+    // The stable single key a Reactive region's one child is splice-keyed by on the client. A Reactive
+    // holds at most one rendered subtree, so a swap is Remove(reactiveKey) + Insert(reactiveKey, 0, new).
+    private val reactiveKey = "reactive"
+
+    // Observes one Reactive region: flatten the emitted subtree and, when the descriptor changed since
+    // the prior emission, emit Remove of the prior child (if any) then Insert of the new one under the
+    // stable single key, both tagged with the region's node id. An identical re-emission is a no-op, so
+    // a Reactive whose value does not change after boot splices once and never thrashes.
+    private def observeReactiveRegion(
+        regionId: String,
+        region: ReactiveRegion,
+        emit: HostPayload => Unit < Async
+    )(using Frame): Unit < (Async & Scope) =
+        AtomicRef.init(Maybe.empty[SceneDescriptor]).map { prior =>
+            Fiber.init {
+                region.signal.observe { node =>
+                    prior.get.map { priorDesc =>
+                        // A Custom/closure subtree rendered into the region aborts the flatten with a
+                        // typed UnserializableNode (the closure-drop boundary); logged and skipped on the
+                        // live observe path, leaving the prior child in place.
+                        Abort.run[UnserializableNode](flattenNode(node)).map {
+                            case Result.Success(desc) =>
+                                if priorDesc.contains(desc) then Kyo.unit
+                                else
+                                    val removeOp: Chunk[StructuralOp] =
+                                        if priorDesc.isDefined then Chunk(StructuralOp.Remove(reactiveKey)) else Chunk.empty
+                                    val ops = removeOp.appended(StructuralOp.Insert(reactiveKey, 0, desc))
+                                    prior.set(Present(desc)).andThen {
+                                        Kyo.foreachDiscard(ops)(op => emit(HostPayload.Structural(op, regionId)))
+                                    }
+                            case Result.Failure(e) =>
+                                Log.error(s"reactive region dropped an unserializable subtree: ${e.getMessage}")
+                            case Result.Panic(e) =>
+                                Log.error("reactive region flatten panicked", e)
+                        }
+                    }
+                }
+            }.unit
         }
 
     // A server-side structural region: a Foreach node wrapped to read its declarative children
@@ -269,27 +343,48 @@ private[kyo] object ThreeBridge:
             items.zipWithIndex.map { case (item, i) => (keyAt(i, item), renderAt(i, item)) }
     end ForeachRegion
 
-    // Walks the scene collecting every Foreach region (the structural reactive holders). Reactive and
-    // Custom nodes carry closures/signals that stay server-side, so they are not structural regions.
-    private def foreachRegions(node: Three): Chunk[ForeachRegion[Any]] =
-        val here: Chunk[ForeachRegion[Any]] = node match
-            // Existential erasure: the type variable [a] is captured locally; the homogeneous Chunk[ForeachRegion[Any]] is only traversed via its own typed methods.
-            case f: Three.Ast.Foreach[a] => Chunk(new ForeachRegion[a](f).asInstanceOf[ForeachRegion[Any]])
-            case _                       => Chunk.empty
-        here.concat(childrenOf(node).flatMap(foreachRegions))
-    end foreachRegions
+    // A server-side Reactive region: the node's Signal[Three], whose every emission is the one rendered
+    // subtree to flatten and swap into the region holder.
+    final private class ReactiveRegion(node: Three.Ast.Reactive):
+        val signal: Signal[Three] = node.signal
+    end ReactiveRegion
 
-    // The pure server-side keyed diff for one structural region: given the prior keyed snapshot and the
-    // next item list, returns the minimal op set (each removed key once, each surviving key whose index
-    // changed as a Move, each new key as an Insert carrying its flattened SceneDescriptor) plus the next
-    // keyed snapshot to thread forward. A surviving key at an unchanged index emits no op (a Move only
-    // when the index actually changed). The diff is pure over the declarative children + key fn; only an
-    // Insert flattens a subtree (resolving Bound.Ref to current at splice time).
+    // Walks the scene assigning each node its deterministic node id (the same depth-first index path
+    // flatten/reconstitute use) and collecting every structural reactive region (Foreach or Reactive)
+    // paired with that id. A Custom node carries a closure that stays server-side, so it is not a
+    // structural region. A region's own (empty) AST children are not traversed: its rendered subtree
+    // streams over the structural channel, not the boot tree.
+    private def structuralRegions(nodeId: String, node: Three): Chunk[(String, ForeachRegion[Any] | ReactiveRegion)] =
+        node match
+            // Existential erasure: the type variable [a] is captured locally; the homogeneous element is
+            // only traversed via the region's own typed methods.
+            case f: Three.Ast.Foreach[a] => Chunk((nodeId, new ForeachRegion[a](f).asInstanceOf[ForeachRegion[Any]]))
+            case r: Three.Ast.Reactive   => Chunk((nodeId, new ReactiveRegion(r)))
+            case _ =>
+                Chunk.from(childrenOf(node).toSeq.zipWithIndex).flatMap { case (child, i) =>
+                    structuralRegions(childId(nodeId, i), child)
+                }
+    end structuralRegions
+
+    // The pure server-side keyed diff for one structural region: given the region id, the prior keyed
+    // snapshot, and the next item list, returns (structural ops, prop pushes, next snapshot).
+    //
+    //   - structural ops: each removed key once, each surviving key whose index changed as a Move, each
+    //     new key as an Insert carrying its freshly flattened SceneDescriptor.
+    //   - prop pushes: for each surviving key whose re-flattened descriptor's prop values changed, one
+    //     HostPayload.Prop per changed slot, addressed by the child's stable `regionId#key` node id, so a
+    //     cube's index-driven position slides on a reorder without re-materializing the live object.
+    //
+    // Every keyed child is re-flattened (resolving each Bound.Ref to its current server value), so a
+    // surviving child's prop change is observed; the structural op set stays minimal (a Move only when
+    // the index actually changed, never a Remove+Insert for a survivor). The next snapshot threads the
+    // freshly flattened descriptors forward so the following emission diffs against the current props.
     private def diffKeyedServer[A](
+        regionId: String,
         region: ForeachRegion[A],
         prior: Chunk[(String, SceneDescriptor)],
         items: Chunk[A]
-    )(using Frame): (Chunk[StructuralOp], Chunk[(String, SceneDescriptor)]) < (Sync & Abort[UnserializableNode]) =
+    )(using Frame): (Chunk[StructuralOp], Chunk[HostPayload.Prop], Chunk[(String, SceneDescriptor)]) < (Sync & Abort[UnserializableNode]) =
         val keyedNodes = region.keyedNodes(items)
         val priorIndex = prior.zipWithIndex.map { case ((k, d), i) => (k, (i, d)) }.toMap
         val nextKeys   = keyedNodes.map(_._1)
@@ -297,26 +392,48 @@ private[kyo] object ThreeBridge:
         // Removed: present in prior, absent from next. One Remove per removed key.
         val removes: Chunk[StructuralOp] =
             prior.collect { case (k, _) if !nextKeySet.contains(k) => StructuralOp.Remove(k) }
-        // For each next entry, either reuse the prior descriptor (a surviving key) or flatten a fresh one
-        // (a new key -> Insert). Threads the next snapshot in order so the prior for the following
-        // emission is the descriptors of the current children.
+        // For each next entry, re-flatten its current subtree. A surviving key emits a Move (if its index
+        // changed) plus a Prop per changed slot; a new key emits an Insert. Threads the next snapshot in
+        // order so the prior for the following emission is the descriptors of the current children.
         Kyo.foreach(keyedNodes.zipWithIndex) { case ((key, node), nextIdx) =>
-            Maybe.fromOption(priorIndex.get(key)) match
-                case Present((priorIdx, priorDesc)) =>
-                    val moveOp =
-                        if priorIdx == nextIdx then Chunk.empty[StructuralOp]
-                        else Chunk(StructuralOp.Move(key, nextIdx))
-                    (moveOp, (key, priorDesc)): (Chunk[StructuralOp], (String, SceneDescriptor)) < (Sync & Abort[UnserializableNode])
-                case Absent =>
-                    flattenNode(node).map { desc =>
-                        (Chunk(StructuralOp.Insert(key, nextIdx, desc)), (key, desc))
-                    }
+            flattenNode(node).map { desc =>
+                Maybe.fromOption(priorIndex.get(key)) match
+                    case Present((priorIdx, priorDesc)) =>
+                        val moveOp =
+                            if priorIdx == nextIdx then Chunk.empty[StructuralOp]
+                            else Chunk(StructuralOp.Move(key, nextIdx))
+                        val propPushes = descPropDeltas(s"$regionId#$key", priorDesc, desc)
+                        (moveOp, propPushes, (key, desc))
+                    case Absent =>
+                        (Chunk(StructuralOp.Insert(key, nextIdx, desc)), Chunk.empty[HostPayload.Prop], (key, desc))
+            }
         }.map { perKey =>
             val moveAndInsertOps = perKey.flatMap(_._1)
-            val nextSnapshot     = perKey.map(_._2)
-            (removes.concat(moveAndInsertOps), nextSnapshot)
+            val propPushes       = perKey.flatMap(_._2)
+            val nextSnapshot     = perKey.map(_._3)
+            (removes.concat(moveAndInsertOps), propPushes, nextSnapshot)
         }
     end diffKeyedServer
+
+    // Walks two descriptors of the same node positionally, emitting one HostPayload.Prop per slot whose
+    // value changed (present in next with a different value than prior, or newly present). The node id
+    // scheme matches reconstituteAt/mirrorRefs: `baseId` for the node, `baseId.i` for child i, so each
+    // Prop addresses the client mirror the spliced child allocated. A structurally divergent descriptor
+    // (different kind or child count) emits no deltas: the structural op set handles that shape change.
+    private def descPropDeltas(baseId: String, prior: SceneDescriptor, next: SceneDescriptor): Chunk[HostPayload.Prop] =
+        if prior.kind != next.kind || prior.children.length != next.children.length then Chunk.empty
+        else
+            val priorProps = prior.props.toMap
+            val here: Chunk[HostPayload.Prop] =
+                Chunk.from(next.props).collect {
+                    case (slot, value) if !priorProps.get(slot).contains(value) => HostPayload.Prop(baseId, slot, value)
+                }
+            val kids =
+                Chunk.from(prior.children.zip(next.children).zipWithIndex).flatMap { case ((p, n), i) =>
+                    descPropDeltas(childId(baseId, i), p, n)
+                }
+            here.concat(kids)
+    end descPropDeltas
 
     /** Walks a scene collecting every `(nodeId, slot, signal)` for a `Bound.Ref` prop. On the server
       * scene the signals are the server-owned ones `observeProps` subscribes; on a reconstituted
@@ -342,12 +459,23 @@ private[kyo] object ThreeBridge:
       */
     def reconstitute(payload: HostPayload)(using Frame): (Three, Map[(String, String), SignalRef[Any]]) < Sync =
         payload match
-            case HostPayload.Structural(StructuralOp.Insert(_, _, descriptor)) =>
+            case HostPayload.Structural(StructuralOp.Insert(_, _, descriptor), _) =>
                 buildNode(rootId, descriptor).map { case (node, mirrors) =>
                     (node, mirrors.toMap)
                 }
             case _ =>
                 Sync.defer((Three.scene(), Map.empty[(String, String), SignalRef[Any]]))
+
+    /** Reconstitutes one descriptor as a client node whose mirror node ids are rooted at `baseId`
+      * instead of the host root, for a region child spliced by `applyStructuralOp`. A `foreach` child is
+      * built under `baseId = s"$regionId#$key"` (the stable per-key id the server emits its prop pushes
+      * against), so the child's bound props (a cube's index-driven position) get mirrors the channel can
+      * route a later `HostPayload.Prop` to. Returns the node plus its `(nodeId, slot) -> mirror` map.
+      */
+    def reconstituteAt(baseId: String, descriptor: SceneDescriptor)(using
+        Frame
+    ): (Three, Map[(String, String), SignalRef[Any]]) < Sync =
+        buildNode(baseId, descriptor).map { case (node, mirrors) => (node, mirrors.toMap) }
 
     // Builds one node from a descriptor, threading the accumulated mirror map. Each prop slot gets a
     // fresh SignalRef seeded with the descriptor's boot value; the node binds Bound.Ref(mirror) so the
