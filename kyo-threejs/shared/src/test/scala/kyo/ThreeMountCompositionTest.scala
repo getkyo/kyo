@@ -11,7 +11,7 @@ import kyo.*
   * with and without the frames argument); the fourth pins the cross-module composition:
   * `UI.runMount` and `Three.runMount` both resolve and compose in one file with a single import.
   */
-class MountCompositionTest extends ThreeTest:
+class ThreeMountCompositionTest extends ThreeTest:
 
     "Three.runMount resolves via import kyo.* (no frames arg)" in {
         val scene                                             = Three.scene()
@@ -127,4 +127,4 @@ class MountCompositionTest extends ThreeTest:
         assert(apps.length == 7)
     }
 
-end MountCompositionTest
+end ThreeMountCompositionTest

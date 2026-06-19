@@ -423,7 +423,7 @@ class ThreeMountChannelTest extends ThreeTest:
         // Type-ascription guard for the one locked public addition: the 2-arg PageHead overload.
         val _: (String, UI.PageHead) => (=> UI < Async) => Frame ?=> Seq[HttpHandler[?, ?, ?]] < Sync =
             (basePath, head) => ui => UI.runHandlers(basePath, head)(ui)
-        assert(true)
+        succeed
     }
 
 end ThreeMountChannelTest

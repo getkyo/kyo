@@ -63,8 +63,8 @@ class HostNodeTest extends kyo.test.Test[Any]:
         end for
     }
 
-    // PRESERVE-UI-01: HostUpdate is a pure construction (no effect row at the call site).
-    "PRESERVE-UI-01: HostUpdate constructs as a plain HtmlOp value" in {
+    // HostUpdate is a pure construction (no effect row at the call site).
+    "HostUpdate constructs as a plain HtmlOp value" in {
         val payload = HostPayload.Prop("n0", "color", HostValue.Col(16711680))
         val op      = HtmlOp.HostUpdate(Seq("0", "2"), payload)
         assert(op.path == Seq("0", "2"))

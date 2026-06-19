@@ -9,7 +9,7 @@ class UIHostMountTest extends kyo.test.Test[Any]:
         val mounted = UI.host("div") { (_: dom.Element) => Kyo.unit }
         assert(mounted.mount.isDefined)
         mounted.mount match
-            case Present(_: DomHostMount) => assert(true)
+            case Present(_: DomHostMount) => succeed
             case _                        => assert(false, "expected Present(DomHostMount)")
     }
 
