@@ -78,7 +78,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ==================== a HostPick runs the server-side onPick ====================
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "INV-TJS-06: a HostPick runs the server-side onPick closure".notNative in {
+    "a HostPick runs the server-side onPick closure".notNative in {
         for
             ref     <- Signal.initRef(0)
             invoked <- Channel.initUnscoped[String](64)
@@ -111,7 +111,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
 
     // ============ the wire pick carries no closure (pure codec) ============
 
-    "INV-TJS-06-absent: the decoded HostPick carries only typed plain fields" in {
+    "the decoded HostPick carries only typed plain fields" in {
         val pick    = UIEvent.HostPick(Seq("0"), "node-0", PointerData(1.5, -2.0, 0.25, 8.0, 0.3, -0.4))
         val encoded = Json.encode[UIEvent](pick)
         val decoded = Json.decode[UIEvent](encoded)
@@ -129,7 +129,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ============ pick handling does not block the WS message loop ============
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "INV-TJS-CP-01: a second HostPick is routed while the first onPick is parked".notNative in {
+    "a second HostPick is routed while the first onPick is parked".notNative in {
         for
             invoked <- Channel.initUnscoped[String](64)
             ready   <- Channel.initUnscoped[Unit](4)
@@ -183,7 +183,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ============ a HostUpdate to an absent path is a silent no-op ============
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "INV-TJS-CP-02: a HostUpdate to an absent path does not tear down the session".notNative in {
+    "a HostUpdate to an absent path does not tear down the session".notNative in {
         for
             captured <- AtomicRef.init(Seq.empty[HtmlOp])
             // The server side emits a HostUpdate for an absent path Q (no registered host) followed by a
@@ -228,7 +228,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ============ server signal emission emits exactly one HostUpdate ============
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "INV-TJS-06: one server-signal emission emits exactly one HostUpdate".notNative in {
+    "one server-signal emission emits exactly one HostUpdate".notNative in {
         for
             color   <- Signal.initRef(0x000000)
             invoked <- Channel.initUnscoped[String](64)
@@ -291,7 +291,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ============ a host survives a sibling reactive re-render ============
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "PRESERVE-UI-03: a sibling re-render never targets the host path".notNative in {
+    "a sibling re-render never targets the host path".notNative in {
         for
             sibling <- Signal.initRef("before")
             invoked <- Channel.initUnscoped[String](64)
@@ -329,7 +329,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ============ the host path is never a Replace/Remove target ============
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "PRESERVE-UI-03-absent: no Replace/Remove over N sibling emissions targets the host".notNative in {
+    "no Replace/Remove over N sibling emissions targets the host".notNative in {
         for
             sibling <- Signal.initRef(0)
             invoked <- Channel.initUnscoped[String](64)
@@ -373,7 +373,7 @@ class UIServerHostBridgeTest extends kyo.test.Test[Any]:
     // ============ kyo-ui never calls back into the bridge's renderer ============
 
     // notNative: WS-behavior leaf; see class scaladoc.
-    "PRESERVE-UI-06: only subscriptions/onPick are invoked on the bridge".notNative in {
+    "only subscriptions/onPick are invoked on the bridge".notNative in {
         for
             invoked <- Channel.initUnscoped[String](64)
             ready   <- Channel.initUnscoped[Unit](4)

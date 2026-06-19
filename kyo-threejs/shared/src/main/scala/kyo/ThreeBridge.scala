@@ -46,7 +46,7 @@ private[kyo] object ThreeBridge:
     private def childrenOf(node: Three): Chunk[Three] =
         node match
             case n: Three.Ast.Node => n.children
-            case _                 => Chunk.empty
+            case null              => Chunk.empty
 
     // ---- Slot naming ----------------------------------------------------------------
     // Each reactive prop is named by a stable slot string shared by flatten and reconstitute. The
@@ -141,18 +141,21 @@ private[kyo] object ThreeBridge:
             case c: Vec3   => HostValue.V3(c.x, c.y, c.z)
             case col: Int  => HostValue.Col(col)
             case d: Double => HostValue.Num(d)
-            case other     => HostValue.Num(other.asInstanceOf[Double])
+            // Normal and Radians are opaque Double wrappers; at runtime they erase to Double.
+            case other => HostValue.Num(other.asInstanceOf[Double])
 
     // Collects the (slot, Bound) pairs the channel mirrors for a node: transform vec3 slots, plus the
     // material/light color/scalar slots. Color is an opaque Int and Normal/Double a Double, so each
     // Bound[A] is read as Bound[Any] uniformly.
+    // Type erasure: Bound[A] -> Bound[Any] casts below are safe because the homogeneous Seq[(String,
+    // Bound[Any])] is only ever read via toHostValue, which matches on the value inside Any.
     private def collectBounds(node: Three): Seq[(String, Bound[Any])] =
         def t(transform: Three.Ast.Transform): Seq[(String, Bound[Any])] =
             Seq(
                 transform.position.map(b => slotPosition -> b.asInstanceOf[Bound[Any]]),
                 transform.rotation.map(b => slotRotation -> b.asInstanceOf[Bound[Any]]),
                 transform.scale.map(b => slotScale -> b.asInstanceOf[Bound[Any]])
-            ).flatMap(_.toList)
+            ).flatMap(_.toChunk)
 
         node match
             case m: Three.Ast.Mesh =>
@@ -270,6 +273,7 @@ private[kyo] object ThreeBridge:
     // Custom nodes carry closures/signals that stay server-side, so they are not structural regions.
     private def foreachRegions(node: Three): Chunk[ForeachRegion[Any]] =
         val here: Chunk[ForeachRegion[Any]] = node match
+            // Existential erasure: the type variable [a] is captured locally; the homogeneous Chunk[ForeachRegion[Any]] is only traversed via its own typed methods.
             case f: Three.Ast.Foreach[a] => Chunk(new ForeachRegion[a](f).asInstanceOf[ForeachRegion[Any]])
             case _                       => Chunk.empty
         here.concat(childrenOf(node).flatMap(foreachRegions))
@@ -297,13 +301,13 @@ private[kyo] object ThreeBridge:
         // (a new key -> Insert). Threads the next snapshot in order so the prior for the following
         // emission is the descriptors of the current children.
         Kyo.foreach(keyedNodes.zipWithIndex) { case ((key, node), nextIdx) =>
-            priorIndex.get(key) match
-                case Some((priorIdx, priorDesc)) =>
+            Maybe.fromOption(priorIndex.get(key)) match
+                case Present((priorIdx, priorDesc)) =>
                     val moveOp =
                         if priorIdx == nextIdx then Chunk.empty[StructuralOp]
                         else Chunk(StructuralOp.Move(key, nextIdx))
                     (moveOp, (key, priorDesc)): (Chunk[StructuralOp], (String, SceneDescriptor)) < (Sync & Abort[UnserializableNode])
-                case None =>
+                case Absent =>
                     flattenNode(node).map { desc =>
                         (Chunk(StructuralOp.Insert(key, nextIdx, desc)), (key, desc))
                     }

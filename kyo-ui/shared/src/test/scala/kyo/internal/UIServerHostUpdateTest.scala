@@ -44,7 +44,7 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
 
     // ---------- serve-and-fetch leaves (JVM+JS) ----------
 
-    "INV-TJS-CP-05: runHandlers with moduleScript links the island bundle".notNative in {
+    "runHandlers with moduleScript links the island bundle".notNative in {
         fetchPage(
             UI.div("hi"),
             Present(UI.PageHead("app", moduleScript = Present("/_kyo/island.js")))
@@ -57,7 +57,7 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-TJS-CP-05-noisland: the 1-arg runHandlers links no island".notNative in {
+    "the 1-arg runHandlers links no island".notNative in {
         fetchPage(UI.div("hi"), Absent).map { body =>
             assert(
                 !body.contains("""<script type="module""""),
@@ -66,7 +66,7 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
         }
     }
 
-    "INV-TJS-CP-05-delegation: the 1-arg form equals the 2-arg PageHead(kyo-ui) default".notNative in {
+    "the 1-arg form equals the 2-arg PageHead(kyo-ui) default".notNative in {
         val ui = UI.div("hi")
         for
             oneArg <- fetchPage(ui, Absent)

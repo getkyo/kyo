@@ -114,7 +114,7 @@ object WebGLSceneHarness:
             NodeFs.readFileSync(NodePath.join(threeJsmDir, relative), "utf8")
         }
 
-    /** The linked ESModule demo bundle (`main.js`) the harness page imports `mountDemo` from. */
+    /** The linked ESModule demo bundle (`main.js`) the harness pages import their probe functions from. */
     private[kyo] lazy val demoBundlePath: String =
         // Node fs bridge: Locates the kyo-threejs-demos fastopt main.js under its target tree.
         val demosTarget = NodePath.join(NodeProcess.cwd(), "kyo-threejs", "demos", "target")

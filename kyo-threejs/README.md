@@ -529,7 +529,7 @@ val solarSystem =
 
 ## Demos
 
-The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. They are browser apps (each needs a canvas and a WebGL context), so there is no JVM `runMain` launcher. They are compile-checked by kyo-threejs's own test on both the JS and Wasm backends.
+The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. Each live-scene demo runs a small server on Node that serves a server-pushed page; the 3D rendering happens in the browser. They are compile-checked by kyo-threejs's own test on both the JS and Wasm backends. See [Running the demos](#running-the-demos) for how to launch one.
 
 <table>
   <tr>
@@ -567,3 +567,26 @@ The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as 
     </td>
   </tr>
 </table>
+
+### Running the demos
+
+kyo-threejs is a Scala.js/Wasm module with no JVM variant, and Scala.js has no `Test/runMain`, so `sbt 'kyo-threejsJS/Test/runMain demo.BouncingBalls'` does not work. The supported launch is one sbt command alias per demo. Each alias selects that demo's main on the `kyo-threejs-demo-runner` project (a Node-runnable Scala.js module that reuses the demo sources) and runs it.
+
+First link the browser island bundle once, then launch a demo:
+
+```sh
+sbt kyo-threejs-demos/fastLinkJS   # link the browser island bundle the page loads
+sbt demoBouncingBalls              # launch one demo's server on Node
+```
+
+The live-scene demos print a `http://localhost:<port>/` URL; open it to see the scene. Each alias launches exactly one demo, so re-link the island bundle only after changing demo or library sources. The aliases:
+
+| Command | Demo |
+|---------|------|
+| `sbt demoBouncingBalls` | BouncingBalls |
+| `sbt demoSolarSystem` | SolarSystem |
+| `sbt demoReactiveCubeField` | ReactiveCubeField |
+| `sbt demoSnake3D` | Snake3D |
+| `sbt demoGltfViewer` | GltfViewer |
+| `sbt demoEmbeddedScene` | EmbeddedScene |
+| `sbt demoGallery` | ThumbnailGallery (headless, writes PNGs under `runs/thumbnails/`) |

@@ -229,7 +229,7 @@ class ThreeMountChannelTest extends ThreeTest:
         (() => geomCount, () => matCount)
     end disposeCounters
 
-    "INV-TJS-03: a removed key disposes its GL scope exactly once" in {
+    "a removed key disposes its GL scope exactly once" in {
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
@@ -261,7 +261,7 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
-    "INV-TJS-03-absent: a surviving node is not disposed on reorder" in {
+    "a surviving node is not disposed on reorder" in {
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
@@ -295,7 +295,7 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
-    "INV-TJS-03: an inserted key materializes under its own scope" in {
+    "an inserted key materializes under its own scope" in {
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
@@ -324,7 +324,7 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
-    "INV-TJS-03-absent: a removed key is not disposed twice" in {
+    "a removed key is not disposed twice" in {
         Scope.run {
             Abort.recover[ThreeException](e => Abort.panic(e)) {
                 for
@@ -349,7 +349,7 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
-    "R-003: the server-side keyed diff emits the minimal op set" in {
+    "the server-side keyed diff emits the minimal op set" in {
         Channel.initWith[HostPayload](32) { emitted =>
             Scope.run {
                 for
@@ -400,7 +400,7 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
-    "P-062 placeholder guard: a Custom/closure subtree is not flattened to a descriptor" in {
+    "a Custom/closure subtree is not flattened to a descriptor" in {
         Scope.run {
             for
                 // A foreachKeyed render that produces a Three.custom node: a closure-bearing subtree the

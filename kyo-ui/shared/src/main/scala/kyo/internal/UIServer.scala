@@ -87,9 +87,9 @@ private[kyo] object UIServer:
             _ <- Fiber.init {
                 Loop.forever {
                     pending.take.map { case (path, nodeId, pointer) =>
-                        val routed = hosts.find(_._1 == path) match
-                            case Some((p, bridge)) => bridge.onPick(p, nodeId, pointer)
-                            case None              => Kyo.unit
+                        val routed = Maybe.fromOption(hosts.find(_._1 == path)) match
+                            case Present((p, bridge)) => bridge.onPick(p, nodeId, pointer)
+                            case Absent               => Kyo.unit
                         // Fork each pick on its own session-Scoped fiber so a parked onPick does not
                         // block draining the next pick.
                         Fiber.init(routed)

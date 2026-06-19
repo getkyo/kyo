@@ -1763,9 +1763,10 @@ lazy val `kyo-threejs` =
 // client island entry (`@JSExportTopLevel("kyoThreeIsland")` in ThreeIsland, which mounts the
 // server-pushed 3D hosts on a page) and the DemoHarness browser-test probes (`@JSExportTopLevel`
 // mountOrderingProbe / mountRendererReleaseProbe / mountHostProbe / mountEmbedProbe /
-// mountEmbedInteractive / mountEmbedSiblingProbe). There is no single god dispatcher: each demo is its
-// own self-serving KyoApp launched via runMain, never mounted through one shared entry. Linked as a
-// browser-clean ESModule (one external `three` import, no node:* / require). The demo sources stay in
+// mountEmbedInteractive / mountEmbedSiblingProbe). Each demo is its own self-serving KyoApp, never
+// mounted through one shared entry; the `kyo-threejs-demo-runner` project below launches a chosen demo
+// on Node. Linked as a browser-clean ESModule (one external `three` import, no node:* / require). The
+// demo sources stay in
 // kyo-threejs's test tree (so they remain compile-checked by kyo-threejs's own test on both backends)
 // and are pulled in here via unmanagedSourceDirectories; this project never links the kyo-threejs test
 // stack (kyo-ui DOM mount, HttpServer, kyo-browser) because the entries reach only the island
@@ -1789,6 +1790,89 @@ lazy val `kyo-threejs-demos` =
             // No test sources; this project exists only to produce the linked demo bundle.
             Test / sources := Seq.empty
         )
+
+// The Node launcher for the demos. Scala.js has no `Test/runMain`, and kyo-threejs has no JVM
+// variant, so the kyo-ui `runMain` launch verb does not apply: instead, the live-scene demo
+// `KyoApp`s run their HttpServer on Node. This project reuses the same demo sources as
+// `kyo-threejs-demos`; each demo is already an `object X extends KyoApp` with its own main, so a demo
+// is selected by the `demo<Name>` command aliases below (each sets `mainClass` to that demo's main and
+// runs it). A Scala.js main initializer takes no command-line arguments, so the demo cannot be chosen
+// as a `run` argument; the alias selects it through `mainClass` instead. There is no god dispatcher:
+// one `run` launches exactly one demo's server.
+//
+// It is a SEPARATE project from `kyo-threejs-demos` on purpose. `kyo-threejs-demos` links the browser
+// island bundle as a no-main ESModule (the SSR page loads it and the browser tests depend on it). A
+// Node runner needs the opposite linker shape: a main initializer over a CommonJSModule that can pull
+// in the demos' HttpServer (node:* carrying) code. Keeping the two outputs in distinct projects leaves
+// the island bundle's shape untouched while giving the runner the Node-runnable main it needs.
+lazy val `kyo-threejs-demo-runner` =
+    project
+        .in(file("kyo-threejs/demo-runner"))
+        .enablePlugins(ScalaJSPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Link a Node main initializer so `run` executes a demo's main. The default main is one of
+            // the demos; the `demo<Name>` aliases override it to select another before running.
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("demo.BouncingBalls"),
+            Compile / unmanagedSourceDirectories +=
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
+            // No test sources; this project exists only to run a demo on Node.
+            Test / sources := Seq.empty,
+            // The demo bundle imports `three`, so Node must resolve it. Install three next to the
+            // Compile fastLink output (Node walks up from main.js for node_modules). Idempotency-guarded
+            // on the package marker, like the cross-project installs.
+            installThree := {
+                val outDir    = (Compile / fastLinkJS / scalaJSLinkerOutputDirectory).value
+                val installIn = outDir.getParentFile
+                val marker    = installIn / "node_modules" / "three" / "package.json"
+                if (!marker.exists()) {
+                    IO.createDirectory(installIn)
+                    val rc = scala.sys.process.Process(Seq("npm", "install", "three@0.184.0"), installIn).!
+                    if (rc != 0) sys.error(s"npm install three failed with exit $rc in $installIn")
+                }
+            },
+            // Install three before the link the runner executes, so `run` resolves the module.
+            Compile / fastLinkJS := (Compile / fastLinkJS).dependsOn(installThree).value
+        )
+
+// One command alias per demo: set the runner project's main to that demo, then run it. Each alias
+// launches exactly one demo's server on Node, so the demos stay independently runnable with no shared
+// dispatcher. The live-scene demos print a `http://localhost:<port>/` URL to open; `demoGallery`
+// renders the headless thumbnail PNGs under `runs/thumbnails/`.
+addCommandAlias(
+    "demoBouncingBalls",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.BouncingBalls") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoSolarSystem",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.SolarSystem") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoReactiveCubeField",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ReactiveCubeField") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoSnake3D",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.Snake3D") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoGltfViewer",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.GltfViewer") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoEmbeddedScene",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.EmbeddedScene") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoGallery",
+    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ThumbnailGallery") ; kyo-threejs-demo-runner/run"""
+)
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)

@@ -1007,11 +1007,11 @@ object ThreeMount:
             case kyo.internal.HostPayload.Prop(nodeId, slot, value) =>
                 channel.writeProp(nodeId, slot, value)
             case kyo.internal.HostPayload.Structural(op) =>
-                // A keyed splice instruction: the structural inbox is a client-side
-                // Signal[Chunk[A]] mirror the keyed reconciler observes (subscribeReactiveRegions'
-                // diffKeyed path), so an Insert materializes the descriptor under a fresh
-                // per-element scope, a Remove closes exactly one element scope (disposing its GL
-                // resources once), and a Move reuses the live node (GPU buffers survive).
+                // A keyed splice instruction: appended to the structural inbox, a
+                // Signal[Chunk[StructuralOp]] the subscribeStructuralInbox drain observes. On the
+                // next drain tick an Insert materializes the descriptor under a fresh per-element
+                // scope, a Remove closes exactly one element scope (disposing its GL resources
+                // once), and a Move reuses the live node (GPU buffers survive).
                 channel.writeStructural(op)
     end applyHostUpdate
 

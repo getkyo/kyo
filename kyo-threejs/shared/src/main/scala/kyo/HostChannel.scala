@@ -28,9 +28,9 @@ final private[kyo] class HostChannel private (
       * `Async & Scope` row callers expect is a widening of this pure-Sync write.
       */
     def writeProp(nodeId: String, slot: String, value: HostValue)(using Frame): Unit < Sync =
-        mirrors.get((nodeId, slot)) match
-            case Some(ref) => ref.set(rawValue(value))
-            case None      => Kyo.unit
+        Maybe.fromOption(mirrors.get((nodeId, slot))) match
+            case Present(ref) => ref.set(rawValue(value))
+            case Absent       => Kyo.unit
 
     /** Appends one structural splice instruction to the inbox the keyed reconciler observes. */
     def writeStructural(op: StructuralOp)(using Frame): Unit < Sync =

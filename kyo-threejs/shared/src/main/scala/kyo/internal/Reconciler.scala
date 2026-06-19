@@ -266,13 +266,10 @@ private[kyo] object Reconciler:
         mounted.regions match
             case Present(cached) => cached
             case Absent =>
-                var buf = Chunk.empty[ReactiveRegion]
-                mounted.live.values.foreach { live =>
-                    live.node match
-                        case _: Ast.Reactive   => buf = buf.appended(new ReactiveRegion(live, live.node))
-                        case _: Ast.Foreach[?] => buf = buf.appended(new ReactiveRegion(live, live.node))
-                        case _                 => ()
-                }
+                val buf = Chunk.from(mounted.live.values.collect {
+                    case live if live.node.isInstanceOf[Ast.Reactive] || live.node.isInstanceOf[Ast.Foreach[?]] =>
+                        new ReactiveRegion(live, live.node)
+                })
                 mounted.regions = Present(buf)
                 buf
     end reactiveRegions

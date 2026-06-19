@@ -290,7 +290,7 @@ object ThreeEmbedBrowserTest:
           |</body>
           |</html>""".stripMargin
 
-    /** Probe page for leaf 4: calls `mountEmbedInteractive`, which mounts the full `EmbeddedScene.ui`
+    /** Probe page for leaf 4: calls `mountEmbedInteractive`, which mounts the full `EmbeddedSceneScene.ui`
       * tree and exposes `window.__setSelected(name)` and `window.__getSelected()` for bidirectional
       * `SignalRef` interop. Raises `__interactiveReady` after setup.
       */
