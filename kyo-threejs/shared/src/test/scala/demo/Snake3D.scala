@@ -15,10 +15,16 @@ import kyo.Three.render
   */
 object Snake3D extends KyoApp:
     run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
         for
             scene <- Snake3DScene.scene
-            _     <- Three.runMount(scene, Snake3DScene.camera, "#app", Snake3DScene.frames)
+            ui = UI.div(Three.embed(scene, Snake3DScene.camera, Snake3DScene.frames).id("app"))
+            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
+            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
+            _        <- Console.printLine(s"Snake3D running on http://localhost:${server.port}/")
+            _        <- server.await
         yield ()
+        end for
     }
 end Snake3D
 

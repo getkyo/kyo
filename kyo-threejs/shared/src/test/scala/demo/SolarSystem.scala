@@ -11,20 +11,26 @@ import kyo.*
   * `.rotation(signal)`, so the transform updates reactively on each emission. Clicking sun or earth
   * writes the selected body name into a `SignalRef[String]` shared with the HUD.
   *
-  * `UI.runMount` (kyo-ui) and `Three.runMount` (kyo-threejs) both resolve with `import kyo.*`:
-  * each is forked as a concurrent `Fiber`, both driven by the same ambient `Scope`.
+  * The kyo-ui HUD and the embedded 3D scene compose in one `UI.div` tree: the HUD `UI.p` and the
+  * `Three.embed` host share the same selection `SignalRef[String]`, so a click on the 3D earth
+  * updates the HUD label on the same server-push page.
   */
 object SolarSystem extends KyoApp:
     run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
         for
             built <- SolarSystemScene.scene
             (scene, selected) = built
-            hud = UI.div(
-                UI.p(selected.map(s => s"Selected: $s"))
+            ui = UI.div(
+                UI.p(selected.map(s => s"Selected: $s")).id("hud"),
+                Three.embed(scene, SolarSystemScene.camera, ThreeFrames.Raf).id("app")
             )
-            _ <- Fiber.init(UI.runMount(hud, "#hud")).unit
-            _ <- Three.runMount(scene, SolarSystemScene.camera, "#app", ThreeFrames.Raf)
+            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
+            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
+            _        <- Console.printLine(s"SolarSystem running on http://localhost:${server.port}/")
+            _        <- server.await
         yield ()
+        end for
     }
 end SolarSystem
 

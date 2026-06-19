@@ -13,10 +13,16 @@ import kyo.*
   */
 object BouncingBalls extends KyoApp:
     run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
         for
             scene <- BouncingBallsScene.scene
-            _     <- Three.runMount(scene, BouncingBallsScene.camera, "#app")
+            ui = UI.div(Three.embed(scene, BouncingBallsScene.camera).id("app"))
+            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
+            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
+            _        <- Console.printLine(s"BouncingBalls running on http://localhost:${server.port}/")
+            _        <- server.await
         yield ()
+        end for
     }
 end BouncingBalls
 

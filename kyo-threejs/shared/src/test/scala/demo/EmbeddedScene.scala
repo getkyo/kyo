@@ -2,15 +2,32 @@ package demo
 
 import kyo.*
 
-/** A 3D scene embedded as a first-class child of a kyo-ui tree: demonstrates `Three.embed` with
-  * surrounding kyo-ui controls and a HUD, all sharing a single `SignalRef[String]`. A button in
-  * the kyo-ui controls panel writes "Sun" into the shared signal; clicking the 3D earth sphere
-  * writes "Earth"; the HUD label below the canvas tracks both, proving bidirectional
-  * `SignalRef` interop through the embed seam.
+/** A 3D scene embedded as a first-class child of a kyo-ui tree, served over kyo-ui's server-push
+  * transport: demonstrates `Three.embed` with surrounding kyo-ui controls and a HUD, all sharing a
+  * single `SignalRef[String]`. A button in the kyo-ui controls panel writes "Sun" into the shared
+  * signal; clicking the 3D earth sphere writes "Earth"; the HUD label below the canvas tracks both,
+  * proving bidirectional `SignalRef` interop through the embed seam on one page.
+  */
+object EmbeddedScene extends KyoApp:
+    run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
+        for
+            ui       <- EmbeddedSceneScene.ui
+            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
+            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
+            _        <- Console.printLine(s"EmbeddedScene running on http://localhost:${server.port}/")
+            _        <- server.await
+        yield ()
+        end for
+    }
+end EmbeddedScene
+
+/** The scene-graph and kyo-ui builder for [[EmbeddedScene]], shared by the `KyoApp` and the
+  * visual-review harness so both compose the same embedded scene.
   *
   * The `camera` def is pure (no effect); `scene` and `ui` carry `< Sync` from `Signal.initRef`.
   */
-object EmbeddedScene:
+object EmbeddedSceneScene:
 
     /** Builds the 3D scene for the embedded view: a sun sphere and an orbiting earth sphere, each
       * clickable. The earth group orbits via `onFrame`. Returns both the scene AST and the shared
@@ -69,4 +86,4 @@ object EmbeddedScene:
             UI.div(controls, embed, hud)
         }
 
-end EmbeddedScene
+end EmbeddedSceneScene

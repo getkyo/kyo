@@ -1759,15 +1759,20 @@ lazy val `kyo-threejs` =
             Test / test  := (Test / test).dependsOn(installThree).value
         )
 
-// The visual-review demo bundle: kyo-threejs MAIN plus the six committed demos plus the
-// `@JSExportTopLevel("mountDemo")` entry, linked as a browser-clean ESModule (one external `three`
-// import, no node:* / require). The demo sources stay in kyo-threejs's test tree (so they remain
-// compile-checked by kyo-threejs's own test on both backends) and are pulled in here via
-// unmanagedSourceDirectories; this project never links the kyo-threejs test stack (kyo-ui DOM mount,
-// HttpServer, kyo-browser) because the entry reaches only the demos' scene-graph builders, so the
-// linker's dead-code elimination drops the node:*-carrying paths. kyo-ui is a compile dependency
-// because the SolarSystem KyoApp references UI.runMount; that code is unreachable from the entry and
-// elided from the linked output (asserted by the node:* grep in the harness gate).
+// The visual-review demo bundle: kyo-threejs MAIN plus the demos' scene-graph builders, exposing the
+// client island entry (`@JSExportTopLevel("kyoThreeIsland")` in ThreeIsland, which mounts the
+// server-pushed 3D hosts on a page) and the DemoHarness browser-test probes (`@JSExportTopLevel`
+// mountOrderingProbe / mountRendererReleaseProbe / mountHostProbe / mountEmbedProbe /
+// mountEmbedInteractive / mountEmbedSiblingProbe). There is no single god dispatcher: each demo is its
+// own self-serving KyoApp launched via runMain, never mounted through one shared entry. Linked as a
+// browser-clean ESModule (one external `three` import, no node:* / require). The demo sources stay in
+// kyo-threejs's test tree (so they remain compile-checked by kyo-threejs's own test on both backends)
+// and are pulled in here via unmanagedSourceDirectories; this project never links the kyo-threejs test
+// stack (kyo-ui DOM mount, HttpServer, kyo-browser) because the entries reach only the island
+// reconciler and the demos' scene-graph builders, so the linker's dead-code elimination drops the
+// node:*-carrying paths. kyo-ui is a compile dependency because the demos reference UI.embed /
+// UI.runMount; the server-serving code is unreachable from the entries and elided from the linked
+// output (asserted by the node:* grep in the harness gate).
 lazy val `kyo-threejs-demos` =
     project
         .in(file("kyo-threejs/demos"))

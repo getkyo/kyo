@@ -34,8 +34,8 @@ object DemoHarness:
       */
     @JSExportTopLevel("mountOrderingProbe")
     def mountOrderingProbe(selector: String): Unit =
-        // Unsafe: the page-to-kyo boundary, mirroring `mountDemo`: launches the probe on a detached fiber
-        // whose ambient Scope stays open for the frame loop; the AllowUnsafe is scoped to this entry call.
+        // Unsafe: the page-to-kyo boundary: launches the probe on a detached fiber whose ambient Scope
+        // stays open for the frame loop; the AllowUnsafe is scoped to this entry call.
         import AllowUnsafe.embrace.danger
         val _ = Sync.Unsafe.evalOrThrow(
             Fiber.initUnscoped(Scope.run(Abort.run[ThreeException](orderingProbe(selector)))).unit
@@ -76,8 +76,8 @@ object DemoHarness:
       */
     @JSExportTopLevel("mountRendererReleaseProbe")
     def mountRendererReleaseProbe(selector: String): Unit =
-        // Unsafe: the page-to-kyo boundary, mirroring mountDemo: runs the probe on a detached fiber; the
-        // AllowUnsafe is scoped to this entry call.
+        // Unsafe: the page-to-kyo boundary: runs the probe on a detached fiber; the AllowUnsafe is
+        // scoped to this entry call.
         import AllowUnsafe.embrace.danger
         val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(rendererReleaseProbe(selector)).unit)
     end mountRendererReleaseProbe
@@ -147,10 +147,10 @@ object DemoHarness:
         val glHolder = new scala.scalajs.js.Object().asInstanceOf[js.Dynamic]
         Scope.run {
             for
-                built <- EmbeddedScene.scene
+                built <- EmbeddedSceneScene.scene
                 (scene, _) = built
                 probeScene = scene.copy(children = scene.children :+ captureSentinel(glHolder))
-                tree       = UI.div(Three.embed(probeScene, EmbeddedScene.camera).id("embed-stage"))
+                tree       = UI.div(Three.embed(probeScene, EmbeddedSceneScene.camera).id("embed-stage"))
                 _ <- Fiber.init(UI.runMount(tree))
                 _ <- untilEmbedFrame
             yield ()
@@ -238,7 +238,7 @@ object DemoHarness:
             }
         }
 
-    /** Mounts the full `EmbeddedScene.ui` tree (controls + embedded canvas + HUD) through
+    /** Mounts the full `EmbeddedSceneScene.ui` tree (controls + embedded canvas + HUD) through
       * `UI.runMount`, exposing `window.__setSelected(name)` so the browser test can drive the
       * shared `SignalRef[String]` directly without needing a raycast, and `window.__getSelected()`
       * to read it back. Raises `window.__interactiveReady` after the first frame.
@@ -253,7 +253,7 @@ object DemoHarness:
     private def embedInteractiveProbe()(using Frame): Unit < Async =
         Scope.run {
             for
-                built <- EmbeddedScene.scene
+                built <- EmbeddedSceneScene.scene
                 (scene, selected) = built
                 _ <- Sync.defer {
                     val w = dom.window.asInstanceOf[js.Dynamic]
@@ -272,7 +272,7 @@ object DemoHarness:
                 tree =
                     UI.div(
                         UI.button("Focus Sun").id("focus-sun").onClick(selected.set("Sun")),
-                        Three.embed(scene, EmbeddedScene.camera).id("stage"),
+                        Three.embed(scene, EmbeddedSceneScene.camera).id("stage"),
                         UI.p(selected.map(s => s"Selected: $s")).id("selected-label")
                     )
                 _ <- Fiber.init(UI.runMount(tree))
@@ -307,11 +307,11 @@ object DemoHarness:
                     }
                     w.__siblingReady = false
                 }
-                built <- EmbeddedScene.scene
+                built <- EmbeddedSceneScene.scene
                 (scene, _) = built
                 probeScene = scene.copy(children = scene.children :+ siblingCaptureSentinel())
                 tree = UI.div(
-                    Three.embed(probeScene, EmbeddedScene.camera).id("stage"),
+                    Three.embed(probeScene, EmbeddedSceneScene.camera).id("stage"),
                     counter.map(n => UI.span(n.toString).id("count"))
                 )
                 _ <- Fiber.init(UI.runMount(tree))

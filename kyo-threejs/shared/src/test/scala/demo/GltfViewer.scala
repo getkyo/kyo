@@ -12,10 +12,16 @@ import kyo.*
   */
 object GltfViewer extends KyoApp:
     run {
+        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
         for
             scene <- GltfViewerScene.scene(GltfViewerScene.defaultModelUrl)
-            _     <- Three.runMount(scene, GltfViewerScene.camera, "#app")
+            ui = UI.div(Three.embed(scene, GltfViewerScene.camera).id("app"))
+            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
+            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
+            _        <- Console.printLine(s"GltfViewer running on http://localhost:${server.port}/")
+            _        <- server.await
         yield ()
+        end for
     }
 end GltfViewer
 
@@ -25,7 +31,10 @@ end GltfViewer
   */
 object GltfViewerScene:
 
-    /** The model the live `KyoApp` loads by default. */
+    /** The model the live `KyoApp` loads by default. The asset is served separately from the demo
+      * page (the demo's `HttpServer` does not bundle a model); point a static file route at this
+      * path, or pass a reachable URL, to load a real model.
+      */
     val defaultModelUrl: String = "/models/helmet.glb"
 
     /** Loads the glTF at `url`, wraps the loaded subtree in a rotating `Group` driven by a
