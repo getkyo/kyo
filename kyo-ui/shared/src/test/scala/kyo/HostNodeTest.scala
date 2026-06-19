@@ -1,6 +1,9 @@
 package kyo
 
 import kyo.UI.Ast.*
+import kyo.internal.HostPayload
+import kyo.internal.HostValue
+import kyo.internal.HtmlOp
 import kyo.internal.HtmlRenderer
 
 /** Tests for the host-node cross-platform bridge: tag rendering, non-void shape, HtmlContent child
@@ -58,6 +61,16 @@ class HostNodeTest extends kyo.test.Test[Any]:
             val canvasHtml  = html.substring(canvasStart, canvasEnd + "</canvas>".length)
             assert(!canvasHtml.contains("data-kyo-reactive"))
         end for
+    }
+
+    // PRESERVE-UI-01: HostUpdate is a pure construction (no effect row at the call site).
+    "PRESERVE-UI-01: HostUpdate constructs as a plain HtmlOp value" in {
+        val payload = HostPayload.Prop("n0", "color", HostValue.Col(16711680))
+        val op      = HtmlOp.HostUpdate(Seq("0", "2"), payload)
+        assert(op.path == Seq("0", "2"))
+        assert(op.payload == payload)
+        val op2 = HtmlOp.HostUpdate(Seq("0", "2"), payload)
+        assert(op == op2)
     }
 
 end HostNodeTest
