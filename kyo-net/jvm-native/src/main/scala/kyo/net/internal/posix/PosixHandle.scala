@@ -251,6 +251,15 @@ final private[net] class PosixHandle private (
       */
     var readMightHaveMore: Boolean = false
 
+    /** Whether a peer half-close (eof / FIN, surfaced as `eofPending`) has been observed for this fd but the terminal EOF (recv == 0) has not yet
+      * been delivered. Set once the read path sees `eofPending` and persisted across re-dispatches so the consumer-paced drain keeps re-reading
+      * until recv returns 0, regardless of edge timing. This is required because an edge-triggered backend fires the half-close edge once: if it
+      * arrives while no read is pending (recorded in `missedReads`) or the buffered bytes span multiple reads ending on a partial recv, the per-edge
+      * `eofPending` flag alone would be lost and the final EOF would never be read (no new edge re-fires the persistent half-close condition).
+      * Cleared when the EOF (empty Span) is delivered. Poll-carrier-only, like [[readMightHaveMore]], so no @volatile is needed.
+      */
+    var halfClosePending: Boolean = false
+
     /** Count of consecutive reads that completely filled [[readBuffer]] (n == readBufferSize). The adaptive predictor grows the buffer
       * once this reaches [[PosixHandle.GrowAfterFullReads]]: a connection that keeps saturating its buffer is one whose peer sends in bursts
       * larger than the current size, so a larger buffer means fewer recv syscalls and fewer per-read copies for the same byte volume. A read that
