@@ -541,6 +541,46 @@ class ThreeMountChannelTest extends ThreeTest:
         }
     }
 
+    "the server-side keyed diff re-materializes a survivor whose subtree shape changed" in {
+        // A survivor (the same key) whose rendered geometry changes from a box to a sphere cannot be
+        // patched by a prop delta; the diff must dispose and re-insert it, not leave the stale box.
+        Channel.initWith[HostPayload](32) { emitted =>
+            Scope.run {
+                for
+                    items <- Signal.initRef(Chunk(("a", false), ("b", false)))
+                    scene = Three.scene(
+                        items.foreachKeyed(_._1) { case (_, round) =>
+                            val geo = if round then Three.Geometry.sphere() else Three.Geometry.box()
+                            Three.mesh(geo, Three.Material.standard())
+                        }
+                    )
+                    _ <- ThreeBridge.observeStructure(scene, payload => Abort.runPartial[Closed](emitted.put(payload)).unit)
+                    // Drain the two boot Inserts (a@0 box, b@1 box).
+                    _ <- emitted.take
+                    _ <- emitted.take
+                    // Change a's shape box -> sphere (same key "a", same index 0); b is unchanged.
+                    _   <- items.set(Chunk(("a", true), ("b", false)))
+                    op1 <- emitted.take
+                    op2 <- emitted.take
+                yield
+                    val ops =
+                        List(op1, op2).map { case HostPayload.Structural(op, _) => op; case p => fail(s"non-structural: $p") }
+                    // The survivor re-materializes: Remove(a) then Insert(a, 0, sphere). A prop push cannot
+                    // turn a box into a sphere, and b (unchanged) emits no op.
+                    assert(ops.contains(StructuralOp.Remove("a")), s"a must be removed to re-materialize, got $ops")
+                    val insertA = ops.collect { case StructuralOp.Insert("a", idx, desc) => (idx, desc) }
+                    assert(insertA.nonEmpty, s"a must be re-inserted, got $ops")
+                    assert(insertA.head._1 == 0, s"a must re-insert at index 0, got ${insertA.head._1}")
+                    assert(
+                        insertA.head._2.geometry.exists(_.isInstanceOf[GeometryDescriptor.Sphere]),
+                        s"a's re-inserted descriptor must carry a sphere geometry, got ${insertA.head._2.geometry}"
+                    )
+                    assert(ops.size == 2, s"exactly Remove(a)+Insert(a); got ${ops.size}: $ops")
+                end for
+            }
+        }
+    }
+
     "a Custom/closure subtree is not flattened to a descriptor" in {
         Scope.run {
             for

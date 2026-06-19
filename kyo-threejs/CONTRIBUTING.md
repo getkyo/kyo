@@ -113,8 +113,10 @@ The wire is **fully typed, closure-free, and `js.Dynamic`-free**. All types deri
 live in `kyo-ui/shared/src/main/scala/kyo/internal/HostPayload.scala`:
 
 - `HostPayload`: three leaves. `Prop(nodeId, slot, value)` for one targeted prop push;
-  `Structural(op)` for one keyed splice instruction; `Boot(insert, camera)` for the page-load boot
-  envelope, carrying the scene's root insert alongside the embed's `CameraDescriptor` so the client
+  `Structural(op, regionId)` for one keyed splice instruction routed to a region holder (the
+  `regionId` defaults to the host root `"r"`, so each foreach/reactive region's ops splice into its
+  own node rather than the mount root); `Boot(insert, camera)` for the page-load boot envelope,
+  carrying the scene's root insert alongside the embed's `CameraDescriptor` so the client
   reconstitutes the server's actual viewpoint, not a default one.
 - `HostValue`: the value union, tagged by SLOT (not runtime type, which mis-tags a whole-number
   scalar that boxes to an `Int` on Scala.js). `V3(x, y, z)` for position/rotation/scale; `Col(rgb)`

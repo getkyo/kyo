@@ -775,10 +775,14 @@ private[kyo] object HtmlRenderer:
            |    else{
            |      // The host's island receiver has not registered yet (the WS session can push a host's
            |      // initial state before the client island mounts and registers). Buffer the payload by
-           |      // path; __kyoHostChannelRegister flushes it in order when the receiver registers, so a
-           |      // host's first structural/prop pushes are never lost to that startup race.
-           |      window.__kyoHostPending[p]=window.__kyoHostPending[p]||[];
-           |      window.__kyoHostPending[p].push(op.HostUpdate.payload);
+           |      // path, bounded so a host whose island never registers (a bundle load failure) under
+           |      // continuous server-push cannot grow it without limit; the bound exceeds any realistic
+           |      // initial push so the normal late-registration race never drops a legitimate op.
+           |      // __kyoHostChannelRegister flushes it in order when the receiver registers, so a host's
+           |      // first structural/prop pushes are never lost to that startup race.
+           |      var q=window.__kyoHostPending[p]=window.__kyoHostPending[p]||[];
+           |      q.push(op.HostUpdate.payload);
+           |      if(q.length>4096)q.shift();
            |    }
            |  }
            |};

@@ -516,7 +516,9 @@ private[kyo] object ThreeBridge:
     //
     // Every keyed child is re-flattened (resolving each Bound.Ref to its current server value), so a
     // surviving child's prop change is observed; the structural op set stays minimal (a Move only when
-    // the index actually changed, never a Remove+Insert for a survivor). The next snapshot threads the
+    // the index actually changed). A survivor whose subtree shape diverges beyond prop values (a changed
+    // kind, geometry, material, or child count) re-materializes via a Remove then an Insert. The next
+    // snapshot threads the
     // freshly flattened descriptors forward so the following emission diffs against the current props.
     private def diffKeyedServer[A](
         regionId: String,
@@ -537,12 +539,21 @@ private[kyo] object ThreeBridge:
         Kyo.foreach(keyedNodes.zipWithIndex) { case ((key, node), nextIdx) =>
             flattenNode(node).map { desc =>
                 Maybe.fromOption(priorIndex.get(key)) match
-                    case Present((priorIdx, priorDesc)) =>
+                    case Present((priorIdx, priorDesc)) if descShapeMatches(priorDesc, desc) =>
                         val moveOp =
                             if priorIdx == nextIdx then Chunk.empty[StructuralOp]
                             else Chunk(StructuralOp.Move(key, nextIdx))
                         val propPushes = descPropDeltas(s"$regionId#$key", priorDesc, desc)
                         (moveOp, propPushes, (key, desc))
+                    case Present(_) =>
+                        // The survivor's subtree shape diverged (a changed kind, geometry, material, or
+                        // child count), which a prop delta cannot express: re-materialize the key by
+                        // disposing the stale node and inserting the fresh descriptor at its index.
+                        (
+                            Chunk(StructuralOp.Remove(key), StructuralOp.Insert(key, nextIdx, desc)),
+                            Chunk.empty[HostPayload.Prop],
+                            (key, desc)
+                        )
                     case Absent =>
                         (Chunk(StructuralOp.Insert(key, nextIdx, desc)), Chunk.empty[HostPayload.Prop], (key, desc))
             }
@@ -573,6 +584,18 @@ private[kyo] object ThreeBridge:
                 }
             here.concat(kids)
     end descPropDeltas
+
+    // True iff `next` differs from `prior` only in prop VALUES, so descPropDeltas can patch it in place:
+    // the same kind, geometry, and material, the same child count, and every child shape-matches
+    // recursively. Any divergence beyond prop values re-materializes the key instead, since a prop push
+    // cannot turn a box into a sphere, swap a material class, or change the child structure.
+    private def descShapeMatches(prior: SceneDescriptor, next: SceneDescriptor): Boolean =
+        prior.kind == next.kind &&
+            prior.geometry == next.geometry &&
+            prior.material == next.material &&
+            prior.children.length == next.children.length &&
+            prior.children.zip(next.children).forall { case (p, n) => descShapeMatches(p, n) }
+    end descShapeMatches
 
     /** Walks a scene collecting every `(nodeId, slot, signal)` for a `Bound.Ref` prop. On the server
       * scene the signals are the server-owned ones `observeProps` subscribes; on a reconstituted
