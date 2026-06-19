@@ -57,6 +57,16 @@ final private[runner] class SbtRunner(
     private val results =
         new java.util.concurrent.ConcurrentLinkedQueue[TestReport]()
 
+    // End-of-run leak detection. Active by default in a forked test JVM, the one place the probe is both sound (the fork holds
+    // only this run's resources) and safe to fail by exit; opt out with -Dkyo.test.leakCheck=false (read here, for the same
+    // reason as kyo.test.count above: no CLI-arg plumbing, survives a mixed-framework module). The fork check is resolved once
+    // here (cheap: `sun.java.command` is set at JVM launch) rather than per suite or at done(). When active, the baseline is
+    // captured now, in the constructor, before any suite runs, so the diff at done() excludes the JVM's own startup
+    // descriptors and threads. In the main sbt JVM it is inactive: no baseline, no carrier tracking, no check.
+    private val leakCheckActive = java.lang.System.getProperty("kyo.test.leakCheck") != "false" && LeakCheck.isForked
+    private val leakBaseline    = if leakCheckActive then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
+    private val leakCheckRan    = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     // Populated on first tasks() invocation. SuiteDiscovery scans the META-INF/services file
     // and surfaces classloader / non-TestBase failures so they end up in Summary's warning line.
     private[runner] val discoveryErrors: AtomicReference[Chunk[String]] =
@@ -66,17 +76,39 @@ final private[runner] class SbtRunner(
         parsedArgs match
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
-                taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results))
+                taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results, leakCheckActive))
             case _ =>
                 Array.empty
 
     def done(): String =
+        runLeakCheck()
         parsedArgs match
             case Args.Result.Error(msg) => msg
             case Args.Result.Help       => ""
             case Args.Result.Ok(_) =>
                 import scala.jdk.CollectionConverters.*
                 Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
+        end match
     end done
+
+    /** Runs the end-of-run leak probes once, only inside a forked test JVM, and throws [[LeakCheck.Detected]] on a leak so sbt fails the test
+      * task. sbt calls `done()` more than once per forked runner (once after execution, once from a shutdown hook), so the
+      * compare-and-set guard ensures the probes and any failure fire exactly once. Outside a fork (the main sbt JVM) `leakCheckActive` is
+      * false, so this is a no-op: the descriptor diff would be polluted by sbt's own resources and a throw would fail sbt itself.
+      */
+    private def runLeakCheck(): Unit =
+        if leakCheckActive && leakCheckRan.compareAndSet(false, true) then
+            val fdTolerance = java.lang.Long.getLong("kyo.test.leakCheck.fdTolerance", LeakCheck.defaultFdTolerance).longValue
+            LeakCheck.detect(
+                leakBaseline,
+                fdTolerance = fdTolerance,
+                idleBudgetNanos = 2_000_000_000L,
+                settleNanos = 200_000_000L,
+                pollNanos = 10_000_000L
+            ) match
+                case kyo.Maybe.Present(report) => throw new LeakCheck.Detected(report)
+                case kyo.Maybe.Absent          => ()
+            end match
+    end runLeakCheck
 
 end SbtRunner
