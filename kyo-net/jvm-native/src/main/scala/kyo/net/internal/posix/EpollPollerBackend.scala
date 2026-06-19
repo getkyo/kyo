@@ -41,13 +41,18 @@ private[net] object EpollPollerBackend extends PollerBackend:
     def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLIN)
-        arm(pollerFd, fd, union, prevUnion, scratch.armBuf)
+        // reReport=false: a read re-arm with an unchanged mask skips the MOD (register-once). The already-ready read case is covered by
+        // missedReads + readMightHaveMore re-dispatch, so no MOD-driven re-evaluation is needed.
+        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = false)
     end registerRead
 
     def registerWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLOUT)
-        arm(pollerFd, fd, union, prevUnion, scratch.armBuf)
+        // reReport=true: the write side has no missed-edge recovery, and EPOLLET reports writability only on an empty->ready transition, so a
+        // re-arm on an already-writable fd whose mask is unchanged would never deliver. Force the MOD so epoll re-evaluates and re-queues the fd
+        // when currently writable, matching kqueue's EV_ADD which re-evaluates per arm (cross-backend consistency).
+        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = true)
     end registerWrite
 
     /** OR `bit` into `fd`'s desired interest in this driver's scratch and return the new union. */
@@ -58,20 +63,25 @@ private[net] object EpollPollerBackend extends PollerBackend:
         updated
     end addInterest
 
-    /** Arm `fd` for `interest | EPOLLET | EPOLLRDHUP`: try `ADD`, and on `EEXIST` re-arm with `MOD` ONLY when the effective interest mask changed
-      * from `prevUnion` (skip the syscall when the mask is identical, avoiding a wasted `epoll_ctl`). `armBuf` is the caller-owned arm buffer (sized for one
-      * EpollEvent, from `PollScratch.armBuf`), reused across all arm calls; no per-call allocation. The ET flags are always ORed in so the fd is
-      * never armed in level-triggered mode by mistake. The buffer is NOT closed here: it persists for the driver lifetime and is freed via
-      * [[PollScratch.close]].
+    /** Arm `fd` for `interest | EPOLLET | EPOLLRDHUP`: try `ADD`, and on `EEXIST` re-arm with `MOD`. When the effective interest mask is unchanged
+      * from `prevUnion`, the MOD is issued only if `reReport` is set: a plain unchanged-mask re-arm is otherwise skipped to avoid a wasted `epoll_ctl`
+      * (register-once). `reReport=true` forces the MOD so epoll re-evaluates current readiness and re-queues the fd if ready, the standard idiom for
+      * re-delivering an edge-triggered readiness that has no new empty->ready transition (used by the write arm, see [[registerWrite]]). `armBuf` is the
+      * caller-owned arm buffer (sized for one EpollEvent, from `PollScratch.armBuf`), reused across all arm calls; no per-call allocation. The ET flags
+      * are always ORed in so the fd is never armed in level-triggered mode by mistake. The buffer is NOT closed here: it persists for the driver
+      * lifetime and is freed via [[PollScratch.close]].
       */
-    private def arm(pollerFd: Int, fd: Int, interest: Int, prevUnion: Int, armBuf: Buffer[Byte])(using AllowUnsafe): Int =
+    private def arm(pollerFd: Int, fd: Int, interest: Int, prevUnion: Int, armBuf: Buffer[Byte], reReport: Boolean)(using
+        AllowUnsafe
+    ): Int =
         val etInterest = interest | PosixConstants.EPOLLET | PosixConstants.EPOLLRDHUP
         EpollEvent.encode(armBuf, 0, EpollEvent(etInterest, fd.toLong))
         val added = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, fd, armBuf)
         if added.value < 0 && added.errorCode == EEXIST then
-            // Skip MOD if the effective mask (after adding ET flags) matches what was previously armed.
+            // Already registered. Skip the MOD when the effective mask is unchanged AND the caller does not need a readiness re-report; otherwise
+            // issue the MOD (epoll_ctl(MOD) re-evaluates readiness and re-queues a currently-ready fd even for an unchanged mask).
             val prevEtInterest = prevUnion | PosixConstants.EPOLLET | PosixConstants.EPOLLRDHUP
-            if etInterest == prevEtInterest then 0
+            if etInterest == prevEtInterest && !reReport then 0
             else ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value.toInt
             end if
         else added.value.toInt
