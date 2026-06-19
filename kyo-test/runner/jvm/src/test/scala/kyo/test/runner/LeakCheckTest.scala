@@ -8,9 +8,10 @@ import kyo.test.runner.internal.LeakCheck
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.funsuite.AnyFunSuite
 
-/** Validates the three end-of-run leak probes against a deliberately leaked file descriptor, a deliberately leaked spinning fiber, and a
-  * deliberately leaked non-daemon thread, then confirms each signal clears after cleanup. Plain ScalaTest (not self-hosted via kyo-test) so
-  * the leaks can be driven and torn down from outside any fiber.
+/** Validates the three end-of-run leak probes: the descriptor diff logic ([[LeakCheck.fdLeaks]] / [[LeakCheck.benignFd]], pure so it runs on
+  * every platform) plus a Linux-only `/proc/self/fd` enumeration check, a deliberately leaked spinning fiber, and a deliberately leaked
+  * non-daemon thread, confirming each signal clears after cleanup. Plain ScalaTest (not self-hosted via kyo-test) so the leaks can be driven
+  * and torn down from outside any fiber.
   */
 class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
 
@@ -26,22 +27,65 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         min
     end minLoad
 
-    test("openFdCount tracks opened and closed file descriptors") {
-        LeakCheck.openFdCount() match
+    /** Polls `cond` every 10ms up to `timeoutMs`, returning whether it became true. Used to wait for a fiber to reach an observable scheduler
+      * state instead of guessing with a fixed sleep, so the scheduler probe test does not race fiber startup.
+      */
+    private def awaitTrue(timeoutMs: Long)(cond: => Boolean): Boolean =
+        val deadline = java.lang.System.nanoTime() + timeoutMs * 1_000_000L
+        var ok       = cond
+        while !ok && java.lang.System.nanoTime() < deadline do
+            Thread.sleep(10)
+            ok = cond
+        ok
+    end awaitTrue
+
+    test("benignFd excludes classpath/library/JVM-internal targets, keeps sockets/pipes/files") {
+        assert(LeakCheck.benignFd("/home/u/.ivy2/cache/io.getkyo/kyo-core.jar"))
+        assert(LeakCheck.benignFd("/usr/lib/x86_64-linux-gnu/libc.so.6"))
+        assert(LeakCheck.benignFd("/dev/urandom"))
+        assert(LeakCheck.benignFd("/proc/self/fd"))
+        assert(LeakCheck.benignFd("anon_inode:[eventpoll]"))
+        assert(!LeakCheck.benignFd("socket:[5]"))
+        assert(!LeakCheck.benignFd("pipe:[7]"))
+        assert(!LeakCheck.benignFd("/tmp/data.txt"))
+    }
+
+    test("fdLeaks reports only new, non-benign, non-whitelisted descriptors") {
+        val baseline = Set("socket:[1]", "/app/lib/foo.jar", "pipe:[2]")
+        val current = Set(
+            "socket:[1]",             // in baseline -> not a leak (e.g. the sbt.ForkMain socket)
+            "/app/lib/foo.jar",       // baseline jar
+            "/app/lib/new.jar",       // new but benign (classloader jar)
+            "anon_inode:[eventpoll]", // new but benign (JVM epoll)
+            "/dev/random",            // new but benign
+            "socket:[99]",            // NEW socket -> leak
+            "/tmp/leaked.txt",        // NEW file -> leak
+            "/tmp/excused.txt"        // NEW file but whitelisted
+        )
+        val leaks = LeakCheck.fdLeaks(baseline, current, Chunk("excused"))
+        assert(leaks.toSet == Set("socket:[99]", "/tmp/leaked.txt"), s"got $leaks")
+    }
+
+    test("openFdTargets enumerates real descriptors and the diff clears on close (Linux only)") {
+        LeakCheck.openFdTargets() match
             case Maybe.Absent =>
-                cancel("UnixOperatingSystemMXBean unavailable on this JVM/OS; FD probe is a no-op here")
+                cancel("/proc/self/fd unavailable on this OS; descriptor probe is a no-op here")
             case Maybe.Present(before) =>
                 val tmp = java.io.File.createTempFile("kyo-leak-fd", ".tmp")
                 tmp.deleteOnExit()
-                val n     = 16
-                val chans = (1 to n).map(_ => FileChannel.open(tmp.toPath, StandardOpenOption.READ))
+                val name = tmp.getName
+                val ch   = FileChannel.open(tmp.toPath, StandardOpenOption.READ)
                 try
-                    val after = LeakCheck.openFdCount().getOrElse(fail("FD count became Absent mid-test"))
-                    assert(after - before >= n, s"opening $n channels should raise the FD count by >= $n (before=$before after=$after)")
-                finally chans.foreach(_.close())
+                    val after = LeakCheck.openFdTargets().getOrElse(fail("openFdTargets became Absent mid-test"))
+                    val leaks = LeakCheck.fdLeaks(before, after, Chunk.empty)
+                    assert(leaks.exists(_.contains(name)), s"the open temp-file descriptor should be reported as a leak; got $leaks")
+                finally ch.close()
                 end try
-                val restored = LeakCheck.openFdCount().getOrElse(fail("FD count became Absent mid-test"))
-                assert(restored - before <= 2, s"closing the channels should return near baseline (before=$before restored=$restored)")
+                val restored = LeakCheck.openFdTargets().getOrElse(fail("openFdTargets became Absent mid-test"))
+                assert(
+                    !LeakCheck.fdLeaks(before, restored, Chunk.empty).exists(_.contains(name)),
+                    "after close the temp-file descriptor must no longer be reported"
+                )
         end match
     }
 
@@ -59,7 +103,9 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
             }
         val ambient = minLoad(8)
         val fiber   = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(spinner))
-        Thread.sleep(150) // let the spinner peg a worker
+        // Wait until the spinner is actually mounted and observed as busy load, instead of guessing with a fixed sleep
+        // (which races startup). At a real done() a leaked spinner has been running since before the check.
+        val observed = awaitTrue(2000)(LeakCheck.busyWorkerFrame().isDefined)
         val verdict = LeakCheck.awaitSchedulerIdle(
             budgetNanos = 300_000_000L,
             settleNanos = 150_000_000L,
@@ -71,6 +117,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         Thread.sleep(200)
         val drained = minLoad(10)
 
+        assert(observed, s"the spinner should be observed as busy load within 2s (ambient=$ambient)")
         verdict match
             case LeakCheck.IdleResult.Busy(la, frame) =>
                 assert(la > 0.0, s"a spinning fiber should keep load above zero (ambient=$ambient)")
@@ -81,10 +128,10 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(drained <= ambient + 0.5, s"after cleanup the spinner's load should be gone (ambient=$ambient drained=$drained)")
     }
 
-    test("non-daemon thread probe detects a leaked thread and clears it after join") {
+    test("non-daemon thread probe detects a leaked thread, respects the whitelist, and clears after join") {
         val baseline = LeakCheck.liveNonDaemonThreads()
         assert(
-            !LeakCheck.leakedNonDaemonThreads(baseline).exists(_.contains("leak-probe-thread")),
+            !LeakCheck.leakedNonDaemonThreads(baseline, Chunk.empty).exists(_.contains("leak-probe-thread")),
             "baseline must not already contain the probe thread"
         )
         val leaked = new Thread(
@@ -96,11 +143,13 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         leaked.setDaemon(false)
         leaked.start()
         try
-            Thread.sleep(50) // let it reach the running state
-            val leaks = LeakCheck.leakedNonDaemonThreads(baseline)
             assert(
-                leaks.exists(_.contains("leak-probe-thread")),
-                s"a live non-daemon thread started after the baseline should be flagged; got $leaks"
+                awaitTrue(2000)(LeakCheck.leakedNonDaemonThreads(baseline, Chunk.empty).exists(_.contains("leak-probe-thread"))),
+                "a live non-daemon thread started after the baseline should be flagged"
+            )
+            assert(
+                !LeakCheck.leakedNonDaemonThreads(baseline, Chunk("leak-probe-thread")).exists(_.contains("leak-probe-thread")),
+                "a thread whose name matches a whitelist pattern must be excused"
             )
         finally
             leaked.interrupt()
@@ -108,7 +157,7 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         end try
         assert(!leaked.isAlive, "probe thread should have stopped after interrupt+join")
         assert(
-            !LeakCheck.leakedNonDaemonThreads(baseline).exists(_.contains("leak-probe-thread")),
+            !LeakCheck.leakedNonDaemonThreads(baseline, Chunk.empty).exists(_.contains("leak-probe-thread")),
             "after the thread joined it must no longer be reported as leaked"
         )
     }

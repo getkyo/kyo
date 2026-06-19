@@ -28,7 +28,7 @@ final private[internal] class SbtTask(
     baseConfig: RunConfig,
     testClassLoader: ClassLoader,
     results: java.util.concurrent.ConcurrentLinkedQueue[TestReport],
-    leakCheck: Boolean
+    forked: Boolean
 ) extends Task:
 
     def tags(): Array[String] = Array.empty
@@ -39,7 +39,7 @@ final private[internal] class SbtTask(
     ): Array[Task] =
         // This call runs on the sbt ForkMain pool thread carrying the task; record it as harness infrastructure so the
         // end-of-run thread probe never mistakes a parked sbt worker for a leaked test thread (see LeakCheck.registerCarrierThread).
-        if leakCheck then LeakCheck.registerCarrierThread()
+        if forked then LeakCheck.registerCarrierThread()
         val report = runSuite()
         results.add(report)
         emitEvents(report, eventHandler)

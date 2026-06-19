@@ -1,7 +1,7 @@
 package kyo.test.runner.internal
 
-import com.sun.management.UnixOperatingSystemMXBean
-import java.lang.management.ManagementFactory
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.concurrent.locks.LockSupport
 import kyo.Chunk
 import kyo.Maybe
@@ -10,29 +10,51 @@ import scala.jdk.CollectionConverters.*
 
 /** JVM end-of-run leak probes, read at the sbt `done()` boundary after every suite in the fork has finished.
   *
-  * Three process-global resources are sampled, never per-leaf: the OS file-descriptor table, the kyo scheduler, and the JVM's non-daemon
+  * Three process-global resources are sampled, never per-leaf: the open file descriptors, the kyo scheduler, and the JVM's non-daemon
   * threads. At `done()` the fork is quiescent (all leaves joined), so a descriptor still open, a fiber still runnable, or a non-daemon thread
-  * still alive is one a leaf failed to release. The probes only read existing surfaces (`UnixOperatingSystemMXBean`, `Scheduler.get`,
+  * still alive is one a leaf failed to release. The probes only read existing surfaces (`/proc/self/fd`, `Scheduler.get`,
   * `Thread.getAllStackTraces`); nothing in the scheduler or core changes.
   *
-  * Detectable: descriptor leaks; runnable/spinning fiber leaks (a fiber pegging or repeatedly rescheduling onto a worker, the class the
-  * async-merge spinning-producer bug produced); and non-daemon thread leaks (a raw `Thread` or un-shutdown executor that keeps the JVM from
-  * exiting cleanly; the scheduler's own threads are daemons, so they never trip this). Not detectable here: a fiber parked on a
-  * still-reachable promise/channel is off-scheduler and invisible to scheduler status; catching that would need a core registry.
+  * Detectable: descriptor leaks (a socket, pipe, or file open at `done()` that was not open at construction and is not a classpath jar or JVM
+  * internal; identified precisely by enumerating and reading the `/proc/self/fd` symlinks, so there is no count tolerance); runnable/spinning
+  * fiber leaks (a fiber pegging or repeatedly rescheduling onto a worker, the class the async-merge spinning-producer bug produced); and
+  * non-daemon thread leaks (a raw `Thread` or un-shutdown executor that keeps the JVM from exiting cleanly; the scheduler's own threads are
+  * daemons, so they never trip this). Not detectable here: a fiber parked on a still-reachable promise/channel is off-scheduler and invisible
+  * to scheduler status; catching that would need a core registry. The descriptor probe is Linux-only (`/proc/self/fd`); a no-op elsewhere.
   */
 private[runner] object LeakCheck:
 
-    /** Default descriptor-growth tolerance for [[detect]], overridable with `-Dkyo.test.leakCheck.fdTolerance`. Absorbs the bounded,
-      * one-time growth of classloader-held jar handles opened lazily as a fork loads suite classes, so that natural growth is not reported as
-      * a leak while gross descriptor accumulation (a socket or file per iteration) still trips the check.
+    /** The set of open file descriptors, each as its `/proc/self/fd` symlink target (`socket:[inode]`, `pipe:[inode]`, a file path, a `.jar`,
+      * ...). `Absent` on a platform without `/proc/self/fd` (macOS, Windows), where the descriptor probe is a no-op. The descriptor that the
+      * enumeration itself opens (the directory stream) targets `/proc/.../fd` and is filtered by [[benignFd]], so it never reads as a leak.
       */
-    val defaultFdTolerance: Long = 128L
+    def openFdTargets(): Maybe[Set[String]] =
+        val dir = Paths.get("/proc/self/fd")
+        if !Files.isDirectory(dir) then Maybe.empty
+        else
+            val targets = Set.newBuilder[String]
+            val stream  = Files.newDirectoryStream(dir)
+            try
+                stream.forEach { entry =>
+                    val target =
+                        try Files.readSymbolicLink(entry).toString
+                        catch case _: Throwable => "<gone>" // the fd closed between listing and readlink; ignore
+                    targets += target
+                }
+            finally stream.close()
+            end try
+            Maybe(targets.result())
+        end if
+    end openFdTargets
 
-    /** Current open file-descriptor count, or `Absent` on a JVM/OS without the Unix OS MXBean (e.g. Windows HotSpot). */
-    def openFdCount(): Maybe[Long] =
-        ManagementFactory.getOperatingSystemMXBean match
-            case os: UnixOperatingSystemMXBean => Maybe(os.getOpenFileDescriptorCount)
-            case _                             => Maybe.empty
+    /** True for a descriptor target that is legitimately open for the JVM's lifetime regardless of any test: a classpath jar, a native
+      * library, a device or proc/sys pseudo-file, a JVM-internal anonymous inode (epoll, eventfd), or the runtime image. These are excluded
+      * from the descriptor diff so that lazy classloading (which opens jar handles as suites load classes) is never reported as a leak.
+      */
+    def benignFd(target: String): Boolean =
+        target.endsWith(".jar") || target.contains(".so") ||
+            target.startsWith("/dev/") || target.startsWith("/proc/") || target.startsWith("/sys/") ||
+            target.startsWith("anon_inode:") || target.startsWith("/modules/") || target == "<gone>"
 
     /** Average scheduler load across active workers: queued plus executing tasks per worker. `0.0` when fully idle. */
     def loadAvg(): Double = Scheduler.get.loadAvg()
@@ -58,17 +80,19 @@ private[runner] object LeakCheck:
     def registerCarrierThread(): Unit =
         carrierThreads.add(Thread.currentThread): Unit
 
-    /** Live non-daemon threads not present in `baseline`, not a registered sbt carrier thread, and not the calling thread: threads a test
-      * started and left running, which a raw `Thread` or an un-shutdown executor produces and which block a clean JVM exit. Each entry is the
-      * thread name plus its top stack frame.
+    /** Live non-daemon threads not present in `baseline`, not a registered sbt carrier thread, not the calling thread, and not whitelisted:
+      * threads a test started and left running, which a raw `Thread` or an un-shutdown executor produces and which block a clean JVM exit. A
+      * thread is whitelisted if any pattern appears in its name or any of its stack frames. Each entry is the thread name plus its top frame.
       */
-    def leakedNonDaemonThreads(baseline: Set[Thread]): Chunk[String] =
+    def leakedNonDaemonThreads(baseline: Set[Thread], whitelist: Chunk[String]): Chunk[String] =
         val self = Thread.currentThread
         val out  = Chunk.newBuilder[String]
         Thread.getAllStackTraces.asScala.foreach { case (t, st) =>
             if t.isAlive && !t.isDaemon && (t ne self) && !baseline.contains(t) && !carrierThreads.contains(t) then
-                val top = if st.nonEmpty then st(0).toString else "<no frame>"
-                out += s"${t.getName} @ $top"
+                val whitelisted = whitelist.exists(p => t.getName.contains(p) || st.exists(_.toString.contains(p)))
+                if !whitelisted then
+                    val top = if st.nonEmpty then st(0).toString else "<no frame>"
+                    out += s"${t.getName} @ $top"
         }
         out.result()
     end leakedNonDaemonThreads
@@ -87,6 +111,29 @@ private[runner] object LeakCheck:
         end while
         res
     end busyWorkerFrame
+
+    /** The full stack of a worker that currently holds work (`load > 0`), joined into one string, for whitelist matching. The scheduler's
+      * `WorkerStatus.frame` is only the top frame, and the top frame of a blocked fiber is an OS-specific syscall (`EPoll.wait` on Linux,
+      * `KQueue` on macOS); a whitelist needs a stable kyo frame deeper in the stack, so this reads the worker's mount thread's full stack via
+      * `Thread.getAllStackTraces` (keyed by the mount thread name in the status). `Absent` when no worker is busy.
+      */
+    def busyWorkerStack(): Maybe[String] =
+        val workers              = Scheduler.get.status().workers
+        var i                    = 0
+        var mount: Maybe[String] = Maybe.empty
+        while i < workers.length && mount.isEmpty do
+            val w = workers(i)
+            if (w ne null) && w.load > 0 && (w.mount ne null) && w.mount.nonEmpty then mount = Maybe(w.mount)
+            i += 1
+        end while
+        mount.flatMap { name =>
+            var res: Maybe[String] = Maybe.empty
+            Thread.getAllStackTraces.asScala.foreach { case (t, st) =>
+                if res.isEmpty && t.getName == name then res = Maybe(st.mkString("\n"))
+            }
+            res
+        }
+    end busyWorkerStack
 
     /** Outcome of [[awaitSchedulerIdle]]. */
     enum IdleResult derives CanEqual:
@@ -129,25 +176,40 @@ private[runner] object LeakCheck:
                 (t.getName == "main") && st.exists(_.getClassName.startsWith("sbt.ForkMain"))
             }
 
-    /** Process-global resource snapshot taken once at runner construction, before any suite runs, and diffed at `done()`. Captures the open
-      * descriptor count and the set of live non-daemon threads so the JVM's own startup infrastructure (the `main` thread, the ForkMain
-      * reader) is excluded from the diff.
+    /** Descriptor targets open at `done()` that were not open at construction and are neither benign ([[benignFd]]) nor whitelisted: a socket,
+      * pipe, or file a leaf opened and never closed. Diffing against the baseline excludes the fork's own startup descriptors, like the
+      * `sbt.ForkMain` socket back to the main JVM, which is open the whole run.
       */
-    final case class Baseline(fd: Maybe[Long], threads: Set[Thread])
+    def fdLeaks(baseline: Set[String], current: Set[String], whitelist: Chunk[String]): Chunk[String] =
+        val out = Chunk.newBuilder[String]
+        current.foreach { target =>
+            if !baseline.contains(target) && !benignFd(target) && !whitelist.exists(target.contains) then
+                out += target
+        }
+        out.result()
+    end fdLeaks
+
+    /** Process-global resource snapshot taken once at runner construction, before any suite runs, and diffed at `done()`. Captures the open
+      * descriptor targets and the set of live non-daemon threads so the JVM's own startup infrastructure (the `main` thread, the ForkMain
+      * reader and socket) is excluded from the diff.
+      */
+    final case class Baseline(fds: Maybe[Set[String]], threads: Set[Thread])
 
     /** Captures a [[Baseline]] of the current open descriptors and live non-daemon threads. */
-    def baseline(): Baseline = Baseline(openFdCount(), liveNonDaemonThreads())
+    def baseline(): Baseline = Baseline(openFdTargets(), liveNonDaemonThreads())
 
-    /** Runs the three end-of-run probes against `baseline` and returns a leak report, or `Absent` when the fork is clean.
+    /** Runs the three end-of-run probes against `baseline`, excusing any finding matched by `whitelist`, and returns a leak report or `Absent`
+      * when the fork is clean.
       *
       * Order: the scheduler/fiber probe first (it owns the settle window), then a `System.gc()` plus settle so Cleaner-closed abandoned
       * channels and finished threads drop out before the descriptor and thread diffs (a genuine leak stays referenced and survives the gc, so
-      * this trims false positives without hiding real leaks). The descriptor delta is compared against `fdTolerance`, which absorbs the
-      * bounded growth of classloader-held jar handles opened lazily as suites load classes.
+      * this trims false positives without hiding real leaks). The fiber probe matches the whitelist against the busy worker's full stack so an
+      * OS-independent kyo frame can excuse an expected event loop; the descriptor probe enumerates `/proc/self/fd` and reports the exact
+      * leaked targets with no count tolerance.
       */
     def detect(
         baseline: Baseline,
-        fdTolerance: Long,
+        whitelist: Chunk[String],
         idleBudgetNanos: Long,
         settleNanos: Long,
         pollNanos: Long
@@ -157,22 +219,25 @@ private[runner] object LeakCheck:
         awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos) match
             case IdleResult.Idle => ()
             case IdleResult.Busy(la, frame) =>
-                findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}"
+                val stack       = busyWorkerStack().getOrElse(frame.getOrElse(""))
+                val whitelisted = whitelist.exists(stack.contains)
+                if !whitelisted then
+                    findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}"
         end match
 
         System.gc()
         LockSupport.parkNanos(settleNanos)
 
-        val threadLeaks = leakedNonDaemonThreads(baseline.threads)
+        val threadLeaks = leakedNonDaemonThreads(baseline.threads, whitelist)
         if threadLeaks.nonEmpty then
             findings += s"non-daemon thread leak (${threadLeaks.size}): ${threadLeaks.mkString("; ")}"
 
-        (baseline.fd, openFdCount()) match
+        (baseline.fds, openFdTargets()) match
             case (Maybe.Present(before), Maybe.Present(after)) =>
-                val delta = after - before
-                if delta > fdTolerance then
-                    findings += s"file-descriptor leak: open fds grew by $delta (before=$before after=$after, tolerance=$fdTolerance)"
-            case _ => () // OS MXBean unavailable: descriptor probe is a no-op on this platform.
+                val leaks = fdLeaks(before, after, whitelist)
+                if leaks.nonEmpty then
+                    findings += s"file-descriptor leak (${leaks.size}): ${leaks.mkString("; ")}"
+            case _ => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
         end match
 
         val all = findings.result()
@@ -186,7 +251,9 @@ private[runner] object LeakCheck:
     final class Detected(report: String)
         extends RuntimeException(
             s"kyo-test leak check failed:$report\n\nThese resources outlived the test run; a leaked fiber, thread, or descriptor means a " +
-                "test (or the code under test) did not release a resource. Disable with -Dkyo.test.leakCheck=false."
+                "test (or the code under test) did not release a resource. Disable for a suite with " +
+                "`override def config = super.config.leakCheck(false)`, or excuse one expected resource with " +
+                "`super.config.leakCheckWhitelist(\"<stack-or-target-substring>\")`."
         )
 
 end LeakCheck

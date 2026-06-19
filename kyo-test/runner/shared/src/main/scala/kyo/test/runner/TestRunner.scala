@@ -203,7 +203,13 @@ object TestRunner:
                                 )
                             )
                         }
-                        val sr = SuiteReport(suiteInfo.name, leaf ++ synthetic, duration)
+                        val sr = SuiteReport(
+                            suiteInfo.name,
+                            leaf ++ synthetic,
+                            duration,
+                            effectiveConfig.leakCheck,
+                            effectiveConfig.leakCheckWhitelist
+                        )
                         reporter.onSuiteComplete(suiteInfo, sr)
                         val report = TestReport(Chunk(sr))
                         reporter.onRunComplete(report)

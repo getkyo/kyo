@@ -13,7 +13,14 @@ abstract class BaseBrowserTest extends kyo.test.Test[Any]:
     // through Browser.assert* domain helpers and expected-exception fail-paths (Abort.run(...) { case Failure(_: X)
     // => () ; case _ => fail(...) }) that do not flow through the kyo.test assert macros, so the per-leaf
     // evaluation counter sees zero even though the leaf does verify behavior. The check is a false positive here.
-    override def config = super.config.sequential.failOnNoAssertion(false)
+    //
+    // leakCheck is disabled because its premise (the fork is quiescent once suites finish) does not hold here:
+    // SharedChrome deliberately holds a Chrome process, its CDP connection socket, and the kyo-http NioIoDriver
+    // event-loop fiber open for the WHOLE run, torn down only at scheduler shutdown (see SharedChrome.ensureStarted).
+    // The fiber could be whitelisted by its stack frame, but the connection is an opaque `socket:[inode]` with no stable
+    // identifier to match, so a whitelist cannot cover it; disabling is the honest handling for a module whose purpose
+    // is driving a long-lived external browser.
+    override def config = super.config.sequential.failOnNoAssertion(false).leakCheck(false)
 
     // Pre-flight: check whether the current (OS, arch) tuple has a chrome-headless-shell artifact
     // (mac-arm64 / mac-x64 / linux64 / win64 / win32). Linux/Aarch64 and Windows/ARM have no published
