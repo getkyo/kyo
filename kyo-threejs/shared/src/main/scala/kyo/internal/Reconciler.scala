@@ -169,7 +169,7 @@ private[kyo] object Reconciler:
       * is removed from a `Foreach` or a `Reactive` swaps, the element's scope closes and disposes its GL
       * resources exactly once; the mount-scope registration is a no-op for an already-closed scope.
       */
-    private def materializeInElemScope(node: Three, mounted: Mounted)(using
+    private[kyo] def materializeInElemScope(node: Three, mounted: Mounted)(using
         Frame
     ): Live < (Async & Scope & Abort[ThreeException]) =
         // Unsafe: constructing the per-element Scope.Finalizer that owns this element's GL resources.
@@ -204,7 +204,7 @@ private[kyo] object Reconciler:
     /** Closes the per-element scope for `removedLive` (disposing its GL resources exactly once) and
       * retires its `mounted.live` entries. Returns the close+await effect so the caller can sequence it.
       */
-    private def disposeElemScope(removedLive: Live, mounted: Mounted)(using
+    private[kyo] def disposeElemScope(removedLive: Live, mounted: Mounted)(using
         Frame
     ): Unit < (Async & Sync) =
         Sync.Unsafe.defer {

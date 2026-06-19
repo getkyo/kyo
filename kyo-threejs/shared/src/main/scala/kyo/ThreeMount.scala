@@ -127,7 +127,9 @@ object ThreeMount:
         scene: Three,
         camera: Three.Ast.Camera,
         frames: ThreeFrames,
-        canvas: org.scalajs.dom.Element
+        canvas: org.scalajs.dom.Element,
+        onMounted: (Reconciler.Live, Reconciler.Mounted) => Unit < (Async & Scope & Abort[ThreeException]) =
+            (_, _) => Kyo.unit
     )(using Frame): Unit < (Async & Scope) =
         // The host hands a live dom.Element; cast to js.Dynamic exactly as resolveCanvas
         // does, then run the runMount pipeline minus resolveCanvas on it, under the ambient
@@ -162,6 +164,7 @@ object ThreeMount:
                 _ <- ThreeMount.subscribeRegions(mounted)
                 _ <- ThreeMount.subscribeReactiveRegions(mounted)
                 _ <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
+                _ <- onMounted(rootLive, mounted)
                 _ <- Fiber.init {
                     Abort.run[ThreeException](ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames)).map {
                         case Result.Success(_) => (): Unit < Sync
@@ -303,11 +306,12 @@ object ThreeMount:
         end for
     end wirePickBackChannel
 
-    /** The server-side [[UI.Ast.HostBridge]] a `Three.embed` host carries so the server-push runner can
-      * boot, observe, and route picks for the scene. `serverInit` flattens the scene to the inline
-      * boot payload; `subscriptions` observes each server-owned reactive prop and emits a
-      * `HostPayload.Prop` on each emission; `onPick` runs the hit node's server-side `onClick`
-      * closure. The closure stays server-side; only the typed payload and pick event cross the wire.
+    /** Builds the server-side HostBridge for a host scene: serverInit flattens the initial scene
+      * to a SceneDescriptor; subscriptions observe each server-owned Signal[Chunk[A]] bound by
+      * foreach/foreachKeyed and emit HostPayload.Structural by diffing the keyed children server-
+      * side (pure over the declarative children + key fn, no GL), alongside the per-slot prop
+      * pushes; onPick runs the user's onClick closure for the hit node. The closure stays
+      * server-side; only the typed payload/event cross.
       */
     private[kyo] def serverBridge(scene: Three, camera: Three.Ast.Camera)(using Frame): UI.Ast.HostBridge =
         new UI.Ast.HostBridge:
@@ -317,7 +321,7 @@ object ThreeMount:
                 path: Seq[String],
                 emit: kyo.internal.HostPayload => Unit < Async
             )(using Frame): Unit < (Async & Scope) =
-                ThreeBridge.observeProps(scene, emit)
+                ThreeBridge.observeProps(scene, emit).andThen(ThreeBridge.observeStructure(scene, emit))
             def onPick(
                 path: Seq[String],
                 nodeId: String,
@@ -848,13 +852,147 @@ object ThreeMount:
             // the apply synchronously (the same Sync.Unsafe convention as the pointer listeners).
             _ <- Sync.Unsafe.defer(registerChannelReceiver(host, path, channel))
             _ <- Scope.ensure(Sync.Unsafe.defer(unregisterChannelReceiver(host, path)))
-            // Run the GL pipeline observing the channel's mirror signals (init seeded the scene).
-            _ <- hostMountPipeline(init.scene, init.camera, init.frames, host)
+            // Run the GL pipeline observing the channel's mirror signals (init seeded the scene). The
+            // onMounted hook wires the channel's structural inbox to a client keyed splice once the live
+            // root is materialized, so an inbound StructuralOp splices/removes/reorders a subtree on the
+            // same channel without a re-mount.
+            _ <- hostMountPipeline(
+                init.scene,
+                init.camera,
+                init.frames,
+                host,
+                (rootLive, mounted) => subscribeStructuralInbox(channel, mounted, rootLive)
+            )
             // Wire the client raycast to post a HostPick back over the WS instead of running onClick
             // locally (the server owns the closure under server-push).
             _ <- wirePickBackChannel(host, path, channel)
         yield ()
     end islandMount
+
+    /** Observes the channel's structural inbox and applies each newly-appended `StructuralOp` to the
+      * live root's children in FIFO order, the client half of structural reactivity. The inbox is a
+      * `SignalRef[Chunk[StructuralOp]]` the WS receiver appends to; this forks one observe fiber under
+      * the island's ambient Scope that tracks how many ops it has already drained (a single-owner cursor
+      * on the observe loop), so each op applies exactly once even as the accumulated chunk grows. An
+      * `Insert` reconstitutes the descriptor and materializes it under a fresh per-element scope, then
+      * splices it into the root at the given index; a `Remove` closes that key's element scope exactly
+      * once (disposing its GL resources) and a stale second `Remove` for the same key is a no-op; a
+      * `Move` reuses the live node (no dispose, the GPU buffers survive) and relinks the children in the
+      * new order. The keyed live map and the ordered child list are single-owner on this fiber.
+      */
+    private[kyo] def subscribeStructuralInbox(
+        channel: HostChannel,
+        mounted: Reconciler.Mounted,
+        rootLive: Reconciler.Live
+    )(using Frame): Unit < (Async & Scope) =
+        // The ordered keyed children spliced onto the root, single-owner on the drain loop. A Remove
+        // drops its entry (and closes its scope once); a Move reorders it; an Insert adds one. The key
+        // identifies a node so a Move/Remove finds it without re-walking the tree. The cursor counts the
+        // ops already drained so each accumulated op applies exactly once.
+        //
+        // The drain loop reads the inbox via `next` rather than `Signal.observe`, deliberately: observe
+        // runs each value inside a fresh per-value Scope that closes when the value changes, which would
+        // dispose an inserted element's per-element scope on the next op. The `next`-driven loop runs the
+        // splice under the island's long-lived ambient Scope, so an inserted subtree lives until its
+        // Remove closes its own per-element scope.
+        AtomicRef.init(Chunk.empty[(String, Reconciler.Live)]).map { spliced =>
+            AtomicInt.init(0).map { drained =>
+                def drainOnce(ops: Chunk[kyo.internal.StructuralOp]): Unit < (Async & Scope & Abort[ThreeException]) =
+                    drained.get.map { already =>
+                        val pending = ops.drop(already)
+                        Kyo.foreachDiscard(pending) { op =>
+                            spliced.get.map { current =>
+                                applyStructuralOp(op, current, rootLive, mounted).map(spliced.set)
+                            }
+                        }.andThen(drained.set(already + pending.size))
+                    }
+                Fiber.init {
+                    Abort.run[Throwable] {
+                        // Drain the current accumulation first (ops that arrived before this fiber started),
+                        // then loop on each subsequent emission.
+                        Abort.recover[ThreeException](e => Abort.panic(e)) {
+                            channel.structuralInbox.current.map(drainOnce).andThen {
+                                Loop.foreach(channel.structuralInbox.next.map(drainOnce).andThen(Loop.continue))
+                            }
+                        }
+                    }.map { result =>
+                        result.fold(
+                            _ => (): Unit < Sync,
+                            err => Log.error(s"structural inbox fiber failed: ${err.getMessage}"),
+                            panic =>
+                                if panic.isInstanceOf[Interrupted] then (): Unit < Sync
+                                else Log.error("structural inbox fiber panicked", panic)
+                        )
+                    }
+                }.unit
+            }
+        }
+    end subscribeStructuralInbox
+
+    /** Applies one `StructuralOp` against the current ordered keyed children, returning the next ordered
+      * list. `Insert` reconstitutes + materializes the descriptor under a per-element scope and splices
+      * it at the index; `Remove` disposes the key's element scope exactly once (a missing key is a
+      * no-op, so a stale second Remove cannot double-dispose); `Move` reorders the existing live node
+      * with no dispose (the live object reference is preserved, GPU buffers survive). After each op the
+      * root's children are relinked in the new order.
+      */
+    private[kyo] def applyStructuralOp(
+        op: kyo.internal.StructuralOp,
+        current: Chunk[(String, Reconciler.Live)],
+        rootLive: Reconciler.Live,
+        mounted: Reconciler.Mounted
+    )(using Frame): Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException]) =
+        op match
+            case kyo.internal.StructuralOp.Insert(key, index, descriptor) =>
+                ThreeBridge.reconstitute(kyo.internal.HostPayload.Structural(
+                    kyo.internal.StructuralOp.Insert(ThreeBridge.rootId, 0, descriptor)
+                )).map { case (node, _) =>
+                    Reconciler.materializeInElemScope(node, mounted).map { live =>
+                        val clamped = math.max(0, math.min(index, current.size))
+                        val next    = current.take(clamped).appended((key, live)).concat(current.drop(clamped))
+                        relinkRoot(rootLive, current, next).andThen(next)
+                    }
+                }
+            case kyo.internal.StructuralOp.Remove(key) =>
+                Maybe.fromOption(current.find(_._1 == key)) match
+                    case Present((_, live)) =>
+                        Reconciler.disposeElemScope(live, mounted).andThen {
+                            val next = current.filterNot(_._1 == key)
+                            relinkRoot(rootLive, current, next).andThen(next)
+                        }
+                    case Absent =>
+                        // A stale Remove for a key already removed: no live entry, so no dispose. This is
+                        // the double-dispose guard (the first Remove cleared the entry).
+                        current: Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException])
+            case kyo.internal.StructuralOp.Move(key, toIndex) =>
+                Maybe.fromOption(current.find(_._1 == key)) match
+                    case Present(entry) =>
+                        val without = current.filterNot(_._1 == key)
+                        val clamped = math.max(0, math.min(toIndex, without.size))
+                        val next    = without.take(clamped).appended(entry).concat(without.drop(clamped))
+                        relinkRoot(rootLive, current, next).andThen(next)
+                    case Absent =>
+                        current: Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException])
+    end applyStructuralOp
+
+    /** Detaches every prior-spliced child from the root and re-attaches the next keyed set in order, the
+      * structural analog of the reconciler's holder relink. Detaching the PRIOR set (not the next set)
+      * is what unlinks a removed child, and re-attaching the next set in order is what realizes an
+      * insert position or a reorder; only the spliced children are touched, so the host root's initial
+      * (boot) content is undisturbed. The live nodes (and their GPU buffers) are unchanged, so a Move
+      * keeps its object identity.
+      */
+    private def relinkRoot(
+        rootLive: Reconciler.Live,
+        prior: Chunk[(String, Reconciler.Live)],
+        next: Chunk[(String, Reconciler.Live)]
+    )(using Frame): Unit < Sync =
+        // Unsafe: a synchronous scene-graph relink on the root and its spliced children.
+        Sync.Unsafe.defer {
+            prior.foreach { case (_, l) => ThreeFacadeOps.detachUnsafe(rootLive.obj, l.obj) }
+            next.foreach { case (_, l) => ThreeFacadeOps.attachUnsafe(rootLive.obj, l.obj) }
+        }
+    end relinkRoot
 
     /** Applies one inbound HostUpdate to the channel: a Prop writes the matching slot's mirror
       * SignalRef (the reconciler's forkBoundRef then drives one patchProp); a Structural writes the
@@ -869,6 +1007,11 @@ object ThreeMount:
             case kyo.internal.HostPayload.Prop(nodeId, slot, value) =>
                 channel.writeProp(nodeId, slot, value)
             case kyo.internal.HostPayload.Structural(op) =>
+                // A keyed splice instruction: the structural inbox is a client-side
+                // Signal[Chunk[A]] mirror the keyed reconciler observes (subscribeReactiveRegions'
+                // diffKeyed path), so an Insert materializes the descriptor under a fresh
+                // per-element scope, a Remove closes exactly one element scope (disposing its GL
+                // resources once), and a Move reuses the live node (GPU buffers survive).
                 channel.writeStructural(op)
     end applyHostUpdate
 
