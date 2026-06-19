@@ -779,7 +779,9 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                 case TypeRef.DoubleT =>
                     buf += s"$segExpr.set(JAVA_DOUBLE, $offExpr, $access)"
                 case TypeRef.StringT =>
-                    val tmp = s"${caseClassVal}_${f.name}_cs"
+                    // Derive the temp name from the full access path so nested-struct recursion (caseClassVal carries
+                    // dots) still yields a legal local identifier, e.g. `contact_address_city_cs` not `contact.address_city_cs`.
+                    val tmp = s"${localIdent(access)}_cs"
                     // Thread binding + method context so spill logs identify the struct-field marshalling call site.
                     buf += s"""val $tmp = __kyoScratch$$.allocUtf8($access, "$bindingFqn", "$methodName")"""
                     buf += s"$segExpr.set(ADDRESS, $offExpr, $tmp)"
@@ -806,8 +808,8 @@ object JvmEmitter extends EmitterBase.Ops with PlatformTypes:
                     // the stub address at the field offset.  The stub is allocated on cbArena which is
                     // emitted by emitPlainMethodBody when it detects FnPtrT struct fields, and closed
                     // in the finally block after the FFI call.
-                    val stubN  = s"${caseClassVal}_${f.name}_stub"
-                    val descId = s"${caseClassVal}_${f.name}_desc"
+                    val stubN  = s"${localIdent(access)}_stub"
+                    val descId = s"${localIdent(access)}_desc"
                     val arity  = params.size
                     val desc   = callbackFunctionDescriptor(params, ret)
                     buf += s"val $descId = $desc"
