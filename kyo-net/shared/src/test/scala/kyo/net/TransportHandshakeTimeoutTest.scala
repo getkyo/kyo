@@ -70,6 +70,12 @@ class TransportHandshakeTimeoutTest extends Test:
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
             val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = 60.millis))
+            // handshakeTimeout currently arms two deadlines from the one config field: the server accept-handshake reap AND an in-flight client
+            // connect deadline. A 60ms reap deadline therefore also caps each client connect at 60ms, and under load the connect-readiness delivery
+            // (poll park / completion drain) can exceed 60ms, firing a spurious NetConnectTimeoutException unrelated to the reap UAF this guard
+            // exercises. The client connect needs no deadline here, so it runs on a separate default-config transport (handshakeTimeout Infinity, no
+            // connect deadline); the server transport keeps the finite 60ms that drives the reap. The reap is still asserted 30 times below.
+            val clientTransport = NetPlatform.transport(TransportConfig.default)
             transport.listen("127.0.0.1", 0, 64, serverTls) { _ => () }.safe.get.map { listener =>
                 // Each iteration: a plaintext client completes the TCP accept but never sends a ClientHello, so the server handshake parks with an
                 // in-flight recv; the 60ms deadline reaps it (closing the accepted fd), which the client observes as its inbound terminating. A
@@ -78,7 +84,7 @@ class TransportHandshakeTimeoutTest extends Test:
                 Loop(0) { i =>
                     if i >= 30 then Loop.done(i)
                     else
-                        transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                        clientTransport.connect("127.0.0.1", listener.port).safe.get.map { client =>
                             Abort.run[Timeout](Async.timeout(5.seconds)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
                                 client.close()
                                 val reaped = outcome match
@@ -94,6 +100,7 @@ class TransportHandshakeTimeoutTest extends Test:
                         }
                 }.map { n =>
                     listener.close()
+                    clientTransport.close()
                     transport.close()
                     assert(n == 30, s"expected 30 stall+reap cycles, completed $n")
                 }
