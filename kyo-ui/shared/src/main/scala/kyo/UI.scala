@@ -851,7 +851,32 @@ object UI:
             final def children: Chunk[UI] = Chunk.empty
             private[kyo] def hostTag: String
             private[kyo] def mount: Maybe[HostMount]
+            // The server-side routing seam, distinct from `mount` (the client DomHostMount). On the
+            // server-push path the runner reads this to observe the host's bound signals and route
+            // picks; on the client SPA path it is unused (the client reads `mount`). Absent for a
+            // bare host with no external renderer.
+            private[kyo] def serverBridge: Maybe[HostMount]
         end HostNode
+
+        /** The server-side host-mount routing seam. A `HostMount` (so it lives in a `Host`'s mount
+          * slot family) that the server-push runner uses to (a) read a host's initial declarative
+          * scene keyed by path, (b) register observers on the host's server-owned signals that emit
+          * a [[kyo.internal.HostPayload]] on each change, and (c) route an inbound raycast pick to
+          * the host's server-side handler. The closure never crosses the wire; only the typed
+          * payload and the typed pick event do. Its only implementation is kyo-threejs's host.
+          */
+        private[kyo] trait HostBridge extends HostMount:
+            private[kyo] def serverInit(path: Seq[String]): kyo.internal.HostPayload < Sync
+            private[kyo] def subscriptions(
+                path: Seq[String],
+                emit: kyo.internal.HostPayload => Unit < Async
+            )(using Frame): Unit < (Async & Scope)
+            private[kyo] def onPick(
+                path: Seq[String],
+                nodeId: String,
+                pointer: kyo.internal.PointerData
+            )(using Frame): Unit < Async
+        end HostBridge
 
         /** Platform-neutral marker for a host's client mount intent. Its only concrete
           * implementation lives in `kyo-ui/js-wasm` and closes over a
@@ -1664,11 +1689,13 @@ object UI:
         final case class Host(
             attrs: Attrs = Attrs(),
             hostTag: String = "canvas",
-            mount: Maybe[HostMount] = Absent
+            mount: Maybe[HostMount] = Absent,
+            serverBridge: Maybe[HostMount] = Absent
         )(using val frame: Frame) extends HostNode:
             type Self = Host
-            def withAttrs(a: Attrs): Host                  = copy(attrs = a)
-            private[kyo] def withMount(m: HostMount): Host = copy(mount = Present(m))
+            def withAttrs(a: Attrs): Host                         = copy(attrs = a)
+            private[kyo] def withMount(m: HostMount): Host        = copy(mount = Present(m))
+            private[kyo] def withServerBridge(b: HostMount): Host = copy(serverBridge = Present(b))
         end Host
 
         // ---- Custom dropdown (div-based overlay, NOT native <select>) ----
