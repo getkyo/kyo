@@ -1245,6 +1245,27 @@ val server: Unit < (Async & Scope) =
 
 The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
 
+A 2-arg overload accepts a `UI.PageHead` so the served page can link a client Scala.js island bundle. The motivating case is a server-push app that embeds a 3D scene (kyo-threejs): the browser must load the island that mounts the host node, and the page HEAD must carry that `<script type="module">`. Pass `head.moduleScript = Present("/island.js")` to link it:
+
+```scala
+import UI.*
+import kyo.*
+
+val withIsland: Unit < (Async & Scope) =
+    for
+        counter <- Signal.initRef(0)
+        page = div(
+            button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
+            counter.render(n => span(n.toString).id("count"))
+        )
+        head = UI.PageHead(title = "My App", moduleScript = Present("/island.js"))
+        uiHandlers <- runHandlers("/app", head)(page)
+        _          <- HttpServer.init(uiHandlers*)
+    yield ()
+```
+
+The 1-arg `runHandlers(basePath)(ui)` delegates to this overload with `PageHead("kyo-ui")` (no `moduleScript`), so all existing call sites are unchanged.
+
 ### `UI.runRender(ui)`
 
 `Stream[String, Async]` of full HTML. First emission is the initial render; subsequent emissions are full re-renders on any signal change. Use for SSR, tests, snapshot exports, or a custom transport.

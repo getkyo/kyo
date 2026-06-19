@@ -491,6 +491,24 @@ The `selected` signal is shared by both the kyo-ui controls (the button writes i
 
 > **Note:** The `frames` parameter defaults to `ThreeFrames.Raf`. Pass `Three.embed(scene, camera, ThreeFrames.Clock(interval))` to use a fixed-interval frame source.
 
+### Server-driven reactivity
+
+`Three.embed` and signal-bound props work unchanged when the containing app runs server-driven via `UI.runHandlers(basePath, head)(ui)`. The split is clean: the server owns every `SignalRef` and every `onClick` closure; the browser owns WebGL and the frame loop. On each signal change the server pushes a diff over kyo-ui's WebSocket; the browser applies it, reacting the same way it would in a client-only mount. A raycast click in the browser calls the server-side `onClick` closure via the same WebSocket, so handler logic stays on the server with full access to server state.
+
+The one extra wiring step is linking the Scala.js island bundle that mounts the 3D host in the browser. Pass a `UI.PageHead` with `moduleScript` set to the island URL:
+
+```scala
+import kyo.*
+
+val head =
+    UI.PageHead(
+        title = "3D App",
+        moduleScript = Present("/island.js")
+    )
+```
+
+`UI.runHandlers(basePath, head)(ui)` serves this head in the SSR page GET so the browser loads the island on first paint. The 1-arg `UI.runHandlers(basePath)(ui)` uses a default head with no `moduleScript`; pass `head` explicitly whenever your page needs a client island. See the kyo-threejs demos (`sbt demoBouncingBalls`, `sbt demoEmbeddedScene`) for a full runnable example including the server entry point and the island bundle wiring.
+
 ## Putting it together
 
 The running scene, fully grown: a lit planet whose color follows a signal, that spins each frame, ringed by a keyed belt of moons, mounted to a canvas with a click-to-select handler.
