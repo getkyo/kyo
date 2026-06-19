@@ -5,7 +5,7 @@ import sbt.*
 /** Extracts fenced ```scala blocks from a module README and emits them as a single generated Scala
   * source so that `Test/compile` type-checks every documented example against the real module surface.
   *
-  * kyo-three is JS+Wasm only and therefore has no JVM doctest host (KyoDoctestPlugin requires
+  * kyo-threejs is JS+Wasm only and therefore has no JVM doctest host (KyoDoctestPlugin requires
   * JvmPlugin), so the README examples are verified by compiling them under the Scala.js compiler
   * through a `Test / sourceGenerators` hook instead of the JVM doctest task.
   *

@@ -7,7 +7,7 @@ import scala.scalajs.js
 import scala.scalajs.js.annotation.JSExportTopLevel
 import scala.scalajs.js.annotation.JSImport
 
-/** The browser entry points for the kyo-three behavioral browser tests.
+/** The browser entry points for the kyo-threejs behavioral browser tests.
   *
   * Each `@JSExportTopLevel` probe is linked as an ES module export and called from a harness page:
   * it builds a scene or kyo-ui tree, mounts it through the real kyo runtime, and records a

@@ -95,7 +95,7 @@ object ThreeMountOrderingBrowserTest:
     private[kyo] val page: String =
         """<!doctype html>
           |<html>
-          |<head><meta charset="utf-8"><title>kyo-three ordering probe</title>
+          |<head><meta charset="utf-8"><title>kyo-threejs ordering probe</title>
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",

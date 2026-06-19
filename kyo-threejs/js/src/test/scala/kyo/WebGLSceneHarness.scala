@@ -92,7 +92,7 @@ object WebGLSceneHarness:
     /** The absolute `three/build` directory under the JS target tree. */
     private[kyo] lazy val threeBuildDir: String =
         // Node fs bridge: Finds the scala-version dir installThree populated.
-        val targetRoot = NodePath.join(NodeProcess.cwd(), "kyo-three", "js", "target")
+        val targetRoot = NodePath.join(NodeProcess.cwd(), "kyo-threejs", "js", "target")
         val located = NodeFs.readdirSync(targetRoot).toSeq.collectFirst {
             case d
                 if d.startsWith("scala-") &&
@@ -116,16 +116,16 @@ object WebGLSceneHarness:
 
     /** The linked ESModule demo bundle (`main.js`) the harness page imports `mountDemo` from. */
     private[kyo] lazy val demoBundlePath: String =
-        // Node fs bridge: Locates the kyo-three-demos fastopt main.js under its target tree.
-        val demosTarget = NodePath.join(NodeProcess.cwd(), "kyo-three", "demos", "target")
+        // Node fs bridge: Locates the kyo-threejs-demos fastopt main.js under its target tree.
+        val demosTarget = NodePath.join(NodeProcess.cwd(), "kyo-threejs", "demos", "target")
         val located = NodeFs.readdirSync(demosTarget).toSeq.collectFirst {
             case d
                 if d.startsWith("scala-") &&
-                    NodeFs.existsSync(NodePath.join(demosTarget, d, "kyo-three-demos-fastopt", "main.js")) =>
-                NodePath.join(demosTarget, d, "kyo-three-demos-fastopt", "main.js")
+                    NodeFs.existsSync(NodePath.join(demosTarget, d, "kyo-threejs-demos-fastopt", "main.js")) =>
+                NodePath.join(demosTarget, d, "kyo-threejs-demos-fastopt", "main.js")
         }
         located.getOrElse(sys.error(
-            s"demo bundle main.js not found under $demosTarget; run 'kyo-three-demos/fastLinkJS' first"
+            s"demo bundle main.js not found under $demosTarget; run 'kyo-threejs-demos/fastLinkJS' first"
         ))
     end demoBundlePath
 

@@ -1,6 +1,6 @@
 package kyo
 
-/** Base class for the kyo-three test suites: the UITest analog for this module.
+/** Base class for the kyo-threejs test suites: the UITest analog for this module.
   *
   * Node-testable suites (AST, reconciler, transforms, raycast, dispose, animation math) extend this
   * directly and run against real three.js on the Scala.js Node environment. The browser-backed suites

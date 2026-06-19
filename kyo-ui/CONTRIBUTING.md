@@ -8,7 +8,7 @@ the authority. When this file and the root differ on a generic rule, the root wi
 never restates a root rule, it points at it.
 
 kyo-ui is the declarative UI layer for Kyo: a pure-value AST, `Signal` reactivity, and three
-runners (Scala.js DOM, HTTP server-push, HTML stream). Its core model mirrors kyo-three: factories
+runners (Scala.js DOM, HTTP server-push, HTML stream). Its core model mirrors kyo-threejs: factories
 produce plain case-class values; the runner materializes them; reactivity threads through via
 `Signal`/`SignalRef`.
 
@@ -94,7 +94,7 @@ given tree depth. For a tree `UI.div(UI.host("canvas"))` mounted via `UI.runMoun
 
 ### How external renderers use the host bridge
 
-An external renderer (`kyo-three`, a chart library, a map widget) builds a `UI.Ast.Host` by
+An external renderer (`kyo-threejs`, a chart library, a map widget) builds a `UI.Ast.Host` by
 calling `UI.host(tag)(mount)` where `mount` is a `dom.Element => (Unit < (Async & Scope))` closure.
 Inside `mount`:
 
@@ -110,7 +110,7 @@ Inside `mount`:
 ### Cross-file visibility
 
 `DomHostMount` is `private[kyo]`, not public. An external renderer in a separate module
-(e.g., `kyo-three`) accesses the host bridge through the public `UI.host(tag)(mount)` factory,
+(e.g., `kyo-threejs`) accesses the host bridge through the public `UI.host(tag)(mount)` factory,
 which builds the `DomHostMount` on the caller's behalf. The factory is the public contract;
 `DomHostMount` itself is an implementation detail.
 
@@ -147,5 +147,5 @@ Cross-platform tests for pure logic (style rules, AST shape, renderer output to 
 `shared/src/test` and run on JVM, JS, and Native. Browser tests that require a real DOM (the DOM
 backend, the host mount seam, reactive update counts) live in `js-wasm/src/test` or, for tests
 that need a real Chrome (a host mount fired in a live page, a GL context released), in the
-downstream `kyo-three/js/src/test`. Follow the root file-naming rule: every test file shares a
+downstream `kyo-threejs/js/src/test`. Follow the root file-naming rule: every test file shares a
 name prefix with the source it covers.

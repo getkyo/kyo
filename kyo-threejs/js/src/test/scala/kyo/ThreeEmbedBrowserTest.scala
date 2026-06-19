@@ -1,6 +1,6 @@
 package kyo
 
-/** Browser proof that `Three.embed` correctly integrates the kyo-three pipeline into a kyo-ui DOM
+/** Browser proof that `Three.embed` correctly integrates the kyo-threejs pipeline into a kyo-ui DOM
   * tree: the embedded canvas renders a non-blank frame, the WebGL context is released when the
   * containing Scope closes, the mount fires exactly once, a shared `SignalRef[String]` is writable
   * from outside the effect system and observed by the kyo-ui reactive label, and the host canvas
@@ -264,7 +264,7 @@ object ThreeEmbedBrowserTest:
     private[kyo] val embedProbePage: String =
         """<!doctype html>
           |<html>
-          |<head><meta charset="utf-8"><title>kyo-three embed probe</title>
+          |<head><meta charset="utf-8"><title>kyo-threejs embed probe</title>
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",
@@ -297,7 +297,7 @@ object ThreeEmbedBrowserTest:
     private[kyo] val interactiveProbePage: String =
         """<!doctype html>
           |<html>
-          |<head><meta charset="utf-8"><title>kyo-three embed interactive probe</title>
+          |<head><meta charset="utf-8"><title>kyo-threejs embed interactive probe</title>
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",
@@ -326,7 +326,7 @@ object ThreeEmbedBrowserTest:
     private[kyo] val siblingProbePage: String =
         """<!doctype html>
           |<html>
-          |<head><meta charset="utf-8"><title>kyo-three embed sibling probe</title>
+          |<head><meta charset="utf-8"><title>kyo-threejs embed sibling probe</title>
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",

@@ -91,7 +91,7 @@ object ThreeMountBrowserTest:
     private[kyo] val page: String =
         """<!doctype html>
           |<html>
-          |<head><meta charset="utf-8"><title>kyo-three renderer release</title>
+          |<head><meta charset="utf-8"><title>kyo-threejs renderer release</title>
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",

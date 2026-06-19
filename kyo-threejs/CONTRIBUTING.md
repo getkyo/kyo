@@ -1,13 +1,13 @@
-# Contributing to kyo-three
+# Contributing to kyo-threejs
 
-This is the module-specific contributor guide for kyo-three. It carries only what is
+This is the module-specific contributor guide for kyo-threejs. It carries only what is
 particular to this module. For every general Kyo convention (effect rows, naming, `using`
 ordering, `inline`, Kyo types over stdlib, the safe-by-default tier, test base classes, the
 "fix the code not the test" and "reproduce before you fix" rules), the
 [root CONTRIBUTING.md](../CONTRIBUTING.md) is the authority. When this file and the root differ
 on a generic rule, the root wins; this file never restates a root rule, it points at it.
 
-kyo-three is the declarative 3D layer for Kyo: the r3f / kyo-ui shape (a pure-value AST plus
+kyo-threejs is the declarative 3D layer for Kyo: the r3f / kyo-ui shape (a pure-value AST plus
 `Signal` reactivity plus a reconciler) retargeted from an HTML tree to a three.js scene graph.
 If you have worked in kyo-ui, the model transfers almost directly; the differences are the
 GL-resource lifecycle, the FFI-heavy reconciler, and the js+wasm-only platform.
@@ -113,7 +113,7 @@ invariant, that is a design decision to surface, not a quiet edit.
 - **The real-GL gate.** Live WebGL runs only in a real browser. A `WebGLRenderer` submit
   cannot run on Node; it is exercised by the in-browser visual-review harness against real
   software-WebGL Chrome. Any new surface that submits to a live GL context belongs behind this gate
-  (a js-only test under `kyo-three/js/src/test`, against the kyo-browser path), never as a Node
+  (a js-only test under `kyo-threejs/js/src/test`, against the kyo-browser path), never as a Node
   test that fakes the submit.
 
 - **`toImage` carries no `Browser` effect.** `Three.toImage` honors exactly the row
@@ -137,7 +137,7 @@ guard test green when you touch the behavior it names.
 
 ## The unsafe boundary
 
-kyo-three is FFI-heavy: it constructs and mutates three.js objects, queries the DOM, and submits
+kyo-threejs is FFI-heavy: it constructs and mutates three.js objects, queries the DOM, and submits
 to WebGL, all through `js.Dynamic`. The discipline (the root's "Safe by default" rule, applied
 here) is:
 
@@ -167,7 +167,7 @@ each a typed `In => js.Dynamic` builder); their bridge in the reconciler is the 
 
 ## Platform: js + wasm only
 
-kyo-three is the repo's only `crossProject(JSPlatform, WasmPlatform)` pair: **no JVM, no Native.**
+kyo-threejs is the repo's only `crossProject(JSPlatform, WasmPlatform)` pair: **no JVM, no Native.**
 This is a genuine platform divergence, not a shortcut. three.js, WebGL, and the DOM do not exist on
 JVM or Native; there is no meaningful JVM target for a 3D scene graph over three.js. Do not add a
 JVM source set to "round out" the cross-build.
@@ -183,7 +183,7 @@ Source and test layout:
   is not a global under the ESModule the Wasm backend mandates).
 - `shared/src/test` holds the cross-platform tests; they run on both the JS (CommonJS) and Wasm
   (ESModule) Node backends. Keep tests here.
-- The only legitimate js-only split (`kyo-three/js/src/test`) is the surface that needs a real
+- The only legitimate js-only split (`kyo-threejs/js/src/test`) is the surface that needs a real
   browser: the WebGL submit and the visual-review harness. That is the divergence the
   root's "all platforms, shared tests" rule explicitly allows for genuinely platform-specific
   behavior. Do not move a Node-testable test into the js-only tree to dodge anything.
@@ -211,7 +211,7 @@ The seams you will use:
 - **Dispose tests observe the real three.js `'dispose'` event** on the live object, so a leak or a
   double-dispose is observed against real behavior, not a counter you trust.
 - **The in-browser visual-review harness** (`DemoVisualReviewTest` + `WebGLSceneHarness`) loads the
-  actual compiled `kyo-three-demos` ESModule bundle into a real software-WebGL Chrome, mounts each
+  actual compiled `kyo-threejs-demos` ESModule bundle into a real software-WebGL Chrome, mounts each
   committed demo through its real scene-graph builder (so the reconciler, frame loop, raycast,
   signal-driven mutations, `loadGltf`, and `toImage` all run for real), reads back the canvas, and
   asserts a non-blank distinct-color count. On a platform with no downloadable Chrome the suite
@@ -260,7 +260,7 @@ budget; that is why new variants nest rather than landing at the package root.
 
 Keep the module's coverage honest as a visible trajectory, not a promise of completeness.
 
-**Round 1 (the current curated slice).** kyo-three ships a deliberately curated primitive slice,
+**Round 1 (the current curated slice).** kyo-threejs ships a deliberately curated primitive slice,
 not all of three.js:
 
 - Geometries: box, sphere, plane, cylinder, cone, torus, plus the `Geometry.custom` escape hatch.
@@ -285,7 +285,7 @@ coverage, approached as explicit rounds, each a deliberate surface expansion:
 - Round 4 and beyond: more of three.js, toward the aspirational "all of three.js" coverage.
 
 **The follow-on: a future kyo-webxr.** The WebXR session / input / presentation layer is
-the next module, a future `kyo-webxr` depending on kyo-three. The frame loop is already
+the next module, a future `kyo-webxr` depending on kyo-threejs. The frame loop is already
 abstracted behind `Frames` (a sealed union), so a WebXR `setAnimationLoop` source flips in as a new
 `Frames` variant without disturbing the loop body; WebXR controller / hand input feeds the existing
 `Pointer` handler shape. This is a stated direction, not a commitment in this round.

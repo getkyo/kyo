@@ -4,14 +4,14 @@ import kyo.*
 
 /** Nested groups orbiting on a `Raf`-driven `onFrame`, with raycast-to-select and a shared
   * `SignalRef[String]` tracking the selected body. Demonstrates groups, the frame loop, reactive
-  * transforms, signal-driven interaction, and kyo-ui HUD composition alongside a kyo-three scene.
+  * transforms, signal-driven interaction, and kyo-ui HUD composition alongside a kyo-threejs scene.
   *
   * The orbit angle advances via `onFrame` on the earth `Group` (groups are `Animated` and carry
   * their own frame hook). The earth group's `rotation` binds to the same `SignalRef[Double]` via
   * `.rotation(signal)`, so the transform updates reactively on each emission. Clicking sun or earth
   * writes the selected body name into a `SignalRef[String]` shared with the HUD.
   *
-  * `UI.runMount` (kyo-ui) and `Three.runMount` (kyo-three) both resolve with `import kyo.*`:
+  * `UI.runMount` (kyo-ui) and `Three.runMount` (kyo-threejs) both resolve with `import kyo.*`:
   * each is forked as a concurrent `Fiber`, both driven by the same ambient `Scope`.
   */
 object SolarSystem extends KyoApp:

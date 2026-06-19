@@ -2,12 +2,12 @@ package kyo
 
 import kyo.*
 
-/** Guards that kyo-three's `Three.runMount` and kyo-ui's `UI.runMount` coexist. `Three.runMount`
+/** Guards that kyo-threejs's `Three.runMount` and kyo-ui's `UI.runMount` coexist. `Three.runMount`
   * is a public member of `object Three` (reachable via `import kyo.*`) and kyo-ui's `UI.runMount`
   * is a top-level extension in `package kyo` (also reachable via `import kyo.*`). Distinct
   * receiver types (`Three.type` vs `UI.type`) keep them unambiguous in the same scope.
   *
-  * The first three fixtures pin the kyo-three side (`Three.runMount` reachable via `import kyo.*`,
+  * The first three fixtures pin the kyo-threejs side (`Three.runMount` reachable via `import kyo.*`,
   * with and without the frames argument); the fourth pins the cross-module composition:
   * `UI.runMount` and `Three.runMount` both resolve and compose in one file with a single import.
   */

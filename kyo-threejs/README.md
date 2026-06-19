@@ -1,6 +1,6 @@
-# kyo-three
+# kyo-threejs
 
-kyo-three describes three.js scenes as pure immutable values: a scene-graph tree you build with factory calls, hold, compare, and test, then hand to a runner that turns it into live WebGL. Signals are first-class throughout, so reactivity is a property of the value rather than a layer bolted on top of it. The module targets JavaScript and WebAssembly only, since three.js is a browser/WebGL library.
+kyo-threejs describes three.js scenes as pure immutable values: a scene-graph tree you build with factory calls, hold, compare, and test, then hand to a runner that turns it into live WebGL. Signals are first-class throughout, so reactivity is a property of the value rather than a layer bolted on top of it. The module targets JavaScript and WebAssembly only, since three.js is a browser/WebGL library.
 
 **A `Three` is a pure value that describes a scene, not a handle to a live one.** You build it with factory calls on the `Three` companion (`Three.scene`, `Three.mesh`, `Three.Geometry.box`, `Three.Material.standard`, `Three.Light.ambient`, `Three.Camera.perspective`). Each call allocates a plain immutable case class and runs no effect, so the result is a `val`: shareable, comparable with `==`, re-renderable, and Node-testable with no GPU and no browser. A geometry pairs with a material to form a mesh, meshes and lights sit inside groups and a scene, and a camera frames it. Nothing touches three.js until you pass the value to a runner.
 
@@ -428,7 +428,7 @@ This is a typed builder boundary, not a cast: the input is your own type, and th
 
 ## Composing with kyo-ui
 
-A kyo-three scene and a kyo-ui HUD compose in one `run` block: each runner is forked as a fiber under the same ambient `Scope`, and they communicate through a shared `SignalRef`. Both `UI.runMount` and `Three.runMount` are reachable with `import kyo.*`.
+A kyo-threejs scene and a kyo-ui HUD compose in one `run` block: each runner is forked as a fiber under the same ambient `Scope`, and they communicate through a shared `SignalRef`. Both `UI.runMount` and `Three.runMount` are reachable with `import kyo.*`.
 
 ```scala
 import kyo.*
@@ -486,7 +486,7 @@ val embedded =
 The `selected` signal is shared by both the kyo-ui controls (the button writes it) and the 3D scene (the click handlers write it), so the embedded canvas and the surrounding UI react to the same cell with no event bus.
 
 <p align="center">
-  <img src="docs/images/embedded-scene.png" width="520" alt="A kyo-three scene embedded as a child of a kyo-ui tree: a kyo-ui button above and a reactive label below frame the live 3D canvas">
+  <img src="docs/images/embedded-scene.png" width="520" alt="A kyo-threejs scene embedded as a child of a kyo-ui tree: a kyo-ui button above and a reactive label below frame the live 3D canvas">
 </p>
 
 > **Note:** The `frames` parameter defaults to `ThreeFrames.Raf`. Pass `Three.embed(scene, camera, ThreeFrames.Clock(interval))` to use a fixed-interval frame source.
@@ -529,7 +529,7 @@ val solarSystem =
 
 ## Demos
 
-The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. They are browser apps (each needs a canvas and a WebGL context), so there is no JVM `runMain` launcher. They are compile-checked by kyo-three's own test on both the JS and Wasm backends.
+The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. They are browser apps (each needs a canvas and a WebGL context), so there is no JVM `runMain` launcher. They are compile-checked by kyo-threejs's own test on both the JS and Wasm backends.
 
 <table>
   <tr>

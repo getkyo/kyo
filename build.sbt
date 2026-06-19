@@ -317,7 +317,7 @@ lazy val kyoJS = project
         `kyo-flow`.js,
         `kyo-browser`.js,
         `kyo-ui`.js,
-        `kyo-three`.js,
+        `kyo-threejs`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -410,7 +410,7 @@ lazy val kyoWasm = project
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-ui`.wasm,
-        `kyo-three`.wasm,
+        `kyo-threejs`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
@@ -1724,10 +1724,10 @@ def installThreeTask = Def.task {
     }
 }
 
-lazy val `kyo-three` =
+lazy val `kyo-threejs` =
     crossProject(JSPlatform, WasmPlatform)
         .crossType(CrossType.Full)
-        .in(file("kyo-three"))
+        .in(file("kyo-threejs"))
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-ui`, `kyo-browser`)
         .withKyoTest
@@ -1759,20 +1759,20 @@ lazy val `kyo-three` =
             Test / test  := (Test / test).dependsOn(installThree).value
         )
 
-// The visual-review demo bundle: kyo-three MAIN plus the six committed demos plus the
+// The visual-review demo bundle: kyo-threejs MAIN plus the six committed demos plus the
 // `@JSExportTopLevel("mountDemo")` entry, linked as a browser-clean ESModule (one external `three`
-// import, no node:* / require). The demo sources stay in kyo-three's test tree (so they remain
-// compile-checked by kyo-three's own test on both backends) and are pulled in here via
-// unmanagedSourceDirectories; this project never links the kyo-three test stack (kyo-ui DOM mount,
+// import, no node:* / require). The demo sources stay in kyo-threejs's test tree (so they remain
+// compile-checked by kyo-threejs's own test on both backends) and are pulled in here via
+// unmanagedSourceDirectories; this project never links the kyo-threejs test stack (kyo-ui DOM mount,
 // HttpServer, kyo-browser) because the entry reaches only the demos' scene-graph builders, so the
 // linker's dead-code elimination drops the node:*-carrying paths. kyo-ui is a compile dependency
 // because the SolarSystem KyoApp references UI.runMount; that code is unreachable from the entry and
 // elided from the linked output (asserted by the node:* grep in the harness gate).
-lazy val `kyo-three-demos` =
+lazy val `kyo-threejs-demos` =
     project
-        .in(file("kyo-three/demos"))
+        .in(file("kyo-threejs/demos"))
         .enablePlugins(ScalaJSPlugin)
-        .dependsOn(`kyo-three`.js, `kyo-ui`.js)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
         .disablePlugins(MimaPlugin, KyoDoctestPlugin)
         .settings(
             `kyo-settings`,
@@ -1780,7 +1780,7 @@ lazy val `kyo-three-demos` =
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
             Compile / unmanagedSourceDirectories +=
-                (`kyo-three`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
             // No test sources; this project exists only to produce the linked demo bundle.
             Test / sources := Seq.empty
         )
