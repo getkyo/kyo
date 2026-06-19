@@ -46,10 +46,9 @@ kyo-net orchestration must not park an OS thread. Specifically, none of the foll
 - `synchronized`
 - `Thread.sleep`, `CountDownLatch`, `Future.await`
 
-There is exactly one sanctioned OS-thread park, and exactly one sanctioned bounded backoff:
+There is exactly one sanctioned OS-thread park, the bounded kernel readiness wait: the driver carrier parks inside `epoll_wait` / `kevent` / `kyo_uring_wait_cqe_timeout` / NIO `Selector.select`, run inline as the `@Ffi.blocking` mechanism (the JVM selector wait is the NIO backend's equivalent floor). This is the scheduler's blocking-I/O floor; the `BlockingMonitor` samples per-thread CPU time, detects the parked carrier, and drains its queue to other workers, so no carrier is starved. "Zero orchestration thread-block" is fully achieved; "no OS thread ever parks" is not, because the kernel readiness wait is the design floor. This is categorically distinct from the forbidden parks above and is the only one. There is no `LockSupport.parkNanos` and no spin-backoff anywhere in the module.
 
-1. **The bounded kernel readiness wait.** The driver carrier parks inside `epoll_wait` / `kevent` / `kyo_uring_wait_cqe_timeout`, run inline as the `@Ffi.blocking` mechanism. This is the scheduler's blocking-I/O floor; the `BlockingMonitor` samples per-thread CPU time, detects the parked carrier, and drains its queue to other workers, so no carrier is starved. "Zero orchestration thread-block" is fully achieved; "no OS thread ever parks" is not, because the kernel readiness wait is the design floor. This is categorically distinct from the forbidden parks above and is the only one.
-2. **The JVM-NIO selector cancelled-key backoff.** A single `LockSupport.parkNanos(1_000_000L)` (1ms) in `NioIoDriver.registerChannel` works around a JDK selector cancelled-key race. It is a bounded driver-carrier wait, documented at the site, and is the only `parkNanos` in the module. Do not add others.
+The JVM-NIO selector cancelled-key race (a re-registration of a channel whose `SelectionKey` was just cancelled, e.g. the STARTTLS `upgradeToTls` re-register after `detachForUpgrade`) is handled WITHOUT a park: `NioIoDriver.registerChannel` keeps its synchronous fast path, and only when `channel.register` throws `CancelledKeyException` (the cancelled key has not been flushed from the selector's cancelled-key set yet) it enqueues the handle on a `pendingRegistrations` queue, wakes the poll carrier, and returns success. The poll carrier drains that queue at the top of `pollOnce`, AFTER `select()` has flushed the cancelled-key set, completing the registration with the interest reconstructed from the pending-op maps (the same source-of-truth invariant `rebuildSelector` uses). An `awaitX` armed during the deferred window records its interest in the pending-op map and `registerInterest` reports deferred-success rather than failing. The registration is the selector owner's job, never the calling carrier's.
 
 ### Carrier spawning
 
@@ -246,7 +245,7 @@ In addition to the root checklist:
 - [ ] Every TLS engine op for a connection routed through `submitEngineOp`.
 - [ ] New code defaults to `shared/`; a platform split is justified by a primitive with no cross-platform wrapper.
 - [ ] After any binding-trait edit, validated on a clean JS and Native build.
-- [ ] No new OS-thread park beyond the sanctioned kernel readiness wait and the single documented NIO `parkNanos`.
+- [ ] No new OS-thread park beyond the sanctioned kernel readiness wait (`epoll_wait` / `kevent` / `kyo_uring_wait_cqe_timeout` / NIO `Selector.select`); no `LockSupport.parkNanos` and no spin-backoff.
 - [ ] Every reused off-heap buffer has a single declared owner (named in a comment), is freed exactly once at the correct site (`freeResources` for per-handle, terminal carrier exit for per-driver), and is never freed in a CQE reap or `onComplete` callback.
 - [ ] No reused or per-driver mutable state placed in a shared `object` or singleton; per-driver state lives on the per-driver scratch, per-handle state on the handle.
 - [ ] Any driver that serves TLS consults `handle.tls` on both the read path and the write path, and shares the encrypt/decrypt steps with the poller via `TlsEngineIo`.

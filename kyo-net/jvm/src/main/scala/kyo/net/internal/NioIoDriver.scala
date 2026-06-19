@@ -76,6 +76,22 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     private val pendingAccepts =
         new java.util.concurrent.ConcurrentHashMap[ServerSocketChannel, Promise.Unsafe[Unit, Abort[Closed]]]()
 
+    // Concurrent-collection audit: registerChannel's deferred path enqueues a handle here for the poll carrier to register on its next cycle.
+    // kyo has no concurrent-queue type, so a raw ConcurrentLinkedQueue is the documented no-equivalent exception (same justification as the
+    // pending-op maps above): producers are arbitrary caller carriers (offer on the CancelledKeyException path of registerChannel), the single
+    // consumer is the poll carrier (drainPendingRegistrations, called at the top of pollOnce AFTER select() has flushed the selector's
+    // cancelled-key set). offer is the happens-before barrier the consumer relies on. Entries are NioHandles whose channel.register(selector, 0)
+    // must be retried on the poll carrier; see registerChannel for why a non-poll carrier cannot flush the cancelled key itself.
+    private val pendingRegistrations =
+        new java.util.concurrent.ConcurrentLinkedQueue[NioHandle]()
+
+    /** Test-observability seam: number of handles awaiting deferred registration on the poll carrier. A `registerChannel` that hit the
+      * cancelled-key race enqueues here and is drained by the poll loop's next `select()` cycle; this count is non-zero only in that window.
+      * Read-only, no mutation.
+      */
+    private[net] def pendingRegistrationCount(using AllowUnsafe): Int =
+        pendingRegistrations.size()
+
     def label: String = s"NioIoDriver[sel=${selector.hashCode()}]"
 
     def handleLabel(handle: NioHandle): String = s"channel=${handle.channel.hashCode()}"
@@ -343,6 +359,10 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                 promise.completeDiscard(Result.fail(closed))
             }
             pendingAccepts.clear()
+            // Drop any handles awaiting deferred registration: the driver is gone, so the poll carrier will never drain them. Their downstream
+            // awaitX promises (if any were armed during the deferred window) are already failed by the pending-op-map cleanup above; the channels
+            // are owned and closed by the caller (the upgrade teardown). Clearing prevents a stranded queue entry from outliving the driver.
+            pendingRegistrations.clear()
             try selector.close()
             catch case _: IOException => ()
         end if
@@ -359,42 +379,24 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             true
         catch
             case _: java.nio.channels.CancelledKeyException =>
-                // A cancelled key for this channel is still pending in the selector's cancelled-key
-                // set. Calling `selectNow()` from a non-polling thread to flush it would deadlock
-                // against the polling thread, which holds the SelectorImpl monitor for the entire
-                // duration of `KQueue.poll(...)` (a native call). Java's intrinsic locks aren't fair,
-                // so even after `wakeup()`, the polling thread can re-acquire the monitor before the
-                // registering thread, leaving the latter blocked indefinitely.
+                // A cancelled key for this channel is still pending in the selector's cancelled-key set. The set is flushed only by the poll
+                // carrier at the start of each `select()`, and `channel.register` throws `CancelledKeyException` until then. Retrying inline
+                // would force this caller carrier to wait for the flush: either a `selectNow()` (which deadlocks against the poll carrier that
+                // holds the SelectorImpl monitor for the whole native poll, with unfair JVM locks giving it no progress guarantee) or an
+                // OS-thread park (the forbidden block). The only sanctioned OS-thread block in the module is the poll carrier's `select()`
+                // head-of-line, so neither is allowed here.
                 //
-                // Instead, kick the polling thread with `wakeup()` and retry `register()`. The
-                // polling thread flushes the cancelled-key set at the start of each `doSelect`
-                // iteration, so within one or two cycles the conflicting key is gone and the retry
-                // succeeds. Triggers via Postgres SSLRequest upgrade (`NioTransport.upgradeToTls`
-                // re-registers the same channel after the plaintext pump tears it down).
-                @scala.annotation.tailrec
-                def retry(attemptsLeft: Int): Boolean =
-                    if attemptsLeft <= 0 then false
-                    else
-                        if wakeupPending.compareAndSet(false, true) then
-                            discard(selector.wakeup())
-                        // Unsafe: sanctioned bounded driver-carrier wait (1ms). Backs off the cancelled-key retry
-                        // so the polling thread can flush the selector's cancelled-key set before the next
-                        // register() attempt. This is a JVM-NIO driver-internal backoff against a selector
-                        // cancelled-key race, NOT an orchestration park and NOT one of the forbidden constructs
-                        // (.safe.get / .block / synchronized / Thread.sleep / CountDownLatch).
-                        java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L) // 1ms
-                        try
-                            discard(handle.channel.register(selector, 0))
-                            given Frame = Frame.internal
-                            Log.live.unsafe.debug(s"$label registerChannel (after retry) ${handleLabel(handle)}")
-                            true
-                        catch
-                            case _: java.nio.channels.CancelledKeyException        => retry(attemptsLeft - 1)
-                            case _: java.nio.channels.ClosedChannelException       => false
-                            case _: java.nio.channels.ClosedSelectorException      => false
-                            case _: java.nio.channels.IllegalBlockingModeException => false
-                        end try
-                retry(100)
+                // Instead, hand the registration to the selector's owner: enqueue the handle, wake the poll carrier, and report success. The
+                // poll carrier drains `pendingRegistrations` at the top of `pollOnce`, AFTER `select()` has flushed the cancelled-key set, and
+                // completes the `channel.register(selector, 0)` there. The registration is therefore deferred but guaranteed: no inline park, no
+                // spin. Triggers via Postgres SSLRequest upgrade (`NioTransport.upgradeToTls` re-registers the same channel after the plaintext
+                // pump's `detachForUpgrade` cancelled its key).
+                discard(pendingRegistrations.offer(handle))
+                if wakeupPending.compareAndSet(false, true) then
+                    discard(selector.wakeup())
+                given Frame = Frame.internal
+                Log.live.unsafe.debug(s"$label registerChannel deferred to poll carrier ${handleLabel(handle)}")
+                true
             case _: java.nio.channels.ClosedChannelException       => false
             case _: java.nio.channels.ClosedSelectorException      => false
             case _: java.nio.channels.IllegalBlockingModeException => false
@@ -443,6 +445,18 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         catch
             case _: CancelledKeyException => false
 
+    /** True while `channel` is still in the deferred-registration queue: its `registerChannel` hit the cancelled-key race and the poll carrier
+      * has not yet completed the registration. In this window the channel has no `SelectionKey`, so an `awaitX` arming interest cannot touch a
+      * key; the interest is held in the pending-op map and applied by `drainPendingRegistrations` when it reconstructs interest at registration.
+      */
+    private def isPendingRegistration(channel: java.nio.channels.SelectableChannel): Boolean =
+        val iter  = pendingRegistrations.iterator()
+        var found = false
+        while !found && iter.hasNext do
+            if iter.next().channel eq channel then found = true
+        found
+    end isPendingRegistration
+
     private def registerInterest(channel: SocketChannel, ops: Int)(using AllowUnsafe): Boolean =
         try
             val key = channel.keyFor(selector)
@@ -459,6 +473,18 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                     s"$label registerInterest channel=${channel.hashCode()} ops=${opsToString(ops)} newOps=${opsToString(newOps)}"
                 )
                 true
+            else if isPendingRegistration(channel) then
+                // Deferred registration in flight: the channel has no key yet. The interest is already in the pending-op map (the calling awaitX
+                // put it there before this call), and drainPendingRegistrations reconstructs interest from those maps when it registers the
+                // channel on the poll carrier, so report success here. Wake the poll carrier so it drains promptly. Mirrors the rebuildSelector
+                // interest-reconstruction invariant: the pending-op maps are the source of truth for what is armed.
+                if wakeupPending.compareAndSet(false, true) then
+                    discard(selector.wakeup())
+                given Frame = Frame.internal
+                Log.live.unsafe.debug(
+                    s"$label registerInterest deferred channel=${channel.hashCode()} ops=${opsToString(ops)}"
+                )
+                true
             else
                 false
             end if
@@ -472,6 +498,11 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             // registration that set the flag while select() was returning is already reflected in the
             // ready-key set this cycle; the next select() will pick up any newly added interest.
             discard(wakeupPending.compareAndSet(true, false))
+            // Drain deferred registrations now that select() has flushed the selector's cancelled-key set: any
+            // channel whose register() raced a lingering cancelled key (the STARTTLS upgrade re-registration) can
+            // now be registered cleanly. Done before key dispatch so a freshly registered channel can have its
+            // interest armed (awaitX) and reported on the next cycle.
+            drainPendingRegistrations()
             if n > 0 then
                 zeroKeyReturns = 0
                 given Frame = Frame.internal
@@ -488,6 +519,66 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             true
         catch
             case _: java.nio.channels.ClosedSelectorException => false
+
+    /** Drain the deferred-registration queue on the poll carrier. Each enqueued handle hit the cancelled-key race in `registerChannel`; the
+      * `select()` that just returned flushed the selector's cancelled-key set, so its `channel.register` can now succeed, registered with the
+      * interest reconstructed from the pending-op maps. A registration that STILL throws `CancelledKeyException` (the key has not been flushed
+      * yet, e.g. its cancel landed after this `select()` began) leaves the handle at the queue head and stops the drain for this cycle, arming a
+      * wakeup so the next `select()` flushes the key and the retry happens promptly rather than blocking until an unrelated event. A closed
+      * channel / selector is dropped (the upgrade or driver is gone; the caller already observed success, and the downstream `awaitX` fails the
+      * parked promise with `Closed`). Called only from the poll carrier (single-carrier-confined consumer).
+      */
+    private def drainPendingRegistrations()(using AllowUnsafe): Unit =
+        // The poll carrier is the only consumer, so peek-then-poll is a safe atomic dequeue here: a handle is removed from the queue ONLY after
+        // its register() has created the SelectionKey (or it is being dropped). This ordering closes the race with a concurrent registerInterest on
+        // a caller carrier: once a channel is absent from the queue, its key already exists, so registerInterest never sees the (no-key AND
+        // not-pending) gap that would fail the awaitX. A still-cancelled key (register throws CancelledKeyException again) stops the drain with the
+        // handle left at the head, retried on the next select() cycle (which re-flushes the cancelled-key set); a wakeup is armed so that cycle
+        // comes promptly. The loop is bounded by the snapshot size so it never spins on a re-enqueued or un-flushable head within one cycle.
+        var remaining  = pendingRegistrations.size()
+        var keyBlocked = false
+        while remaining > 0 && !keyBlocked do
+            remaining -= 1
+            val handle = pendingRegistrations.peek()
+            if handle ne null then
+                try
+                    // Reconstruct armed interest from the pending-op maps, exactly as rebuildSelector does: an awaitX issued during the deferred
+                    // window recorded its interest in the map (registerInterest returned the deferred-success path), so registering with interest 0
+                    // here would drop it and the operation's promise would never complete. Connect is the upgrade path's relevant op; read/write
+                    // are included for completeness and to mirror the rebuild invariant.
+                    val sc  = handle.channel
+                    var ops = 0
+                    if pendingReads.containsKey(sc) then ops = ops | SelectionKey.OP_READ
+                    if pendingWritables.containsKey(sc) then ops = ops | SelectionKey.OP_WRITE
+                    if pendingConnects.containsKey(sc) then ops = ops | SelectionKey.OP_CONNECT
+                    discard(sc.register(selector, ops))
+                    // Registration succeeded (the key now exists): only now remove the handle from the queue.
+                    discard(pendingRegistrations.poll())
+                    given Frame = Frame.internal
+                    Log.live.unsafe.debug(s"$label registerChannel (deferred) ${handleLabel(handle)} ops=${opsToString(ops)}")
+                catch
+                    case _: java.nio.channels.CancelledKeyException =>
+                        // Key not flushed yet: leave the handle at the queue head and stop draining this cycle. Wake the poll loop so the next
+                        // select() flushes the cancelled-key set and the retry happens promptly rather than blocking until an unrelated event.
+                        keyBlocked = true
+                        if wakeupPending.compareAndSet(false, true) then
+                            discard(selector.wakeup())
+                    case _: java.nio.channels.ClosedChannelException =>
+                        discard(pendingRegistrations.poll())
+                        given Frame = Frame.internal
+                        Log.live.unsafe.debug(s"$label registerChannel (deferred) dropped closed channel ${handleLabel(handle)}")
+                    case _: java.nio.channels.ClosedSelectorException =>
+                        discard(pendingRegistrations.poll())
+                        given Frame = Frame.internal
+                        Log.live.unsafe.debug(s"$label registerChannel (deferred) dropped on closed selector ${handleLabel(handle)}")
+                    case _: java.nio.channels.IllegalBlockingModeException =>
+                        discard(pendingRegistrations.poll())
+                        given Frame = Frame.internal
+                        Log.live.unsafe.debug(s"$label registerChannel (deferred) dropped blocking-mode channel ${handleLabel(handle)}")
+                end try
+            end if
+        end while
+    end drainPendingRegistrations
 
     private def dispatchReadyKeys()(using AllowUnsafe): Unit =
         installedKeySet match

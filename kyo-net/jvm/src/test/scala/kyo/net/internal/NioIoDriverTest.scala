@@ -828,4 +828,121 @@ class NioIoDriverTest extends Test:
         end try
     }
 
+    // -----------------------------------------------------------------------
+    // Cancelled-key re-registration routed through the poll carrier (no OS-thread park)
+    // -----------------------------------------------------------------------
+
+    "registerChannelDeferredOnCancelledKey" in {
+        // Reproduce-first for the STARTTLS upgrade re-registration race (#343). detachForUpgrade cancels the channel's SelectionKey; the
+        // cancelled key lingers in the selector's cancelled-key set until the poll carrier flushes it during select(). An immediate
+        // registerChannel on the same channel therefore throws CancelledKeyException. The fix routes that re-registration through the poll
+        // carrier (enqueue + wakeup + return success) instead of parking the calling carrier in a parkNanos retry loop.
+        //
+        // Deterministic trigger: register a channel, cancel its key (mirrors detachForUpgrade's driver.cancel), then re-register before any
+        // select() has flushed the cancelled key. registerChannel must take the deferred path: return true and enqueue the handle (no park).
+        given Frame      = Frame.internal
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096)
+        try
+            // Initial registration creates a live key.
+            assert(driver.registerChannel(handle))
+            assert(driver.pendingRegistrationCount == 0)
+
+            // Cancel the key (as detachForUpgrade does). The cancelled key now lingers in the cancelled-key set: no select() has flushed it.
+            driver.cancel(handle)
+
+            // Re-register the same channel: the lingering cancelled key makes channel.register throw CancelledKeyException, so the driver must
+            // take the deferred path. It returns success (the registration is guaranteed, just deferred) and enqueues the handle for the poll
+            // carrier. No parkNanos, no spin: the call returns immediately.
+            val deferred = driver.registerChannel(handle)
+            assert(deferred)
+            assert(driver.pendingRegistrationCount == 1)
+
+            // Arm a read during the deferred window (before the channel is registered): the interest is held in the pending-op map and applied
+            // when the poll carrier completes the deferred registration. awaitRead must NOT fail the promise here.
+            val pr = new IOPromise[Closed, Span[Byte]]
+            driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+            assert(!pr.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].done())
+
+            // Start the poll loop: its first select() flushes the cancelled key, drainPendingRegistrations registers the channel with the armed
+            // OP_READ interest reconstructed from the pending-op map, and the server write is then delivered.
+            discard(driver.start())
+            sv.write(ByteBuffer.wrap("after-deferred-register".getBytes))
+
+            pr.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+                sv.close()
+                driver.closeHandle(handle)
+                driver.close()
+                // The deferred registration completed on the poll carrier and the read delivered the real bytes: no data lost, no park.
+                assert(new String(result.toArray) == "after-deferred-register")
+                assert(driver.pendingRegistrationCount == 0)
+                succeed
+            }
+        catch
+            case t: Throwable =>
+                driver.close()
+                throw t
+        end try
+    }
+
+    "registerChannelDeferredThenStartedDeliversAcrossManyChannels" in {
+        // Strengthen the deferred-path guard across MANY channels in one driver: every channel is registered, its key cancelled, then
+        // re-registered (each hitting the deferred path), each arms a read during the deferred window, and after the loop starts every read must
+        // deliver its own distinct bytes. This pins that the poll carrier drains the whole queue and reconstructs each channel's armed interest
+        // from the pending-op maps, not just a single deferred registration. The ordering mirrors the real upgrade flow (re-register, then arm the
+        // read, then the loop runs and the peer's bytes arrive): all driver mutations happen before start(), so there is no artificial race between
+        // the test carrier and a live dispatch loop.
+        given Frame  = Frame.internal
+        val driver   = NioIoDriver.init()
+        val n        = 8
+        val pairs    = Array.fill(n)(openLoopbackPair())
+        val handles  = pairs.map { case (client, _) => NioHandle.init(client, 4096) }
+        val promises = Array.fill(n)(new IOPromise[Closed, Span[Byte]])
+        try
+            var i = 0
+            while i < n do
+                assert(driver.registerChannel(handles(i)))
+                driver.cancel(handles(i))
+                // Deferred path: the cancelled key lingers (no select() has run), so re-register enqueues for the poll carrier.
+                assert(driver.registerChannel(handles(i)))
+                driver.awaitRead(handles(i), promises(i).asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+                i += 1
+            end while
+            assert(driver.pendingRegistrationCount == n)
+
+            // Start the loop: one select() cycle flushes all cancelled keys, the drain registers every channel with its armed OP_READ interest.
+            discard(driver.start())
+            i = 0
+            while i < n do
+                pairs(i)._2.write(ByteBuffer.wrap(s"chan-$i".getBytes))
+                i += 1
+            end while
+
+            // Collect all reads sequentially; each must carry its own channel's distinct payload.
+            def collect(idx: Int): Boolean < (Async & Abort[Closed]) =
+                if idx >= n then (true: Boolean)
+                else
+                    promises(idx).asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { bytes =>
+                        assert(new String(bytes.toArray) == s"chan-$idx")
+                        collect(idx + 1)
+                    }
+            collect(0).map { _ =>
+                var j = 0
+                while j < n do
+                    driver.closeHandle(handles(j))
+                    pairs(j)._2.close()
+                    j += 1
+                end while
+                driver.close()
+                assert(driver.pendingRegistrationCount == 0)
+                succeed
+            }
+        catch
+            case t: Throwable =>
+                driver.close()
+                throw t
+        end try
+    }
+
 end NioIoDriverTest
