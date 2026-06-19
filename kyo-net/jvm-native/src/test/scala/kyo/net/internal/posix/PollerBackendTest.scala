@@ -83,7 +83,7 @@ class PollerBackendTest extends Test:
             assert(pollerFd >= 0)
             loopbackPair().map { case (client, accepted) =>
                 // Test 1: registerRead is synchronous and returns Int >= 0 directly (the backend register carries no pending effect).
-                val rc = backend.registerRead(pollerFd, accepted, scratch)
+                val rc = backend.registerRead(pollerFd, accepted, accepted.toLong, scratch)
                 assert(rc >= 0, s"registerRead rc=$rc")
                 // Client writes a byte; the accepted fd becomes read-ready.
                 val wb = Buffer.fromArray[Byte](Array[Byte](7))

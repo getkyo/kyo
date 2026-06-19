@@ -74,7 +74,8 @@ class KqueueBindingsTest extends Test:
                     change,
                     accepted,
                     PosixConstants.EVFILT_READ,
-                    (PosixConstants.EV_ADD | PosixConstants.EV_ENABLE).toShort
+                    (PosixConstants.EV_ADD | PosixConstants.EV_ENABLE).toShort,
+                    accepted.toLong
                 )
                 emptyEvents = Buffer.alloc[Byte](KEvent.size)
                 // Register the accepted fd for EVFILT_READ.

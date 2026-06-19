@@ -33,7 +33,7 @@ class EpollPollerBackendDesiredIsolationTest extends Test:
                 // A real fd to register: a fresh eventfd or pipe read end works; use epfd2 itself as a registerable fd on epfd1 (an epoll fd is a
                 // valid pollable fd). The fd value is what the desired map keys on.
                 val fd = epfd2
-                discard(backend.registerRead(epfd1, fd, scratch1))
+                discard(backend.registerRead(epfd1, fd, fd.toLong, scratch1))
 
                 // The first driver's scratch records the armed interest for fd.
                 assert(

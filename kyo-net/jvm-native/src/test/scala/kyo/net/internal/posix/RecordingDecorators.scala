@@ -470,7 +470,7 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     def create()(using AllowUnsafe): Int =
         real.create()
 
-    def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+    def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val hook = onRegisterRead
         if hook != null && onRegisterRead.eq(hook) then
             onRegisterRead = null
@@ -480,16 +480,16 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         registeredReadFds.add(fd)
         registerReadArmBufs.add(scratch.armBuf)
         discard(callLogQueue.add(s"registerRead($fd)"))
-        val rc = real.registerRead(pollerFd, fd, scratch)
+        val rc = real.registerRead(pollerFd, fd, id, scratch)
         registeredRead(fd).completeDiscard(Result.succeed(()))
         rc
     end registerRead
 
-    def registerWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+    def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         discard(registerWriteCount.getAndIncrement())
         registeredWriteFds.add(fd)
         discard(callLogQueue.add(s"registerWrite($fd)"))
-        val rc = real.registerWrite(pollerFd, fd, scratch)
+        val rc = real.registerWrite(pollerFd, fd, id, scratch)
         registeredWrite(fd).completeDiscard(Result.succeed(()))
         rc
     end registerWrite

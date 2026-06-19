@@ -35,17 +35,20 @@ private[net] object KqueuePollerBackend extends PollerBackend:
 
     def create()(using AllowUnsafe): Int = kq.kqueue().value.toInt
 
-    def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
-        // EV_CLEAR: edge-triggered (auto-reset after delivery, filter stays armed). EV_ADD registers or re-enables if previously deleted.
-        change(pollerFd, fd, PosixConstants.EVFILT_READ, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, scratch.kqueueData)
+    def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        // EV_CLEAR: edge-triggered (auto-reset after delivery, filter stays armed). EV_ADD registers or re-enables if previously deleted. udata=id
+        // tags the knote with the owning handle id so a stale event for a recycled fd (whose id no longer matches) is dropped by the poll loop.
+        change(pollerFd, fd, PosixConstants.EVFILT_READ, (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR).toShort, id, scratch.kqueueData)
 
-    def registerWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
-        // EV_CLEAR + EV_ENABLE: register enabled. After write completes, disableWrite issues EV_DISABLE to suppress spurious wakeups.
+    def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+        // EV_CLEAR + EV_ENABLE: register enabled. After write completes, disableWrite issues EV_DISABLE to suppress spurious wakeups. udata=id tags
+        // the knote with the owning handle id (the stale-event discriminator; EV_ADD on a fresh or recycled fd sets the current owner's id).
         change(
             pollerFd,
             fd,
             PosixConstants.EVFILT_WRITE,
             (PosixConstants.EV_ADD | PosixConstants.EV_CLEAR | PosixConstants.EV_ENABLE).toShort,
+            id,
             scratch.kqueueData
         )
 
@@ -59,8 +62,9 @@ private[net] object KqueuePollerBackend extends PollerBackend:
             // delivered. Uses changeNow (immediate keventNow) rather than the batch change path, because the batch is consumed at poll time
             // and a batch-path deregister could race with an event that fires before the next kevent call. The two changeNow calls are
             // sequential (never concurrent: deregister runs on the single poll-loop carrier in dispatchCmd), so armBuf is safe to reuse.
-            discard(changeNow(pollerFd, fd, PosixConstants.EVFILT_READ, PosixConstants.EV_DELETE, scratch.kqueueData))
-            discard(changeNow(pollerFd, fd, PosixConstants.EVFILT_WRITE, PosixConstants.EV_DELETE, scratch.kqueueData))
+            // EV_DELETE matches the knote by ident+filter, so udata is irrelevant here; pass the fd as an inert value.
+            discard(changeNow(pollerFd, fd, PosixConstants.EVFILT_READ, PosixConstants.EV_DELETE, fd.toLong, scratch.kqueueData))
+            discard(changeNow(pollerFd, fd, PosixConstants.EVFILT_WRITE, PosixConstants.EV_DELETE, fd.toLong, scratch.kqueueData))
         end if
     end deregister
 
@@ -70,7 +74,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
       * the next kevent syscall completes the batch; no spurious event can fire before then since the poll loop is single-carrier).
       */
     override def disableWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
-        discard(change(pollerFd, fd, PosixConstants.EVFILT_WRITE, PosixConstants.EV_DISABLE, scratch.kqueueData))
+        // EV_DISABLE matches the existing knote by ident+filter and does not create one, so udata is irrelevant; pass the fd as an inert value.
+        discard(change(pollerFd, fd, PosixConstants.EVFILT_WRITE, PosixConstants.EV_DISABLE, fd.toLong, scratch.kqueueData))
 
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
         // Register the EVFILT_USER wake filter on the fixed wakeUserIdent with EV_CLEAR (auto-reset on delivery). No wake fd: the filter lives on
@@ -115,11 +120,13 @@ private[net] object KqueuePollerBackend extends PollerBackend:
       * When `kqData` is `Absent` (test callers that build a driver without a kqueue-specific scratch), submits immediately via a one-element
       * `keventNow` with fresh per-call allocation. This preserves the test path behavior without requiring a full scratch to be set up.
       */
-    private def change(pollerFd: Int, fd: Int, filter: Short, flags: Short, kqData: Maybe[KqueuePollData])(using AllowUnsafe): Int =
+    private def change(pollerFd: Int, fd: Int, filter: Short, flags: Short, udata: Long, kqData: Maybe[KqueuePollData])(using
+        AllowUnsafe
+    ): Int =
         kqData match
             case Present(data) =>
                 val slot = data.nChanges
-                KEvent.encodeChange(data.changelistBuf, slot, fd, filter, flags)
+                KEvent.encodeChange(data.changelistBuf, slot, fd, filter, flags, udata)
                 data.nChanges = slot + 1
                 // changelistBuf is NOT closed here: it is the per-driver reused buffer, freed via PollScratch.close.
                 0
@@ -127,7 +134,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 val changelist  = Buffer.alloc[Byte](KEvent.size)
                 val emptyEvents = Buffer.alloc[Byte](0)
                 try
-                    KEvent.encodeChange(changelist, 0, fd, filter, flags)
+                    KEvent.encodeChange(changelist, 0, fd, filter, flags, udata)
                     kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value.toInt
                 finally
                     changelist.close()
@@ -139,10 +146,12 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     /** Submit a single one-element change immediately via `keventNow` (without batching). Used by `deregister` and `disableWrite` paths where the
       * change must be applied outside the normal `drainChanges`-to-`poll` batch cycle (or when kqData is Absent in the test path).
       */
-    private def changeNow(pollerFd: Int, fd: Int, filter: Short, flags: Short, kqData: Maybe[KqueuePollData])(using AllowUnsafe): Int =
+    private def changeNow(pollerFd: Int, fd: Int, filter: Short, flags: Short, udata: Long, kqData: Maybe[KqueuePollData])(using
+        AllowUnsafe
+    ): Int =
         kqData match
             case Present(data) =>
-                KEvent.encodeChange(data.armBuf, 0, fd, filter, flags)
+                KEvent.encodeChange(data.armBuf, 0, fd, filter, flags, udata)
                 val emptyEvents = Buffer.alloc[Byte](0)
                 val rc          = kq.keventNow(pollerFd, data.armBuf, 1, emptyEvents, 0, ZeroTimeout).value.toInt
                 emptyEvents.close()
@@ -151,7 +160,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                 val changelist  = Buffer.alloc[Byte](KEvent.size)
                 val emptyEvents = Buffer.alloc[Byte](0)
                 try
-                    KEvent.encodeChange(changelist, 0, fd, filter, flags)
+                    KEvent.encodeChange(changelist, 0, fd, filter, flags, udata)
                     kq.keventNow(pollerFd, changelist, 1, emptyEvents, 0, ZeroTimeout).value.toInt
                 finally
                     changelist.close()
@@ -228,6 +237,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags
+        val ids   = scratch.ids
         scratch.readyCount = n
         var i = 0
         while i < n do
@@ -240,6 +250,9 @@ private[net] object KqueuePollerBackend extends PollerBackend:
             if (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Eof
             if (evFlags & PosixConstants.EV_ERROR) != 0 then f |= PollFlags.Error
             flags(i) = f
+            // The owning handle id from the knote's udata, for the stale-event guard. EVFILT_USER (the wake event) carries no socket owner, so use
+            // the no-check sentinel for it (its udata is the wake ident, not a handle id); read/write events carry the registering handle's id.
+            ids(i) = if evFilter == PosixConstants.EVFILT_USER then PollScratch.IdNoCheck else KEvent.udata(data.eventsBuffer, i)
             i += 1
         end while
         n
@@ -255,6 +268,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     ): Fiber.Unsafe[Int, Any] =
         val fds         = scratch.fds
         val flags       = scratch.flags
+        val ids         = scratch.ids
         val emptyChange = Buffer.alloc[Byte](0)
         val events      = Buffer.alloc[Byte](MaxEvents * KEvent.size)
         val timeout     = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
@@ -275,6 +289,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
                     if (evFlags & PosixConstants.EV_EOF) != 0 then f |= PollFlags.Eof
                     if (evFlags & PosixConstants.EV_ERROR) != 0 then f |= PollFlags.Error
                     flags(i) = f
+                    ids(i) = if evFilter == PosixConstants.EVFILT_USER then PollScratch.IdNoCheck else KEvent.udata(events, i)
                     i += 1
                 end while
                 n
@@ -298,7 +313,14 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         )
         val sentinelEvents = Buffer.alloc[Byte](0) // unused on kqueue; closed via PollScratch.close
         val sentinelArm    = Buffer.alloc[Byte](0) // unused on kqueue; closed via PollScratch.close
-        new PollScratch(sentinelEvents, new Array[Int](MaxEvents), new Array[Int](MaxEvents), sentinelArm, Present(kqData))
+        new PollScratch(
+            sentinelEvents,
+            new Array[Int](MaxEvents),
+            new Array[Int](MaxEvents),
+            sentinelArm,
+            Present(kqData),
+            new Array[Long](MaxEvents)
+        )
     end newPollScratch
 
     def close(pollerFd: Int)(using AllowUnsafe, Frame): Unit =

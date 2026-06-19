@@ -343,7 +343,8 @@ final private[net] class PollerIoDriver private[posix] (
                 // JVM/Native inline-completion path: the @Ffi.blocking wait completed synchronously. Extract events and continue the
                 // while loop without growing the stack (the while iteration is the tail-loop equivalent of @tailrec).
                 waitFiber.poll() match
-                    case Present(Result.Success(_)) => drainReady(pollScratch.fds, pollScratch.flags, pollScratch.readyCount)
+                    case Present(Result.Success(_)) =>
+                        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
                     case Present(Result.Failure(_)) => running = false // backend closed or error; exit loop
                     case Present(Result.Panic(_))   => running = false // fatal backend error; exit loop
                     case Absent                     => ()              // unreachable when done(); continue
@@ -356,7 +357,7 @@ final private[net] class PollerIoDriver private[posix] (
                 enteredPending = true
                 waitFiber.onComplete {
                     case Result.Success(_) =>
-                        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.readyCount)
+                        drainReady(pollScratch.fds, pollScratch.flags, pollScratch.ids, pollScratch.readyCount)
                         // Drain both FIFOs on the JS re-entry path too: JS is single-threaded so it never strands a drain, but the poll loop is the
                         // sole FIFO consumer on every platform, so the drain must run on whichever poll path executes. This also runs any
                         // close-teardown engine op (the maps are poll-fiber-confined; JS is single-threaded so the teardown never races the loop).
@@ -960,7 +961,7 @@ final private[net] class PollerIoDriver private[posix] (
       *   - Dispatches error-ONLY events (no read/write/eof bit) to `dispatchError` so a peer reset surfaces immediately rather than being
       *     missed until a later op fails. When a read or write bit is also set, the normal dispatch runs and surfaces the error in-band.
       */
-    private def drainReady(fds: Array[Int], flags: Array[Int], n: Int)(using AllowUnsafe, Frame): Unit =
+    private def drainReady(fds: Array[Int], flags: Array[Int], ids: Array[Long], n: Int)(using AllowUnsafe, Frame): Unit =
         var i = 0
         while i < n do
             val fd = fds(i)
@@ -969,6 +970,40 @@ final private[net] class PollerIoDriver private[posix] (
                 // consume the signal so it does not immediately re-fire, then fall through to the cycle's drainFifos, which applies the change(s)
                 // that prompted the wake. Not dispatched as a socket readiness (it is the eventfd / EVFILT_USER wake key, never a socket fd).
                 backend.drainWake(pollScratch)
+            else if ids(i) != PollScratch.IdNoCheck && activeFds.getOrElse(fd, -1L) != ids(i) then
+                // Stale event for a closed-and-recycled fd (kqueue only; epoll fills ids with IdNoCheck so this never fires there). The event's
+                // udata names the registration that produced it (the owning handle id at register time); activeFds names the fd's CURRENT owner. A
+                // mismatch means this fd was closed and its number recycled into a new connection AND a new owner re-armed it (or the event is a
+                // residual knote from the prior owner): the kernel still queued an event tagged with the OLD id. This branch never runs the normal
+                // read/eof/error/write dispatch for the stale event, which is what closes the connect-burst race: the prior owner's spurious EV_EOF /
+                // EV_ERROR / read edge can no longer surface a phantom close on the NEW owner's fresh connection, and it never reaches dispatchRead's
+                // missed-edge tracking to contaminate it.
+                //
+                // It does fail the stale event's OWN orphaned pending op: when a pending read / accept / writable for this fd is still the very
+                // registration the stale event was produced for (its stored owner id equals the event's id), the fd was recycled out from under that
+                // op without its handle being closed, so complete it Closed and remove it (it would otherwise hang). An op belonging to the CURRENT
+                // owner (a different id) is left untouched: a stale event must never complete the new owner's op. In the connect-burst the prior
+                // owner's pending op was already failed by its close, so pendingReads[fd] there is the new owner (different id) and is correctly left
+                // alone; only the synthetic recycle-without-close path (the stale-read / stale-writable regression guards) has a matching-id op here.
+                val staleId  = ids(i)
+                val staleErr = Closed(label, summon[Frame], s"stale event fd=$fd")
+                Maybe(pendingReads.get(fd)).foreach { h =>
+                    if h.id == staleId then
+                        discard(pendingReads.remove(fd))
+                        h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
+                        h.pendingReadPromise = Absent
+                }
+                Maybe(pendingAccepts.get(fd)).foreach { h =>
+                    if h.id == staleId then
+                        discard(pendingAccepts.remove(fd))
+                        h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
+                        h.pendingAcceptPromise = Absent
+                }
+                Maybe(pendingWritables.get(fd)).foreach { entry =>
+                    if entry.id == staleId then
+                        discard(pendingWritables.remove(fd))
+                        entry.promise.completeDiscard(Result.fail(staleErr))
+                }
             else
                 val f     = flags(i)
                 val read  = (f & PollFlags.Read) != 0
@@ -1480,24 +1515,31 @@ final private[net] class PollerIoDriver private[posix] (
       * mismatched. Applies nothing when no registration matches (a cancel removed it before the command ran). The handle's `@volatile` promise/id
       * reads here pair with the await methods' stores (published before the registration offer; the queue offer/take is the happens-before barrier).
       */
-    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe): Unit =
-        Maybe(takeRegistration(fd, kind)).foreach { reg =>
-            val handle = reg.handle
-            kind match
-                case RegKind.Read =>
-                    activeFds.put(fd, handle.id)
-                    pendingReads.put(fd, handle)
-                case RegKind.Accept =>
-                    activeFds.put(fd, handle.id)
-                    pendingAccepts.put(fd, handle)
-                case RegKind.Write =>
-                    activeFds.put(fd, handle.id)
-                    handle.pendingWritablePromise match
-                        case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id))
-                        case Absent     => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
-                    end match
-            end match
-        }
+    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe): Long =
+        Maybe(takeRegistration(fd, kind)) match
+            case Present(reg) =>
+                val handle = reg.handle
+                kind match
+                    case RegKind.Read =>
+                        activeFds.put(fd, handle.id)
+                        pendingReads.put(fd, handle)
+                    case RegKind.Accept =>
+                        activeFds.put(fd, handle.id)
+                        pendingAccepts.put(fd, handle)
+                    case RegKind.Write =>
+                        activeFds.put(fd, handle.id)
+                        handle.pendingWritablePromise match
+                            case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id))
+                            case Absent     => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
+                        end match
+                end match
+                handle.id
+            case Absent =>
+                // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
+                // arming a fd with no pending op (the pre-fix behavior) would leave an interest with no owner id to tag the knote, and there is no op
+                // to deliver to anyway.
+                PollScratch.IdNoCheck
+        end match
     end applyRegistration
 
     /** Decode a packed Long command and dispatch to the appropriate backend method. On rc<0 from registerRead/registerWrite, the pending promise is
@@ -1518,45 +1560,53 @@ final private[net] class PollerIoDriver private[posix] (
             // (RegKind.Accept vs RegKind.Read), so the live entry is applied to pendingAccepts vs pendingReads for THIS command, never confused with a
             // concurrently-pending registration of the other kind on the same fd.
             if accept then
-                applyRegistration(fd, RegKind.Accept)
-                val rc = backend.registerRead(pollerFd, fd, pollScratch)
-                if rc < 0 then
-                    Maybe(pendingAccepts.remove(fd)).foreach { h =>
-                        h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                        h.pendingAcceptPromise = Absent
-                    }
+                val id = applyRegistration(fd, RegKind.Accept)
+                // Skip the backend register when no registration matched (id == IdNoCheck): there is no pending op to arm and no owner id to tag the
+                // kqueue knote (the udata stale-event cookie). The id is the registering handle's monotonic id, passed to the backend as the knote udata.
+                if id != PollScratch.IdNoCheck then
+                    val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
+                    if rc < 0 then
+                        Maybe(pendingAccepts.remove(fd)).foreach { h =>
+                            h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            h.pendingAcceptPromise = Absent
+                        }
+                    end if
                 end if
             else
-                applyRegistration(fd, RegKind.Read)
-                val rc = backend.registerRead(pollerFd, fd, pollScratch)
-                if rc < 0 then
-                    Maybe(pendingReads.remove(fd)).foreach { h =>
-                        h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
-                        h.pendingReadPromise = Absent
-                    }
-                else
-                    // Consumer-paced drain: re-dispatch immediately when the kernel may hold bytes with no new ET edge pending. Two cases:
-                    // (1) readMightHaveMore=true: the previous recv filled the read buffer exactly; the kernel holds residual bytes
-                    //     that EPOLLET will never re-signal (no new empty->ready transition when data was already present).
-                    // (2) missedReads contains fd: a kernel read edge fired while no pending read was present (consumer was in a
-                    //     backpressure pause). The edge was dropped by dispatchRead's Absent branch. On re-registration, epoll_ctl(MOD)
-                    //     with the same mask is a no-op (no new edge fires). Remove clears the entry so it applies exactly once per
-                    //     missed edge. A spurious re-dispatch (no actual bytes in the kernel) hits EAGAIN immediately and is harmless.
-                    val missed     = missedReads.remove(fd)
-                    val missedEofd = missedEof.remove(fd)
-                    Maybe(pendingReads.get(fd)).foreach { h =>
-                        // A dropped edge that carried eof transfers into the handle's persistent half-close flag so the re-dispatch (and any
-                        // further re-dispatches) drain to recv == 0 and surface the EOF, which the bare missedReads entry would not.
-                        if missedEofd then h.halfClosePending = true
-                        if h.readMightHaveMore || missed || missedEofd then dispatchRead(fd)
-                    }
+                val id = applyRegistration(fd, RegKind.Read)
+                if id != PollScratch.IdNoCheck then
+                    val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
+                    if rc < 0 then
+                        Maybe(pendingReads.remove(fd)).foreach { h =>
+                            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            h.pendingReadPromise = Absent
+                        }
+                    else
+                        // Consumer-paced drain: re-dispatch immediately when the kernel may hold bytes with no new ET edge pending. Two cases:
+                        // (1) readMightHaveMore=true: the previous recv filled the read buffer exactly; the kernel holds residual bytes
+                        //     that EPOLLET will never re-signal (no new empty->ready transition when data was already present).
+                        // (2) missedReads contains fd: a kernel read edge fired while no pending read was present (consumer was in a
+                        //     backpressure pause). The edge was dropped by dispatchRead's Absent branch. On re-registration, epoll_ctl(MOD)
+                        //     with the same mask is a no-op (no new edge fires). Remove clears the entry so it applies exactly once per
+                        //     missed edge. A spurious re-dispatch (no actual bytes in the kernel) hits EAGAIN immediately and is harmless.
+                        val missed     = missedReads.remove(fd)
+                        val missedEofd = missedEof.remove(fd)
+                        Maybe(pendingReads.get(fd)).foreach { h =>
+                            // A dropped edge that carried eof transfers into the handle's persistent half-close flag so the re-dispatch (and any
+                            // further re-dispatches) drain to recv == 0 and surface the EOF, which the bare missedReads entry would not.
+                            if missedEofd then h.halfClosePending = true
+                            if h.readMightHaveMore || missed || missedEofd then dispatchRead(fd)
+                        }
+                    end if
                 end if
             end if
         else if op == OpRegisterWrite then
-            applyRegistration(fd, RegKind.Write)
-            val rc = backend.registerWrite(pollerFd, fd, pollScratch)
-            if rc < 0 then
-                Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
+            val id = applyRegistration(fd, RegKind.Write)
+            if id != PollScratch.IdNoCheck then
+                val rc = backend.registerWrite(pollerFd, fd, id, pollScratch)
+                if rc < 0 then
+                    Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
+            end if
         else
             // OpDeregister: remove this fd's entries from the four poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer).
             // The pending promises were already failed synchronously by deregisterFds (held on the handle, not in the maps), so this

@@ -25,13 +25,18 @@ private[net] trait PollerBackend:
     /** Register one-shot read interest on `fd`. `scratch` is the per-driver [[PollScratch]], whose `armBuf` field (epoll) or
       * `kqueueData.armBuf` field (kqueue) is used as the reused arm buffer. Owned by the change worker (single owner: drainChanges runs on
       * one worker). Returns the underlying register syscall rc (<0 = failure).
+      *
+      * `id` is the owning handle's monotonic id. kqueue encodes it into the knote's `udata` so a decoded event names the registration that produced
+      * it; the poll loop drops an event whose `udata` no longer matches the fd's current owner (a stale event for a closed-and-recycled fd). epoll
+      * ignores `id`: epoll cleanly drops pending events for a closed fd, so it has no recycled-fd stale-event exposure and needs no per-event cookie.
       */
-    def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int
+    def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int
 
-    /** Register one-shot write interest on `fd`. `scratch` is the per-driver [[PollScratch]] (see [[registerRead]]). Returns the underlying
-      * register syscall rc (<0 = failure).
+    /** Register one-shot write interest on `fd`. `scratch` is the per-driver [[PollScratch]] (see [[registerRead]]). `id` is the owning handle id,
+      * encoded into the kqueue knote's `udata` for the stale-event guard (ignored by epoll; see [[registerRead]]). Returns the underlying register
+      * syscall rc (<0 = failure).
       */
-    def registerWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int
+    def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int
 
     /** Remove `fd` from the poller. Epoll issues `EPOLL_CTL_DEL`; kqueue deletes both filters via `kevent`. When `fdClosing` is true the fd is
       * already closed (the OS auto-removes it from the interest set), so the delete syscall is skipped; an `EV_DELETE` on a recycled fd number
@@ -174,7 +179,12 @@ final private[net] class PollScratch(
     val fds: Array[Int],
     val flags: Array[Int],
     val armBuf: kyo.ffi.Buffer[Byte],
-    val kqueueData: Maybe[KqueuePollData]
+    val kqueueData: Maybe[KqueuePollData],
+    // Per-event decoded kqueue `udata` (the owning handle id), parallel to `fds`/`flags`. kqueue's decode fills it from each event's `udata`; the
+    // poll loop drops an event whose `ids(i)` no longer matches the fd's current owner in `activeFds` (a stale event for a closed-and-recycled fd).
+    // On epoll this stays at the no-check sentinel ([[PollScratch.IdNoCheck]]) for every slot, so the guard is a no-op there (epoll cleanly drops a
+    // closed fd's pending events, so it has no recycled-fd stale-event exposure). Poll-loop-carrier-owned, like `fds`/`flags`. A heap array, GC'd.
+    val ids: Array[Long]
 ):
     /** Per-driver fd -> currently-armed epoll direction bits (a union of EPOLLIN / EPOLLOUT). Used only by the epoll arm: mutated by
       * registerRead / registerWrite / rearm / deregister, every one of which the driver runs on its serial interest-change worker, so a plain
@@ -214,6 +224,14 @@ final private[net] class PollScratch(
         if wakeArmBuf != null then wakeArmBuf.close()
         // fds and flags are heap arrays, collected by GC. wakeFd (epoll eventfd) is closed by the backend's closeWake via the driver close path.
     end close
+end PollScratch
+
+private[net] object PollScratch:
+    /** The `ids(i)` sentinel that disables the per-event stale-owner check. The epoll decode writes it for every event (epoll has no recycled-fd
+      * stale-event exposure), and the kqueue decode writes it for the wake event (which is not a socket fd and carries no owner). Handle ids are
+      * `>= 0`, so a negative sentinel can never collide with a real owner id; the poll loop skips the `activeFds` comparison when it sees this value.
+      */
+    val IdNoCheck: Long = -1L
 end PollScratch
 
 /** Flag bits packed into `PollScratch.flags(i)` for decoded poll events. */

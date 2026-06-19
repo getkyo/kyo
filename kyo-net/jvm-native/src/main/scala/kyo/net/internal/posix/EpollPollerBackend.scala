@@ -38,7 +38,10 @@ private[net] object EpollPollerBackend extends PollerBackend:
 
     def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value.toInt
 
-    def registerRead(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+    // `id` (the owning handle id) is ignored on epoll: the kqueue arm encodes it into the knote `udata` for the recycled-fd stale-event guard, but
+    // epoll cleanly drops a closed fd's pending events so it has no such exposure and carries no per-event owner cookie. The parameter is kept on the
+    // shared seam so the driver passes one register call shape to both backends.
+    def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLIN)
         // reReport=false: a read re-arm with an unchanged mask skips the MOD (register-once). The already-ready read case is covered by
@@ -46,7 +49,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
         arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = false)
     end registerRead
 
-    def registerWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
+    def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLOUT)
         // reReport=true: the write side has no missed-edge recovery, and EPOLLET reports writability only on an empty->ready transition, so a
@@ -196,7 +199,10 @@ private[net] object EpollPollerBackend extends PollerBackend:
         // Unsafe: off-heap allocations at driver init (called once; closed in driver.close via PollScratch.close).
         val eventsBuffer = Buffer.alloc[Byte](MaxEvents * EpollEvent.size)
         val armBuf       = Buffer.alloc[Byte](EpollEvent.size)
-        new PollScratch(eventsBuffer, new Array[Int](MaxEvents), new Array[Int](MaxEvents), armBuf, Absent)
+        // ids is pre-filled with the no-check sentinel and never written by the epoll decode: epoll has no recycled-fd stale-event exposure, so the
+        // driver's per-event owner check is a no-op on epoll (every slot reads IdNoCheck). Sized MaxEvents to stay parallel to fds/flags.
+        val ids = Array.fill[Long](MaxEvents)(PollScratch.IdNoCheck)
+        new PollScratch(eventsBuffer, new Array[Int](MaxEvents), new Array[Int](MaxEvents), armBuf, Absent, ids)
     end newPollScratch
 
     def close(pollerFd: Int)(using AllowUnsafe, Frame): Unit =

@@ -136,30 +136,35 @@ private[net] object KEvent:
     /** Total byte size of `struct kevent` on the supported (64-bit, naturally aligned) kqueue ABIs. */
     val size: Int = 32
 
-    /** Write the changelist entry for `fd` at element 0 of `buf`: `ident`/`udata` = fd, the given `filter`/`flags`, and `fflags`/`data` = 0.
+    /** Write the changelist entry for `fd` at element 0 of `buf`: `ident` = fd, the given `filter`/`flags`/`udata`, and `fflags`/`data` = 0.
       * Used by the kqueue arm path (register / deregister) in place of `Buffer[KEvent].set(0, KEvent(...))`, which would box the Long fields.
+      *
+      * `udata` is the per-registration cookie the kernel preserves on the knote and returns verbatim on every event for it. The driver passes the
+      * owning handle's monotonic id so a decoded event names the registration that produced it; an event whose `udata` no longer matches the fd's
+      * current owner is a stale event for a closed-and-recycled fd and is dropped (the kqueue recycled-fd stale-event guard, see PollerIoDriver).
       */
-    def encodeChange(buf: Buffer[Byte], fd: Int, filter: Short, flags: Short)(using AllowUnsafe): Unit =
-        putLongLe(buf, 0, fd.toLong)  // ident
-        putShortLe(buf, 8, filter)    // filter
-        putShortLe(buf, 10, flags)    // flags
-        putIntLe(buf, 12, 0)          // fflags
-        putLongLe(buf, 16, 0L)        // data
-        putLongLe(buf, 24, fd.toLong) // udata
+    def encodeChange(buf: Buffer[Byte], fd: Int, filter: Short, flags: Short, udata: Long)(using AllowUnsafe): Unit =
+        putLongLe(buf, 0, fd.toLong) // ident
+        putShortLe(buf, 8, filter)   // filter
+        putShortLe(buf, 10, flags)   // flags
+        putIntLe(buf, 12, 0)         // fflags
+        putLongLe(buf, 16, 0L)       // data
+        putLongLe(buf, 24, udata)    // udata (owning handle id; the stale-event discriminator)
     end encodeChange
 
     /** Write the changelist entry for `fd` at element `slot` of `buf` (slot is a 0-based index; byte offset = slot * size). Identical to the
       * single-element overload but writes at the given slot for changelist batching: `drainChanges` encodes multiple changes at
-      * consecutive slots in `KqueuePollData.changelistBuf` before passing the batch to `kevent` alongside the poll wait.
+      * consecutive slots in `KqueuePollData.changelistBuf` before passing the batch to `kevent` alongside the poll wait. `udata` carries the owning
+      * handle id, as in the single-element overload.
       */
-    def encodeChange(buf: Buffer[Byte], slot: Int, fd: Int, filter: Short, flags: Short)(using AllowUnsafe): Unit =
+    def encodeChange(buf: Buffer[Byte], slot: Int, fd: Int, filter: Short, flags: Short, udata: Long)(using AllowUnsafe): Unit =
         val base = slot * size
-        putLongLe(buf, base + 0, fd.toLong)  // ident
-        putShortLe(buf, base + 8, filter)    // filter
-        putShortLe(buf, base + 10, flags)    // flags
-        putIntLe(buf, base + 12, 0)          // fflags
-        putLongLe(buf, base + 16, 0L)        // data
-        putLongLe(buf, base + 24, fd.toLong) // udata
+        putLongLe(buf, base + 0, fd.toLong) // ident
+        putShortLe(buf, base + 8, filter)   // filter
+        putShortLe(buf, base + 10, flags)   // flags
+        putIntLe(buf, base + 12, 0)         // fflags
+        putLongLe(buf, base + 16, 0L)       // data
+        putLongLe(buf, base + 24, udata)    // udata (owning handle id; the stale-event discriminator)
     end encodeChange
 
     /** Write a one-element `EVFILT_USER` changelist at element 0 of `buf` with explicit `fflags`. Used by the kqueue poll-loop wakeup: the
@@ -187,6 +192,11 @@ private[net] object KEvent:
 
     /** Read the `data` (bytes available / errno) of the event at element `i`. */
     def data(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 16)
+
+    /** Read the `udata` (the per-registration cookie the kernel returns verbatim; the driver encodes the owning handle id here) of the event at
+      * element `i`. Used by the poll loop to drop a stale event for a closed-and-recycled fd whose `udata` no longer matches the fd's current owner.
+      */
+    def udata(buf: Buffer[Byte], i: Int)(using AllowUnsafe): Long = getLongLe(buf, i * size + 24)
 
     /** Decode the whole `struct kevent` at element `i`. Used by the binding integration test's round-trip assertion; the poll hot path uses
       * the per-field readers instead so it never allocates a `KEvent`.
