@@ -1177,27 +1177,30 @@ final private[net] class PollerIoDriver private[posix] (
             // submitEngineOp enqueue, the same mechanism as writableArmed. The at-most-one-in-flight guarantee ensures the next
             // recvNow write cannot happen before this feedCiphertext completes.
             submitEngineOp { () =>
-                var plain = feedAndDecrypt(engine, staging, n, handle)
-                var lastN = n
-                var eof   = false
-                var errno = 0
+                var plain   = feedAndDecrypt(engine, staging, n, handle)
+                var eof     = false
+                var errno   = 0
+                var drained = false
                 // Partial-record drain (edge-triggered): if the engine consumed ciphertext but produced no plaintext, a TLS record is split
-                // across recv boundaries and the remaining ciphertext may ALREADY be in the kernel with no new readiness edge to come (a short
-                // recv that did not fill the buffer means the socket drained, so the rest will arrive on a fresh edge; a full recv means more may
-                // be queued NOW). Recv+feed until the engine yields plaintext, the socket drains (EAGAIN), or the peer closes, rather than
-                // re-arming and waiting for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record /
-                // bulk TLS transfer strands on the poller under load.
-                while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && lastN == handle.readBufferSize do
+                // across recv boundaries and the remaining ciphertext may ALREADY be in the kernel with no new readiness edge to come. Under
+                // EPOLLET the ONLY definitive "socket empty" signal is an explicit EAGAIN: a short recv (fewer bytes than the buffer) does NOT
+                // prove the socket drained, because back-to-back ciphertext keeps arriving and more may already be queued. So recv+feed until the
+                // engine yields plaintext, the socket reports EAGAIN, or the peer closes, rather than inferring emptiness from a short recv and
+                // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
+                // transfer strands on the poller under load.
+                while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && !drained do
                     val r = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
-                    lastN = r.value.toInt
-                    if lastN > 0 then plain = feedAndDecrypt(engine, staging, lastN, handle)
-                    else if lastN == 0 then eof = true
-                    else if !isWouldBlock(r.errorCode) then errno = r.errorCode
-                    // EAGAIN (lastN < 0, would-block): the loop exits because lastN != readBufferSize; rest not yet arrived, wait for the edge.
+                    val rN = r.value.toInt
+                    if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle)
+                    else if rN == 0 then eof = true
+                    else if isWouldBlock(r.errorCode) then drained = true
+                    else errno = r.errorCode
                 end while
-                // Residual ciphertext may remain only when the last recv filled the buffer (a short recv drained the socket). Cleared on
-                // EOF / EAGAIN / error (lastN is 0 or negative there).
-                handle.readMightHaveMore = lastN == handle.readBufferSize
+                // More ciphertext may remain in the kernel UNLESS the socket is confirmed empty (EAGAIN observed), the stream ended (EOF), the
+                // peer closed cleanly, or the recv errored. After delivering plaintext the socket is NOT confirmed empty (the loop stops the
+                // moment plaintext appears, before the next recv), so the consumer-paced drain must re-dispatch to pull the rest; under EPOLLET no
+                // fresh edge fires while the fd was still readable. A spurious re-dispatch (no actual bytes) hits EAGAIN and re-arms harmlessly.
+                handle.readMightHaveMore = !drained && !eof && errno == 0 && !handle.peerCleanClose
                 if plain.length > 0 then
                     finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(plain)))
                 else if handle.peerCleanClose then
