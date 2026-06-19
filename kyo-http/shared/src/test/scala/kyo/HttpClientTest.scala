@@ -1102,7 +1102,12 @@ class HttpClientTest extends BaseHttpTest:
             }
             withServer(ep) { url =>
                 var called = false
-                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(50.millis, 2.0).take(5)))) {
+                // The base must dominate per-retry overhead noise. The delays are measured as wall-clock gaps
+                // between server hits, which include request overhead: the first retry pays connection setup and
+                // JIT warmup while later retries reuse a warm path, so that overhead is non-uniform across retries.
+                // A small base (tens of ms) is smaller than that noise and can invert the comparison; a 500ms base
+                // makes the exponential increment the dominant term so the gap growth reflects the backoff, not jitter.
+                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(500.millis, 2.0).take(5)))) {
                     withClient { client =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
                         client.sendWith(route, request) { resp =>
