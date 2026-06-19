@@ -550,12 +550,52 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // Count of wake() triggers (poll-loop wakeup), for tests asserting a submitted change triggers a prompt wake.
     val wakeCount: AtomicInteger = new AtomicInteger(0)
 
+    // Number of wake() calls currently between their start and their delegate-to-real return (the wake-fd-in-flight window). The wake-fd lifecycle
+    // guard must never let closeWake run while this is > 0: closeWake closes the wakeup eventfd, and a concurrent wake's eventfd_write on the same
+    // (then-recycled) fd is the lazyFdDelete cross-fd corruption. Used by PollerWakeCloseRaceTest.
+    val wakeInFlight: AtomicInteger = new AtomicInteger(0)
+
+    // Set true if closeWake ever runs while a wake() is in flight (wakeInFlight > 0): the invariant violation the wake-fd guard prevents.
+    val closeWakeWhileWaking: AtomicBoolean = new AtomicBoolean(false)
+
+    // Count of closeWake() calls actually delegated (the wake-fd is closed exactly once across the close paths).
+    val closeWakeCount: AtomicInteger = new AtomicInteger(0)
+
+    // One-shot latch completed AFTER closeWake() delegates to real, a real-event signal that the wake-fd teardown has run (the driver's terminal
+    // exit reached freeScratch). A test awaits it instead of polling a flag, so the close-vs-wake race is synchronized on a real event, not a sleep.
+    // Lazily created (a class-level Promise.Unsafe.init would need a class-scoped AllowUnsafe); a test calls closeWakeDone() before triggering close.
+    private val closeWakeDoneRef: AtomicReference[AnyRef] = new AtomicReference[AnyRef](null)
+
+    /** A promise that completes when closeWake() runs on the driver's terminal exit. Created on first request so it is ready before the close. */
+    def closeWakeDone()(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
+        val existing = closeWakeDoneRef.get()
+        if existing != null then existing.asInstanceOf[Promise.Unsafe[Unit, Any]]
+        else
+            val p = Promise.Unsafe.init[Unit, Any]()
+            if closeWakeDoneRef.compareAndSet(null, p.asInstanceOf[AnyRef]) then p
+            else closeWakeDoneRef.get().asInstanceOf[Promise.Unsafe[Unit, Any]]
+        end if
+    end closeWakeDone
+
+    // One-shot callback fired at the START of wake() (after wakeInFlight is incremented, before delegating to real), so a test can hold the wake
+    // mid-flight and drive a concurrent close into the wake-fd guard. null means none set; CAS to null before firing so it fires exactly once.
+    @volatile var onWakeEnter: () => Unit = null
+
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
         real.registerWake(pollerFd, scratch)
 
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         discard(wakeCount.getAndIncrement())
-        real.wake(pollerFd, scratch)
+        discard(wakeInFlight.getAndIncrement())
+        try
+            val hook = onWakeEnter
+            if hook != null && onWakeEnter.eq(hook) then
+                onWakeEnter = null
+                hook()
+            end if
+            real.wake(pollerFd, scratch)
+        finally discard(wakeInFlight.getAndDecrement())
+        end try
     end wake
 
     def drainWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
@@ -565,7 +605,12 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
         real.isWakeFd(fd, scratch)
 
     def closeWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
+        if wakeInFlight.get() > 0 then closeWakeWhileWaking.set(true)
+        discard(closeWakeCount.getAndIncrement())
         real.closeWake(scratch)
+        val p = closeWakeDoneRef.get()
+        if p != null then p.asInstanceOf[Promise.Unsafe[Unit, Any]].completeDiscard(Result.succeed(()))
+    end closeWake
 
     def close(pollerFd: Int)(using AllowUnsafe, Frame): Unit =
         real.close(pollerFd)

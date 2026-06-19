@@ -88,7 +88,20 @@ final private[net] class PollerIoDriver private[posix] (
     wakePending: AtomicBoolean.Unsafe,
     // True while the wakeup mechanism is armed (registerWake succeeded at start). When false (best-effort arm failed) the driver still works via the
     // bounded-park drain; only the prompt-wake latency improvement is lost, so submitChange skips the wake rather than calling into a dead fd.
-    wakeArmed: AtomicBoolean.Unsafe
+    wakeArmed: AtomicBoolean.Unsafe,
+    // Wake-fd lifecycle guard: makes the wake-fd teardown (backend.closeWake, which on epoll closes the wakeup eventfd) mutually exclusive with any
+    // in-flight backend.wake (which on epoll writes the wakeup eventfd's counter). Encoded like PosixHandle.guard: the low WakeHolderMask bits count
+    // the backend.wake calls currently touching the wake fd, and WakeClosingBit records that the wake fd is being torn down. backend.closeWake runs
+    // EXACTLY ONCE, by whichever of {the close path, the last in-flight wake} observes the holder count reaching zero with the closing bit set.
+    //
+    // Without this guard backend.wake reads scratch.wakeFd and issues eventfd_write on it with no exclusion against backend.closeWake, which closes
+    // that fd and sets wakeFd = -1 on the poll-loop carrier's terminal exit (freeScratch). A wake on an arbitrary carrier that has read wakeFd (a
+    // valid eventfd) but not yet written it can be preempted while closeWake closes that fd; the OS then recycles the freed number into ANOTHER
+    // driver's freshly-opened socket, and the resumed eventfd_write writes the 8-byte counter (1) INTO that recycled socket. The peer then recv's
+    // the phantom 8-byte [1,0,0,0,0,0,0,0] ahead of its real data: the lazyFdDelete cross-fd stale-event failure under full-suite load. Gating the
+    // close behind the in-flight-wake count closes the window: the eventfd is never closed while a wake holds it, so its number cannot be recycled
+    // out from under an eventfd_write.
+    wakeGuard: AtomicInt.Unsafe
 ) extends IoDriver[PosixHandle], TlsEngineIo:
 
     import PollerIoDriver.PendingWritable
@@ -229,11 +242,77 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def freeScratch()(using AllowUnsafe): Unit =
         if freeScratchOnce.compareAndSet(false, true) then
-            // Close the wakeup fd (epoll eventfd; kqueue no-op) before freeing the scratch buffers, under the same single-owner CAS so the eventfd
-            // is closed exactly once. backend.closeWake needs a Frame; use the internal frame (no effectful suspension, a plain fd close).
-            backend.closeWake(pollScratch)(using summon[AllowUnsafe], Frame.internal)
+            // Close the wakeup fd (epoll eventfd; kqueue no-op) before freeing the scratch buffers, gated by the wake guard so the eventfd is closed
+            // EXACTLY ONCE and ONLY when no in-flight backend.wake still holds it (closeWakeGuarded blocks the close until the last wake releases; a
+            // wake that arrives after the closing bit is set is refused). This is what prevents the eventfd's fd number from being closed out from
+            // under an in-flight eventfd_write and then recycled into another driver's socket (the lazyFdDelete cross-fd stale-event race). The
+            // freeScratchOnce CAS still guards the buffer free below; the wake guard separately guards the wake-fd close.
+            closeWakeGuarded()
             pollScratch.close()
     end freeScratch
+
+    /** Acquire the wake fd for one [[PollerBackend.wake]] call: register this carrier as an in-flight wake holder so [[closeWakeGuarded]] cannot close
+      * the wake fd while the wake is operating on it. Returns `false` once the wake fd is closing (or closed), in which case the caller skips the wake
+      * rather than touching a fd that may be closed and recycled. Mirrors [[PosixHandle.acquire]]: CAS-increment the holder count unless the closing bit
+      * is set; loops over CAS contention with a concurrent acquire/release/close.
+      */
+    private def acquireWake()(using AllowUnsafe): Boolean =
+        var result = false
+        var done   = false
+        while !done do
+            val g = wakeGuard.get()
+            if (g & PollerIoDriver.WakeClosingBit) != 0 then done = true // closing/closed: refuse the wake
+            else if wakeGuard.compareAndSet(g, g + 1) then
+                result = true
+                done = true
+            end if
+        end while
+        result
+    end acquireWake
+
+    /** Release the wake fd after one [[PollerBackend.wake]] call. If this is the last in-flight wake AND the close path has set the closing bit, this
+      * caller performs the deferred [[PollerBackend.closeWake]] exactly once (the last-releaser-frees handoff, mirroring [[PosixHandle.release]]).
+      */
+    private def releaseWake()(using AllowUnsafe): Unit =
+        var done = false
+        while !done do
+            val g       = wakeGuard.get()
+            val holders = g & PollerIoDriver.WakeHolderMask
+            val closing = (g & PollerIoDriver.WakeClosingBit) != 0
+            if holders == 1 && closing then
+                // Last holder while closing: take the guard to its terminal value and run the wake-fd close exactly once.
+                if wakeGuard.compareAndSet(g, PollerIoDriver.WakeClosed) then
+                    backend.closeWake(pollScratch)(using summon[AllowUnsafe], Frame.internal)
+                    done = true
+            else if wakeGuard.compareAndSet(g, g - 1) then done = true
+            end if
+        end while
+    end releaseWake
+
+    /** Close the wake fd, coordinated against any in-flight [[PollerBackend.wake]] via the wake guard. Sets the closing bit so no new wake acquires; if
+      * no wake holds the fd right now this performs [[PollerBackend.closeWake]] immediately, otherwise the last in-flight wake's [[releaseWake]] performs
+      * it. Idempotent once the guard reaches its terminal [[PollerIoDriver.WakeClosed]] value. Called only from [[freeScratch]] (the poll-loop terminal
+      * exit, or close()'s never-started path), so it runs at most twice across the two single owners and the CAS makes the actual close happen once.
+      */
+    private def closeWakeGuarded()(using AllowUnsafe): Unit =
+        var done = false
+        while !done do
+            val g = wakeGuard.get()
+            if g == PollerIoDriver.WakeClosed then done = true // already closed by a prior closeWakeGuarded / a last-releaser wake
+            else
+                val holders = g & PollerIoDriver.WakeHolderMask
+                if holders == 0 then
+                    // No wake holds the fd: close now and go terminal.
+                    if wakeGuard.compareAndSet(g, PollerIoDriver.WakeClosed) then
+                        backend.closeWake(pollScratch)(using summon[AllowUnsafe], Frame.internal)
+                        done = true
+                else
+                    // A wake is in flight: set the closing bit and defer the close to that wake's releaseWake.
+                    if wakeGuard.compareAndSet(g, g | PollerIoDriver.WakeClosingBit) then done = true
+                end if
+            end if
+        end while
+    end closeWakeGuarded
 
     /** Run the poll loop body on the current fiber. Called from `start()` and from the JS onComplete re-entry path. The while loop runs
       * the JVM/Native inline-completion path without stack growth. On JS, where the wait fiber is genuinely pending, we exit the while
@@ -858,7 +937,7 @@ final private[net] class PollerIoDriver private[posix] (
                 // still drained before the loop frees the scratch. backend.close(pollerFd) + freeScratch run at the poll loop's terminal exit, AFTER
                 // its last poll, so the poller fd is never closed out from under an in-flight epoll_wait/kevent.
                 submitEngineOp(() => closeTeardown(closed))
-                if wakeArmed.get() then backend.wake(pollerFd, pollScratch)
+                if wakeArmed.get() then triggerWake()
             else
                 // start() was never called: no poll loop ran, so no carrier is using the maps or the scratch. Tear down directly.
                 closeTeardown(closed)
@@ -1189,12 +1268,13 @@ final private[net] class PollerIoDriver private[posix] (
                 // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
                 // transfer strands on the poller under load.
                 while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && !drained do
-                    val r = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
+                    val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
                     val rN = r.value.toInt
                     if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle)
                     else if rN == 0 then eof = true
                     else if isWouldBlock(r.errorCode) then drained = true
                     else errno = r.errorCode
+                    end if
                 end while
                 // More ciphertext may remain in the kernel UNLESS the socket is confirmed empty (EAGAIN observed), the stream ended (EOF), the
                 // peer closed cleanly, or the recv errored. After delivering plaintext the socket is NOT confirmed empty (the loop stops the
@@ -1334,8 +1414,19 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def submitChange(cmd: Long)(using AllowUnsafe, Frame): Unit =
         changeQueue.offer(cmd)
-        if wakeArmed.get() && wakePending.compareAndSet(false, true) then backend.wake(pollerFd, pollScratch)
+        if wakeArmed.get() && wakePending.compareAndSet(false, true) then triggerWake()
     end submitChange
+
+    /** Trigger the poll-loop wakeup under the wake guard: register as an in-flight wake holder, fire [[PollerBackend.wake]], then release. If the wake
+      * fd is already closing (the driver is tearing down), [[acquireWake]] refuses and this no-ops, so a wake never touches a wake fd that may be closed
+      * and recycled. The acquire/wake/release bracket is what keeps the wake-fd close ([[closeWakeGuarded]]) from running while this wake is mid-flight.
+      */
+    private def triggerWake()(using AllowUnsafe, Frame): Unit =
+        if acquireWake() then
+            try backend.wake(pollerFd, pollScratch)
+            finally releaseWake()
+            end try
+    end triggerWake
 
     /** Pack an opcode, fd, fdClosing flag, and accept discriminator into a single Long command for the change FIFO.
       *   Bits 34-35: opcode (OpRegisterRead=0 / OpRegisterWrite=1 / OpDeregister=3; value 2 retired from OpRearm)
@@ -1558,6 +1649,14 @@ end PollerIoDriver
 
 private[net] object PollerIoDriver:
 
+    // Wake-guard encoding (see PollerIoDriver.wakeGuard, acquireWake/releaseWake/closeWakeGuarded): the low WakeHolderMask bits count the in-flight
+    // backend.wake calls touching the wake fd, WakeClosingBit records that the wake-fd teardown has begun, and WakeClosed is the terminal value once
+    // backend.closeWake has run (a sentinel distinct from any holders|WakeClosingBit combination, so a repeat closeWakeGuarded is idempotent). Mirrors
+    // the PosixHandle.guard encoding.
+    final private val WakeClosingBit = 1 << 30
+    final private val WakeHolderMask = WakeClosingBit - 1
+    final private val WakeClosed     = -1
+
     /** A pending writable registration: the waiter's promise paired with the arming handle's monotonic id. The id lets `dispatchWritable`
       * apply the same stale-fd-id equality guard the read/accept paths use (the read path reads the id off the stored `PosixHandle`; the
       * writable path stores it here because the writable promise is not held on the handle), so a writable readiness event the kernel queued
@@ -1600,7 +1699,8 @@ private[net] object PollerIoDriver:
             started = AtomicBoolean.Unsafe.init(false),
             freeScratchOnce = AtomicBoolean.Unsafe.init(false),
             wakePending = AtomicBoolean.Unsafe.init(false),
-            wakeArmed = AtomicBoolean.Unsafe.init(false)
+            wakeArmed = AtomicBoolean.Unsafe.init(false),
+            wakeGuard = AtomicInt.Unsafe.init(0)
         )
     end init
 
