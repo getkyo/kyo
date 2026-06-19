@@ -1775,6 +1775,72 @@ class UnsafeServerDispatchTest extends kyo.BaseHttpTest:
                 }
             }
         }
+
+        "hoistedClosureSameDispatch" in {
+            // Two distinct routes, dispatched in sequence on a keep-alive connection using the hoisted
+            // restartParserFn closure. Verifies no stale capture: request B gets handler B's response,
+            // not handler A's.
+            val handlerA = HttpHandler.getText("pathA")(_ => "response-A")
+            val handlerB = HttpHandler.getText("pathB")(_ => "response-B")
+            val router   = HttpRouter(Seq(handlerA, handlerB), Absent)
+
+            val inbound  = Channel.Unsafe.init[Span[Byte]](64)
+            val outbound = Channel.Unsafe.init[Span[Byte]](64)
+
+            // Both requests are keep-alive by default in HTTP/1.1; second closes the connection.
+            val requestA = "GET /pathA HTTP/1.1\r\nHost: localhost\r\n\r\n"
+            val requestB = "GET /pathB HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+            sendRequest(inbound, requestA)
+            sendRequest(inbound, requestB)
+
+            UnsafeServerDispatch.serve(router, inbound, outbound, defaultConfig)
+
+            collectResponseAsync(outbound).map { responseA =>
+                assert(responseA.contains("HTTP/1.1 200 OK"), s"Request A expected 200, got: $responseA")
+                assert(
+                    responseA.contains("response-A"),
+                    s"Request A expected body 'response-A' (no stale closure), got: $responseA"
+                )
+                collectResponseAsync(outbound).map { responseB =>
+                    assert(responseB.contains("HTTP/1.1 200 OK"), s"Request B expected 200, got: $responseB")
+                    assert(
+                        responseB.contains("response-B"),
+                        s"Request B expected body 'response-B' (no stale closure), got: $responseB"
+                    )
+                    assert(
+                        !responseB.contains("response-A"),
+                        s"Request B must not contain response-A body (stale capture), got: $responseB"
+                    )
+                }
+            }
+        }
+
+        "closedSingletonNormalOnly" in {
+            // IdleTimerClosed is the shared singleton for the normal idle-timer cancel path.
+            // It must have referential identity and carry an empty details (no error context).
+            val singleton = UnsafeServerDispatch.IdleTimerClosed
+
+            assert(
+                singleton eq UnsafeServerDispatch.IdleTimerClosed,
+                "IdleTimerClosed must be a singleton (referential equality on repeated access)"
+            )
+
+            assert(
+                singleton.getMessage.contains("idle timer"),
+                s"IdleTimerClosed must mention 'idle timer', got: ${singleton.getMessage}"
+            )
+
+            // A fresh Closed (error path) is distinct from the singleton.
+            val errorClosed = new Closed("idle timer", Frame.internal, "connection error")(using Frame.internal)
+            assert(
+                !(singleton eq errorClosed),
+                "Error-path Closed must be a distinct object from IdleTimerClosed singleton"
+            )
+            assert(
+                errorClosed.getMessage.contains("connection error"),
+                s"Error-path Closed must carry its details in getMessage, got: ${errorClosed.getMessage}"
+            )
+        }
     }
 
 end UnsafeServerDispatchTest
