@@ -53,6 +53,12 @@ private[net] trait SocketBindings extends Ffi:
       */
     def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int]
 
+    /** `int getpeername(int fd, struct sockaddr* addr, socklen_t* addrlen)`. Resolves the connected peer's address. Used by the handshake-teardown
+      * fd-leak test to attribute an open socket to a connection by its peer port (a connect-side client's peer is the listener), so the leak check
+      * counts only the connections under test rather than the process-wide descriptor table, which other suites share under test parallelism.
+      */
+    def getpeername(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int]
+
     /** `int fstat(int fd, struct stat* buf)`. Fills `buf` (a [[PosixStructs.Stat]]-sized `Buffer[Byte]`) with the fd's metadata; the stdio
       * pollability probe reads `st_mode` to classify the read end (regular file vs pipe vs tty). Returns 0 on success or -1 with
       * `errno`.

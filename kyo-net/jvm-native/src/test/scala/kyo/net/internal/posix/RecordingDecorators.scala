@@ -87,6 +87,8 @@ final class RecordingSocketBindings(real: SocketBindings) extends SocketBindings
 
     def getsockname(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
         real.getsockname(fd, addr, addrlen)
+    def getpeername(fd: Int, addr: Buffer[Byte], addrlen: Buffer[Int])(using AllowUnsafe): Ffi.Outcome[Int] =
+        real.getpeername(fd, addr, addrlen)
 
     def fstat(fd: Int, buf: Buffer[Byte])(using AllowUnsafe): Ffi.Outcome[Int] =
         real.fstat(fd, buf)

@@ -37,8 +37,8 @@ class HandshakeEngineFreeTest extends Test:
     private val transportConfig = TransportConfig.default
 
     // A soak of real handshakes churns descriptors per iteration; the driver and listener hold a small fixed set. After the soak's async closes
-    // drain (see settledProbe), the probe returns to baseline (descriptors reused). This slack absorbs at most a couple of benign residual fds on
-    // a loaded host; a per-iteration leak climbs to ~iterations (>= k), far above it.
+    // drain (see settledOwnCount), the listener-port socket count returns to baseline (descriptors reused). This slack absorbs at most a couple of
+    // benign in-flight connections still tearing down at the instant of the count; a per-iteration leak climbs to ~iterations (>= k), far above it.
     private val fdSlack = 2
 
     private def assumePollerReady(): Unit =
@@ -56,28 +56,62 @@ class HandshakeEngineFreeTest extends Test:
     private def clientTls(min: NetTlsConfig.Version, max: NetTlsConfig.Version): NetTlsConfig =
         NetTlsConfig(trustAll = true, minVersion = min, maxVersion = max)
 
-    /** Probe the process's open-fd high-water by allocating then closing a socket: the kernel hands back the lowest free descriptor, so the
-      * returned number equals the count of currently-open low descriptors. Stable across leak-free iterations, climbing under an fd leak.
-      */
-    private def probeFd(sockets: SocketBindings, shim: PosixShimBindings)(using AllowUnsafe): Int =
-        val fd = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
-        discard(shim.kyo_posix_close(fd))
-        fd
-    end probeFd
+    // The high fd ceiling the open-fd scan walks. The process never holds anywhere near this many low descriptors in these suites; it bounds the
+    // scan without missing any connection fd (loopback connections are allocated low).
+    private val fdScanCeiling = 4096
 
-    /** Probe the fd high-water repeatedly, returning the lowest observation, stopping early once it settles to `base`. A handshake close routes
-      * its fd close through the driver asynchronously, so the descriptor of the last connection(s) can still be open at the instant the soak loop
-      * returns; the short retries let those async closes drain. A real per-iteration leak never drains back to `base`, so the minimum stays high.
+    /** Count the OPEN descriptors that belong to a connection with `port` at one end (an accept-side server socket has `local == port`; a
+      * connect-side client socket has `peer == port`). This counts only THIS test's sockets, never a foreign fd, because no other connection in the
+      * process shares this listener's port.
+      *
+      * The earlier version of this check probed the process-wide lowest-free descriptor (allocate a socket, read its number, close it). That number
+      * equals the count of ALL open low descriptors in the process, which is only a valid leak proxy in a single-threaded process. The module runs
+      * its suites at `parallelism 4` (and the campaign command raises async concurrency to 4 on top), so three other suites open and close their own
+      * descriptors throughout this soak; the process-wide probe then rose by THEIR fds, not a leak here, and the assertion flaked (a captured run
+      * showed the probe climb from 118 to 138 while this test's own socket count held at 1, the listener, with all 19 of the rise foreign). Counting
+      * only the port-attributed sockets makes the check immune to that cross-suite contamination while still climbing under a genuine per-iteration
+      * leak (a leaked connect or accept fd keeps `port` at one of its ends).
       */
-    private def settledProbe(sockets: SocketBindings, shim: PosixShimBindings, base: Int)(using Frame): Int < Async =
+    private def portOf(buf: Buffer[Byte])(using AllowUnsafe): Int = ((buf.get(2) & 0xff) << 8) | (buf.get(3) & 0xff)
+    private def countSocketsOnPort(sockets: SocketBindings, port: Int)(using AllowUnsafe): Int =
+        var count = 0
+        var fd    = 3
+        while fd < fdScanCeiling do
+            val st = Buffer.alloc[Byte](PosixConstants.statSize)
+            val live =
+                try sockets.fstat(fd, st).value == 0
+                finally st.close()
+            if live then
+                val ln = Buffer.alloc[Byte](SockAddr.inet6Size)
+                val ll = Buffer.alloc[Int](1); ll.set(0, SockAddr.inet6Size)
+                val pn = Buffer.alloc[Byte](SockAddr.inet6Size)
+                val pl = Buffer.alloc[Int](1); pl.set(0, SockAddr.inet6Size)
+                try
+                    val local = if sockets.getsockname(fd, ln, ll).value == 0 then portOf(ln) else -1
+                    val peer  = if sockets.getpeername(fd, pn, pl).value == 0 then portOf(pn) else -1
+                    if local == port || peer == port then count += 1
+                finally
+                    ln.close(); ll.close(); pn.close(); pl.close()
+                end try
+            end if
+            fd += 1
+        end while
+        count
+    end countSocketsOnPort
+
+    /** Re-count the port-attributed sockets repeatedly, returning the lowest observation, stopping early once it settles to `base`. A failed
+      * handshake routes its fd close through the driver asynchronously, so the last connection's descriptor can still be open at the instant the soak
+      * loop returns; the short retries let those async closes drain. A real per-iteration leak never drains back to `base`, so the minimum stays high.
+      */
+    private def settledOwnCount(sockets: SocketBindings, port: Int, base: Int)(using Frame): Int < Async =
         Loop(0, Int.MaxValue) { (i, best) =>
-            Sync.defer(probeFd(sockets, shim)).map { p =>
+            Sync.defer(countSocketsOnPort(sockets, port)).map { p =>
                 val b = math.min(best, p)
                 if b <= base || i >= 12 then Loop.done(b)
                 else Async.sleep(40.millis).andThen(Loop.continue(i + 1, b))
             }
         }
-    end settledProbe
+    end settledOwnCount
 
     /** Build a transport over a fresh real poller driver, run `body`, then close the transport and the driver. */
     private def withTransport[A](body: PosixTransport => A < (Async & Abort[Closed] & Scope))(using
@@ -103,26 +137,26 @@ class HandshakeEngineFreeTest extends Test:
             assumePollerReady()
             TlsRealEngines.assumeTlsReady()
             val sockets = Ffi.load[SocketBindings]
-            val shim    = Ffi.load[PosixShimBindings]
             val k       = 64
             withTransport { transport =>
                 // The server accepts only TLS 1.3; each client offers only TLS 1.2, so every accept handshake fails (server-side engine + fd
                 // teardown) and every connect fails after receiving the server's alert (client-side engine + fd teardown). Both descriptors per
                 // iteration must be released.
                 transport.listen("127.0.0.1", 0, 16, serverTls(TLS13, TLS13)) { _ => () }.safe.get.map { listener =>
-                    // Baseline after the listener + driver are up and one warmup failure has settled any lazy allocation.
+                    // Baseline after the listener + driver are up and one warmup failure has settled any lazy allocation. The count is of sockets
+                    // with this listener's port at one end (accept-side local, connect-side peer), so it ignores other suites' descriptors.
                     Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).andThen {
-                        Sync.defer(probeFd(sockets, shim)).map { base =>
+                        Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
                             soak(k) { _ =>
                                 Abort.run[Closed](transport.connect("127.0.0.1", listener.port, clientTls(TLS12, TLS12)).safe.get).map {
                                     o =>
                                         assert(o.isFailure, s"expected the version-mismatch handshake to fail, got $o")
                                 }
                             }.andThen {
-                                settledProbe(sockets, shim, base).map { after =>
+                                settledOwnCount(sockets, listener.port, base).map { after =>
                                     assert(
                                         after - base <= fdSlack,
-                                        s"failing handshakes leaked descriptors: fd probe rose from $base to $after over $k iterations"
+                                        s"failing handshakes leaked descriptors: listener-port socket count rose from $base to $after over $k iterations"
                                     )
                                 }
                             }
@@ -162,29 +196,40 @@ class HandshakeEngineFreeTest extends Test:
                                 finally stat.close()
                             })
                     }.andThen {
-                        Sync.defer(probeFd(sockets, shim)).map { base =>
-                            soak(k) { _ =>
-                                loopbackPair().map { case (cFd, pFd) =>
-                                    closeRaw(shim, pFd)
-                                    val h  = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent)
-                                    val pc = transport.openWith(h, transportDriver(transport))
-                                    pc.start()
-                                    Abort.run[Closed](transport.upgradeToTls(
-                                        pc,
-                                        clientTls(TLS12, TLS13),
-                                        transportConfig.channelCapacity
-                                    ).safe.get).map {
-                                        o => assert(o.isFailure, s"expected the upgrade to fail on EOF, got $o")
-                                    }
-                                }
-                            }.andThen {
-                                settledProbe(sockets, shim, base).map { after =>
-                                    assert(
-                                        after - base <= fdSlack,
-                                        s"failing STARTTLS upgrades leaked detached descriptors: fd probe rose from $base to $after over $k iterations"
-                                    )
+                        // Track the exact detached plaintext fd each iteration creates, then assert every one is eventually closed. This is a
+                        // direct per-fd check (the same fstat<0 technique the single upgrade above uses), immune to the cross-suite fd-table
+                        // contamination a process-wide fd probe suffers under `parallelism 4`: a leaked detached fd stays fstat-able and fails it.
+                        val createdFds = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+                        soak(k) { _ =>
+                            loopbackPair().map { case (cFd, pFd) =>
+                                closeRaw(shim, pFd)
+                                discard(createdFds.add(cFd))
+                                val h  = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent)
+                                val pc = transport.openWith(h, transportDriver(transport))
+                                pc.start()
+                                Abort.run[Closed](transport.upgradeToTls(
+                                    pc,
+                                    clientTls(TLS12, TLS13),
+                                    transportConfig.channelCapacity
+                                ).safe.get).map {
+                                    o => assert(o.isFailure, s"expected the upgrade to fail on EOF, got $o")
                                 }
                             }
+                        }.andThen {
+                            // Every detached plaintext fd the soak created must be closed (fstat < 0). A genuine per-iteration leak leaves one open
+                            // and this never settles, surfacing as the per-test timeout. The fd numbers are this test's own, so a foreign reuse of a
+                            // closed number cannot make a leaked fd look closed: the assertion is on the SET of fds we opened, not a process-wide count.
+                            assertEventually(Sync.defer {
+                                val stat = Buffer.alloc[Byte](PosixConstants.statSize)
+                                try
+                                    var allClosed = true
+                                    val it        = createdFds.iterator()
+                                    while it.hasNext do
+                                        if sockets.fstat(it.next(), stat).value >= 0 then allClosed = false
+                                    allClosed
+                                finally stat.close()
+                                end try
+                            })
                         }
                     }
                 }
@@ -225,12 +270,12 @@ class HandshakeEngineFreeTest extends Test:
                             }
                         }
                     roundTrip().andThen {
-                        Sync.defer(probeFd(sockets, shim)).map { base =>
+                        Sync.defer(countSocketsOnPort(sockets, listener.port)).map { base =>
                             soak(k)(_ => roundTrip()).andThen {
-                                settledProbe(sockets, shim, base).map { after =>
+                                settledOwnCount(sockets, listener.port, base).map { after =>
                                     assert(
                                         after - base <= fdSlack,
-                                        s"successful handshakes leaked descriptors on close: fd probe rose from $base to $after over $k iterations"
+                                        s"successful handshakes leaked descriptors on close: listener-port socket count rose from $base to $after over $k iterations"
                                     )
                                 }
                             }
