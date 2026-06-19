@@ -513,14 +513,34 @@ MsgPack.decode[User](MsgPack.encode(alice))
 // Result.Success(alice)
 ```
 
-`KeyEncoding.FieldId` trades self-description for size. Dynamic `Map` keys and the `Result`/`Either` discriminators always stay strings, since a hash is not reversible. `Instant` and `Duration` default to a lossless `[seconds, nanos]` pair; `TemporalEncoding.Extension` writes them as MessagePack extension types (the reserved timestamp type for `Instant`) instead:
+`KeyEncoding.FieldId` trades self-description for size. Dynamic `Map` keys and the `Result`/`Either` discriminators always stay strings, since a hash is not reversible.
+
+`Instant` defaults to a lossless `[seconds, nanos]` array; `InstantEncoding.Extension` writes the spec-defined MessagePack timestamp extension (type -1), which standard MessagePack decoders in other languages read as a timestamp:
 
 ```scala
-given MsgPack = MsgPack(MsgPack.Config(temporalEncoding = MsgPack.TemporalEncoding.Extension))
+given MsgPack = MsgPack(MsgPack.Config(instantEncoding = MsgPack.InstantEncoding.Extension))
 
 MsgPack.decode[User](MsgPack.encode(alice))
 // Result.Success(alice)
 ```
+
+`Duration` has no MessagePack standard, so `DurationEncoding` lets you choose: `Lossless` (default, a `[seconds, nanos]` array keeping the full `java.time.Duration` range) or `Compat` (a string of total nanoseconds, wire-compatible with upickle/weePickle, limited to the `Long` nanosecond range). Schemas are provided for both `java.time.Duration` and `scala.concurrent.duration.{Duration, FiniteDuration}`. The reader auto-detects the wire shape either way:
+
+```scala
+import scala.concurrent.duration.Duration
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
+
+case class Timeout(connect: FiniteDuration, idle: Duration) derives Schema
+
+given MsgPack = MsgPack(MsgPack.Config(durationEncoding = MsgPack.DurationEncoding.Compat))
+
+val t = Timeout(5.seconds, Duration.Inf)
+MsgPack.decode[Timeout](MsgPack.encode(t))
+// Result.Success(Timeout(5 seconds, Duration.Inf))
+```
+
+`scala.concurrent.duration.Duration` (the possibly-infinite type) always uses the string form so it can carry `Inf`/`MinusInf`/`Undefined`; `FiniteDuration` and `java.time.Duration` follow the `DurationEncoding` setting.
 
 Because MessagePack is self-describing, its reader can materialize an arbitrary payload into a `Structure.Value` without a schema. This makes MsgPack a binary transport for open-shaped wire protocols, the role JSON plays for JSON-RPC: an envelope can hold a `Structure.Value` slot whose concrete type is decided per message.
 

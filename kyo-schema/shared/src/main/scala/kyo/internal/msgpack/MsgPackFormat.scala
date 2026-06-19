@@ -67,9 +67,6 @@ private[msgpack] object MsgPackFormat:
     /** MessagePack reserved extension type for timestamps (`-1`). */
     inline val ExtTypeTimestamp = -1
 
-    /** Kyo-specific extension type for `java.time.Duration` (seconds + nanos), not defined by the MessagePack spec. */
-    inline val ExtTypeDuration = 1
-
     // Open-container kinds tracked by the writer to decide whether `field` counts toward an object header.
     inline val KindObject = 0
     inline val KindArray  = 1

@@ -387,22 +387,21 @@ final class MsgPackReader(data: Array[Byte], config: MsgPack.Config)(using _fram
 
     def duration(): java.time.Duration =
         val b = peekByte()
-        if isExt(b) then
-            val (tpe, len) = readExtHeader()
-            if tpe != ExtTypeDuration.toInt then
-                throw ParseException(self, s"ext type $tpe", "Duration")(using _frame)
-            if len != 12 then
-                throw ParseException(self, s"duration ext length $len", "Duration")(using _frame)
-            val secs  = readBE64()
-            val nanos = readBE32()
-            java.time.Duration.ofSeconds(secs, nanos.toLong)
-        else if isArray(b) then
+        if isArray(b) then
+            // Lossless form: [seconds, nanos].
             val n     = readArrayHeader()
             val secs  = readLongValue()
             val nanos = if n > 1 then readLongValue() else 0L
             java.time.Duration.ofSeconds(secs, nanos)
-        else if isInt(b) then java.time.Duration.ofMillis(readLongValue())
-        else mismatch("Duration (array, ext, or integer)", b)
+        else if isStr(b) then
+            // Compat form (upickle/weePickle): a string of total nanoseconds.
+            val s = readStringValue()
+            try java.time.Duration.ofNanos(s.toLong)
+            catch case _: NumberFormatException => throw ParseException(self, s, "Duration")(using _frame)
+        else if isInt(b) then
+            // Bare integer of total nanoseconds (e.g. a plain msgpack int produced by another encoder).
+            java.time.Duration.ofNanos(readLongValue())
+        else mismatch("Duration (array, string, or integer)", b)
         end if
     end duration
 

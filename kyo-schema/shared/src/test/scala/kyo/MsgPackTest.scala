@@ -1,10 +1,12 @@
 package kyo
 
 import kyo.MsgPack.Config
+import kyo.MsgPack.DurationEncoding
+import kyo.MsgPack.InstantEncoding
 import kyo.MsgPack.KeyEncoding
-import kyo.MsgPack.TemporalEncoding
 import kyo.internal.msgpack.MsgPackReader
 import kyo.internal.msgpack.MsgPackWriter
+import scala.concurrent.duration.*
 
 class MsgPackTest extends kyo.test.Test[Any]:
 
@@ -238,30 +240,108 @@ class MsgPackTest extends kyo.test.Test[Any]:
         val instant  = java.time.Instant.ofEpochSecond(1_700_000_000L, 123_456_789L)
         val duration = java.time.Duration.ofSeconds(86_400L, 250_000_000L)
 
-        "Primitive mode round-trips Instant/Duration losslessly at nanosecond precision" in {
+        "default (Primitive instant, Lossless duration) round-trips at nanosecond precision" in {
             val v = MPTime(instant, duration)
             assert(roundTrip(v) == v)
         }
 
-        "Extension mode round-trips Instant/Duration losslessly" in {
-            given MsgPack = MsgPack(Config(temporalEncoding = TemporalEncoding.Extension))
+        "Instant Extension mode round-trips losslessly" in {
+            given MsgPack = MsgPack(Config(instantEncoding = InstantEncoding.Extension))
             val v         = MPTime(instant, duration)
             assert(MsgPack.decode[MPTime](MsgPack.encode(v)).getOrThrow == v)
         }
 
-        "Extension-encoded bytes decode through a Primitive-config reader" in {
+        "Instant Extension uses the spec timestamp ext type -1 (0xc7, len 12, 0xff)" in {
+            given MsgPack = MsgPack(Config(instantEncoding = InstantEncoding.Extension))
+            // single Instant field: map header (0x81) + key "at" + ext header
+            val bytes = MsgPack.encode(MPInstant(instant)).toArray.map(_ & 0xff)
+            assert(bytes.containsSlice(Seq(0xc7, 12, 0xff)))
+        }
+
+        "Instant Extension bytes decode through a Primitive-config reader" in {
             val v = MPTime(instant, duration)
             val extBits = MsgPack.encode(v)(using
                 summon[Schema[MPTime]],
-                MsgPack(Config(temporalEncoding = TemporalEncoding.Extension)),
+                MsgPack(Config(instantEncoding = InstantEncoding.Extension)),
                 summon[Frame]
             )
             val decoded = MsgPack.decode[MPTime](extBits)(using
-                MsgPack(Config(temporalEncoding = TemporalEncoding.Primitive)),
+                MsgPack(Config(instantEncoding = InstantEncoding.Primitive)),
                 summon[Schema[MPTime]],
                 summon[Frame]
             )
             assert(decoded.getOrThrow == v)
+        }
+
+        "Duration Compat mode round-trips and matches the upickle nanos-string wire form" in {
+            given MsgPack = MsgPack(Config(durationEncoding = DurationEncoding.Compat))
+            val d         = java.time.Duration.ofSeconds(1L) // 1_000_000_000 nanos, like upickle's rw(1.second, "1000000000")
+            val bytes     = MsgPack.encode(MPDuration(d))
+            assert(MsgPack.decode[MPDuration](bytes).getOrThrow == MPDuration(d))
+            // wire: map(0x81) + key "d" + str "1000000000"; assert the nanos string is present as a msgpack str
+            val r = new MsgPackReader(bytes.toArray, Config(durationEncoding = DurationEncoding.Compat))
+            assert(r.objectStart() == 1)
+            assert(r.hasNextField())
+            r.fieldParse()
+            assert(r.duration() == d)
+        }
+
+        "Duration Compat string bytes decode through a Lossless-config reader (reader auto-detects)" in {
+            val d = java.time.Duration.ofSeconds(86_400L, 250_000_000L)
+            val compatBits = MsgPack.encode(MPDuration(d))(using
+                summon[Schema[MPDuration]],
+                MsgPack(Config(durationEncoding = DurationEncoding.Compat)),
+                summon[Frame]
+            )
+            val decoded = MsgPack.decode[MPDuration](compatBits)(using
+                MsgPack(Config(durationEncoding = DurationEncoding.Lossless)),
+                summon[Schema[MPDuration]],
+                summon[Frame]
+            )
+            assert(decoded.getOrThrow == MPDuration(d))
+        }
+    }
+
+    // ===== scala.concurrent.duration =====
+
+    "scala.concurrent.duration" - {
+
+        "FiniteDuration round-trips (Lossless and Compat)" in {
+            val v = MPFinite(5.seconds, 250.millis)
+            assert(roundTrip(v) == v)
+            given MsgPack = MsgPack(Config(durationEncoding = DurationEncoding.Compat))
+            assert(MsgPack.decode[MPFinite](MsgPack.encode(v)).getOrThrow == v)
+        }
+
+        "FiniteDuration Compat matches the upickle nanos-string form" in {
+            given MsgPack = MsgPack(Config(durationEncoding = DurationEncoding.Compat))
+            val bytes     = MsgPack.encode(MPFiniteOne(1.second))
+            // map(0x81) + key + str "1000000000"; confirm the nanos string is on the wire
+            val r = new MsgPackReader(bytes.toArray, Config(durationEncoding = DurationEncoding.Compat))
+            discard(r.objectStart()); discard(r.hasNextField()); r.fieldParse()
+            assert(r.string() == "1000000000")
+        }
+
+        "abstract Duration round-trips finite and infinite cases as the upickle string form" in {
+            List[Duration](7.seconds, Duration.Inf, Duration.MinusInf, Duration.Undefined).foreach { d =>
+                val bytes   = MsgPack.encode(MPScalaDur(d))
+                val decoded = MsgPack.decode[MPScalaDur](bytes).getOrThrow
+                if d eq Duration.Undefined then assert(decoded.dur eq Duration.Undefined)
+                else assert(decoded.dur == d, s"duration $d failed")
+            }
+            succeed
+        }
+
+        "abstract Duration encodes infinities as upickle sentinels" in {
+            def strOf(d: Duration): String =
+                val bytes = MsgPack.encode(MPScalaDur(d))
+                val r     = new MsgPackReader(bytes.toArray, Config.Default)
+                discard(r.objectStart()); discard(r.hasNextField()); r.fieldParse()
+                r.string()
+            end strOf
+            assert(strOf(Duration.Inf) == "inf")
+            assert(strOf(Duration.MinusInf) == "-inf")
+            assert(strOf(Duration.Undefined) == "undef")
         }
     }
 
@@ -443,6 +523,15 @@ case class MPBytes(data: Span[Byte]) derives Schema
 case class MPMap(scores: Map[String, Int]) derives Schema, CanEqual
 case class MPBig(i: BigInt, d: BigDecimal) derives Schema, CanEqual
 case class MPTime(at: java.time.Instant, dur: java.time.Duration) derives Schema, CanEqual
+case class MPInstant(at: java.time.Instant) derives Schema, CanEqual
+case class MPDuration(d: java.time.Duration) derives Schema, CanEqual
+
+given CanEqual[scala.concurrent.duration.FiniteDuration, scala.concurrent.duration.FiniteDuration] = CanEqual.derived
+given CanEqual[scala.concurrent.duration.Duration, scala.concurrent.duration.Duration]             = CanEqual.derived
+
+case class MPFinite(a: scala.concurrent.duration.FiniteDuration, b: scala.concurrent.duration.FiniteDuration) derives Schema, CanEqual
+case class MPFiniteOne(d: scala.concurrent.duration.FiniteDuration) derives Schema, CanEqual
+case class MPScalaDur(dur: scala.concurrent.duration.Duration) derives Schema, CanEqual
 case class MPList(items: List[Int]) derives Schema, CanEqual
 case class MPEmpty() derives Schema, CanEqual
 case class MPLongFields(theFirstLongFieldName: Int, theSecondLongFieldName: Int) derives Schema, CanEqual

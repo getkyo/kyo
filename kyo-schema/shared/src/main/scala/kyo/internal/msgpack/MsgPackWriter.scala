@@ -189,12 +189,12 @@ final class MsgPackWriter(config: MsgPack.Config) extends Writer:
     def bigDecimal(value: BigDecimal): Unit = string(value.toString)
 
     def instant(value: java.time.Instant): Unit =
-        config.temporalEncoding match
-            case MsgPack.TemporalEncoding.Primitive =>
+        config.instantEncoding match
+            case MsgPack.InstantEncoding.Primitive =>
                 writeArrayHeaderTo(current, 2)
                 writeLongValue(value.getEpochSecond)
                 writeLongValue(value.getNano.toLong)
-            case MsgPack.TemporalEncoding.Extension =>
+            case MsgPack.InstantEncoding.Extension =>
                 // MessagePack timestamp 96: ext8, length 12, type -1, 32-bit nanos + 64-bit seconds.
                 writeByte(Ext8)
                 writeByte(12)
@@ -204,18 +204,15 @@ final class MsgPackWriter(config: MsgPack.Config) extends Writer:
     end instant
 
     def duration(value: java.time.Duration): Unit =
-        config.temporalEncoding match
-            case MsgPack.TemporalEncoding.Primitive =>
+        config.durationEncoding match
+            case MsgPack.DurationEncoding.Lossless =>
                 writeArrayHeaderTo(current, 2)
                 writeLongValue(value.getSeconds)
                 writeLongValue(value.getNano.toLong)
-            case MsgPack.TemporalEncoding.Extension =>
-                // Kyo duration extension: ext8, length 12, type 1, 64-bit seconds + 32-bit nanos.
-                writeByte(Ext8)
-                writeByte(12)
-                writeByte(ExtTypeDuration & 0xff)
-                writeBE64(value.getSeconds)
-                writeBE32(current, value.getNano)
+            case MsgPack.DurationEncoding.Compat =>
+                // upickle/weePickle wire form: a string of total nanoseconds. `toNanos` throws on overflow
+                // beyond the Long nanosecond range (~292 years), the same limit those libraries have.
+                string(value.toNanos.toString)
     end duration
 
     /** Materialized output as a raw byte array (for tests and the `result()` bridge). */

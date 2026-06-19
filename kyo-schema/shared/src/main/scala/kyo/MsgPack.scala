@@ -12,9 +12,12 @@ package kyo
   *     interops with any MsgPack decoder) or `FieldId` (compact MurmurHash3 integers, like Protobuf). Dynamic `Map` keys and the
   *     `Result`/`Either`/tuple discriminator keys are always written as strings regardless of this setting, since they are not recoverable
   *     from a hash.
-  *   - [[MsgPack.TemporalEncoding]] selects how `Instant`/`Duration` are written: `Primitive` (default, lossless `[seconds, nanos]` array)
-  *     or `Extension` (MessagePack timestamp extension for `Instant`, a Kyo extension for `Duration`). The reader auto-detects the wire
-  *     shape, so bytes produced under either setting decode correctly regardless of the reader's config.
+  *   - [[MsgPack.InstantEncoding]] selects how `Instant` is written: `Primitive` (default, lossless `[seconds, nanos]` array) or
+  *     `Extension` (the spec-defined MessagePack timestamp extension, type -1). The reader auto-detects the wire shape, so bytes produced
+  *     under either setting decode correctly regardless of the reader's config.
+  *   - [[MsgPack.DurationEncoding]] selects how `Duration`/`FiniteDuration` are written: `Lossless` (default, `[seconds, nanos]` array,
+  *     full range) or `Compat` (a string of total nanoseconds, wire-compatible with upickle/weePickle). Schemas for both
+  *     `java.time.Duration` and `scala.concurrent.duration.{Duration, FiniteDuration}` are provided.
   *
   * @see
   *   [[kyo.Schema]] for the type-driven serialization model
@@ -47,25 +50,48 @@ object MsgPack:
         case FieldId
     end KeyEncoding
 
-    /** Selects how `java.time.Instant` and `java.time.Duration` are encoded. */
-    enum TemporalEncoding derives CanEqual:
+    /** Selects how `java.time.Instant` is encoded. */
+    enum InstantEncoding derives CanEqual:
         /** Lossless primitive encoding: a 2-element `[seconds, nanos]` array. */
         case Primitive
 
-        /** MessagePack timestamp extension (type -1) for `Instant`; a Kyo extension (type 1) for `Duration`. */
+        /** MessagePack reserved timestamp extension (type -1), the spec-defined cross-language form. */
         case Extension
-    end TemporalEncoding
+    end InstantEncoding
+
+    /** Selects how `java.time.Duration` and `scala.concurrent.duration.FiniteDuration` are encoded.
+      *
+      * MessagePack defines no Duration type and no cross-library convention exists, so this is a free choice:
+      *   - [[Lossless]] keeps full `java.time.Duration` range (seconds beyond a `Long` of nanoseconds).
+      *   - [[Compat]] matches upickle/weePickle, whose Duration wire form is a string of total nanoseconds.
+      *
+      * `scala.concurrent.duration.Duration` (the possibly-infinite abstract type) always uses the [[Compat]]
+      * string form regardless of this setting, since `Inf`/`MinusInf`/`Undefined` have no lossless numeric
+      * representation.
+      */
+    enum DurationEncoding derives CanEqual:
+        /** Lossless 2-element `[seconds, nanos]` array, preserving the full `java.time.Duration` range. */
+        case Lossless
+
+        /** A MessagePack string of total nanoseconds, wire-compatible with upickle/weePickle. Limited to the
+          * `Long` nanosecond range (about 292 years), matching those libraries.
+          */
+        case Compat
+    end DurationEncoding
 
     /** Wire-shape configuration for the MsgPack codec.
       *
       * @param keyEncoding
       *   how schema field/variant names are written (default [[KeyEncoding.StringName]])
-      * @param temporalEncoding
-      *   how `Instant`/`Duration` are written (default [[TemporalEncoding.Primitive]])
+      * @param instantEncoding
+      *   how `Instant` is written (default [[InstantEncoding.Primitive]])
+      * @param durationEncoding
+      *   how `Duration`/`FiniteDuration` is written (default [[DurationEncoding.Lossless]])
       */
     case class Config(
         keyEncoding: KeyEncoding = KeyEncoding.StringName,
-        temporalEncoding: TemporalEncoding = TemporalEncoding.Primitive
+        instantEncoding: InstantEncoding = InstantEncoding.Primitive,
+        durationEncoding: DurationEncoding = DurationEncoding.Lossless
     ) derives CanEqual
 
     object Config:
