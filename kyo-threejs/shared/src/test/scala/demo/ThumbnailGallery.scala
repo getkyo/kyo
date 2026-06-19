@@ -27,8 +27,8 @@ object ThumbnailGallery extends KyoApp:
     }
 end ThumbnailGallery
 
-/** The scene set for [[ThumbnailGallery]], shared by the `KyoApp` and the visual-review harness so
-  * both render the same compiled scenes through `Three.toImage`.
+/** The scene set for [[ThumbnailGallery]], used by the `ThumbnailGallery` `KyoApp` to render each
+  * scene through `Three.toImage`.
   */
 object ThumbnailGalleryScene:
 

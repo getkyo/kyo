@@ -5,7 +5,8 @@ package kyo
   * These fixtures exercise the render-target readback technique in a real Chrome with software WebGL.
   * They prove that WebGLRenderTarget + readRenderTargetPixels yields a non-blank pixel buffer for a lit
   * scene. The fixtures drive raw three.js from the browser page to validate the readback technique;
-  * the compiled `Three.toImage` path is covered by `DemoVisualReviewTest`.
+  * the compiled `Three.toImage` path is exercised by the ThumbnailGallery scenes, and the rendered
+  * output is the committed `docs/images` thumbnails.
   *
   * Every assertion observes real pixel values from a real GL context; nothing is faked.
   */

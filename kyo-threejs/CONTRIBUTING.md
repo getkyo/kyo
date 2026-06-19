@@ -111,10 +111,10 @@ invariant, that is a design decision to surface, not a quiet edit.
   be reachable from these two one-shot fills, or it will render stale in `toImage`.
 
 - **The real-GL gate.** Live WebGL runs only in a real browser. A `WebGLRenderer` submit
-  cannot run on Node; it is exercised by the in-browser visual-review harness against real
-  software-WebGL Chrome. Any new surface that submits to a live GL context belongs behind this gate
-  (a js-only test under `kyo-threejs/js/src/test`, against the kyo-browser path), never as a Node
-  test that fakes the submit.
+  cannot run on Node; it is exercised by the in-browser WebGL tests (`WebGLSceneHarness` subclasses)
+  against real software-WebGL Chrome. Any new surface that submits to a live GL context belongs behind
+  this gate (a js-only test under `kyo-threejs/js/src/test`, against the kyo-browser path), never as
+  a Node test that fakes the submit.
 
 - **`toImage` carries no `Browser` effect.** `Three.toImage` honors exactly the row
   `Image < (Async & Scope & Abort[ThreeException])` and produces its `Image` via the public
@@ -184,7 +184,7 @@ Source and test layout:
 - `shared/src/test` holds the cross-platform tests; they run on both the JS (CommonJS) and Wasm
   (ESModule) Node backends. Keep tests here.
 - The only legitimate js-only split (`kyo-threejs/js/src/test`) is the surface that needs a real
-  browser: the WebGL submit and the visual-review harness. That is the divergence the
+  browser: the WebGL submit and the in-browser WebGL tests. That is the divergence the
   root's "all platforms, shared tests" rule explicitly allows for genuinely platform-specific
   behavior. Do not move a Node-testable test into the js-only tree to dodge anything.
 
@@ -210,13 +210,11 @@ The seams you will use:
   through this (and assert ordering / counts deterministically), not through a real loop or a timer.
 - **Dispose tests observe the real three.js `'dispose'` event** on the live object, so a leak or a
   double-dispose is observed against real behavior, not a counter you trust.
-- **The in-browser visual-review harness** (`DemoVisualReviewTest` + `WebGLSceneHarness`) loads the
-  actual compiled `kyo-threejs-demos` ESModule bundle into a real software-WebGL Chrome, mounts each
-  committed demo through its real scene-graph builder (so the reconciler, frame loop, raycast,
-  signal-driven mutations, `loadGltf`, and `toImage` all run for real), reads back the canvas, and
-  asserts a non-blank distinct-color count. On a platform with no downloadable Chrome the suite
-  cancels (skips) rather than failing. This is the only place live GL is exercised; new GL-visible
-  behavior should be reachable from a demo so the harness covers it.
+- **The in-browser WebGL tests** (`ThreeToImageBrowserTest`, `ThreeMountBrowserTest`, `WebGLAcceptanceTest`,
+  all extending `WebGLSceneHarness`) load real GL pages into a software-WebGL Chrome and assert
+  non-blank pixel buffers or context-release state. On a platform with no downloadable Chrome the
+  suite cancels (skips) rather than failing. This is the only place live GL is exercised; new
+  GL-visible behavior should be reachable from a test or demo scene so the browser suite covers it.
 - **README examples are doctest-compiled**, not via the JVM doctest task (a js+wasm-only module has
   no JVM doctest host). `project/ReadmeBlocks.scala` extracts each fenced `scala` block into a
   generated source compiled under the Scala.js compiler. Two consequences for README authors: each

@@ -589,4 +589,5 @@ The live-scene demos print a `http://localhost:<port>/` URL; open it to see the 
 | `sbt demoSnake3D` | Snake3D |
 | `sbt demoGltfViewer` | GltfViewer |
 | `sbt demoEmbeddedScene` | EmbeddedScene |
-| `sbt demoGallery` | ThumbnailGallery (headless, writes PNGs under `runs/thumbnails/`) |
+
+`ThumbnailGallery` uses `Three.toImage`, which requires a browser WebGL context and cannot run via the Node demo runner. Its rendered output is the committed `docs/images/*.png` thumbnails in this repository. The `toImage` primitive is validated by `ThreeToImageBrowserTest` and `WebGLAcceptanceTest` in a real software-WebGL Chrome.

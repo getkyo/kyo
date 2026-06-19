@@ -22,8 +22,8 @@ object EmbeddedScene extends KyoApp:
     }
 end EmbeddedScene
 
-/** The scene-graph and kyo-ui builder for [[EmbeddedScene]], shared by the `KyoApp` and the
-  * visual-review harness so both compose the same embedded scene.
+/** The scene-graph and kyo-ui builder for [[EmbeddedScene]], used by the `EmbeddedScene` `KyoApp`
+  * to compose the embedded scene.
   *
   * The `camera` def is pure (no effect); `scene` and `ui` carry `< Sync` from `Signal.initRef`.
   */

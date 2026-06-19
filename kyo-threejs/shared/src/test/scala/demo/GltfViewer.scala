@@ -25,9 +25,9 @@ object GltfViewer extends KyoApp:
     }
 end GltfViewer
 
-/** The scene-graph builder for [[GltfViewer]], shared by the `KyoApp` and the visual-review harness
-  * so both load and mount the same compiled scene. The model URL is a parameter so the harness can
-  * point it at a served fixture while the `KyoApp` uses the default.
+/** The scene-graph builder for [[GltfViewer]], used by the `GltfViewer` `KyoApp` to load and mount
+  * the compiled scene. The model URL is a parameter so tests can point it at a served fixture while
+  * the `KyoApp` uses the default.
   */
 object GltfViewerScene:
 

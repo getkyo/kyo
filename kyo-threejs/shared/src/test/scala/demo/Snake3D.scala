@@ -28,8 +28,8 @@ object Snake3D extends KyoApp:
     }
 end Snake3D
 
-/** The scene-graph builder for [[Snake3D]], shared by the `KyoApp` and the visual-review harness so
-  * both mount the same compiled scene.
+/** The scene-graph builder for [[Snake3D]], used by the `Snake3D` `KyoApp` to mount the compiled
+  * scene.
   */
 object Snake3DScene:
 

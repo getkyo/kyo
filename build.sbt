@@ -1843,8 +1843,7 @@ lazy val `kyo-threejs-demo-runner` =
 
 // One command alias per demo: set the runner project's main to that demo, then run it. Each alias
 // launches exactly one demo's server on Node, so the demos stay independently runnable with no shared
-// dispatcher. The live-scene demos print a `http://localhost:<port>/` URL to open; `demoGallery`
-// renders the headless thumbnail PNGs under `runs/thumbnails/`.
+// dispatcher. The live-scene demos print a `http://localhost:<port>/` URL to open.
 addCommandAlias(
     "demoBouncingBalls",
     """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.BouncingBalls") ; kyo-threejs-demo-runner/run"""
@@ -1868,10 +1867,6 @@ addCommandAlias(
 addCommandAlias(
     "demoEmbeddedScene",
     """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.EmbeddedScene") ; kyo-threejs-demo-runner/run"""
-)
-addCommandAlias(
-    "demoGallery",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ThumbnailGallery") ; kyo-threejs-demo-runner/run"""
 )
 
 lazy val `kyo-examples` =
