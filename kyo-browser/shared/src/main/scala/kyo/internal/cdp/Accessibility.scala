@@ -1,7 +1,8 @@
 package kyo.internal.cdp
 
 import kyo.*
-import kyo.internal.CdpClient
+import kyo.internal.CdpBackend
+import kyo.internal.CdpNoParams
 import kyo.internal.CdpReply
 
 /** Typed wrapper around CDP `Accessibility.getFullAXTree`.
@@ -26,18 +27,18 @@ private[kyo] object Accessibility:
 
     /** Returns the full accessibility tree for the current page.
       *
-      * The caller must invoke this on a session-scoped [[CdpClient]] (obtained via `client.withSession(sid)`). The `Accessibility` domain
+      * The caller must invoke this on a session-scoped [[CdpBackend]] (obtained via `backend.withSession(sid)`). The `Accessibility` domain
       * is auto-enabled by this call; no explicit `Accessibility.enable` is required.
       */
-    def getFullAXTree(client: CdpClient)(using Frame): Chunk[AxNode] < (Async & Abort[BrowserReadException]) =
-        client.send("Accessibility.getFullAXTree").map(parseAxTree)
+    def getFullAXTree(client: CdpBackend)(using Frame): Chunk[AxNode] < (Async & Abort[BrowserReadException]) =
+        client.send[CdpNoParams, AxTreeResponse]("Accessibility.getFullAXTree", CdpNoParams()).map(extractAxNodes)
 
     /** Frame-scoped variant: returns the AX tree for the specified frame id rather than the top-level document. */
-    def getFullAXTreeForFrame(client: CdpClient, frameId: String)(using Frame): Chunk[AxNode] < (Async & Abort[BrowserReadException]) =
-        client.send[GetFullAXTreeParams](
+    def getFullAXTreeForFrame(client: CdpBackend, frameId: String)(using Frame): Chunk[AxNode] < (Async & Abort[BrowserReadException]) =
+        client.send[GetFullAXTreeParams, AxTreeResponse](
             "Accessibility.getFullAXTree",
             GetFullAXTreeParams(frameId = Present(frameId))
-        ).map(parseAxTree)
+        ).map(extractAxNodes)
 
     /** Wire shape for `Accessibility.getFullAXTree`. Only the `frameId` field is consumed; the zero-arg overload sends no params. */
     final private[kyo] case class GetFullAXTreeParams(frameId: Maybe[String] = Absent) derives Schema
@@ -133,6 +134,13 @@ private[kyo] object Accessibility:
 
     // --- Parsing ---
 
+    /** Extracts [[AxNode]] values from a typed [[AxTreeResponse]]. The error and decode failure paths are handled
+      * upstream by [[CdpBackend.send]], which recovers [[JsonRpcError]] to [[BrowserProtocolErrorException]].
+      */
+    private[kyo] def extractAxNodes(tree: AxTreeResponse): Chunk[AxNode] =
+        Chunk.from(tree.nodes.map(toAxNode))
+
+    /** Legacy wire-string parser kept for test compatibility. */
     private[kyo] def parseAxTree(wire: String)(using Frame): Chunk[AxNode] < (Sync & Abort[BrowserReadException]) =
         Json.decode[CdpReply[AxTreeResponse]](wire) match
             case Result.Success(reply) =>

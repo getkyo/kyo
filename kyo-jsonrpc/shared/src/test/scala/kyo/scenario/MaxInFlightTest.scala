@@ -1,0 +1,448 @@
+package kyo.scenario
+
+import kyo.*
+import kyo.Maybe.Absent
+import kyo.Maybe.Present
+
+class MaxInFlightTest extends JsonRpcTest:
+
+    case class PingReq(n: Int) derives Schema, CanEqual
+    case class PingResp(n: Int) derives Schema, CanEqual
+    case class LogMsg(text: String) derives Schema, CanEqual
+
+    // CapturingTransport records every envelope it forwards. When `signalOn` matches an envelope, the
+    // transport completes `signal`, giving the test a deterministic latch to await delivery of a specific
+    // wire message (instead of polling the accumulated list with a timing-sensitive sleep).
+    private class CapturingTransport(
+        inner: JsonRpcTransport,
+        signal: Maybe[Fiber.Promise[Unit, Any]] = Absent,
+        signalOn: JsonRpcEnvelope => Boolean = _ => false
+    ) extends JsonRpcTransport:
+        // Unsafe: AtomicRef.Unsafe.init used for thread-safe envelope accumulation outside effect context
+        val sent = AtomicRef.Unsafe.init(List.empty[JsonRpcEnvelope])(using AllowUnsafe.embrace.danger)
+
+        def send(env: JsonRpcEnvelope)(using Frame): Unit < (Async & Abort[Closed]) =
+            Sync.defer(discard(sent.getAndUpdate(env :: _)(using AllowUnsafe.embrace.danger))).andThen {
+                val notifySignal: Unit < Sync =
+                    if signalOn(env) then
+                        signal match
+                            case Present(p) => p.completeUnitDiscard
+                            case Absent     => Kyo.unit
+                    else Kyo.unit
+                notifySignal.andThen(inner.send(env))
+            }
+
+        def incoming(using Frame): Stream[JsonRpcEnvelope, Async & Abort[Closed]] =
+            inner.incoming
+
+        def close(using Frame): Unit < Async =
+            inner.close
+
+        def sentList: List[JsonRpcEnvelope] = sent.get()(using AllowUnsafe.embrace.danger).reverse
+    end CapturingTransport
+
+    "maxInFlight = 2 parks the third concurrent call until a slot is freed" in {
+        // Unsafe: AtomicInt.Unsafe.init used for concurrent counter in synchronous handler scope
+        val handlerEntered = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        // Unsafe: AtomicRef.Unsafe.init used for concurrent promise accumulation outside effect context
+        val handlerPromises = AtomicRef.Unsafe.init(List.empty[Fiber.Promise[Unit, Any]])(using AllowUnsafe.embrace.danger)
+
+        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (req, _) =>
+            Fiber.Promise.init[Unit, Any].map { p =>
+                Sync.defer(discard(handlerPromises.getAndUpdate(p :: _)(using AllowUnsafe.embrace.danger))).andThen {
+                    Sync.defer(discard(handlerEntered.incrementAndGet()(using AllowUnsafe.embrace.danger))).andThen {
+                        p.get.andThen(PingResp(req.n))
+                    }
+                }
+            }
+        }
+
+        val cfg = JsonRpcHandler.Config(
+            maxInFlight = Present(2),
+            cancellation = Absent
+        )
+
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(pingOnB), cfg).map { _ =>
+                    Fiber.initUnscoped(
+                        Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(1)))
+                    ).map { fib1 =>
+                        Fiber.initUnscoped(
+                            Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(2)))
+                        ).map { fib2 =>
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(3)))
+                            ).map { fib3 =>
+                                // Wait until exactly 2 handlers have entered (two slots acquired)
+                                assertEventually(Sync.defer(handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2)).andThen {
+                                    Sync.defer(assert(
+                                        handlerEntered.get()(using AllowUnsafe.embrace.danger) == 2,
+                                        "third call should be parked"
+                                    )).andThen {
+                                        // Release one slot (whichever handler got it first) so the third call can proceed
+                                        Sync.defer {
+                                            val all = handlerPromises.get()(using AllowUnsafe.embrace.danger)
+                                            all.headOption.foreach { first =>
+                                                handlerPromises.set(all.tail)(using AllowUnsafe.embrace.danger)
+                                                first.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                                            }
+                                        }.andThen {
+                                            // Wait for all three handlers to have entered
+                                            assertEventually(Sync.defer(handlerEntered.get()(using
+                                                AllowUnsafe.embrace.danger
+                                            ) == 3)).andThen {
+                                                // Release remaining slots
+                                                Sync.defer {
+                                                    handlerPromises.get()(using AllowUnsafe.embrace.danger).foreach { p =>
+                                                        p.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                                                    }
+                                                }.andThen {
+                                                    fib1.get.andThen(fib2.get).andThen(fib3.get).map { _ =>
+                                                        succeed
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "notify is NOT rate-limited by maxInFlight" in {
+        // Unsafe: AtomicInt.Unsafe.init for concurrent counter in handler scope
+        val notifyReceived = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+        // Unsafe: AtomicRef.Unsafe.init for handler promise capture across fibers
+        val handlerBlocked = AtomicRef.Unsafe.init[Maybe[Fiber.Promise[Unit, Any]]](Absent)(using AllowUnsafe.embrace.danger)
+
+        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
+            Fiber.Promise.init[Unit, Any].map { p =>
+                Sync.defer(handlerBlocked.set(Present(p))(using AllowUnsafe.embrace.danger)).andThen(p.get.andThen(PingResp(0)))
+            }
+        }
+        val logOnB = JsonRpcRoute.request[LogMsg, Unit]("log") { (_, _) =>
+            Sync.defer(discard(notifyReceived.incrementAndGet()(using AllowUnsafe.embrace.danger)))
+        }
+
+        val cfg = JsonRpcHandler.Config(
+            maxInFlight = Present(1),
+            cancellation = Absent
+        )
+
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(pingOnB, logOnB), cfg).map { _ =>
+                    // Start one call to consume the single slot
+                    Fiber.initUnscoped(
+                        Abort.run[JsonRpcError | Closed](endpointA.call[PingReq, PingResp]("ping", PingReq(0)))
+                    ).andThen {
+                        // Wait for the handler to have acquired the slot and blocked
+                        assertEventually(Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
+                            // Send a notification while the slot is full; notify should go through immediately
+                            endpointA.notify[LogMsg]("log", LogMsg("hi")).andThen {
+                                // Verify notification was received on the server
+                                assertEventually(Sync.defer(notifyReceived.get()(using AllowUnsafe.embrace.danger) == 1)).andThen {
+                                    // Release the blocked call
+                                    Sync.defer(handlerBlocked.get()(using AllowUnsafe.embrace.danger)).map {
+                                        case Present(p) =>
+                                            p.completeUnitDiscard.andThen(succeed)
+                                        case Absent => fail("handler not blocked")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "requestTimeout fires and caller receives JsonRpcError.cancelled" in {
+        // The handler blocks on a never-completed gate (Fiber.Promise), so the only exit is the
+        // requestTimeout firing. Clock.withTimeControl drives the deterministic timeout: Async.timeout
+        // routes through Clock.sleep, so advancing the fake clock past requestTimeout fires the timeout
+        // arm. control.advance settles real async work via a wall-clock delay, letting the call resolve.
+        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
+            // Block forever; timeout is the only exit
+            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
+        }
+
+        val cfg = JsonRpcHandler.Config(
+            requestTimeout = 100.millis,
+            cancellation = Absent
+        )
+
+        Clock.withTimeControl { control =>
+            JsonRpcTransport.inMemory.map { (ta, tb) =>
+                JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
+                    JsonRpcHandler.init(tb, Seq(pingOnB), cfg).map { _ =>
+                        Fiber.initUnscoped(
+                            Abort.run[JsonRpcError | Closed](
+                                endpointA.call[PingReq, PingResp]("ping", PingReq(0))
+                            )
+                        ).map { callFib =>
+                            // Advance the fake clock past requestTimeout to fire the timeout arm.
+                            control.advance(200.millis).andThen {
+                                callFib.get.map {
+                                    case Result.Failure(e: JsonRpcError) =>
+                                        assert(e.code == -32800, s"expected cancelled code -32800, got ${e.code}")
+                                    case other => fail(s"expected JsonRpcError.cancelled, got $other")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "requestTimeout fires and $/cancelRequest appears on transport with expectReply policy" in {
+        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
+            // Block forever; timeout is the only exit
+            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
+        }
+
+        // cancelMethod="$/cancelRequest", expectReply=true
+        case class CancelByIdParams(id: JsonRpcId) derives Schema, CanEqual
+        val cfg = JsonRpcHandler.Config(
+            requestTimeout = 100.millis,
+            cancellation = Present(JsonRpcCancellationPolicy(
+                cancelMethod = "$/cancelRequest",
+                encodeParams = (id, _) => f ?=> Sync.defer(Structure.encode(CancelByIdParams(id)))(using f),
+                decodeParams = sv =>
+                    f ?=>
+                        Sync.defer {
+                            Structure.decode[CancelByIdParams](sv)(using summon[Schema[CancelByIdParams]], f) match
+                                case Result.Success(p) => Present(p.id)
+                                case _                 => Absent
+                        }(using f),
+                expectReplyForCancelledRequest = true,
+                cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
+                protectedMethods = Set.empty
+            ))
+        )
+
+        // The cancel notification is enqueued before the call fails, but the writer fiber delivers it
+        // asynchronously. cancelSent is completed by the capturing transport the instant it forwards the
+        // $/cancelRequest, so the test awaits delivery deterministically instead of polling with a sleep.
+        Fiber.Promise.init[Unit, Any].map { cancelSent =>
+            Clock.withTimeControl { control =>
+                JsonRpcTransport.inMemory.map { (ta, tb) =>
+                    val capA = new CapturingTransport(
+                        ta,
+                        Present(cancelSent),
+                        {
+                            case JsonRpcNotification("$/cancelRequest", _, _) => true
+                            case _                                            => false
+                        }
+                    )
+                    JsonRpcHandler.init(capA, Seq.empty, cfg).map { endpointA =>
+                        JsonRpcHandler.init(tb, Seq(pingOnB), cfg).map { _ =>
+                            Fiber.initUnscoped(
+                                Abort.run[JsonRpcError | Closed](
+                                    endpointA.call[PingReq, PingResp]("ping", PingReq(0))
+                                )
+                            ).map { callFib =>
+                                // Advance the fake clock past requestTimeout to fire the timeout arm, then
+                                // wait for the call to resolve with a failure.
+                                control.advance(200.millis).andThen {
+                                    callFib.get.map {
+                                        case Result.Failure(_: JsonRpcError) => ()
+                                        case other                           => fail(s"expected failure, got $other")
+                                    }
+                                }.andThen {
+                                    // Await the writer fiber delivering the $/cancelRequest, then confirm it landed.
+                                    cancelSent.get.andThen {
+                                        Sync.defer {
+                                            assert(capA.sentList.exists {
+                                                case JsonRpcNotification("$/cancelRequest", _, _) => true
+                                                case _                                            => false
+                                            })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "requestTimeout fires with cancellation = Absent: no cancel notification sent" in {
+        val pingOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (_, _) =>
+            // Block forever; timeout is the only exit
+            Fiber.Promise.init[Unit, Any].map { p => p.get.andThen(PingResp(0)) }
+        }
+
+        val cfg = JsonRpcHandler.Config(
+            requestTimeout = 100.millis,
+            cancellation = Absent
+        )
+
+        Clock.withTimeControl { control =>
+            JsonRpcTransport.inMemory.map { (ta, tb) =>
+                val capA = new CapturingTransport(ta)
+                JsonRpcHandler.init(capA, Seq.empty, cfg).map { endpointA =>
+                    JsonRpcHandler.init(tb, Seq(pingOnB), cfg).map { _ =>
+                        Fiber.initUnscoped(
+                            Abort.run[JsonRpcError | Closed](
+                                endpointA.call[PingReq, PingResp]("ping", PingReq(0))
+                            )
+                        ).map { callFib =>
+                            // Advance the fake clock past requestTimeout to fire the timeout arm. With
+                            // cancellation = Absent, no cancel notification is ever enqueued; once the call
+                            // fiber has resolved the timeout path has fully run, so the count is final.
+                            control.advance(200.millis).andThen {
+                                callFib.get.map { result =>
+                                    val cancelNotifications =
+                                        capA.sentList.count {
+                                            case _: JsonRpcNotification => true
+                                            case _                      => false
+                                        }
+                                    result match
+                                        case Result.Failure(e: JsonRpcError) =>
+                                            assert(
+                                                e.code == -32800 && cancelNotifications == 0,
+                                                s"expected -32800 with 0 cancel notifications, got code=${e.code} notifications=$cancelNotifications"
+                                            )
+                                        case other => fail(s"expected failure, got $other")
+                                    end match
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    "semaphore slot released after call failure: next call proceeds" in {
+        // Unsafe: AtomicInt.Unsafe.init for call counter in handler scope
+        val callCount = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
+
+        // First call: handler always fails with MethodNotFound
+        val failOnB = JsonRpcRoute.request[PingReq, PingResp]("ping") { (req, _) =>
+            val n = callCount.incrementAndGet()(using AllowUnsafe.embrace.danger)
+            if n == 1 then Abort.fail(JsonRpcMethodNotFoundError("ping", Chunk.empty))
+            else PingResp(req.n)
+        }
+
+        val cfg = JsonRpcHandler.Config(
+            maxInFlight = Present(1),
+            cancellation = Absent
+        )
+
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(failOnB), cfg).map { _ =>
+                    // First call: should fail with MethodNotFound
+                    Abort.run[JsonRpcError | Closed](
+                        endpointA.call[PingReq, PingResp]("ping", PingReq(1))
+                    ).map {
+                        case Result.Failure(_: JsonRpcError) =>
+                            // Semaphore slot should be released; second call should proceed without parking
+                            Abort.run[JsonRpcError | Closed](
+                                endpointA.call[PingReq, PingResp]("ping", PingReq(2))
+                            ).map {
+                                case Result.Success(r) => assert(r == PingResp(2))
+                                case other             => fail(s"second call failed: $other")
+                            }
+                        case other => fail(s"expected first call to fail, got $other")
+                    }
+                }
+            }
+        }
+    }
+
+    "progressResetsTimeout = true: progress notifications reset the deadline" in {
+        case class ProgressMsg(pct: Int) derives Schema, CanEqual
+
+        // A 1-second timeout: without resets it would fire before the handler completes.
+        // The handler sends 4 progress notifications at 300ms intervals (total ~1.2s).
+        // With progressResetsTimeout = true, each notification resets the 1-second clock.
+        // This is the one timing test deliberately kept on real Async.sleep: the reset-deadline monitor runs in
+        // a fiber forked at the unsafe callWithProgress entry, which does not observe Clock.withTimeControl, so
+        // the reset cadence can only be exercised with real elapsed time. The 300ms-vs-1s margin is wide, so it
+        // is robust; production reads the ambient clock (Clock.live) correctly.
+        val longTask = JsonRpcRoute.request[PingReq, PingResp]("longTask") { (req, ctx) =>
+            val progressValue = Structure.Value.Record(Chunk("pct" -> Structure.Value.Integer(25L)))
+            Async.sleep(300.millis).andThen {
+                Abort.run[Closed](ctx.progress(progressValue)).andThen {
+                    Async.sleep(300.millis).andThen {
+                        Abort.run[Closed](ctx.progress(progressValue)).andThen {
+                            Async.sleep(300.millis).andThen {
+                                Abort.run[Closed](ctx.progress(progressValue)).andThen {
+                                    Async.sleep(300.millis).andThen {
+                                        Abort.run[Closed](ctx.progress(progressValue)).andThen {
+                                            PingResp(req.n)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // cancelMethod="$/cancelRequest", expectReply=true; progressMethod="$/progress", workDoneToken style
+        case class CancelByIdParamsB(id: JsonRpcId) derives Schema, CanEqual
+        val cfg = JsonRpcHandler.Config(
+            requestTimeout = 1.second,
+            progress = Present(JsonRpcProgressPolicy(
+                progressMethod = "$/progress",
+                extractInboundToken = p => JsonRpcProgressPolicy.field(p, "token"),
+                extractRequestToken = p => JsonRpcProgressPolicy.field(p, "workDoneToken"),
+                stampOutboundToken = (p, t) => JsonRpcProgressPolicy.merge(p, Structure.Value.Record(Chunk("workDoneToken" -> t))),
+                encodeProgressParams = (t, v) => Structure.Value.Record(Chunk("token" -> t, "value" -> v)),
+                extractProgressValue = p => JsonRpcProgressPolicy.field(p, "value"),
+                enforceMonotonic = false
+            )),
+            cancellation = Present(JsonRpcCancellationPolicy(
+                cancelMethod = "$/cancelRequest",
+                encodeParams = (id, _) => f ?=> Sync.defer(Structure.encode(CancelByIdParamsB(id)))(using f),
+                decodeParams = sv =>
+                    f ?=>
+                        Sync.defer {
+                            Structure.decode[CancelByIdParamsB](sv)(using summon[Schema[CancelByIdParamsB]], f) match
+                                case Result.Success(p) => Present(p.id)
+                                case _                 => Absent
+                        }(using f),
+                expectReplyForCancelledRequest = true,
+                cancelledError = Present(JsonRpcCustomError(-32800, "Request cancelled")(using Frame.internal)),
+                protectedMethods = Set.empty
+            )),
+            progressResetsTimeout = true
+        )
+
+        JsonRpcTransport.inMemory.map { (ta, tb) =>
+            JsonRpcHandler.init(ta, Seq.empty, cfg).map { endpointA =>
+                JsonRpcHandler.init(tb, Seq(longTask), cfg).map { _ =>
+                    // callWithProgress so that progress notifications are received and fire the heartbeat
+                    endpointA.callWithProgress[PingReq, PingResp]("longTask", PingReq(42)).map { pending =>
+                        // Drain the progress stream so it doesn't back-pressure the handler
+                        Fiber.initUnscoped(
+                            Abort.run[Closed](pending.progress.discard)
+                        ).andThen {
+                            Abort.run[JsonRpcError | Closed](pending.result).map {
+                                case Result.Success(resp) =>
+                                    assert(resp == PingResp(42), s"expected PingResp(42), got $resp")
+                                case Result.Failure(e: JsonRpcError) =>
+                                    fail(s"call timed out or failed: ${e.message} (code ${e.code})")
+                                case other =>
+                                    fail(s"unexpected result: $other")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+end MaxInFlightTest

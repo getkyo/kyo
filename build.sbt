@@ -255,6 +255,8 @@ lazy val kyoJVM: Project = project
         `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
+        `kyo-jsonrpc`.jvm,
+        `kyo-jsonrpc-http`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -320,6 +322,8 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
+        `kyo-jsonrpc`.js,
+        `kyo-jsonrpc-http`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
@@ -365,6 +369,8 @@ lazy val kyoNative = project
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
+        `kyo-jsonrpc`.native,
+        `kyo-jsonrpc-http`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -415,6 +421,8 @@ lazy val kyoWasm = project
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
         `kyo-flow`.wasm,
+        `kyo-jsonrpc`.wasm,
+        `kyo-jsonrpc-http`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
@@ -1177,6 +1185,36 @@ lazy val `kyo-flow` =
         )
         .wasmSettings(`wasm-settings`)
 
+lazy val `kyo-jsonrpc` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-prelude`)
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-schema`)
+        .in(file("kyo-jsonrpc"))
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .wasmSettings(`wasm-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-jsonrpc-http` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-jsonrpc-http"))
+        .withKyoTest
+        .dependsOn(`kyo-jsonrpc`)
+        .dependsOn(`kyo-http`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`, `openssl-native-settings`)
+        .wasmSettings(`wasm-settings`)
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
         .crossType(CrossType.Pure)
@@ -1600,7 +1638,7 @@ lazy val `kyo-browser` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-browser"))
-        .dependsOn(`kyo-http`)
+        .dependsOn(`kyo-http`, `kyo-jsonrpc`, `kyo-jsonrpc-http`)
         .withKyoTest
         .settings(
             `kyo-settings`
@@ -1644,7 +1682,19 @@ lazy val `kyo-browser` =
             `openssl-native-settings`,
             // Chrome resource contention makes parallel test-suite execution flaky on Native — serialize
             // suites so each owns the shared Chrome WebSocket channel in turn.
-            Test / parallelExecution := false
+            Test / parallelExecution := false,
+            // kyo-browser runs N=10 parallel Async.zip + Scope.ensure chains in its uniqueness tests.
+            // The default 8 MB main-thread stack (macOS system default) is insufficient for 10 concurrent
+            // fibers each running deep Abort.recover / Scope / CDP send continuations. Set the main-thread
+            // stack to 64 MB via the macOS linker's -stack_size flag. On Linux the kernel grows the stack
+            // on demand so no linker flag is needed.
+            nativeConfig ~= { c =>
+                if (System.getProperty("os.name").toLowerCase.contains("mac"))
+                    c.withLinkingOptions(
+                        c.linkingOptions ++ Seq("-Xlinker", "-stack_size", "-Xlinker", "0x4000000")
+                    )
+                else c
+            }
         )
         .jsSettings(
             `js-settings`,

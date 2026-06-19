@@ -1019,7 +1019,7 @@ transitively gets the `Test` machinery (chrome-platform pre-flight, decode helpe
 `orFail`, `timed`) (`shared/src/test/scala/kyo/BrowserTest.scala:74`). A suite that
 does NOT boot Chrome (pure parsing, wire/decoder, schema, percent-encode, snapshot,
 downloader) extends `Test` / `kyo.Test` directly, never `BrowserTest`: examples are
-`StabilitySamplerTest`, `CdpClientDecoderTest`, `BrowserExceptionHierarchyTest`
+`StabilitySamplerTest`, `CdpBackendDecoderTest`, `BrowserExceptionHierarchyTest`
 (`shared/src/test/scala/kyo/internal/StabilitySamplerTest.scala:12`,
 `shared/src/test/scala/kyo/BrowserExceptionHierarchyTest.scala:3`). Runnable demos
 live in `shared/src/test/scala/demo` and extend `KyoApp` (not `Test`); they are

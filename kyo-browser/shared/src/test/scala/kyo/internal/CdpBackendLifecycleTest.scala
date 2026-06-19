@@ -4,14 +4,16 @@ import CdpTypes.*
 import kyo.*
 import kyo.BrowserElementNotActionableException.Reason
 import kyo.BrowserIFrameInvalidException.Reason as IFrameReason
+import kyo.JsonRpcIdStrategy
 import kyo.internal.SharedChrome
 
-/** [[CdpClient]] lifecycle, close, and connection tests.
+/** [[CdpBackend]] lifecycle, close, and connection tests.
   *
-  * Tests that require a fault-injecting CDP WebSocket fixture server are marked `pending` with an explicit comment naming the missing
-  * infrastructure. Live-browser tests use SharedChrome.
+  * Mechanical rename of the former `CdpClientLifecycleTest`: `CdpClient.init/initUnscoped` -> `CdpBackend.init/initUnscoped`,
+  * `tab.client` -> `tab.backend`, raw-string sends replaced with typed [[CdpBackend]] wrappers. Tests that exercised `CdpClient`-specific
+  * internals (relay fiber, inFlight counter, drainSignal) are adapted to the equivalent [[CdpBackend]] / [[JsonRpcHandler]] APIs.
   */
-class CdpClientLifecycleTest extends kyo.BrowserTest:
+class CdpBackendLifecycleTest extends kyo.BrowserTest:
 
     override def timeout = 2.minutes
 
@@ -19,27 +21,25 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     // initUnscoped(url).map(f) invokes f without auto-closing on exit
     // ─────────────────────────────────────────────────────────────────────────
 
-    "initUnscoped + .map invokes f with the client" in {
+    "initUnscoped + .map invokes f with the backend" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 for
-                    // Capture the client inside f, then verify it was called.
-                    capturedClient <- CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
-                        // Verify the client is live (f is invoked with a working client).
-                        client.send("Target.getTargets").andThen(client)
+                    capturedBackend <- CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
+                        // Verify the backend is live (f is invoked with a working backend).
+                        CdpBackend.getTargets(backend).andThen(backend)
                     }
-                    // After initUnscoped + .map returns, f has completed but the client is NOT
+                    // After initUnscoped + .map returns, f has completed but the backend is NOT
                     // automatically closed; initUnscoped does not close on exit.
-                    // The naming is "unscoped": the caller owns cleanup.
-                    // Verify client is still live (unscoped means no auto-close).
-                    stillAlive <- Abort.run[BrowserConnectionException](capturedClient.send("Target.getTargets"))
-                    _          <- capturedClient.close(30.seconds) // manual cleanup
+                    stillAlive <- Abort.run[BrowserConnectionException](CdpBackend.getTargets(capturedBackend))
+                    _          <- capturedBackend.close(30.seconds) // manual cleanup
                 yield stillAlive match
                     case Result.Success(reply) =>
-                        // The client must still be alive (initUnscoped does not auto-close); a live send returns a non-empty wire reply.
-                        assert(reply.nonEmpty)
+                        // The client must still be alive (initUnscoped does not auto-close); landing in Result.Success
+                        // proves the live send completed without an Abort.
+                        succeed
                     case Result.Failure(err) =>
-                        fail(s"initUnscoped + .map closed the client unexpectedly: ${err.getMessage}")
+                        fail(s"initUnscoped + .map closed the backend unexpectedly: ${err.getMessage}")
                     case Result.Panic(ex) => fail(s"Panic: ${ex.getMessage}")
             }
         }.orFail("Unexpected BrowserConnectionException")
@@ -52,17 +52,13 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     "close() is idempotent - second call returns without exception" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
-                CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
                         // First close; should succeed.
-                        _ <- client.close(30.seconds)
+                        _ <- backend.close(30.seconds)
                         // Second close; must not throw, hang, or panic.
-                        _ <- client.close(30.seconds)
-                    yield
-                        // The leaf proves idempotency by reaching this point without exception; the
-                        // orFail wrapper catches any Abort[BrowserConnectionException] on the failure
-                        // path, so reaching here without failure is the meaningful contract.
-                        succeed("a second close on an already-closed client is idempotent: it does not throw, hang, or panic")
+                        _ <- backend.close(30.seconds)
+                    yield succeed
                 }
             }
         }.orFail("Unexpected exception on second close")
@@ -72,18 +68,25 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     // WS connection failure on init
     // ─────────────────────────────────────────────────────────────────────────
 
-    "initUnscoped with bad URL fails fast with BrowserConnectionException" in {
-        // initUnscoped waits for the WebSocket connect to resolve before returning the client (the
-        // `connectReady` gate), so an unreachable URL surfaces as Abort[BrowserConnectionException]
-        // from init itself rather than blocking the first send.
-        // 127.0.0.1:0 is OS-rejected immediately so no timeout is needed.
-        Abort.run[BrowserConnectionException] {
-            CdpClient.initUnscoped("ws://127.0.0.1:0/", Browser.LaunchConfig.default).map(_ => ())
+    "initUnscoped with bad URL fails fast with BrowserSetupException or BrowserConnectionException" in {
+        // initUnscoped waits for the WebSocket connect to resolve before returning the backend (the
+        // Q-002 probe gate), so an unreachable URL surfaces as Abort failure from init
+        // itself rather than blocking the first send. 127.0.0.1:0 is OS-rejected immediately.
+        // The failure is one of the two specific types this path can raise: a setup failure (connect
+        // rejected before any session) or a connection failure (BrowserConnectionLostException, a
+        // BrowserConnectionException, covers a close/timeout race). The broad BrowserReadException
+        // supertype is deliberately NOT accepted: it would let nearly any read-path failure pass.
+        Abort.run[BrowserReadException | BrowserSetupException] {
+            Scope.run(CdpBackend.initUnscoped("ws://127.0.0.1:0/", Browser.LaunchConfig.default).map(_ => ()))
         }.map {
+            case Result.Failure(_: BrowserSetupException) =>
+                succeed
             case Result.Failure(_: BrowserConnectionException) =>
-                ()
+                succeed
             case other =>
-                fail(s"Expected fast Abort.Failure(BrowserConnectionException) from initUnscoped, got $other")
+                fail(
+                    s"Expected fast Abort.Failure (BrowserSetupException or BrowserConnectionException) from initUnscoped on unreachable URL, got $other"
+                )
         }
     }
 
@@ -94,11 +97,11 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     "close(Duration.Zero) closes immediately and subsequent send raises ConnectionLost" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
-                CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     // close(Duration.Zero) hits the zero-duration short-circuit branch.
-                    client.close(Duration.Zero).andThen {
+                    backend.close(Duration.Zero).andThen {
                         // Behavioural pair: subsequent send must fail with ConnectionLost.
-                        Abort.run[BrowserConnectionException](client.send("Target.getTargets"))
+                        Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend))
                     }
                 }
             }
@@ -127,19 +130,17 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     "closeOrderly (close with grace) completes in-flight send before returning" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
-                CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
-                        createJson <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                        created = decodeCdpResult[CreateTargetResult](createJson)
-                        attachJson <- client.send("Target.attachToTarget", AttachParams(created.targetId, flatten = true))
-                        attached = decodeCdpResult[AttachResult](attachJson)
-                        session  = client.withSession(SessionId(attached.sessionId))
-                        _ <- session.sendUnit("Runtime.enable")
+                        created  <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                        attached <- CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true))
+                        session = backend.withSession(SessionId(attached.sessionId))
+                        _ <- session.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
 
                         // Slow in-flight send: 1-second setTimeout Promise + awaitPromise=true.
                         slowFiber <- Fiber.initUnscoped {
-                            session.send(
-                                "Runtime.evaluate",
+                            CdpBackend.runtimeEvaluate(
+                                session,
                                 EvalParams(
                                     expression = "new Promise((r) => setTimeout(r, 1000))",
                                     awaitPromise = true
@@ -151,14 +152,11 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                         _ <- Async.delay(50.millis)(Kyo.unit)
 
                         // close(5s) must wait for the 1-second send to drain.
-                        // Outer Async.timeout(10s) prevents a regression from hanging CI.
-                        timedClose <- timed(Async.timeout(10.seconds)(client.close(5.seconds)))
+                        timedClose <- timed(Async.timeout(10.seconds)(backend.close(5.seconds)))
                         (elapsed, _) = timedClose
                         fiberResult <- slowFiber.getResult
                     yield fiberResult match
                         case Result.Success(_) =>
-                            // 900ms floor accounts for Chrome jitter while still detecting a regression
-                            // where close returned without draining (~0 ms).
                             assert(
                                 elapsed >= 900.millis,
                                 s"close(5s) returned in $elapsed; expected >=900ms - drain did not wait"
@@ -183,24 +181,20 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     // closeNow with in-flight
     // ─────────────────────────────────────────────────────────────────────────
 
-    "closeNow while a slow in-flight send is pending surfaces ConnectionLost to the caller" in {
+    "closeNow while a slow in-flight send is pending surfaces ConnectionLost (or transport-closed ProtocolError) to the caller" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
-                CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     for
                         // Set up a session so we can issue a Runtime.evaluate with awaitPromise.
-                        createJson <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                        created = decodeCdpResult[CreateTargetResult](createJson)
-                        attachJson <- client.send("Target.attachToTarget", AttachParams(created.targetId, flatten = true))
-                        attached = decodeCdpResult[AttachResult](attachJson)
-                        session  = client.withSession(SessionId(attached.sessionId))
-                        _ <- session.sendUnit("Runtime.enable")
+                        created  <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                        attached <- CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true))
+                        session = backend.withSession(SessionId(attached.sessionId))
+                        _ <- session.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
                         // Launch the slow in-flight send: a Promise that resolves in 30 seconds.
-                        // awaitPromise: true means the CDP round-trip won't complete for ~30s,
-                        // guaranteeing the send is still in-flight when closeNow runs.
                         slowFiber <- Fiber.initUnscoped {
-                            session.send(
-                                "Runtime.evaluate",
+                            CdpBackend.runtimeEvaluate(
+                                session,
                                 EvalParams(
                                     expression = "new Promise((r) => setTimeout(r, 30000))",
                                     awaitPromise = true
@@ -208,17 +202,20 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                             )
                         }
                         // The slow send is guaranteed in-flight (30s timeout); call closeNow immediately.
-                        _           <- client.closeNow
+                        _           <- backend.closeNow
                         fiberResult <- slowFiber.getResult
                     yield fiberResult match
                         case Result.Failure(_: BrowserConnectionLostException) =>
-                            ()
+                            succeed
+                        case Result.Failure(e: BrowserProtocolErrorException)
+                            if e.error.contains("transport closed") || e.error.contains("endpoint closed") =>
+                            // JS: engine surfaces close as JsonRpcError("transport closed"); JVM: maps to Closed -> ConnectionLost.
+                            // Both are valid outcomes for a closeNow racing an in-flight send.
+                            succeed
                         case Result.Success(v) =>
-                            fail(s"Expected ConnectionLost but send succeeded with: $v")
-                        case Result.Panic(ex) =>
-                            fail(s"Expected ConnectionLost but got Panic: ${ex.getMessage}")
-                        case Result.Failure(other) =>
-                            fail(s"Expected BrowserConnectionLostException but got ${other.getClass.getName}: ${other.getMessage}")
+                            fail(s"Expected close-induced abort but send succeeded with: $v")
+                        case other =>
+                            fail(s"Expected ConnectionLost or transport-closed ProtocolError, got: $other")
                 }
             }
         }.orFail("Unexpected outer")
@@ -232,28 +229,27 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
-                    CdpClient.init(wsUrl, Browser.LaunchConfig.default).map { client =>
+                    CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
                             // Create two targets.
-                            t1Json <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                            t2Json <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                            t1 = decodeCdpResult[CreateTargetResult](t1Json)
-                            t2 = decodeCdpResult[CreateTargetResult](t2Json)
-                            a1Json <- client.send("Target.attachToTarget", AttachParams(t1.targetId, flatten = true))
-                            a2Json <- client.send("Target.attachToTarget", AttachParams(t2.targetId, flatten = true))
-                            a1       = decodeCdpResult[AttachResult](a1Json)
-                            a2       = decodeCdpResult[AttachResult](a2Json)
-                            sessionA = client.withSession(SessionId(a1.sessionId))
-                            sessionB = client.withSession(SessionId(a2.sessionId))
-                            _ <- sessionA.sendUnit("Runtime.enable")
-                            _ <- sessionB.sendUnit("Runtime.enable")
+                            t1 <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                            t2 <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                            a1 <- CdpBackend.attachToTarget(backend, AttachParams(t1.targetId, flatten = true))
+                            a2 <- CdpBackend.attachToTarget(backend, AttachParams(t2.targetId, flatten = true))
+                            sessionA = backend.withSession(SessionId(a1.sessionId))
+                            sessionB = backend.withSession(SessionId(a2.sessionId))
+                            _ <- sessionA.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
+                            _ <- sessionB.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
                             // Concurrent sends on both sessions via Async.zip.
-                            (rA, rB) <- Async.zip(
-                                sessionA.send("Runtime.evaluate", EvalParams("'result-A'")),
-                                sessionB.send("Runtime.evaluate", EvalParams("'result-B'"))
+                            // runtimeEvaluate returns the typed EvalResult; project the value to check routing.
+                            (envA, envB) <- Async.zip(
+                                CdpBackend.runtimeEvaluate(sessionA, EvalParams("'result-A'")),
+                                CdpBackend.runtimeEvaluate(sessionB, EvalParams("'result-B'"))
                             )
-                            _ <- client.send("Target.closeTarget", CloseTargetParams(t1.targetId))
-                            _ <- client.send("Target.closeTarget", CloseTargetParams(t2.targetId))
+                            rA <- CdpEvalDecoder.extractEvalValue(envA)
+                            rB <- CdpEvalDecoder.extractEvalValue(envB)
+                            _  <- CdpBackend.closeTarget(backend, CloseTargetParams(t1.targetId))
+                            _  <- CdpBackend.closeTarget(backend, CloseTargetParams(t2.targetId))
                         yield
                             assert(rA.contains("result-A"), s"Session A got wrong result: $rA")
                             assert(rB.contains("result-B"), s"Session B got wrong result: $rB")
@@ -271,27 +267,25 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
-                    CdpClient.init(wsUrl, Browser.LaunchConfig.default).map { client =>
+                    CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
                             // Create two targets.
-                            t1Json <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                            t2Json <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                            t1 = decodeCdpResult[CreateTargetResult](t1Json)
-                            t2 = decodeCdpResult[CreateTargetResult](t2Json)
-                            a1Json <- client.send("Target.attachToTarget", AttachParams(t1.targetId, flatten = true))
-                            a2Json <- client.send("Target.attachToTarget", AttachParams(t2.targetId, flatten = true))
-                            a1    = decodeCdpResult[AttachResult](a1Json)
-                            a2    = decodeCdpResult[AttachResult](a2Json)
-                            outer = client.withSession(SessionId(a1.sessionId))
+                            t1 <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                            t2 <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                            a1 <- CdpBackend.attachToTarget(backend, AttachParams(t1.targetId, flatten = true))
+                            a2 <- CdpBackend.attachToTarget(backend, AttachParams(t2.targetId, flatten = true))
+                            outer = backend.withSession(SessionId(a1.sessionId))
                             inner = outer.withSession(SessionId(a2.sessionId))
-                            _ <- outer.sendUnit("Runtime.enable")
-                            _ <- inner.sendUnit("Runtime.enable")
+                            _ <- outer.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
+                            _ <- inner.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
                             // inner.send should carry sessionId = a2.sessionId
-                            innerResult <- inner.send("Runtime.evaluate", EvalParams("'inner-session'"))
+                            innerEnv <- CdpBackend.runtimeEvaluate(inner, EvalParams("'inner-session'"))
                             // outer.send should carry sessionId = a1.sessionId
-                            outerResult <- outer.send("Runtime.evaluate", EvalParams("'outer-session'"))
-                            _           <- client.send("Target.closeTarget", CloseTargetParams(t1.targetId))
-                            _           <- client.send("Target.closeTarget", CloseTargetParams(t2.targetId))
+                            outerEnv    <- CdpBackend.runtimeEvaluate(outer, EvalParams("'outer-session'"))
+                            innerResult <- CdpEvalDecoder.extractEvalValue(innerEnv)
+                            outerResult <- CdpEvalDecoder.extractEvalValue(outerEnv)
+                            _           <- CdpBackend.closeTarget(backend, CloseTargetParams(t1.targetId))
+                            _           <- CdpBackend.closeTarget(backend, CloseTargetParams(t2.targetId))
                         yield
                             assert(inner.sessionId == Present(SessionId(a2.sessionId)), s"inner.sessionId mismatch: ${inner.sessionId}")
                             assert(outer.sessionId == Present(SessionId(a1.sessionId)), s"outer.sessionId mismatch: ${outer.sessionId}")
@@ -310,13 +304,13 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     "dialogDrainer fiber is done after closeNow" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
-                CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default).map { backend =>
                     // Capture reference to dialogDrainer fiber before closing.
-                    val drainer = client.dialogDrainer
+                    val drainer = backend.dialogDrainer
                     for
                         // Verify drainer is alive before close.
                         aliveBefore <- drainer.done
-                        _           <- client.closeNow
+                        _           <- backend.closeNow
                         // After closeNow, dialogDrainer must be interrupted/done.
                         // Poll briefly to allow fiber to settle (interrupt is async).
                         _          <- Async.delay(50.millis)(Kyo.unit)
@@ -329,10 +323,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
             }
         }.orFail("Unexpected")
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // rapid 20 dialogs, queue capacity 16
-    // ─────────────────────────────────────────────────────────────────────────
 
     // ─────────────────────────────────────────────────────────────────────────
     // Frame-context tracker
@@ -461,15 +451,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     }
 
     "isolated-world contexts (auxData.isDefault == false) do not pollute frameContexts" in {
-        // Strategy: emit two events in a known order on the wire, then synchronize on the SECOND.
-        //   1. Page.createIsolatedWorld for the root frame  ->  Runtime.executionContextCreated
-        //                                                       with auxData.isDefault == false.
-        //   2. Inject a same-origin iframe                  ->  Runtime.executionContextCreated
-        //                                                       with auxData.isDefault == true.
-        // CDP delivers events in wire order on a single WebSocket and the relay dispatches them
-        // sequentially, so by the time the iframe's entry appears in `frameContexts`, the prior
-        // isolated-world event has already been processed (and correctly dropped by the filter).
-        // This gives a deterministic synchronization point; no fixed delay required.
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException | BrowserAssertionException | BrowserScriptException] {
                 withBrowserOnLocalhost {
@@ -479,14 +460,12 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                             rootMaybe <- tab.rootFrameId.get
                             _ <- rootMaybe match
                                 case Present(rid) =>
-                                    tab.client.withSession(tab.sessionId).sendUnit(
+                                    tab.backend.withSession(tab.sessionId).sendUnit(
                                         "Page.createIsolatedWorld",
                                         CreateIsolatedWorldParams(rid.value, "kyo-iso-test")
                                     )
                                 case Absent => Kyo.unit
-                            // Inject a same-origin iframe. Its main world produces an
-                            // executionContextCreated event with isDefault == true; the
-                            // positive observable we synchronize on.
+                            // Inject a same-origin iframe.
                             _ <- Browser.eval(
                                 """(() => {
                                     const f = document.createElement('iframe');
@@ -510,13 +489,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 }
                             }
                         yield
-                            // The same-origin iframe's main world is now in the map. Because the
-                            // relay processes wire messages sequentially, the isolated-world event
-                            // (which arrived before the iframe event) has already been dispatched
-                            // and dropped by the isDefault filter. Therefore:
-                            //   - the map grew by EXACTLY 1 (the iframe), not 2;
-                            //   - the root frame's executionContextId is unchanged (an isolated
-                            //     world reuses the root frameId, so a leak would have replaced it).
                             assert(
                                 after.size == before.size + 1,
                                 s"frameContexts must grow by exactly one after iframe insertion " +
@@ -527,9 +499,7 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 case Present(rid) =>
                                     assert(
                                         after.get(rid) == before.get(rid),
-                                        s"root frame's executionContextId must be unchanged " +
-                                            s"(an isolated-world leak would have replaced it). " +
-                                            s"rid=$rid before=${before.get(rid)} after=${after.get(rid)}"
+                                        s"root frame's executionContextId must be unchanged. rid=$rid before=${before.get(rid)} after=${after.get(rid)}"
                                     )
                                 case Absent => fail("rootFrameId must be seeded by attachTab")
                             end match
@@ -567,8 +537,7 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                             )
                                     }
                                 }
-                                json <- tab.client.withSession(tab.sessionId).send("Page.getFrameTree")
-                                tree <- CdpBackend.decodeOrFail[GetFrameTreeResult](json, "Page.getFrameTree")
+                                tree <- CdpBackend.getFrameTree(tab.backend.withSession(tab.sessionId))
                             yield
                                 val rootId   = tree.frameTree.frame.id
                                 val children = tree.frameTree.childFrames.getOrElse(Seq.empty)
@@ -668,16 +637,11 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                         if m.size >= 2 then m
                                         else
                                             Abort.fail[BrowserAssertionException](
-                                                BrowserAssertionTimedOutException(
-                                                    "tab1 iframe",
-                                                    "size>=2",
-                                                    s"size=${m.size}"
-                                                )
+                                                BrowserAssertionTimedOutException("tab1 iframe", "size>=2", s"size=${m.size}")
                                             )
                                     }
                                 }
-                                // Open a second tab in the same connection. about:blank; it has its own
-                                // root frame and its own executionContextId (different from tab1's).
+                                // Open a second tab in the same connection.
                                 tabsCompared <- Browser.withNewTab {
                                     Browser.use { secondTab =>
                                         for
@@ -687,11 +651,7 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                                     if m.nonEmpty then m
                                                     else
                                                         Abort.fail[BrowserAssertionException](
-                                                            BrowserAssertionTimedOutException(
-                                                                "tab2 root ctx",
-                                                                "nonEmpty",
-                                                                "empty"
-                                                            )
+                                                            BrowserAssertionTimedOutException("tab2 root ctx", "nonEmpty", "empty")
                                                         )
                                                 }
                                             }
@@ -720,7 +680,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                                 firstStd.keySet.intersect(secondStd.keySet).isEmpty,
                                                 s"tabs must have disjoint frameIds. first=${firstStd.keySet} second=${secondStd.keySet}"
                                             )
-                                            // Verify tab1's iframe entry didn't leak into tab2.
                                             assert(
                                                 firstMap.size > secondMap.size,
                                                 s"tab1 has the iframe so its map should be larger than tab2. first=${firstMap.size} second=${secondMap.size}"
@@ -747,19 +706,13 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                 withBrowserOnLocalhost {
                     Browser.use { tab =>
                         for
-                            // No Local.let around evalJs => activeIFrameLocal == Absent => contextId
-                            // must be OMITTED from the wire-encoded `Runtime.evaluate` params.
-                            _           <- tab.client.lastEvaluateParams.set(Absent)
+                            _           <- tab.backend.lastEvaluateParams.set(Absent)
                             _           <- BrowserEval.evalJs("window.location.href")
-                            recordedOpt <- tab.client.lastEvaluateParams.get
+                            recordedOpt <- tab.backend.lastEvaluateParams.get
                         yield
                             val recorded = recordedOpt match
                                 case Present(value) => value
                                 case Absent         => fail("no Runtime.evaluate params recorded")
-                            // Wire-shape contract: when activeIFrameLocal is Absent, the encoded
-                            // `Runtime.evaluate` params must NOT carry a contextId field (Schema's
-                            // Option[Int] encoder elides None entirely, so the key is absent).
-                            // Decode the recorded params and assert the typed `contextId` is Absent.
                             val params = decode[EvalParams](recorded)
                             assert(
                                 params.contextId.isEmpty,
@@ -782,8 +735,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                 withBrowserOnLocalhost {
                     Browser.use { tab =>
                         for
-                            // Inject a same-origin iframe that loads `about:blank`. It inherits the parent origin so
-                            // `Runtime.evaluate` against its execution context works on Chromium.
                             _ <- Browser.eval(
                                 """(() => {
                                     const f = document.createElement('iframe');
@@ -793,7 +744,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                     return 'ok';
                                 })()"""
                             )
-                            // Wait for the executionContextCreated event to land in frameContexts.
                             ctxMap <- Retry[BrowserAssertionException](Schedule.fixed(50.millis).take(40)) {
                                 tab.frameContexts.get.map { m =>
                                     if m.size >= 2 then m
@@ -804,21 +754,18 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 }
                             }
                             rootMaybe <- tab.rootFrameId.get
-                            // Pick the iframe's frameId; anything in the map other than the root.
                             iframeEntry = ctxMap.find { case (fid, _) => Present(fid) != rootMaybe } match
                                 case Present(value) => value
                                 case Absent         => fail(s"no iframe entry: rootMaybe=$rootMaybe map=$ctxMap")
                             handle = IFrameHandle(iframeEntry._1, iframeEntry._2)
-                            // Inside the local scope, evalJs reads the iframe's contextId; window.location.href is
-                            // the iframe's document URL ("about:blank"), distinct from the parent's localhost URL.
-                            _ <- tab.client.lastEvaluateParams.set(Absent)
+                            _ <- tab.backend.lastEvaluateParams.set(Absent)
                             inFrameUrl <- Browser.activeIFrameLocal.let(Present(handle): Maybe[IFrameHandle]) {
                                 BrowserEval.evalJs("window.location.href")
                             }
-                            insideRecordedOpt  <- tab.client.lastEvaluateParams.get
-                            _                  <- tab.client.lastEvaluateParams.set(Absent)
+                            insideRecordedOpt  <- tab.backend.lastEvaluateParams.get
+                            _                  <- tab.backend.lastEvaluateParams.set(Absent)
                             outsideUrl         <- BrowserEval.evalJs("window.location.href")
-                            outsideRecordedOpt <- tab.client.lastEvaluateParams.get
+                            outsideRecordedOpt <- tab.backend.lastEvaluateParams.get
                         yield
                             assert(
                                 inFrameUrl == "about:blank",
@@ -828,9 +775,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 outsideUrl.contains("/json/version"),
                                 s"Expected top-frame url after exit to contain '/json/version' but was '$outsideUrl'"
                             )
-                            // Wire-shape contract: inside the let, the encoded `Runtime.evaluate`
-                            // params MUST carry contextId == iframe.executionContextId. Outside the
-                            // let, the contextId field MUST be omitted (Absent activeIFrameLocal).
                             val insideRecorded = insideRecordedOpt match
                                 case Present(value) => value
                                 case Absent         => fail("no inside Runtime.evaluate params recorded")
@@ -870,9 +814,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                 withBrowserOnLocalhost {
                     Browser.use { tab =>
                         for
-                            // Inject an iframe and stamp a marker element only inside it. The parent document does NOT
-                            // contain an element with this id. If Resolver does not honor activeIFrameLocal, the resolver
-                            // will fail to find the element when scoped to the iframe.
                             _ <- Browser.eval(
                                 """(() => {
                                     const f = document.createElement('iframe');
@@ -898,11 +839,7 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 case Present(value) => value
                                 case Absent         => fail("no iframe entry")
                             handle = IFrameHandle(iframeEntry._1, iframeEntry._2)
-                            // Outside the frame scope: the marker element is invisible to the resolver because it
-                            // lives in the iframe's document, not the parent document.
                             outsideRef <- Resolver.resolveOne(Browser.Selector.id("iframe-only-in-iframe"))
-                            // Inside the frame scope: Resolver evaluates against the iframe's contextId, so
-                            // `document` resolves to the iframe's document and the marker is found.
                             insideRef <- Browser.activeIFrameLocal.let(Present(handle): Maybe[IFrameHandle]) {
                                 Resolver.resolveOne(Browser.Selector.id("iframe-only-in-iframe"))
                             }
@@ -957,14 +894,11 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 case Present(value) => value
                                 case Absent         => fail("no iframe entry")
                             handle = IFrameHandle(iframeEntry._1, iframeEntry._2)
-                            // Outside the frame scope: no element matches the selector, so Actionability returns NotAttached.
                             outside <- Actionability.check(
                                 Browser.Selector.id("iframe-iframe-button"),
                                 requireFillable = false,
                                 requireEnabled = true
                             )
-                            // Inside the frame scope: Actionability evaluates against the iframe's context. The button
-                            // is connected and visible there, so the check passes.
                             inside <- Browser.activeIFrameLocal.let(Present(handle): Maybe[IFrameHandle]) {
                                 Actionability.check(
                                     Browser.Selector.id("iframe-iframe-button"),
@@ -997,9 +931,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                 withBrowserOnLocalhost {
                     Browser.use { tab =>
                         for
-                            // Synthesize a stale IFrameHandle whose executionContextId was never created on the page.
-                            // CDP will respond with the error "Cannot find context with specified id"; the iframe
-                            // translator must intercept and surface BrowserIFrameInvalidException, NOT BrowserProtocolErrorException.
                             rootMaybe <- tab.rootFrameId.get
                             staleFid = rootMaybe match
                                 case Present(value) => value
@@ -1054,11 +985,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 case Present(value) => value
                                 case Absent         => fail("no iframe entry")
                             handle = IFrameHandle(iframeEntry._1, iframeEntry._2)
-                            // Inside an active frame scope, evalJs targets the iframe; the inlined runtime-evaluate
-                            // path must NOT consult the local; it always evaluates against the top-frame default
-                            // context. We invoke the private helper via Browser.runOn (which strips Env[BrowserTab])
-                            // inside the let so the active scope is in flight when the evaluate would have
-                            // observed it had it been threaded.
                             (frameScopedUrl, escapeHatchUrl) <- Browser.activeIFrameLocal.let(
                                 Present(handle): Maybe[IFrameHandle]
                             ) {
@@ -1069,9 +995,9 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                     b <- Browser.runOn(tab) {
                                         Browser.use(t =>
                                             CdpBackend.runtimeEvaluate(
-                                                t.client.withSession(t.sessionId),
+                                                t.backend.withSession(t.sessionId),
                                                 EvalParams("window.location.href")
-                                            ).map(CdpEvalDecoder.parseAndExtractEvalValue)
+                                            ).map(CdpEvalDecoder.extractValueOrFail)
                                         )
                                     }
                                 yield (a, b)
@@ -1102,7 +1028,6 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                 withBrowserOnLocalhost {
                     Browser.use { tab =>
                         for
-                            // Two distinct iframes; we'll point outer at the first, inner at the second.
                             _ <- Browser.eval(
                                 """(() => {
                                     const a = document.createElement('iframe');
@@ -1128,14 +1053,10 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 }
                             }
                             rootMaybe <- tab.rootFrameId.get
-                            // Order is non-deterministic but the two iframes inject markers identifying themselves;
-                            // pick whichever ctxId resolves to the 'outer-frame' marker as the outer handle.
-                            // We probe each non-root entry to find the matching one.
                             nonRoot     = ctxMap.toMap.toList.filter { case (fid, _) => Present(fid) != rootMaybe }
                             _           = assert(nonRoot.size == 2, s"Expected 2 iframe entries, got ${nonRoot.size}")
                             outerHandle = IFrameHandle(nonRoot.head._1, nonRoot.head._2)
                             innerHandle = IFrameHandle(nonRoot(1)._1, nonRoot(1)._2)
-                            // Read the marker tag in each scope to verify Local.let round-trip.
                             outerBefore <- Browser.activeIFrameLocal.let(Present(outerHandle): Maybe[IFrameHandle]) {
                                 BrowserEval.evalJs("document.getElementById('iframe-tag').textContent")
                             }
@@ -1145,16 +1066,11 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
                                 }
                             }
                             outerAfter <- Browser.activeIFrameLocal.let(Present(outerHandle): Maybe[IFrameHandle]) {
-                                // After leaving the inner Local.let, the outer frame must be restored.
                                 Browser.activeIFrameLocal.let(Present(innerHandle): Maybe[IFrameHandle])(BrowserEval.evalJs("1"))
                                     .andThen(BrowserEval.evalJs("document.getElementById('iframe-tag').textContent"))
                             }
-                            // After leaving the outer Local.let entirely, the active frame is Absent; top-frame
-                            // evaluation; the parent document has no '#iframe-tag' element at all.
                             absentAfter <- BrowserEval.evalJs("(document.getElementById('iframe-tag') || {textContent: ''}).textContent")
                         yield
-                            // We don't know which of nonRoot is "outer" vs "inner" up-front; instead, assert that
-                            // outerBefore and outerAfter agree (round-trip), and innerInBody differs from outerBefore.
                             assert(
                                 outerBefore == outerAfter,
                                 s"Outer scope must be restored after the inner block exits. before=$outerBefore after=$outerAfter"
@@ -1180,23 +1096,9 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     }
 
     "rapid 20 alert() dialogs are all auto-dismissed without drops" in {
-        // This test fires 20 synchronous alert() calls via JS and counts the
-        // Page.javascriptDialogOpening events enqueued in the dialog drainer.
-        // The dialogQueue capacity is 16 - if the drainer cannot keep up the
-        // extra dialogs overflow. We assert all 20 are dismissed (no hang).
-        //
-        // Uses withBrowserOnLocalhost because data: URLs can behave differently.
-        // Each alert() is synchronous in the page context; they fire one at a time
-        // as Chrome awaits Page.handleJavaScriptDialog before resuming JS.
-        // Therefore the 20 dialogs are naturally serialised through the drainer.
         Scope.run {
             Abort.run[BrowserConnectionException | BrowserNavigationException] {
                 withBrowserOnLocalhost {
-                    // Fire 20 alert() calls in a loop. Because alert() is synchronous,
-                    // Chrome waits for Page.handleJavaScriptDialog between each one,
-                    // so the dialogQueue never holds more than 1 entry at a time.
-                    // The drainer dismisses them in order without drops.
-                    // We use window.__dialogCount to count dismissals.
                     Browser.eval("""
                         (function() {
                             var count = 0;
@@ -1215,38 +1117,30 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // awaitDrain uses a Fiber.Promise re-issued per 0↔1 in-flight transition instead of a 5 ms polling loop.
-    // The behavioural contract: once the last in-flight CDP request completes, awaitDrain wakes within
-    // microseconds, not on a 5 ms tick boundary. We exercise the wake path by issuing a long in-page
-    // Promise, letting it complete, then timing the awaitDrain call from after that point.
+    // awaitDrain uses a Fiber.Promise re-issued per 0->1 in-flight transition.
     // ─────────────────────────────────────────────────────────────────────────
 
-    "CdpClient.awaitDrain returns within microseconds of last in-flight drain (no 5ms spin)" in {
+    "CdpBackend.awaitDrain returns within microseconds of last in-flight drain (no 5ms spin)" in {
         Abort.run[BrowserConnectionException] {
             SharedChrome.init.map { wsUrl =>
                 Scope.run {
-                    CdpClient.init(wsUrl, Browser.LaunchConfig.default).map { client =>
+                    CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
-                            createJson <- client.send("Target.createTarget", CreateTargetParams("about:blank"))
-                            created = decodeCdpResult[CreateTargetResult](createJson)
-                            attachJson <- client.send("Target.attachToTarget", AttachParams(created.targetId, flatten = true))
-                            attached = decodeCdpResult[AttachResult](attachJson)
-                            session  = client.withSession(SessionId(attached.sessionId))
-                            _ <- session.sendUnit("Runtime.enable")
+                            created  <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank"))
+                            attached <- CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true))
+                            session = backend.withSession(SessionId(attached.sessionId))
+                            _ <- session.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams())
 
-                            // Issue an in-flight 100 ms Promise and wait for it to complete: at this point inFlight
-                            // is back to 0 and the drain promise has already been completed. The awaitDrain that
-                            // follows must see the AtomicInt at 0 and return immediately, NOT wait 5 ms before
-                            // re-checking.
-                            _ <- session.send(
-                                "Runtime.evaluate",
+                            // Issue an in-flight 100 ms Promise and wait for it to complete.
+                            _ <- CdpBackend.runtimeEvaluate(
+                                session,
                                 EvalParams(
                                     expression = "new Promise((r) => setTimeout(r, 100))",
                                     awaitPromise = true
                                 )
                             )
                             t0 <- Clock.nowMonotonic
-                            _  <- client.awaitDrain
+                            _  <- backend.awaitDrain
                             t1 <- Clock.nowMonotonic
                             elapsed = t1 - t0
                         yield assert(
@@ -1259,6 +1153,63 @@ class CdpClientLifecycleTest extends kyo.BrowserTest:
         }.orFail("Unexpected BrowserConnectionException")
     }
 
-end CdpClientLifecycleTest
+    // ─────────────────────────────────────────────────────────────────────────
+    // close() WS full-teardown invariant
+    // ─────────────────────────────────────────────────────────────────────────
+
+    "close(grace) returns only after dialogDrainer is fully stopped (not just interrupted)" in {
+        // This test verifies the CORRECT invariant: after close() returns, the
+        // dialogDrainer fiber is fully stopped (getResult is Done), not merely
+        // scheduled-for-interrupt but still running. A drainer that is only
+        // interrupted but not yet done would allow the next test's CdpBackend.init
+        // to race with the still-live drainer fiber consuming the old dialog queue.
+        val testLaunchCfg = Browser.LaunchConfig.default.copy(
+            requestTimeout = 30.seconds,
+            closeGrace = 100.millis
+        )
+        val testVersionResult = BrowserVersionResult(
+            protocolVersion = "0",
+            product = "Headless/0",
+            revision = "0",
+            userAgent = "Mozilla/5.0 (Headless)",
+            jsVersion = "0.0"
+        )
+        Scope.run {
+            for
+                (clientTransport, server) <- JsonRpcTransport.inMemory
+                versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
+                    "Browser.getVersion"
+                ) { (_, _) => testVersionResult }
+                serverCfg = JsonRpcHandler.Config(
+                    codec = JsonRpcEnvelope.lenientSchema,
+                    maxInFlight = Present(8),
+                    idStrategy = JsonRpcIdStrategy.SequentialInt
+                )
+                _       <- JsonRpcHandler.init(server, Seq(versionMethod), serverCfg)
+                backend <- CdpBackend.initUnscoped(clientTransport, testLaunchCfg)
+                drainer = backend.dialogDrainer
+                // Verify drainer is alive before close.
+                aliveBefore <- drainer.done
+                // close(grace): must return only after full teardown.
+                _ <- backend.close(50.millis)
+                // After close() returns, getResult must be available immediately.
+                // If the drainer were only interrupted-but-still-running, getResult
+                // would block (still running) rather than completing right away.
+                drainerResult <- drainer.getResult
+                doneAfter     <- drainer.done
+            yield
+                assert(!aliveBefore, s"dialogDrainer should be running before close, but done=$aliveBefore")
+                assert(doneAfter, s"dialogDrainer must be fully stopped after close() returns, but done=$doneAfter")
+                drainerResult match
+                    case Result.Failure(_: kyo.Interrupted) => succeed
+                    case Result.Panic(_: kyo.Interrupted)   => succeed
+                    case Result.Success(_)                  => succeed
+                    case other                              => fail(s"drainer not fully stopped: $other")
+                end match
+            end for
+        }
+    }
+
+end CdpBackendLifecycleTest
 
 final private case class CreateIsolatedWorldParams(frameId: String, worldName: String) derives Schema, CanEqual

@@ -113,7 +113,7 @@ abstract class BrowserTest extends BaseBrowserTest:
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
         cancelOnUnsupportedPlatform {
-            SharedChrome.init.map(url => Browser.run(url)(warmupGate(f)))
+            SharedChrome.withUrl(url => Browser.run(url)(warmupGate(f)))
         }
 
     /** Boots a tab on the localhost DevTools JSON page (cookies / localStorage tests need a real http://localhost origin). */
@@ -121,7 +121,7 @@ abstract class BrowserTest extends BaseBrowserTest:
         Frame
     ): A < (Async & Scope & Abort[BrowserReadException | BrowserSetupException] & S) =
         cancelOnUnsupportedPlatform {
-            SharedChrome.init.map { url =>
+            SharedChrome.withUrl { url =>
                 val port    = url.split(":")(2).split("/")(0)
                 val httpUrl = s"http://localhost:$port/json/version"
                 Browser.run(url)(warmupGate(Browser.goto(httpUrl).andThen(f)))
