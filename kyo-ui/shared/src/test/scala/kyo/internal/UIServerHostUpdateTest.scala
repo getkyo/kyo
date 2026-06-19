@@ -149,4 +149,76 @@ class UIServerHostUpdateTest extends kyo.test.Test[Any]:
         assert(pointer.distance == 1.0)
     }
 
+    // notNative: WS-behavior leaf; HttpWebSocket.connect is not available on Native.
+    "round-trip: server signal emission reaches client as HostUpdate; client HostPick runs server closure; setup fires once".notNative in {
+        for
+            serverSignal  <- Signal.initRef(0)
+            setupCounter  <- AtomicInt.init(0)
+            ready         <- Channel.initUnscoped[Unit](4)
+            done          <- Channel.initUnscoped[Unit](4)
+            capturedValue <- AtomicRef.init(Absent: Maybe[HostPayload])
+            // A local host bridge whose subscriptions body forks a signal observer (forked under
+            // the ambient Scope so subscriptions returns) and whose onPick writes the signal to 42
+            // then signals the done latch. The setup counter counts how many times subscriptions
+            // was called; the assertion requires exactly 1.
+            bridge = new UI.Ast.HostBridge:
+                private[kyo] def serverInit(path: Seq[String]): HostPayload < Sync =
+                    Sync.defer(HostPayload.Prop("n0", "value", HostValue.Num(0.0)))
+                private[kyo] def subscriptions(
+                    path: Seq[String],
+                    emit: HostPayload => Unit < Async
+                )(using Frame): Unit < (Async & Scope) =
+                    setupCounter.incrementAndGet.andThen {
+                        // Fork the observer under the ambient Scope; Signal.observe never terminates
+                        // so it must not block subscriptions from returning. The sentinel value (0)
+                        // signals that the observer is live; non-zero values emit a HostPayload.Prop.
+                        Fiber.init {
+                            serverSignal.observe { v =>
+                                if v != 0 then emit(HostPayload.Prop("n0", "value", HostValue.Num(v.toDouble)))
+                                else Abort.run[Closed](ready.put(())).unit
+                            }
+                        }.unit
+                    }
+                private[kyo] def onPick(path: Seq[String], nodeId: String, ptr: PointerData)(using Frame): Unit < Async =
+                    serverSignal.set(42).andThen(Abort.run[Closed](done.put(())).unit)
+            app = UI.div(UI.host("div").withServerBridge(bridge))
+            _ <- Scope.run {
+                HttpWebSocket.connect(
+                    (serverWs: HttpWebSocket) => UIServer.serveSession(serverWs, app),
+                    (clientWs: HttpWebSocket) =>
+                        for
+                            // Wait until the observer is live before setting the test value, so the
+                            // signal set(7) is guaranteed to be observed by the forked observer.
+                            _     <- ready.take
+                            _     <- serverSignal.set(7)
+                            frame <- clientWs.take()
+                            _ <- frame match
+                                case HttpWebSocket.Payload.Text(data) =>
+                                    Json.decode[HtmlOp](data) match
+                                        case Result.Success(HtmlOp.HostUpdate(_, payload)) =>
+                                            capturedValue.set(Present(payload))
+                                        case _ => Kyo.unit
+                                case _ => Kyo.unit
+                            pick = UIEvent.HostPick(Seq("0"), "node-0", pointer)
+                            _ <- clientWs.put(HttpWebSocket.Payload.Text(Json.encode[UIEvent](pick)))
+                            // Wait for the server's onPick closure to complete (serverSignal.set(42) +
+                            // done.put) before the client exits; without this the WS can tear down
+                            // before the server's closure body runs to completion.
+                            _ <- done.take
+                        yield ()
+                )
+            }
+            payload  <- capturedValue.get
+            sigFinal <- serverSignal.current
+            count    <- setupCounter.get
+        yield
+            assert(
+                payload == Present(HostPayload.Prop("n0", "value", HostValue.Num(7.0))),
+                s"expected HostUpdate payload Num(7.0), got: $payload"
+            )
+            assert(sigFinal == 42, s"expected serverSignal.current == 42 after HostPick, got: $sigFinal")
+            assert(count == 1, s"expected setup counter == 1 (subscriptions fires once), got: $count")
+        end for
+    }
+
 end UIServerHostUpdateTest
