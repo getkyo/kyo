@@ -867,9 +867,10 @@ final private[net] class PollerIoDriver private[posix] (
       *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds); under edge-triggered the fd is persistently
       *     armed and there is no survivor re-arm to submit.
       *   - Dispatches write-ready events to `dispatchWritable`.
-      *   - Dispatches Eof events (peer half-close): when Eof fires alongside Read, `dispatchRead` handles buffered bytes first (passing
-      *     `eofPending=true` so EAGAIN surfaces as Span.empty rather than a silent stop). When Eof fires without Read, the fd's read-promise
-      *     is completed directly with Span.empty (no bytes to drain first).
+      *   - Dispatches Eof events (peer half-close) through `dispatchRead` with `eofPending=true` whether or not Read fired alongside it: the recv
+      *     drains any buffered bytes first and surfaces Span.empty only once recv confirms the buffer is empty (n==0 / EAGAIN). Routing the eof-only
+      *     case through `dispatchRead` (rather than completing the promise directly) also drains a TLS handle's engine and records a missed edge in
+      *     `missedReads` when no read is pending, so a consumer that registers after the eof edge still surfaces EOF on its next read.
       *   - Dispatches error-ONLY events (no read/write/eof bit) to `dispatchError` so a peer reset surfaces immediately rather than being
       *     missed until a later op fails. When a read or write bit is also set, the normal dispatch runs and surfaces the error in-band.
       */
@@ -895,8 +896,13 @@ final private[net] class PollerIoDriver private[posix] (
                     if pendingAccepts.contains(fd) then dispatchAccept(fd)
                     else dispatchRead(fd, eofPending = eof, fromKernelEdge = true)
                 else if eof then
-                    // Eof without Read: no buffered bytes before the EOF marker (or already drained). Surface the half-close directly.
-                    dispatchEof(fd)
+                    // Eof edge with no co-reported Read bit. There may STILL be buffered bytes this edge did not signal as readable: on a real
+                    // socket the data-readiness and the peer half-close can surface in separate edges, and under load the eof edge can be drained
+                    // before the read edge. Route through dispatchRead with eofPending=true so any buffered bytes are recv'd and delivered first,
+                    // and Span.empty (EOF) is surfaced only once recv confirms the buffer is drained (n==0 / EAGAIN). Delivering EOF directly here
+                    // dropped buffered bytes that a separate read edge then recv'd into an orphaned dispatch (the halfCloseDrainsRemaining race).
+                    if pendingAccepts.contains(fd) then dispatchAccept(fd)
+                    else dispatchRead(fd, eofPending = true, fromKernelEdge = true)
                 end if
                 if write then dispatchWritable(fd)
                 // Error-ONLY event: no read/write/eof bit carried it, so no recv/send will observe the error. Fail the pending op(s).
@@ -1105,43 +1111,6 @@ final private[net] class PollerIoDriver private[posix] (
             )
         end if
     end dispatchReadPlain
-
-    /** Surface a peer half-close (Eof-without-Read) to the fd's pending read promise as an empty Span.
-      *
-      * Called from `drainReady` when `PollFlags.Eof` fires without `PollFlags.Read`, meaning the peer's TCP FIN arrived while the kernel
-      * receive buffer was already empty (no bytes to drain before delivering EOF). The read promise is completed with `Span.empty` to signal
-      * orderly half-close to the consumer (not a failure; the consumer decides whether to close the write side or continue writing).
-      *
-      * When the fd has no pending read promise (the consumer did not issue a read before the FIN arrived, or a cancel raced this event),
-      * the event is dropped silently: the next read the consumer issues will call recv and get 0 immediately, surfacing the EOF in-band.
-      */
-    private def dispatchEof(fd: Int)(using AllowUnsafe, Frame): Unit =
-        Maybe(pendingReads.remove(fd)) match
-            case Present(handle) =>
-                val promise = handle.pendingReadPromise
-                if isStaleId(handle.readFd, handle.id) then
-                    // Stale event: fd recycled. Drop it.
-                    promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale eof event fd=$fd"))))
-                    handle.pendingReadPromise = Absent
-                else if !handle.beginDispatch() then
-                    // Handle closed before dispatch acquired it. Drop it.
-                    promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"eof on closed handle fd=$fd"))))
-                    handle.pendingReadPromise = Absent
-                else
-                    handle.pendingReadPromise = Absent
-                    promise match
-                        case Present(p) =>
-                            // Surface the orderly half-close as Span.empty (not Closed); the consumer decides next steps.
-                            finishDispatch(fd, handle, p, Result.succeed(Span.empty[Byte]))
-                        case Absent =>
-                            discard(handle.endDispatch())
-                    end match
-                end if
-            case Absent =>
-                // No pending read: the consumer will see EOF on the next recv call (returns 0). Nothing to signal here.
-                ()
-        end match
-    end dispatchEof
 
     /** Return the per-handle recvStaging Buffer, lazily allocated on the first TLS read.
       *
