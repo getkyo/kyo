@@ -246,7 +246,19 @@ object UI:
       * resets when the client disconnects.
       */
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
-        UIServer.handlers(basePath)(ui)
+        runHandlers(basePath, PageHead("kyo-ui"))(ui)
+
+    /** Server-push with a configurable page head: like the 1-arg `runHandlers`, but the SSR page
+      * is built from `head` so a server-push app can declare a client island bundle through
+      * `head.moduleScript` (a `<script type="module" src="...">` linked into the page). This is
+      * what lets a server-push 3D host reach the browser: the island carries the Scala.js
+      * reconciler that mounts the host, and the page must link it. The 1-arg form delegates here
+      * with the default `PageHead("kyo-ui")`, so there is one implementation and no duplicated
+      * logic. The page GET stays pure SSR (no session, no fiber, no cookie); each WebSocket owns
+      * its own per-connection subscription tree.
+      */
+    def runHandlers(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+        UIServer.handlers(basePath, head)(ui)
 
     /** Read-only stream of the full rendered HTML. Emits whenever any signal changes. First emission is the initial render. Useful for
       * testing, SSR, export, or custom transports.

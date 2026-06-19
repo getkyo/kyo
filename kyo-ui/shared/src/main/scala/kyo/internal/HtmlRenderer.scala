@@ -32,8 +32,60 @@ private[kyo] object HtmlRenderer:
         val tag = if svgContext then "g" else "span"
         s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive>$innerHtml</$tag>"""
 
-    /** Wrap body HTML in a full page with inline JS client. */
-    def renderPage(title: String, body: String, css: String, basePath: String): String =
+    /** Injects the server-push host boot island into rendered HTML for the host element at
+      * `dataKyoPath`. Adds a `data-kyo-host` marker attribute to that element's opening tag (so the
+      * client island can scan `[data-kyo-host]`) and nests a `<script type="application/json"
+      * data-kyo-host-init>` carrying `initJson` (a `Json.encode[HostPayload]` boot payload) inside
+      * the element, immediately before its closing tag. The JSON body is escaped with `escScript` so
+      * a `</script>` substring cannot close the element early. The host element renders with no
+      * children, so the closing tag follows the opening tag's content directly.
+      *
+      * If no element with `data-kyo-path="<dataKyoPath>"` is found (or it is self-closed), the HTML
+      * is returned unchanged: a host with no rendered element receives no island rather than a
+      * malformed page.
+      */
+    private[kyo] def injectHostIsland(html: String, dataKyoPath: String, initJson: String): String =
+        val anchor    = s"""data-kyo-path="$dataKyoPath""""
+        val anchorPos = html.indexOf(anchor)
+        if anchorPos < 0 then html
+        else
+            // The opening tag ends at the first '>' at or after the anchor; the element's tag name is
+            // the token after the '<' that opens this element.
+            val tagOpen = html.lastIndexOf('<', anchorPos)
+            val tagEnd  = html.indexOf('>', anchorPos)
+            if tagOpen < 0 || tagEnd < 0 then html
+            else
+                val tagName  = html.substring(tagOpen + 1, anchorPos).trim.takeWhile(c => c != ' ' && c != '\t')
+                val close    = s"</$tagName>"
+                val closePos = html.indexOf(close, tagEnd)
+                if closePos < 0 then html
+                else
+                    val island =
+                        s"""<script type="application/json" data-kyo-host-init>${escScript(initJson)}</script>"""
+                    val withMarker =
+                        html.substring(0, tagEnd) + " data-kyo-host" + html.substring(tagEnd, closePos) +
+                            island + html.substring(closePos)
+                    withMarker
+                end if
+            end if
+        end if
+    end injectHostIsland
+
+    /** Wrap body HTML in a full page with inline JS client. The optional `moduleScript` links a
+      * client island bundle (a `<script type="module" src="...">`) after the inline server-push
+      * client, so a server-push app can ship a Scala.js island the inline client routes host
+      * updates into. `Absent` emits no module script (the default server-push page).
+      */
+    def renderPage(
+        title: String,
+        body: String,
+        css: String,
+        basePath: String,
+        moduleScript: Maybe[String] = Absent
+    ): String =
+        val islandScript = moduleScript match
+            case Present(src) => s"""\n<script type="module" src="${esc(src)}"></script>"""
+            case Absent       => ""
         s"""<!DOCTYPE html>
            |<html>
            |<head>
@@ -42,9 +94,10 @@ private[kyo] object HtmlRenderer:
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(jsStr(basePath))}</script>
+           |<script>${clientJs(jsStr(basePath))}</script>$islandScript
            |</body>
            |</html>""".stripMargin
+    end renderPage
 
     /** Wrap body HTML in a complete static HTML document with a configurable head (for SSG/SSR).
       *
@@ -715,8 +768,17 @@ private[kyo] object HtmlRenderer:
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
            |    document.head.appendChild(s);
+           |  }else if(op.HostUpdate){
+           |    var p=op.HostUpdate.path.join(".");
+           |    var rx=window.__kyoHostChannels&&window.__kyoHostChannels[p];
+           |    if(rx)rx(op.HostUpdate.payload);
            |  }
            |};
+           |// The island registers a receiver per host path here; a HostUpdate for an unregistered
+           |// path is a silent no-op (rx is undefined). The island also calls window.__kyoPostPick to
+           |// send a HostPick back over this same WS.
+           |window.__kyoHostChannels=window.__kyoHostChannels||{};
+           |window.__kyoPostPick=function(path,nodeId,pointer){post({HostPick:{path:path,nodeId:nodeId,pointer:pointer}});};
            |function fp(el){
            |  while(el&&el!==document.body){
            |    if(el.hasAttribute("data-kyo-path"))return el;

@@ -113,59 +113,218 @@ object ThreeMount:
         camera: Three.Ast.Camera,
         frames: ThreeFrames = ThreeFrames.Raf
     )(using Frame): UI.Ast.Host =
-        UI.host("canvas") { canvas =>
-            // The host hands a live dom.Element; cast to js.Dynamic exactly as resolveCanvas
-            // does, then run the runMount pipeline minus resolveCanvas on it, under the ambient
-            // page mount Scope. The pipeline's Abort[ThreeException] is discharged to a Log.error
-            // before the effect reaches the kyo-ui seam, so the seam stays Async & Scope (the
-            // kyo-ui mount callback type is dom.Element => Unit < (Async & Scope)).
-            val canvasDyn = canvas.asInstanceOf[js.Dynamic]
-            val pipeline: Unit < (Async & Scope & Abort[ThreeException]) =
-                for
-                    renderer    <- ThreeMount.makeRenderer(canvasDyn)
-                    mountResult <- Reconciler.mount(scene)
-                    (rootLive, mounted) = mountResult
-                    cam <- ThreeFacadeOps.makeCamera(camera)
-                    _ <- Sync.Unsafe.defer {
-                        // Size the renderer and camera to the actual canvas layout dimensions so the
-                        // projection aspect matches the non-square canvas kyo-ui lays out. clientWidth
-                        // and clientHeight reflect CSS-pixel dimensions after layout; fall back to the
-                        // canvas width/height attributes if the element is not yet laid out (both are
-                        // zero only in headless/test contexts where sizing is not required).
-                        // updateStyle=false leaves the element CSS untouched: kyo-ui owns canvas styling.
-                        // The renderer is sized once at mount and is not re-aspected on later window resizes.
-                        val cw = canvasDyn.clientWidth.asInstanceOf[Double]
-                        val ch = canvasDyn.clientHeight.asInstanceOf[Double]
-                        val w  = if cw > 0 then cw else canvasDyn.width.asInstanceOf[Double]
-                        val h  = if ch > 0 then ch else canvasDyn.height.asInstanceOf[Double]
-                        if w > 0 && h > 0 then
-                            val _ = renderer.setSize(w, h, false)
-                            cam.aspect = w / h
-                            val _ = cam.updateProjectionMatrix()
-                        end if
+        // The server bridge carries the scene's server-side bindings so the server-push runner can
+        // observe the host's signals and route picks. The client DomHostMount closure (below) is
+        // unchanged in shape; it wires the GL pipeline on the client under UI.runMount AND, under
+        // UI.runHandlers, observes the per-slot client mirror the island channel feeds.
+        val host = UI.host("canvas") { canvas =>
+            hostMountPipeline(scene, camera, frames, canvas)
+        }
+        host.withServerBridge(ThreeMount.serverBridge(scene, camera))
+    end embed
+
+    private def hostMountPipeline(
+        scene: Three,
+        camera: Three.Ast.Camera,
+        frames: ThreeFrames,
+        canvas: org.scalajs.dom.Element
+    )(using Frame): Unit < (Async & Scope) =
+        // The host hands a live dom.Element; cast to js.Dynamic exactly as resolveCanvas
+        // does, then run the runMount pipeline minus resolveCanvas on it, under the ambient
+        // page mount Scope. The pipeline's Abort[ThreeException] is discharged to a Log.error
+        // before the effect reaches the kyo-ui seam, so the seam stays Async & Scope (the
+        // kyo-ui mount callback type is dom.Element => Unit < (Async & Scope)).
+        val canvasDyn = canvas.asInstanceOf[js.Dynamic]
+        val pipeline: Unit < (Async & Scope & Abort[ThreeException]) =
+            for
+                renderer    <- ThreeMount.makeRenderer(canvasDyn)
+                mountResult <- Reconciler.mount(scene)
+                (rootLive, mounted) = mountResult
+                cam <- ThreeFacadeOps.makeCamera(camera)
+                _ <- Sync.Unsafe.defer {
+                    // Size the renderer and camera to the actual canvas layout dimensions so the
+                    // projection aspect matches the non-square canvas kyo-ui lays out. clientWidth
+                    // and clientHeight reflect CSS-pixel dimensions after layout; fall back to the
+                    // canvas width/height attributes if the element is not yet laid out (both are
+                    // zero only in headless/test contexts where sizing is not required).
+                    // updateStyle=false leaves the element CSS untouched: kyo-ui owns canvas styling.
+                    // The renderer is sized once at mount and is not re-aspected on later window resizes.
+                    val cw = canvasDyn.clientWidth.asInstanceOf[Double]
+                    val ch = canvasDyn.clientHeight.asInstanceOf[Double]
+                    val w  = if cw > 0 then cw else canvasDyn.width.asInstanceOf[Double]
+                    val h  = if ch > 0 then ch else canvasDyn.height.asInstanceOf[Double]
+                    if w > 0 && h > 0 then
+                        val _ = renderer.setSize(w, h, false)
+                        cam.aspect = w / h
+                        val _ = cam.updateProjectionMatrix()
+                    end if
+                }
+                _ <- ThreeMount.subscribeRegions(mounted)
+                _ <- ThreeMount.subscribeReactiveRegions(mounted)
+                _ <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
+                _ <- Fiber.init {
+                    Abort.run[ThreeException](ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames)).map {
+                        case Result.Success(_) => (): Unit < Sync
+                        case Result.Failure(e) => Log.error(s"Three.embed frame loop failed: ${e.getMessage}")
+                        case Result.Panic(e) =>
+                            if e.isInstanceOf[Interrupted] then (): Unit < Sync
+                            else Log.error("Three.embed frame loop panicked", e)
                     }
-                    _ <- ThreeMount.subscribeRegions(mounted)
-                    _ <- ThreeMount.subscribeReactiveRegions(mounted)
-                    _ <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
-                    _ <- Fiber.init {
-                        Abort.run[ThreeException](ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames)).map {
-                            case Result.Success(_) => (): Unit < Sync
-                            case Result.Failure(e) => Log.error(s"Three.embed frame loop failed: ${e.getMessage}")
-                            case Result.Panic(e) =>
-                                if e.isInstanceOf[Interrupted] then (): Unit < Sync
-                                else Log.error("Three.embed frame loop panicked", e)
-                        }
-                    }.unit
-                yield ()
-            Abort.run[ThreeException](pipeline).map {
-                case Result.Success(_) => (): Unit < Sync
-                case Result.Failure(e) => Log.error(s"Three.embed mount failed: ${e.getMessage}")
-                case Result.Panic(e) =>
-                    if e.isInstanceOf[Interrupted] then (): Unit < Sync
-                    else Log.error("Three.embed mount panicked", e)
+                }.unit
+            yield ()
+        Abort.run[ThreeException](pipeline).map {
+            case Result.Success(_) => (): Unit < Sync
+            case Result.Failure(e) => Log.error(s"Three.embed mount failed: ${e.getMessage}")
+            case Result.Panic(e) =>
+                if e.isInstanceOf[Interrupted] then (): Unit < Sync
+                else Log.error("Three.embed mount panicked", e)
+        }
+    end hostMountPipeline
+
+    /** Reads the inline boot init for a host element: parses the nested
+      * `<script type="application/json" data-kyo-host-init>` data island the SSR page emitted (a
+      * `Json`-encoded [[kyo.internal.HostPayload]] boot payload) and reconstitutes the client scene
+      * with one mirror `SignalRef` per prop slot, plus the camera and frame mode. A host with no init
+      * island reconstitutes an empty scene, so a malformed page mounts nothing rather than throwing.
+      */
+    private[kyo] def readHostInit(el: org.scalajs.dom.Element)(using Frame): kyo.internal.HostInit < Sync =
+        // Unsafe: a one-shot DOM read of the nested init script's text content at mount.
+        Sync.Unsafe.defer {
+            val script = Maybe(el.querySelector("[data-kyo-host-init]"))
+            script.map(_.textContent).getOrElse("")
+        }.map { json =>
+            val payload =
+                if json.isEmpty then
+                    kyo.internal.HostPayload.Structural(
+                        kyo.internal.StructuralOp.Insert(ThreeBridge.rootId, 0, kyo.internal.SceneDescriptor("scene", Seq.empty, Seq.empty))
+                    )
+                else
+                    Json.decode[kyo.internal.HostPayload](json) match
+                        case Result.Success(p) => p
+                        case _ => kyo.internal.HostPayload.Structural(
+                                kyo.internal.StructuralOp.Insert(
+                                    ThreeBridge.rootId,
+                                    0,
+                                    kyo.internal.SceneDescriptor("scene", Seq.empty, Seq.empty)
+                                )
+                            )
+            ThreeBridge.reconstitute(payload).map { case (scene, _) =>
+                kyo.internal.HostInit(scene, Three.Camera.perspective(), ThreeFrames.Raf)
             }
         }
-    end embed
+    end readHostInit
+
+    /** The host's path segments, read from its `data-kyo-path` attribute (the same scheme the inline
+      * clientJs routes a HostUpdate by). An empty attribute is the root path.
+      */
+    private[kyo] def hostPath(el: org.scalajs.dom.Element): Seq[String] =
+        val attr = Maybe(el.getAttribute("data-kyo-path")).getOrElse("")
+        if attr.isEmpty then Seq.empty else attr.split('.').toSeq
+
+    /** Registers the per-path receiver the inline clientJs routes a HostUpdate into:
+      * `window.__kyoHostChannels[path] = rx`, where `rx(payload)` decodes the JS payload to a
+      * [[kyo.internal.HostPayload]] and applies it to the channel synchronously (one mirror write per
+      * Prop). Idempotent per path: a re-register overwrites the same key (the mount runs once per host,
+      * so this is the single registration).
+      */
+    private def registerChannelReceiver(
+        host: org.scalajs.dom.Element,
+        path: Seq[String],
+        channel: HostChannel
+    )(using Frame): Unit =
+        // Unsafe: a JS-callback bridge from the WS onmessage handler into the channel. evalOrThrow runs
+        // the channel apply synchronously, the same Sync.Unsafe convention as the pointer listeners.
+        import AllowUnsafe.embrace.danger
+        val rx: js.Function1[js.Any, Unit] = (payload: js.Any) =>
+            val json = js.JSON.stringify(payload)
+            Json.decode[kyo.internal.HostPayload](json) match
+                case Result.Success(p) => Sync.Unsafe.evalOrThrow(channel.apply(p))
+                case _                 => ()
+        val channels = window_kyoHostChannels()
+        channels.update(path.mkString("."), rx)
+    end registerChannelReceiver
+
+    /** Drops the per-path receiver on scope close so a closed page leaves no stale entry. */
+    private def unregisterChannelReceiver(
+        host: org.scalajs.dom.Element,
+        path: Seq[String]
+    )(using Frame): Unit =
+        // Unsafe: deletes the window.__kyoHostChannels entry for this host path on teardown.
+        import AllowUnsafe.embrace.danger
+        val channels = window_kyoHostChannels()
+        discard(channels.remove(path.mkString(".")))
+    end unregisterChannelReceiver
+
+    // The window.__kyoHostChannels registry the inline clientJs initializes (a plain JS object the WS
+    // onmessage handler reads to route a HostUpdate). Read here as a js.Dictionary so update/remove
+    // by key are the Map-like Unit-returning ops, matching the inline clientJs's object access.
+    private def window_kyoHostChannels()(using AllowUnsafe): js.Dictionary[js.Any] =
+        // Unsafe: reads/initializes the shared window registry the inline clientJs owns.
+        val w = dom.window.asInstanceOf[js.Dynamic]
+        if js.isUndefined(w.__kyoHostChannels) then w.__kyoHostChannels = js.Dynamic.literal()
+        w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]]
+    end window_kyoHostChannels
+
+    /** Wires the client raycast back-channel: registers a capture-phase pointerdown listener on the
+      * host that posts a `HostPick` over the WS (via `window.__kyoPostPick`) instead of running a
+      * client onClick (the reconstituted client scene carries no closures; the server owns them under
+      * server-push). The pick names the host-root node and carries the pointer NDC; the server's
+      * `onPick` resolves the closure. The listener is removed on scope close.
+      */
+    private def wirePickBackChannel(
+        host: org.scalajs.dom.Element,
+        path: Seq[String],
+        channel: HostChannel
+    )(using Frame): Unit < (Async & Scope) =
+        val handler: js.Function1[dom.PointerEvent, Unit] = (evt: dom.PointerEvent) =>
+            // Unsafe: a JS pointer-event callback posting a typed HostPick back over the WS.
+            import AllowUnsafe.embrace.danger
+            val hostDyn = host.asInstanceOf[js.Dynamic]
+            val (ndcX, ndcY) =
+                if js.isUndefined(hostDyn.getBoundingClientRect) then (0.0, 0.0)
+                else ThreeMount.toNdc(hostDyn, evt)
+            val w = dom.window.asInstanceOf[js.Dynamic]
+            if !js.isUndefined(w.__kyoPostPick) then
+                val pathArr = js.Array(path*)
+                val pointer = js.Dynamic.literal(
+                    pointX = 0.0,
+                    pointY = 0.0,
+                    pointZ = 0.0,
+                    distance = 0.0,
+                    ndcX = ndcX,
+                    ndcY = ndcY
+                )
+                discard(w.__kyoPostPick(pathArr, ThreeBridge.rootId, pointer))
+            end if
+        for
+            _ <- Sync.Unsafe.defer(host.addEventListener("pointerdown", handler, true))
+            _ <- Scope.ensure(Sync.Unsafe.defer(host.removeEventListener("pointerdown", handler, true)))
+        yield ()
+        end for
+    end wirePickBackChannel
+
+    /** The server-side [[UI.Ast.HostBridge]] a `Three.embed` host carries so the server-push runner can
+      * boot, observe, and route picks for the scene. `serverInit` flattens the scene to the inline
+      * boot payload; `subscriptions` observes each server-owned reactive prop and emits a
+      * `HostPayload.Prop` on each emission; `onPick` runs the hit node's server-side `onClick`
+      * closure. The closure stays server-side; only the typed payload and pick event cross the wire.
+      */
+    private[kyo] def serverBridge(scene: Three, camera: Three.Ast.Camera)(using Frame): UI.Ast.HostBridge =
+        new UI.Ast.HostBridge:
+            def serverInit(path: Seq[String]): kyo.internal.HostPayload < Sync =
+                ThreeBridge.flattenInit(scene)
+            def subscriptions(
+                path: Seq[String],
+                emit: kyo.internal.HostPayload => Unit < Async
+            )(using Frame): Unit < (Async & Scope) =
+                ThreeBridge.observeProps(scene, emit)
+            def onPick(
+                path: Seq[String],
+                nodeId: String,
+                pointer: kyo.internal.PointerData
+            )(using Frame): Unit < Async =
+                ThreeBridge.runPick(scene, nodeId, pointer)
+    end serverBridge
 
     /** Resolves the `<canvas>` at `selector`; `CanvasNotFound` when no element matches. */
     def resolveCanvas(selector: String)(using Frame): js.Dynamic < (Sync & Abort[ThreeException]) =
@@ -669,5 +828,48 @@ object ThreeMount:
 
         buf
     end extractBoundRefs
+
+    /** Builds the per-host client channel: one mirror `SignalRef` per bound prop slot plus a
+      * structural inbox. The client reconciler observes these mirrors (the same forkBoundRef /
+      * subscribeReactiveRegions path it uses for a local signal), so an inbound HostUpdate that
+      * writes a mirror drives exactly one targeted patchProp or one keyed splice. Holds for the page
+      * lifetime under the ambient Scope: the mount runs once, no re-fire, and server pushes flow
+      * through this channel rather than a re-mount.
+      */
+    private[kyo] def islandMount(
+        host: org.scalajs.dom.Element,
+        path: Seq[String],
+        init: kyo.internal.HostInit
+    )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
+        for
+            channel <- HostChannel.init(init)
+            // Register the per-path receiver the inline clientJs routes a HostUpdate into. Unsafe:
+            // a JS-callback bridge from the WS onmessage handler into the channel; evalOrThrow runs
+            // the apply synchronously (the same Sync.Unsafe convention as the pointer listeners).
+            _ <- Sync.Unsafe.defer(registerChannelReceiver(host, path, channel))
+            _ <- Scope.ensure(Sync.Unsafe.defer(unregisterChannelReceiver(host, path)))
+            // Run the GL pipeline observing the channel's mirror signals (init seeded the scene).
+            _ <- hostMountPipeline(init.scene, init.camera, init.frames, host)
+            // Wire the client raycast to post a HostPick back over the WS instead of running onClick
+            // locally (the server owns the closure under server-push).
+            _ <- wirePickBackChannel(host, path, channel)
+        yield ()
+    end islandMount
+
+    /** Applies one inbound HostUpdate to the channel: a Prop writes the matching slot's mirror
+      * SignalRef (the reconciler's forkBoundRef then drives one patchProp); a Structural writes the
+      * structural inbox (the keyed reconciler then splices). A payload for a slot/node the channel
+      * does not know is a silent no-op.
+      */
+    private[kyo] def applyHostUpdate(
+        channel: HostChannel,
+        payload: kyo.internal.HostPayload
+    )(using Frame): Unit < (Async & Scope) =
+        payload match
+            case kyo.internal.HostPayload.Prop(nodeId, slot, value) =>
+                channel.writeProp(nodeId, slot, value)
+            case kyo.internal.HostPayload.Structural(op) =>
+                channel.writeStructural(op)
+    end applyHostUpdate
 
 end ThreeMount

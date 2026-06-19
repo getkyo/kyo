@@ -7,23 +7,48 @@ private[kyo] object UIServer:
     private def normalizePath(basePath: String): String =
         if basePath.endsWith("/") then basePath.dropRight(1) else basePath
 
-    def handlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+    def handlers(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
         val base = normalizePath(basePath)
         Sync.defer(Seq(
-            getPage(base, basePath, Sync.defer(ui)),
+            getPage(base, basePath, head, Sync.defer(ui)),
             wsRoute(base, Sync.defer(ui))
         ))
     end handlers
 
-    private def getPage(base: String, pagePath: String, ui: => UI < Async)(using Frame): HttpHandler[?, ?, ?] =
+    private def getPage(base: String, pagePath: String, head: UI.PageHead, ui: => UI < Async)(using
+        Frame
+    ): HttpHandler[?, ?, ?] =
         HttpRoute.getText(pagePath).handler { _ =>
             for
                 uiTree <- ui
                 html   <- HtmlRenderer.render(uiTree, Seq.empty)
-                page = HtmlRenderer.renderPage("kyo-ui", html, "", base)
+                // Inject each host's boot init payload as a nested
+                // <script type="application/json" data-kyo-host-init> island plus a data-kyo-host
+                // marker on the host element, keyed by data-kyo-path, so the client island can scan
+                // [data-kyo-host], read its init island, and mount the initial scene with no WS
+                // round-trip. Hosts with no HostBridge are left untouched (a bare host with no
+                // external renderer needs no island).
+                hosted <- injectHostInit(uiTree, html)
+                page = HtmlRenderer.renderPage(head.title, hosted, head.css, base, head.moduleScript)
             yield HttpResponse.ok(page)
                 .addHeader("Content-Type", "text/html; charset=utf-8")
         }
+
+    // Walks the host bridges in the tree and injects, for each, a data-kyo-host marker attribute and
+    // a nested <script type="application/json" data-kyo-host-init> island carrying that host's boot
+    // payload (Json.encode[HostPayload] of bridge.serverInit), into the rendered host element at the
+    // matching data-kyo-path. This is the server-push-only init-island emission; the shared
+    // renderTo host arm stays a plain cross-platform <canvas> for the SPA/SSG paths.
+    private def injectHostInit(uiTree: UI, html: String)(using Frame): String < Sync =
+        val hosts = ReactiveUI.hostBridges(uiTree)
+        Kyo.foldLeft(hosts)(html) { case (acc, (path, bridge)) =>
+            bridge.serverInit(path).map { init =>
+                val json    = Json.encode[HostPayload](init)
+                val pathStr = path.mkString(".")
+                HtmlRenderer.injectHostIsland(acc, pathStr, json)
+            }
+        }
+    end injectHostInit
 
     private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(using Frame): Unit < (Async & Abort[Closed]) =
         Scope.run {
