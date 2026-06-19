@@ -1489,7 +1489,11 @@ final private[net] class PosixTransport private[posix] (
         // first flight. Route it through the handle carry-over rather than issuing a second, racing recv; once it is consumed (upgradeActive cleared)
         // later reads fall to the normal recvNow path. See PosixHandle.upgradeActive and IoUringDriver.complete.
         if handle.upgradeActive then driveUpgradeRead(handle, engine, cont, onFailed, onPanic, isReaped)
-        else recvNowAndFeed(handle, engine, cont, onFailed, onPanic, isReaped)
+        else if handle.driver.inlineRecvSafe then recvNowAndFeed(handle, engine, cont, onFailed, onPanic, isReaped)
+        else
+            // io_uring: the synchronous recvNow probe is unsafe here (a direct recv(2) races kernel-owned io_uring recvs on the same fd, corrupting a
+            // handshake record under load, see IoDriver.inlineRecvSafe). Read the next ciphertext flight through io_uring's recv (awaitRead) only.
+            awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
     end recvAndFeed
 
     /** Feed `arr` (ciphertext read off the socket) into the handshake engine on the engine FIFO, then continue the handshake. Shared by the

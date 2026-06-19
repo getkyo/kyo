@@ -771,6 +771,10 @@ final private[net] class IoUringDriver private[posix] (
         found
     end hasInFlightRead
 
+    // io_uring reads are kernel-owned recv SQEs, so the TLS handshake must NOT mix a direct recv(2) probe with them on the same fd (the two race the
+    // socket stream into handle.readBuffer under load, fabricating a corrupt handshake record). The handshake reads exclusively through awaitRead.
+    override def inlineRecvSafe: Boolean = false
+
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Route the engine free through the engine queue so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before the close path can fire so freeResources sees the sink whether the close runs now or is

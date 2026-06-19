@@ -92,6 +92,15 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def hasInFlightRead(handle: Handle)(using AllowUnsafe): Boolean = false
 
+    /** Whether the TLS handshake may use the synchronous `recvNow` probe (a direct `recv(2)`) to read ciphertext off the socket. The readiness
+      * drivers (epoll/kqueue, JS Node) read synchronously and hold no kernel-owned recv, so the probe is safe and returns true (the default). The
+      * io_uring completion driver overrides this to false: its `awaitRead` submits a recv SQE, so a connection's reads are kernel-owned, and mixing
+      * a direct `recv(2)` with io_uring recvs on the same fd races the socket stream into the same `readBuffer` under load, corrupting a handshake
+      * record (a fabricated record the peer never sent) and failing the TLS handshake. On io_uring the handshake therefore reads exclusively through
+      * `awaitRead`.
+      */
+    def inlineRecvSafe: Boolean = true
+
     /** Close the handle (fd, socket, channel). Idempotent. Cleans up any pending operations. */
     def closeHandle(handle: Handle)(using AllowUnsafe, Frame): Unit
 
