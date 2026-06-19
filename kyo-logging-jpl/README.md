@@ -2,7 +2,7 @@
 
 A `Log` backend that routes kyo-core's `Log` effect through `java.lang.System.Logger`, the JDK 9+ Java Platform Logging API (JPL). JPL is a service-loader interface, so the actual sink is whatever the JVM resolves at runtime: the built-in `java.util.logging` (JUL) implementation, Log4j via its JPL bridge, SLF4J via `slf4j-jdk-platform-logging`, or any other JPL-compatible binding. The typical first call is `Log.let(JavaLog("kyo.app")) { ... }`: wire a named JPL logger as the active `Log` for a scope, then call the ordinary `Log.info` / `Log.debug` / etc. surface from kyo-core inside that scope.
 
-This module's API surface is intentionally tiny: one entry-point object with two factories. Everything beyond constructing the backend lives in kyo-core's `Log` and in the JDK's logger configuration. Level mapping is decided once at construction by probing `Logger.isLoggable` for each JPL level, and call-site frames are prepended to each message so `[file:line]` shows up in the formatter output. JVM-only: `System.Logger` is a JDK interface with no JS or Native analog.
+This module's API surface is intentionally tiny: one entry-point object with two factories. Everything beyond constructing the backend lives in kyo-core's `Log` and in the JDK's logger configuration. The level gate is evaluated live on each call by probing `Logger.isLoggable` for each JPL level, and call-site frames are prepended to each message so `[file:line]` shows up in the formatter output. JVM-only: `System.Logger` is a JDK interface with no JS or Native analog.
 
 ```scala
 import kyo.*
@@ -58,7 +58,7 @@ Log.let(log) {
 
 ## How log calls reach the JDK
 
-Inside a `Log.let(JavaLog(...))` scope, every `Log.trace` / `Log.debug` / `Log.info` / `Log.warn` / `Log.error` call from kyo-core delegates to this backend, which decorates the message and dispatches to `logger.log(level, msg, throwable?)` on the underlying `System.Logger`. There are three behaviors worth knowing before the output surprises you.
+Inside a `Log.let(JavaLog(...))` scope, every `Log.trace` / `Log.debug` / `Log.info` / `Log.warn` / `Log.error` call from kyo-core delegates to this backend, which decorates the message and dispatches to `logger.log(level, msg, throwable?)` on the underlying `System.Logger`. There are four behaviors worth knowing before the output surprises you.
 
 ### Frame prefix
 
@@ -90,12 +90,12 @@ Kyo's levels map one-to-one onto JPL's:
 
 `kyo.Log.Level.silent` does not correspond to JPL's `Level.OFF`; instead, it is reported when none of `TRACE` / `DEBUG` / `INFO` / `WARNING` / `ERROR` is loggable. `isLoggable(OFF)` is always false, so there is no mapping back from `OFF` to anything kyo can report.
 
-### `level`: snapshot, not live
+### `level`: live gate
 
-Querying `log.level` returns a value frozen at construction, not the logger's current threshold. The backend walks `isLoggable` from `TRACE` down to `ERROR` once at construction and picks the first level the underlying logger accepts.
+Querying `log.level` returns the logger's current threshold, not a value frozen at construction. Each access walks `isLoggable` from `TRACE` down to `ERROR` on the underlying `System.Logger` and returns the most permissive enabled level. Runtime reconfiguration (for example `java.util.logging.Logger.setLevel(...)`) is reflected immediately.
 
 ```scala
-// At construction time, JavaLog probes the logger:
+// log.level probes the logger live on each access:
 //   if (isLoggable(TRACE)) trace
 //   else if (isLoggable(DEBUG)) debug
 //   else if (isLoggable(INFO))  info
@@ -103,10 +103,30 @@ Querying `log.level` returns a value frozen at construction, not the logger's cu
 //   else if (isLoggable(ERROR)) error
 //   else silent
 val log = JavaLog("kyo.app")
-// log's reported level is whatever was true the moment JavaLog was called.
+// log.level always reflects the current state of the underlying JPL logger.
 ```
 
-> **Note:** Two consequences follow from this design. First, changing the underlying logger's level at runtime (e.g. `Logger.getLogger("kyo.app").setLevel(...)`) does not change what `log.unsafe.level` reports; the kyo-level snapshot is stale. The actual `logger.log(...)` dispatch still routes through the live logger, so messages are filtered by the current JPL level, but level-gating queries on the kyo side keep returning the construction-time answer. Second, the chain picks the most verbose enabled level: when both `TRACE` and `INFO` are loggable (the usual case for JUL where finer levels imply coarser ones), the reported level is `trace`, not the logger's effective threshold.
+> **Note:** The chain picks the most verbose enabled level. When both `TRACE` and `INFO` are loggable (the usual case for JUL where finer levels imply coarser ones), the reported level is `trace`, not the logger's effective threshold.
+
+### Async dispatch
+
+On JVM and Native, `Log` calls are async by default. Each call enqueues the event to a bounded background channel (default capacity 4096) and returns without waiting for the JPL logger to write. A daemon fiber drains the channel and forwards events to the backend in FIFO order.
+
+`Log.flush: Unit < Async` suspends until the daemon has dispatched every currently-enqueued event. Call it before asserting logger output in tests, or before shutdown.
+
+```scala
+import kyo.*
+
+val program: Unit < Async =
+    Log.let(JavaLog("kyo.app")) {
+        for
+            _ <- Log.info("processing complete")
+            _ <- Log.flush // await delivery before checking logger output
+        yield ()
+    }
+```
+
+Tests that capture output via thread-local stream redirection should set `-Dkyo.Log.asyncLogging=false` instead, since the daemon runs on a separate thread and does not inherit `DynamicVariable`-based redirections. On JS/Wasm, all writes are inline and `Log.flush` returns immediately.
 
 ## Configuring the underlying logger
 
@@ -173,4 +193,4 @@ Log.let(log) {
 }
 ```
 
-`JavaLog(name)` and `JavaLog(logger)` already do exactly this internally. Reach for `JavaLog.Unsafe.JPL` directly only when you need the `Log.Unsafe` value itself: passing it into another component that takes `Log.Unsafe`, building a composite backend that fans out to multiple sinks, or testing the backend's `level` snapshot without going through `Log.let`. For everyday code, the `JavaLog(...)` factories are the intended path.
+`JavaLog(name)` and `JavaLog(logger)` already do exactly this internally. Reach for `JavaLog.Unsafe.JPL` directly only when you need the `Log.Unsafe` value itself: passing it into another component that takes `Log.Unsafe`, building a composite backend that fans out to multiple sinks, or probing the backend's live `level` without going through `Log.let`. For everyday code, the `JavaLog(...)` factories are the intended path.

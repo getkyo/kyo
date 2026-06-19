@@ -11,8 +11,8 @@ class JavaLogTest extends kyo.test.Test[Any]:
 
     // Every leaf mutates the level of the SAME global JUL logger named "kyo.logging" via
     // Logger.getLogger("kyo.logging").setLevel(...) and reads it back through the JPL wrapper.
-    // ScalaTest's AsyncFreeSpec ran a suite's leaves sequentially; kyo-test runs them in parallel
-    // by default, so concurrent leaves clobber each other's level. Serialize this suite's leaves.
+    // Leaves run in parallel by default; concurrent leaves clobber each other's level.
+    // Serialize this suite's leaves to eliminate the race.
     override def config = super.config.sequential
 
     case object ex extends NoStackTrace
@@ -59,6 +59,35 @@ class JavaLogTest extends kyo.test.Test[Any]:
         assert(loggerWithLevel(Level.OFF).level == Log.Level.silent)
     }
 
+    "JPL level reflects runtime reconfiguration" in {
+        // Construct the wrapper once at INFO level; hold the same instance across the flip.
+        // If .level were a val, it would capture the construction-time snapshot and the
+        // post-setLevel assertion below would still return Log.Level.info (the stale value),
+        // causing the test to fail. With def, each read re-queries the underlying logger.
+        val jplLogger = java.lang.System.getLogger("kyo.logging")
+        Logger.getLogger("kyo.logging").setLevel(toJUL(Level.INFO))
+        val wrapper = new JavaLog.Unsafe.JPL(jplLogger)
+
+        // Before flip: level reads INFO (construction-time level).
+        assert(wrapper.level == Log.Level.info)
+
+        // Flip the underlying JUL logger to DEBUG. Do NOT reconstruct wrapper.
+        // JPL System.Logger.isLoggable() delegates to the JUL logger synchronously.
+        Logger.getLogger("kyo.logging").setLevel(toJUL(Level.DEBUG))
+
+        // After flip: same wrapper instance must now report DEBUG, not the stale INFO.
+        assert(wrapper.level == Log.Level.debug)
+
+        // Flip to ERROR (strictest non-silent level). The Log tier gate reads unsafe.level
+        // on each call, so it must now reject info calls. Verify via the gate predicate.
+        Logger.getLogger("kyo.logging").setLevel(toJUL(Level.ERROR))
+        assert(wrapper.level == Log.Level.error)
+
+        // Gate coupling: info is below ERROR threshold, so Log.Level.info.enabled(wrapper.level)
+        // must be false. This is the predicate the Log case class evaluates before dispatching.
+        assert(!Log.Level.info.enabled(wrapper.level))
+    }
+
     "log" in {
         val buffer = new StringBuilder()
         val out = new java.io.OutputStream:
@@ -79,6 +108,7 @@ class JavaLogTest extends kyo.test.Test[Any]:
                 _ <- Log.debug("test message")
                 _ <- Log.info(text.dropRight(9))
                 _ <- Log.warn("warning", ex)
+                _ <- Log.flush
             yield
                 handler.close()
                 val logs = buffer.toString.trim.split("\\r?\\n")
