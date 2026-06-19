@@ -1172,22 +1172,46 @@ final private[net] class PollerIoDriver private[posix] (
         val result  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
         val n       = result.value.toInt
         if n > 0 then
-            // A full-buffer recv may leave residual ciphertext in the kernel with no new ET edge. Record that for the re-register path.
-            handle.readMightHaveMore = n == handle.readBufferSize
             // Feed staging directly to feedCiphertext on the FIFO worker: no per-read re-fromArray.
             // The happens-before between the recvNow write (poll carrier) and the feedCiphertext read (FIFO worker) is the
             // submitEngineOp enqueue, the same mechanism as writableArmed. The at-most-one-in-flight guarantee ensures the next
             // recvNow write cannot happen before this feedCiphertext completes.
             submitEngineOp { () =>
-                val plain = feedAndDecrypt(engine, staging, n, handle)
+                var plain = feedAndDecrypt(engine, staging, n, handle)
+                var lastN = n
+                var eof   = false
+                var errno = 0
+                // Partial-record drain (edge-triggered): if the engine consumed ciphertext but produced no plaintext, a TLS record is split
+                // across recv boundaries and the remaining ciphertext may ALREADY be in the kernel with no new readiness edge to come (a short
+                // recv that did not fill the buffer means the socket drained, so the rest will arrive on a fresh edge; a full recv means more may
+                // be queued NOW). Recv+feed until the engine yields plaintext, the socket drains (EAGAIN), or the peer closes, rather than
+                // re-arming and waiting for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record /
+                // bulk TLS transfer strands on the poller under load.
+                while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && lastN == handle.readBufferSize do
+                    val r = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
+                    lastN = r.value.toInt
+                    if lastN > 0 then plain = feedAndDecrypt(engine, staging, lastN, handle)
+                    else if lastN == 0 then eof = true
+                    else if !isWouldBlock(r.errorCode) then errno = r.errorCode
+                    // EAGAIN (lastN < 0, would-block): the loop exits because lastN != readBufferSize; rest not yet arrived, wait for the edge.
+                end while
+                // Residual ciphertext may remain only when the last recv filled the buffer (a short recv drained the socket). Cleared on
+                // EOF / EAGAIN / error (lastN is 0 or negative there).
+                handle.readMightHaveMore = lastN == handle.readBufferSize
                 if plain.length > 0 then
                     finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(plain)))
                 else if handle.peerCleanClose then
                     // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the ReadPump tears down,
                     // rather than re-arming for ciphertext the peer will never send. closeReason then reports CleanClose, not Truncated.
                     finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                else if eof then
+                    // A bare FIN arrived mid-record (no close_notify): record the truncation and surface EOF.
+                    handle.peerEof = true
+                    finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                else if errno != 0 then
+                    finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"recv failed fd=$fd errno=$errno")))
                 else
-                    // Only handshake/partial-record bytes consumed; wait for more ciphertext rather than signalling EOF.
+                    // Only handshake/partial-record bytes consumed and the socket is drained (EAGAIN): wait for more ciphertext on the next edge.
                     rearmOwned(fd, handle, promise)
                 end if
             }
