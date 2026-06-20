@@ -371,6 +371,13 @@ class StyleTest extends kyo.test.Test[Any]:
             assert(Style.italic.toCss == "font-style: italic;")
         }
 
+        "fontVariantLigatures" in {
+            assert(Style.fontVariantLigatures(Style.FontVariantLigatures.none).toCss == "font-variant-ligatures: none;")
+            assert(Style.fontVariantLigatures(Style.FontVariantLigatures.normal).toCss == "font-variant-ligatures: normal;")
+            // selector-style sugar resolves the enum value
+            assert(Style.fontVariantLigatures(_.none).toCss == "font-variant-ligatures: none;")
+        }
+
         "fontFamily generic families" in {
             assert(Style.fontFamily(FontFamily.SansSerif).toCss == "font-family: sans-serif;")
             assert(Style.fontFamily(FontFamily.Serif).toCss == "font-family: serif;")

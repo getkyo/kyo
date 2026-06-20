@@ -1,13 +1,14 @@
 package kyo.internal
 
 import kyo.*
+import scala.annotation.publicInBinary
 
 /** JSON Schema enrichment helpers: applies runtime Schema metadata (docs, constraints, examples, transforms) to a JsonSchema.Obj.
   *
   * These are pure functions on JsonSchema values, separated so that JSON Schema enrichment is not mixed with serialization or factory
   * concerns.
   */
-private[kyo] object JsonSchemaEnricher:
+@publicInBinary private[kyo] object JsonSchemaEnricher:
 
     /** Enriches a JsonSchema.Obj with runtime metadata: doc, field docs, field deprecations, examples, and constraints.
       *

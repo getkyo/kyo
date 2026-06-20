@@ -64,7 +64,9 @@ object ClasspathOrchestrator:
       * Fields ownerBySymbol, bodyDataByAddr, sectionBytes, sectionOffset, names are fed from AstUnpickler Pass1Result to ClasspathOrchestrator Pass C.
       */
     final private case class FileResult(
-        fullNames: Chunk[(String, LoadingSymbol.Materialising)],
+        // Two aligned spans (no per-pair Tuple2): fullNameKeys(i) is the fully-qualified name of fullNameSymbols(i).
+        fullNameKeys: Span[String],
+        fullNameSymbols: Span[LoadingSymbol.Materialising],
         /** All symbols from this file in TASTy parse order (deterministic depth-first traversal of the AST).
           *
           * Used in mergeOneInto to accumulate allSyms in a stable order across runs, ensuring that symbol IDs
@@ -596,7 +598,12 @@ object ClasspathOrchestrator:
                         state.allSymsSet(symbol.id.toLong) = ()
                 end for
 
-                for (fullName, symbol) <- fr.fullNames do
+                val frKeys = fr.fullNameKeys
+                val frSyms = fr.fullNameSymbols
+                var fnIdx  = 0
+                while fnIdx < frKeys.size do
+                    val fullName = frKeys(fnIdx)
+                    val symbol   = frSyms(fnIdx)
                     val indexKey = if symbol.kind == SymbolKind.Object && !fullName.endsWith("$") then fullName + "$" else fullName
                     val existing = state.fullNameIndex.get(indexKey)
                     val shouldStore = existing match
@@ -679,7 +686,8 @@ object ClasspathOrchestrator:
                             SymbolKind.TypeParam | SymbolKind.Parameter =>
                             ()
                     end match
-                end for
+                    fnIdx += 1
+                end while
                 state.accErrors ++= fr.errors
                 state.fileResults += fr
             case ModuleInfoCase(name, md) =>
@@ -745,7 +753,10 @@ object ClasspathOrchestrator:
                 Sync.Unsafe.defer {
                     // Build a map from LoadingSymbol.Materialising.id -> final SymbolId (index in allPartial).
                     // LongMap keyed on m.id (unique per-instance); replaces the former IdentityHashMap approach.
-                    val symbolIdMap = mutable.LongMap.empty[Int]
+                    // Pre-size the backing arrays to allPartial.length so the LongMap is allocated once instead
+                    // of repacking (re-allocating and copying its long[]/Object[] arrays) ~log2(count) times as
+                    // it fills with the classpath's symbols.
+                    val symbolIdMap = new mutable.LongMap[Int](allPartial.length * 2)
                     var i           = 0
                     for symbol <- allPartial do
                         symbolIdMap(symbol.id.toLong) = i
@@ -2083,15 +2094,15 @@ object ClasspathOrchestrator:
                                 cfResult.classSymbol.javaMetadata match
                                     case Maybe.Present(meta) =>
                                         // Populate companionJavaMeta for all top-level symbols in this file.
-                                        // The fullNames list maps each TASTy partial symbol to its fully-qualified name; we populate all since
-                                        // a single .tasty file may declare exactly one top-level class.
-                                        for (_, symbol) <- fr.fullNames do
+                                        // fullNameSymbols carries each TASTy partial symbol that has a fully-qualified name; we
+                                        // populate all since a single .tasty file may declare exactly one top-level class.
+                                        fr.fullNameSymbols.foreach { symbol =>
                                             fr.companionJavaMeta(symbol.id.toLong) = meta
-                                        end for
+                                        }
                                     case Maybe.Absent => ()
                                 end match
                                 fr
-                            case _: Result.Failure[TastyError] | _: Result.Panic => fr
+                            case _: Result.Failure[TastyError] @unchecked | _: Result.Panic => fr
                         }
                 }
             case Result.Failure(err: TastyError) =>
@@ -2118,7 +2129,8 @@ object ClasspathOrchestrator:
     /** Produce an empty FileResult carrying a single error (soft-fail path). */
     private def emptyFileResultWithError(file: String, err: TastyError): FileResult =
         FileResult(
-            Chunk.empty,
+            Span.empty[String],
+            Span.empty[LoadingSymbol.Materialising],
             Chunk.empty,
             TypeArena.canonical(),
             Seq(err),
@@ -2194,12 +2206,24 @@ object ClasspathOrchestrator:
         yield
             // computeFullName walks the ownerBySymbol chain to build the dotted fully-qualified name.
             val ownerBySymbol = pass1Result.ownerBySymbol
-            val pairs = pass1Result.symbols.flatMap { symbol =>
+            // Accumulate the (fullName, symbol) associations as two aligned arrays: no per-pair Tuple2 and no
+            // builder. Over-allocate to the symbol count, fill the prefix with the symbols that have a
+            // fully-qualified name, then trim and wrap as Span. fullNameKeys(i) names fullNameSymbols(i).
+            val srcSymbols = pass1Result.symbols
+            val keys       = new Array[String](srcSymbols.length)
+            val syms       = new Array[LoadingSymbol.Materialising](srcSymbols.length)
+            var named      = 0
+            srcSymbols.foreach { symbol =>
                 val fullName = computeFullName(symbol, ownerBySymbol)
-                if fullName.nonEmpty then Chunk((fullName, symbol)) else Chunk.empty
+                if fullName.nonEmpty then
+                    keys(named) = fullName
+                    syms(named) = symbol
+                    named += 1
+                end if
             }
             FileResult(
-                pairs,
+                Span.fromUnsafe(java.util.Arrays.copyOf(keys, named)),
+                Span.fromUnsafe(java.util.Arrays.copyOf(syms, named)),
                 // Include rootSymbol (the synthetic per-file Package("") symbol) first so that top-level
                 // symbols can correctly point to it as their owner in finalizeMerge. rootSymbol is at
                 // allSymbols(0) which is excluded from pass1Result.symbols by allSymbols.tail; re-adding

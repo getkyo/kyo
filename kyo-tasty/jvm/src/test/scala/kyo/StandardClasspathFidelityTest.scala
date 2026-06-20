@@ -8,6 +8,10 @@ import kyo.internal.TestClasspaths2
   */
 class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
 
+    // The "JPMS module count" leaf walks java.base via jrt:/ (the shared platform-module load), which on a cold,
+    // contended CI run can exceed the default per-test timeout. Budget the suite like the other jrt:/ suites.
+    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
+
     "allSymbols.count(isGiven) ~= 570 on standard classpath" in {
         TestClasspaths.withClasspath()(Tasty.classpath).map { classpath =>
             val count = classpath.symbols.count(_.isGiven)

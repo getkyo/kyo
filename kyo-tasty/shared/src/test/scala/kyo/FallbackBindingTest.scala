@@ -8,6 +8,7 @@ import kyo.internal.TestClasspaths
 class FallbackBindingTest extends kyo.test.Test[Any]:
 
     "JVM fallback yields non-empty Classpath when no withClasspath scope is active".onlyJvm in {
+        TestClasspaths.forceGlobalNarrowed()
         Tasty.classpath.map { classpath =>
             val n = classpath.symbols.size
             assert(n >= 1, s"JVM fallback must load at least 1 symbol from java.class.path; got $n")
@@ -33,6 +34,7 @@ class FallbackBindingTest extends kyo.test.Test[Any]:
 
     // Tasty.global is a lazy val; JS/Native fallback always returns Binding.empty.
     "Tasty.global lazy val is initialized at most once (reference equality)".onlyJvm in {
+        TestClasspaths.forceGlobalNarrowed()
         // Access global twice; both must return the same object reference.
         val b1 = Tasty.global
         val b2 = Tasty.global
@@ -70,6 +72,7 @@ class FallbackBindingTest extends kyo.test.Test[Any]:
 
     // The JVM fallback loads java.class.path which includes the internal fixtures symbols.
     "Tasty query works under JVM fallback: non-empty classpath implies findable symbols".onlyJvm in {
+        TestClasspaths.forceGlobalNarrowed()
         Tasty.allClasses.map { classes =>
             assert(classes.nonEmpty, "JVM fallback must load at least one Class symbol from java.class.path")
             succeed

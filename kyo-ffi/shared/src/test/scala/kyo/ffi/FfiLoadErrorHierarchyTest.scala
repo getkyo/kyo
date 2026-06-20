@@ -5,8 +5,8 @@ import kyo.Chunk
 /** Validates the sealed [[FfiLoadError]] hierarchy that unifies every `Ffi.load[T]` failure under a single catch surface.
   *
   * Scenarios cover: (a) the not-found-library path throws [[FfiLoadError.LibraryNotFound]] with `libraryId` + non-empty `candidates`, (b)
-  * the legacy [[FfiUnsupported]] shim is caught by `catch FfiLoadError`, (c) [[FfiAbiMismatch]] is a subtype of [[FfiLoadError]], and (d) a
-  * binding trait without a generated impl surfaces as [[FfiLoadError.ImplNotFound]] with `traitFqcn` populated. The 32-bit-host scenario
+  * [[FfiLoadError.Unsupported]] is caught by `catch FfiLoadError`, (c) [[FfiLoadError.AbiMismatch]] is a subtype of [[FfiLoadError]], and (d)
+  * a binding trait without a generated impl surfaces as [[FfiLoadError.ImplNotFound]] with `traitFqcn` populated. The 32-bit-host scenario
   * from the plan is intentionally omitted, it requires a 32-bit JVM to exercise reliably and is already covered indirectly by per-platform
   * `*PlatformCheckTest` suites.
   */
@@ -24,19 +24,15 @@ class FfiLoadErrorHierarchyTest extends Test:
         assert(ex.isInstanceOf[FfiLoadError.ImplNotFound])
     }
 
-    "FfiUnsupported remains a catch-compatible subtype of FfiLoadError.Unsupported" in {
-        // An existing `catch FfiUnsupported` block must still match a thrown FfiUnsupported, and the same
-        // instance must also match `catch FfiLoadError`, so new code can converge on the unified surface.
+    "FfiLoadError.Unsupported is caught by `catch FfiLoadError` (unified surface)" in {
         val thrown: Throwable =
-            try throw new FfiUnsupported("synthetic unsupported")
+            try throw new FfiLoadError.Unsupported("synthetic unsupported")
             catch case e: FfiLoadError => e
         assert(thrown.isInstanceOf[FfiLoadError.Unsupported])
-        assert(thrown.isInstanceOf[FfiUnsupported])
     }
 
-    "FfiAbiMismatch is a subtype of FfiLoadError.AbiMismatch (and therefore FfiLoadError)" in {
-        val ex = new FfiAbiMismatch("kyo.example.Bindings", "Packed", 16L, 9L, "synthetic mismatch")
-        assert(ex.isInstanceOf[FfiLoadError.AbiMismatch])
+    "FfiLoadError.AbiMismatch is a subtype of FfiLoadError" in {
+        val ex = new FfiLoadError.AbiMismatch("16", "9")
         assert(ex.isInstanceOf[FfiLoadError])
     }
 

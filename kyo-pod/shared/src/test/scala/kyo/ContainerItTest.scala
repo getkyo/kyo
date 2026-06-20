@@ -1216,9 +1216,13 @@ class ContainerItTest extends BasePodTest:
             val config = Container.Config("alpine")
                 .command("sh", "-c", "trap 'exit 0' TERM; echo stdout-msg; echo stderr-msg >&2; sleep infinity & wait")
             Container.init(config).map { c =>
-                c.logs(stdout = false, stderr = true).map { entries =>
-                    assert(!entries.exists(_.content.contains("stdout-msg")))
-                    assert(entries.exists(_.content.contains("stderr-msg")))
+                // The http log backend can return before the container's stderr is flushed to the
+                // daemon's log buffer; poll until stderr-msg appears, then assert stdout is excluded.
+                assertEventually(c.logs(stdout = false, stderr = true).map(_.exists(_.content.contains("stderr-msg")))).andThen {
+                    c.logs(stdout = false, stderr = true).map { entries =>
+                        assert(!entries.exists(_.content.contains("stdout-msg")))
+                        assert(entries.exists(_.content.contains("stderr-msg")))
+                    }
                 }
             }
         }

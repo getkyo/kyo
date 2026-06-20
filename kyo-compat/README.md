@@ -30,7 +30,7 @@ case class Request(id: String)
 def process(req: Request): CIO[Response]     = CIO.defer(Response("ok"))
 val req: Request                             = Request("req-1")
 def wrapWithContext(e: Throwable): Throwable = new RuntimeException("wrapped", e)
-type Result = String
+type QueryResult = String
 ```
 -->
 
@@ -51,6 +51,12 @@ The cross-backend computation type, `CIO[+A]`, is an opaque alias whose definiti
 | Future         | `LocalCtx => scala.concurrent.Future[A]`         | `kyo-compat-future`        |
 | Ox             | `(Int, ox.Ox) => A`                                | `kyo-compat-ox`            |
 | Twitter Future | `() => com.twitter.util.Future[A]`               | `kyo-compat-twitter-future`|
+
+## The error channel
+
+`CIO` has one portable failure lane: `Throwable`. That is the compatibility boundary. Backends with a first-class error channel still use it underneath, but the error type is fixed by `CIO`: the Kyo binding is `A < (Abort[Throwable] & Async)`, and the ZIO binding is `ZIO[Any, Throwable, A]`. Cats Effect, Future, Ox, and Twitter Future also surface failures as throwables, so the shared API can offer `CIO.fail`, `.recover`, `.fold`, `.mapError`, and `.liftToTry` uniformly across all six bindings.
+
+This means `CIO[A]` is not the portable form of a backend-specific `A < Abort[E]` or `ZIO[R, E, A]` with an arbitrary typed error `E`. If a library needs typed domain errors in its public portable API, model them as values in the success type or translate them to `Throwable` at the `CIO` boundary. When backend-specific typed recovery, partial error elimination, or defect inspection matters, use `.lower` to work with the native carrier and wrap the result with `CIO.lift` afterward. The [error handling](#error-handling) section below lists the portable operations.
 
 Kyo, ZIO, and Cats Effect alias a backend effect type directly: `A < S`, `ZIO`, and `IO` are already lazy, referentially-transparent descriptions, so `CIO` inherits that. The other three carriers are functions because their runtimes are not lazy. `scala.concurrent.Future` and Twitter's `Future` are eager (constructing one starts the computation), and Ox is direct-style with no effect type. Wrapping the runtime in a cold function (`() => Future[A]`, `LocalCtx => Future[A]`, `(Int, Ox) => A`) keeps a `CIO` value a description: nothing runs until `unsafeRun` applies the function, and each application is a fresh run. So a `CIO[A]` is referentially transparent on every backend.
 
@@ -133,7 +139,7 @@ Every `C*` primitive has the same pattern; see [Primitives](#primitives).
 
 ### Error handling
 
-Failures are not tracked in the type; every backend channels them through its native `Throwable` lane. Recovery handlers receive a `Throwable`:
+Failures are not tracked in the type parameter; every backend channels them through the portable `Throwable` lane introduced above. Recovery handlers receive a `Throwable`:
 
 ```scala
 val resilient: CIO[User] =
@@ -145,6 +151,26 @@ val resilient: CIO[User] =
         .orElse(fetchUserFromCache(id))
         .mapError(wrapWithContext)
 ```
+
+When a domain error is part of your portable API, keep it in the success value instead of the `CIO` failure lane:
+
+```scala
+enum LoadError:
+    case NotFound(id: String)
+    case Disabled(id: String)
+
+// Domain errors stay in the success value as data.
+def loadUser(id: String): CIO[Result[LoadError, User]] =
+    fetchUser(id)
+        .map(Result.succeed(_))
+        .recover {
+            case _: NetworkError =>
+                // The CIO failure lane recovers to a typed error value.
+                CIO.value(Result.fail(LoadError.NotFound(id)))
+        }
+```
+
+Use this shape when callers should handle the domain error as data. Reserve `CIO.fail` for runtime failures, interrupted work, defects collapsed by a backend, or errors you intentionally expose as `Throwable`.
 
 The full set:
 
@@ -222,7 +248,7 @@ def fromCallback[A](api: (Try[A] => Unit) => Unit): CIO[A] =
 `CIO.sleep(d)` suspends the calling computation for `d`. `CIO.delay(d)(c)` runs `c` after a delay of `d` (sleep, then run). `CIO.now` returns the wall-clock instant; `CIO.nowMonotonic` returns a monotonic timestamp expressed as a `Duration` since some backend-defined origin (use it for *intervals*, not wall-clock time).
 
 ```scala
-val late: CIO[Result]            = CIO.delay(500.millis)(query("data"))
+val late: CIO[QueryResult]       = CIO.delay(500.millis)(query("data"))
 val maybeUser: CIO[Option[User]] = CIO.timeout(5.seconds)(fetchUser(id))
 val mustComplete: CIO[User] =
     CIO.timeoutWithError(5.seconds)(new TimeoutException("fetch deadline"))(fetchUser(id))
@@ -648,4 +674,3 @@ lazy val myLibAll = myLib.aggregate("my-lib-all")
 ```
 
 The aggregator sets `publish / skip := true`, so it never lands in maven local itself.
-

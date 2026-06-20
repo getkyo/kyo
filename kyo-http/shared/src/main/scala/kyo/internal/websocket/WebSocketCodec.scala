@@ -37,18 +37,25 @@ private[kyo] object WebSocketCodec:
 
     // ── Public API ──────────────────────────────────────────────
 
-    /** Read one complete frame, passing (frame, remainingStream) to f. Handles Ping by auto-sending Pong. On Close frame: Abort[Closed]. */
-    def readFrameWith[A, S](src: Stream[Span[Byte], Async], dst: TransportStream, maxFrameSize: Int = Int.MaxValue)(
+    /** Read one complete frame in the server role: no frame-size cap, no close hook, and an unmasked auto-Pong (RFC 6455 §5.1). Handles
+      * Ping by auto-sending Pong; on a Close frame, aborts `Closed`. A client must use the full overload with `mask = true`.
+      */
+    def readFrameWith[A, S](src: Stream[Span[Byte], Async], dst: TransportStream)(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
-        readFrameWith(src, dst, maxFrameSize, _ => Kyo.unit)(f)
+        readFrameWith(src, dst, Int.MaxValue, _ => Kyo.unit, mask = false)(f)
 
-    /** Read one complete frame; on receipt of a Close frame, invoke `onClose` with the parsed (code, reason) before aborting. */
+    /** Read one complete frame; on receipt of a Close frame, invoke `onClose` with the parsed (code, reason) before aborting.
+      *
+      * `mask` is the caller's role (client `true` / server `false`); it governs whether the auto-Pong reply to a server Ping is masked,
+      * which RFC 6455 §5.1 requires of a client.
+      */
     def readFrameWith[A, S](
         src: Stream[Span[Byte], Async],
         dst: TransportStream,
         maxFrameSize: Int,
-        onClose: ((Int, String)) => Unit < (S & Async)
+        onClose: ((Int, String)) => Unit < (S & Async),
+        mask: Boolean
     )(
         f: (HttpWebSocket.Payload, Stream[Span[Byte], Async]) => A < S
     )(using Frame): A < (S & Async & Abort[Closed]) =
@@ -63,9 +70,9 @@ private[kyo] object WebSocketCodec:
                             Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Close frame received: $code $reason"))
                         )
                     case OpPing =>
-                        writeRawFrame(dst, OpPong, payload, mask = false).andThen(readFrameWith(remaining, dst, maxFrameSize, onClose)(f))
+                        writeRawFrame(dst, OpPong, payload, mask).andThen(readFrameWith(remaining, dst, maxFrameSize, onClose, mask)(f))
                     case OpPong =>
-                        readFrameWith(remaining, dst, maxFrameSize, onClose)(f)
+                        readFrameWith(remaining, dst, maxFrameSize, onClose, mask)(f)
                     case other =>
                         Abort.fail(new Closed("HttpWebSocket", summon[Frame], s"Unknown opcode: $other"))
                 end match

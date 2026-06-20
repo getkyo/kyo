@@ -1,10 +1,10 @@
 package kyo
 
 case class MTPerson(name: String, age: Int) derives CanEqual
-case class MTAddress(street: String, city: String, zip: String) derives CanEqual
-case class MTPersonAddr(name: String, age: Int, address: MTAddress) derives CanEqual
-case class MTTeam(name: String, lead: MTPersonAddr, members: List[MTPersonAddr]) derives CanEqual
-case class MTCompany(name: String, hq: MTTeam) derives CanEqual
+case class MTAddress(street: String, city: String, zip: String) derives CanEqual, Schema
+case class MTPersonAddr(name: String, age: Int, address: MTAddress) derives CanEqual, Schema
+case class MTTeam(name: String, lead: MTPersonAddr, members: List[MTPersonAddr]) derives CanEqual, Schema
+case class MTCompany(name: String, hq: MTTeam) derives CanEqual, Schema
 case class MTConfig(host: String, port: Int = 8080, ssl: Boolean = false) derives CanEqual
 case class MTPair[A, B](first: A, second: B) derives CanEqual
 
@@ -15,8 +15,8 @@ case class MTPair[A, B](first: A, second: B) derives CanEqual
 case class MTGenericDefault[A](value: A, tag: String = "default") derives CanEqual
 case class MTGenericMaybe[A](result: Maybe[A] = Absent, error: Maybe[String] = Absent) derives CanEqual
 case class MTGenericTwoParam[A, B](first: A, second: B, label: String = "pair") derives CanEqual
-case class MTOrder(id: Int, items: List[MTItem]) derives CanEqual
-case class MTItem(name: String, price: Double) derives CanEqual
+case class MTOrder(id: Int, items: List[MTItem]) derives CanEqual, Schema
+case class MTItem(name: String, price: Double) derives CanEqual, Schema
 case class MTWrapper(value: String) derives CanEqual
 case class MTEvil(get: String, set: Int, path: String, selectDynamic: Boolean) derives CanEqual
 case class MTUser(name: String, age: Int, email: String, ssn: String) derives CanEqual
@@ -29,10 +29,10 @@ case class MTThreeField(x: Int, y: String, z: Boolean) derives CanEqual
 case class MTSmallTeam(lead: MTPerson, size: Int) derives CanEqual
 case class MTNamedTeam(name: String, lead: MTPerson, size: Int) derives CanEqual
 
-sealed trait MTShape derives CanEqual
+sealed trait MTShape derives CanEqual, Schema
 case class MTCircle(radius: Double)                   extends MTShape derives CanEqual
 case class MTRectangle(width: Double, height: Double) extends MTShape derives CanEqual
-case class MTDrawing(title: String, shape: MTShape) derives CanEqual
+case class MTDrawing(title: String, shape: MTShape) derives CanEqual, Schema
 
 case class MTDebugConfig(host: String, port: Int = 8080, debug: Boolean = false) derives CanEqual
 case class MTPublicUser(name: String, age: Int) derives CanEqual
@@ -75,22 +75,22 @@ case class MTUserV2Renamed(displayName: String, age: Int, email: String, active:
 case class MTUserV2StringAge(fullName: String, age: String, email: String) derives CanEqual
 
 // Each test types
-case class MTEachItem(name: String, price: Double, tags: Seq[String]) derives CanEqual
-case class MTEachOrder(id: Int, items: Seq[MTEachItem], note: String) derives CanEqual
-case class MTWarehouse(name: String, orders: Seq[MTEachOrder]) derives CanEqual
-case class MTVecOrder(id: Int, items: Vector[MTEachItem]) derives CanEqual
-case class MTListOrder(id: Int, items: List[MTEachItem]) derives CanEqual
+case class MTEachItem(name: String, price: Double, tags: Seq[String]) derives CanEqual, Schema
+case class MTEachOrder(id: Int, items: Seq[MTEachItem], note: String) derives CanEqual, Schema
+case class MTWarehouse(name: String, orders: Seq[MTEachOrder]) derives CanEqual, Schema
+case class MTVecOrder(id: Int, items: Vector[MTEachItem]) derives CanEqual, Schema
+case class MTListOrder(id: Int, items: List[MTEachItem]) derives CanEqual, Schema
 
 // Focus composition test types
-case class MTGallery(name: String, drawings: Seq[MTDrawing]) derives CanEqual
-case class MTDepartment(name: String, team: MTTeam) derives CanEqual
+case class MTGallery(name: String, drawings: Seq[MTDrawing]) derives CanEqual, Schema
+case class MTDepartment(name: String, team: MTTeam) derives CanEqual, Schema
 
 // Non-derivable types for error message tests
 class MTOpaque(val inner: Int)
 trait MTOpenTrait
 
 // Recursive test types
-case class TreeNode(value: Int, children: List[TreeNode]) derives CanEqual
+case class TreeNode(value: Int, children: List[TreeNode]) derives CanEqual, Schema
 
 case class RTDepartment(name: String, manager: RTEmployee) derives CanEqual
 case class RTEmployee(name: String, department: Maybe[RTDepartment]) derives CanEqual
@@ -101,7 +101,7 @@ object RTDepartment:
 object RTEmployee:
     given Schema[RTEmployee] = Schema.derived[RTEmployee]
 
-sealed trait Expr derives CanEqual
+sealed trait Expr derives CanEqual, Schema
 case class Lit(value: Int)              extends Expr derives CanEqual
 case class Add(left: Expr, right: Expr) extends Expr derives CanEqual
 case class Neg(inner: Expr)             extends Expr derives CanEqual

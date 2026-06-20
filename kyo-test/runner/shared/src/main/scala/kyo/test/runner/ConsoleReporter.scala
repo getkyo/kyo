@@ -108,7 +108,10 @@ final class ConsoleReporter(
                     out.println(s"$ind${color("[PASS]", _.green.bold)} $path  ${durationSuffix(d)}")
 
             case TestResult.Failed(diagram, cause, d, _) =>
-                out.println(s"$ind${color("[FAIL]", _.red.bold)} $path  ${durationSuffix(d)}")
+                // The trailing " *** FAILED ***" is the ScalaTest-compatible marker that log-grepping
+                // tooling (CI parsers, the dev test harness) locates failures by, emitted on every
+                // failing leaf line alongside kyo-test's own [FAIL] tag.
+                out.println(s"$ind${color("[FAIL]", _.red.bold)} $path  ${durationSuffix(d)} *** FAILED ***")
                 if diagram.nonEmpty then
                     printDiagram(diagram)
                 else
@@ -133,8 +136,9 @@ final class ConsoleReporter(
                     out.println(s"$ind${color("[IGNORED]", _.grey)} $path${if reason.nonEmpty then s"  $reason" else ""}")
 
             case TestResult.TimedOut(limit) =>
+                // A timeout is a failure, so it carries the same ScalaTest-compatible marker as [FAIL].
                 out.println(
-                    s"$ind${color("[TIMEOUT]", _.red.bold)} $path  (limit: ${formatDuration(limit)})"
+                    s"$ind${color("[TIMEOUT]", _.red.bold)} $path  (limit: ${formatDuration(limit)}) *** FAILED ***"
                 )
 
             case TestResult.Skipped(reason) =>

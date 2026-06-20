@@ -219,12 +219,11 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Tasty.classpath.map { classpath =>
                 given Tasty.Classpath = classpath
                 Tasty.bindingLocal.use { mbind =>
-                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
-                        case Maybe.Present(ctx) =>
-                            classpath.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
-                                Some(s)
-                            )
-                        case Maybe.Absent => None
+                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx).fold(Option.empty[Tasty.Symbol]) { ctx =>
+                        classpath.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
+                            Some(s)
+                        )
+                    }
                     candidateOpt match
                         case None => succeed
                         case Some(symbol) =>
@@ -499,12 +498,11 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Tasty.classpath.map { classpath =>
                 given Tasty.Classpath = classpath
                 Tasty.bindingLocal.use { mbind =>
-                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
-                        case Maybe.Present(ctx) =>
-                            classpath.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
-                                Some(s)
-                            )
-                        case Maybe.Absent => None
+                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx).fold(Option.empty[Tasty.Symbol]) { ctx =>
+                        classpath.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
+                            Some(s)
+                        )
+                    }
                     candidateOpt match
                         case None => succeed
                         case Some(symbol) =>
@@ -609,12 +607,11 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Tasty.classpath.map { classpath =>
                 given Tasty.Classpath = classpath
                 Tasty.bindingLocal.use { mbind =>
-                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
-                        case Maybe.Present(ctx) =>
-                            classpath.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
-                                Some(s)
-                            )
-                        case Maybe.Absent => None
+                    val candidateOpt: Option[Tasty.Symbol] = mbind.flatMap(_.decodeCtx).fold(Option.empty[Tasty.Symbol]) { ctx =>
+                        classpath.allClassLike.find(c => ctx.bodyStore.get(c.id) != null).foldLeft(Option.empty[Tasty.Symbol])((_, s) =>
+                            Some(s)
+                        )
+                    }
                     candidateOpt match
                         case None => succeed
                         case Some(symbol) =>
@@ -642,10 +639,9 @@ class DecoderFidelity5Wave2Test extends kyo.test.Test[Any]:
             Tasty.classpath.map { classpath =>
                 given Tasty.Classpath = classpath
                 Tasty.bindingLocal.use { mbind =>
-                    val bodied: Chunk[Tasty.Symbol] = mbind.flatMap(_.decodeCtx) match
-                        case Maybe.Present(ctx) =>
-                            classpath.allClassLike.filter(c => ctx.bodyStore.get(c.id) != null)
-                        case Maybe.Absent => Chunk.empty
+                    val bodied: Chunk[Tasty.Symbol] = mbind.flatMap(_.decodeCtx).fold(Chunk.empty[Tasty.Symbol]) { ctx =>
+                        classpath.allClassLike.filter(c => ctx.bodyStore.get(c.id) != null)
+                    }
                     assert(bodied.nonEmpty, "expected at least one class-like symbol with a decodable body in the fixture classpath")
                     Kyo.foreach(bodied) { symbol =>
                         Abort.run[TastyError](Tasty.bodyTree(symbol)).map {

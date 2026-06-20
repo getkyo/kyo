@@ -7,10 +7,10 @@ package kyo
   *
   * {{{
   * val d = Compare(alice, bob)
-  * d.changed(_.name)    // Boolean — whether the field differs
-  * d.left(_.name)       // Maybe[String] — left value of the field
-  * d.right(_.name)      // Maybe[String] — right value of the field
-  * d.changes            // Seq[(String, Any, Any)] — all changed fields
+  * d.changed(_.name)    // Boolean: whether the field differs
+  * d.left(_.name)       // Maybe[String]: left value of the field
+  * d.right(_.name)      // Maybe[String]: right value of the field
+  * d.changes            // Seq[(String, Any, Any)]: all changed fields
   * }}}
   *
   * @tparam Root

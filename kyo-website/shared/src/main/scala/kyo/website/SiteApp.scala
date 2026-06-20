@@ -1,0 +1,372 @@
+// PUBLIC unified site shell
+package kyo.website
+
+import kyo.*
+import kyo.UI.Href
+import kyo.UI.ImgSrc
+import kyo.UI.Keyboard
+import kyo.UI.Target
+import scala.language.implicitConversions
+
+/** The unified single-page-app shell: one persistent header above a single route-reactive content
+  * slot.
+  *
+  * `SiteApp` is the one shell both the JVM static-site generator and the JS bundle render, so a
+  * route's server-rendered HTML and the bundle's first render produce a structurally identical
+  * `data-kyo-path` tree (the hydration-parity contract). The header is rendered once and
+  * never remounts during a content swap; the content slot is a single reactive boundary at a fixed
+  * position immediately below the header, so swapping the body (landing to docs, or one docs page to
+  * another) does not disturb the header or the layout.
+  *
+  * `SiteApp` carries no `org.scalajs.dom`: the route information it needs is passed in as plain
+  * values (`content` is a `Signal[UI]` the caller already built; the JVM passes a constant signal,
+  * the JS bundle passes a `SignalRef` updated by its nav fiber). Client-side navigation from search
+  * is injected as a `navigate` callback: the bundle passes `UILocation.push`, the generator passes a
+  * no-op, so the shared shell never references the JS-only router directly.
+  *
+  * The header reuses the landing chrome class family (`brand`/`mark`/`links`/`right`/`btn`/`ver`)
+  * plus the docs `search-input`, under two new wrapper classes: `site-header` (the full-bleed sticky
+  * bar) and `site-header-inner` (the 1500px-capped flex row, matching the docs shell width).
+  *
+  * The header search box is live: typing writes the `queryRef`, and the `search-results` dropdown
+  * runs [[DocsSearch.filter]] over the search index, rendering one `search-result` row per hit
+  * (module title, plus a `search-result-sub` heading label on heading hits). Each row is a plain
+  * `<a>` so a mouse click routes through the `UILocation` interceptor; Enter activates the
+  * highlighted (or first) row via `navigate`, Arrow Up/Down move the `search-result-active`
+  * highlight, and Escape clears the query and closes the dropdown. At the empty query the dropdown
+  * is an empty container, so the SSG shell and the bundle's first render are structurally identical.
+  */
+object SiteApp:
+
+    private def html(cs: Seq[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.map(n => UI.Ast.HtmlChildVal.lift(n))
+    private def html(cs: kyo.Chunk[UI]): Seq[UI.Ast.HtmlChildVal] =
+        cs.toSeq.map(n => UI.Ast.HtmlChildVal.lift(n))
+
+    // Feather-style theme-toggle icons built with the kyo-ui `Svg` DSL. `stroke = currentColor` makes
+    // them inherit the button's text color (and its hover tone); CSS shows exactly one based on the root
+    // `data-theme`. A shared `iconFrame` applies the common stroke style to either icon's body.
+    private def iconFrame(body: Svg.SvgElement*)(using Frame): UI =
+        // The stroke family is carried on a `<g>` (the `<svg>` root has no presentation attrs); the
+        // shapes inherit it. `stroke = currentColor` makes the icon follow the button's text color.
+        Svg.svg.viewBox(Svg.ViewBox(0, 0, 24, 24))(
+            Svg.g
+                .fill(Svg.Paint.None)
+                .stroke(Svg.Paint.CurrentColor)
+                .strokeWidth(2.0)
+                .strokeLinecap(Svg.StrokeLinecap.Round)
+                .strokeLinejoin(Svg.StrokeLinejoin.Round)(body*)
+        )
+
+    private def sunIcon(using Frame): UI =
+        iconFrame(
+            Svg.circle.cx(12).cy(12).r(4),
+            Svg.path.d(
+                Svg.PathData.from(12, 2).vLineBy(2)
+                    .moveTo(12, 20).vLineBy(2)
+                    .moveTo(4.93, 4.93).lineBy(1.41, 1.41)
+                    .moveTo(17.66, 17.66).lineBy(1.41, 1.41)
+                    .moveTo(2, 12).hLineBy(2)
+                    .moveTo(20, 12).hLineBy(2)
+                    .moveTo(6.34, 17.66).lineBy(-1.41, 1.41)
+                    .moveTo(19.07, 4.93).lineBy(-1.41, 1.41)
+            )
+        )
+
+    private def moonIcon(using Frame): UI =
+        iconFrame(
+            Svg.path.d(
+                Svg.PathData.from(21, 12.79)
+                    .arcTo(9, 9, 0, largeArc = true, sweep = true, 11.21, 3)
+                    .arcTo(7, 7, 0, largeArc = false, sweep = false, 21, 12.79)
+                    .close
+            )
+        )
+
+    /** Compose the unified shell: the persistent header above one route-reactive content slot.
+      *
+      * @param versions
+      *   All available documentation versions, populating the header version selector. Sorted
+      *   newest-first; the current version is pre-selected and picking another fires `switchVersion`.
+      * @param docsHome
+      *   The Get-started button target: the first module under the active prefix,
+      *   `/<prefix>/<firstSlug>/`, falling back to `/<prefix>/` when a version has no modules. The Docs
+      *   and Modules links target the overview/intro route `/<prefix>/` (the root-README overview, whose
+      *   sidebar is the module list), derived from the first path segment of `docsHome`.
+      * @param searchIndex
+      *   The search index signal. `Signal.initConst(DocsSearch.Index(Chunk.empty))` on the SSG path;
+      *   a `SignalRef` filled lazily on the bundle (titles from the boot island, headings from the
+      *   version manifest).
+      * @param queryRef
+      *   The header search query reference. Empty on first render; written on each keystroke.
+      * @param navigate
+      *   Client-side navigation for Enter-driven result selection. The bundle passes
+      *   `UILocation.push`; the SSG generator passes a no-op (no keyboard handling at render time).
+      * @param onSearchFocus
+      *   Run once the user first focuses the search box. The bundle uses this to lazily fetch and
+      *   cache the heading index (so the manifest fetch never blocks initial load); the SSG passes a
+      *   no-op.
+      * @param toggleTheme
+      *   Run when the nav theme toggle is clicked. The bundle flips `data-theme` on the document root
+      *   and persists the choice; the SSG generator passes a no-op (the static page carries no DOM
+      *   handler, and the no-flash boot script applies the stored theme before paint).
+      * @param switchVersion
+      *   Run when the header version selector picks a different version, with the chosen version's
+      *   route prefix path (`/latest/` or `/<tag>/`). The bundle passes a full browser navigation
+      *   (`UILocation.assign`) so the reader lands on that version's docs tree; the SSG generator
+      *   passes a no-op (the static page never fires the selector's change handler at render time).
+      * @param content
+      *   The route body (landing or docs), already built by the caller. A constant signal on the SSG
+      *   path; a `SignalRef[UI]` updated by the nav fiber on the bundle.
+      * @return
+      *   A `UI < Sync` value representing the unified shell for one route.
+      */
+    def view(
+        versions: Chunk[WebsiteVersion],
+        docsHome: String,
+        searchIndex: Signal[DocsSearch.Index],
+        queryRef: SignalRef[String],
+        navigate: String => Unit < Async,
+        onSearchFocus: => Unit < Async,
+        toggleTheme: => Unit < Async,
+        switchVersion: String => Unit < Async,
+        content: Signal[UI]
+    )(using Frame): UI < Sync =
+        for
+            // The highlighted result row index (-1 = none). Driven by Arrow Up/Down; reset on input.
+            activeRef <- Signal.initRef(-1)
+        yield
+            // A bare flex-column wrapper (base div rule): the full-bleed header stacks above the one
+            // content slot. The content slot is a single reactive boundary at a fixed position, so its
+            // data-kyo-path is stable as long as the header structure is identical across SSG and
+            // bundle (it is the same SiteApp.view).
+            UI.div(
+                siteHeader(versions, docsHome, searchIndex, queryRef, activeRef, navigate, onSearchFocus, toggleTheme, switchVersion),
+                // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
+                UI.Ast.Reactive(content.map(c => c))
+            )
+    end view
+
+    // ---- Private helpers ----
+
+    private def siteHeader(
+        versions: Chunk[WebsiteVersion],
+        docsHome: String,
+        searchIndex: Signal[DocsSearch.Index],
+        queryRef: SignalRef[String],
+        activeRef: SignalRef[Int],
+        navigate: String => Unit < Async,
+        onSearchFocus: => Unit < Async,
+        toggleTheme: => Unit < Async,
+        switchVersion: String => Unit < Async
+    )(using Frame): UI =
+        // The first path segment of docsHome is the active version prefix ("latest" or a tag like
+        // "v0.9.0"), reused both for the overview route and the version selector's selected value.
+        // e.g. docsHome = "/latest/kyo-data/" -> currentPrefix = "latest" -> overviewHome = "/latest/"
+        val currentPrefix: String =
+            docsHome.split('/').filter(_.nonEmpty).headOption.getOrElse("latest")
+        val overviewHome: String = s"/$currentPrefix/"
+        UI.header.cssClass("site-header").data("section", "header")(
+            UI.div.cssClass("site-header-inner")(
+                UI.a.cssClass("brand").data("role", "logo").href(Href.Path("/"))(
+                    // The crisp vector mark (/kyo.svg): the 1000x1000 raster (/kyo.png) downscaled to the
+                    // 28px header mark read pixelated and aliased next to the wordmark. The SVG is the same
+                    // logo as pure vector art, so it renders sharp at any size.
+                    UI.img(ImgSrc.Path("/kyo.svg"), "Kyo").cssClass("mark"),
+                    UI.span("kyo")
+                ),
+                UI.nav.cssClass("links")(
+                    // Docs opens the overview (the root-README intro at the intro route): clicking it
+                    // lands on the overview, which auto-opens as the active rail item, with the module
+                    // list in the sidebar.
+                    UI.a("Docs").href(Href.Path(overviewHome)),
+                    UI.a("API")
+                        .href(Href.External("https", "//javadoc.io/doc/io.getkyo/kyo-core_3"))
+                        .target(Target.Blank),
+                    UI.a.cssClass("soc")(LandingApp.brandGlyph(LandingApp.githubMark), "GitHub")
+                        .href(Href.External("https", "//github.com/getkyo/kyo"))
+                        .target(Target.Blank),
+                    UI.a.cssClass("soc")(LandingApp.brandGlyph(LandingApp.discordMark), "Community")
+                        .href(Href.External("https", "//discord.gg/KxxkBbW8bq"))
+                        .target(Target.Blank)
+                ),
+                UI.div.cssClass("right")(
+                    // The input and its dropdown share a position:relative wrapper so the absolutely
+                    // positioned .search-results anchors directly under the input (not the right edge of
+                    // the whole header cluster). The wrapper is also the hit-test region for the
+                    // click-outside dismiss wired in the bundle.
+                    UI.div.cssClass("search-wrap")(
+                        UI.input
+                            .cssClass("search-input")
+                            .placeholder("Search docs")
+                            .value(queryRef)
+                            .onFocus(onSearchFocus)
+                            .onInput(q => queryRef.set(q).andThen(activeRef.set(-1)))
+                            .onKeyDown(handleKey(searchIndex, queryRef, activeRef, navigate)),
+                        searchResults(searchIndex, queryRef, activeRef)
+                    ),
+                    versionSelect(versions, currentPrefix, switchVersion),
+                    // Theme toggle: holds both icons; CSS shows the one matching the root data-theme.
+                    // onClick flips data-theme + persists (the bundle's effect; a no-op on the SSG).
+                    UI.button.cssClass("theme-toggle").aria("label", "Toggle dark mode").onClick(toggleTheme)(
+                        UI.span.cssClass("sun")(sunIcon),
+                        UI.span.cssClass("moon")(moonIcon)
+                    ),
+                    // Get started lands on the overview (the root-README intro), the same target as the
+                    // Docs link, rather than dropping the reader straight into the first module's page.
+                    UI.a
+                        .cssClass("btn")
+                        .cssClass("btn-primary")
+                        .href(Href.Path(overviewHome))("Get started")
+                )
+            )
+        )
+    end siteHeader
+
+    /** The header version selector: a NATIVE `<select>` so it expands with the browser's own control
+      * (no JS toggle, so it works on the static SSG site exactly as it does in the bundle) and
+      * navigates on change.
+      *
+      *   - One `<option>` per version, NEWEST-first: the caller supplies `versions` oldest-first (the
+      *     generator orders them by git tag timestamp, ascending), so this reverses that given order
+      *     rather than re-sorting by version string. The newest tag by date therefore sits at the top.
+      *   - Each option's value is its route prefix: `"latest"` for the latest version, else the tag
+      *     (`"v0.9.0"`); its display text is the version label (`"1.0.0-RC2"`).
+      *   - The option whose prefix equals `currentPrefix` carries `selected(true)` so the control
+      *     shows the CURRENT version on first paint (a native `<select>` reads the selected option,
+      *     not a `value=` attribute), and the select's `value` is pinned to `currentPrefix` so the
+      *     bundle runtime keeps the same selection after hydration.
+      *   - `onChange` routes the chosen prefix to `switchVersion(s"/$p/")`: the bundle navigates the
+      *     browser to that version's docs tree; the SSG no-op never fires at render time.
+      *
+      * With ONE version (or none) there is nothing to switch to, so the control renders nothing: a
+      * single-option dropdown reads as broken (the initial post-launch state has only the current
+      * release). It reappears on its own once a second version exists. SSR and the bundle apply the
+      * same rule from the same `versions`, so hydration stays consistent.
+      */
+    private def versionSelect(
+        versions: Chunk[WebsiteVersion],
+        currentPrefix: String,
+        switchVersion: String => Unit < Async
+    )(using Frame): UI =
+        if versions.size <= 1 then UI.fragment()
+        else
+            val sorted = versions.toSeq.reverse
+            val options = sorted.map { v =>
+                val prefix = if v.latest then "latest" else v.tag
+                UI.option.value(prefix).selected(prefix == currentPrefix)(v.label)
+            }
+            UI.select
+                .cssClass("ver")
+                .id("site-version")
+                .value(currentPrefix)
+                .onChange(p => switchVersion(s"/$p/"))(html(options)*)
+        end if
+    end versionSelect
+
+    /** Keyboard handling on the search input.
+      *
+      *   - Arrow Down / Up move the highlighted row within `[0, hits.size)`, clamped at the ends.
+      *   - Enter activates the highlighted row, or the first row when none is highlighted, via
+      *     `navigate` (the bundle's `UILocation.push`); the query is cleared so the dropdown closes.
+      *   - Escape clears the query (closing the dropdown) and resets the highlight.
+      *
+      * The handler reads `queryRef`/`searchIndex` at keypress time and recomputes the hits with the
+      * same [[DocsSearch.filter]] the dropdown renders, so the highlight and the navigation target
+      * always agree with what the user sees.
+      */
+    private def handleKey(
+        searchIndex: Signal[DocsSearch.Index],
+        queryRef: SignalRef[String],
+        activeRef: SignalRef[Int],
+        navigate: String => Unit < Async
+    )(using Frame): UI.KeyboardEvent => Any < Async =
+        evt =>
+            evt.key match
+                case Keyboard.ArrowDown =>
+                    currentHits(searchIndex, queryRef).map { hits =>
+                        if hits.isEmpty then Kyo.unit
+                        else activeRef.updateAndGet(i => math.min(i + 1, hits.size - 1).max(0)).unit
+                    }
+                case Keyboard.ArrowUp =>
+                    currentHits(searchIndex, queryRef).map { hits =>
+                        if hits.isEmpty then Kyo.unit
+                        else activeRef.updateAndGet(i => math.max(i - 1, 0)).unit
+                    }
+                case Keyboard.Enter =>
+                    for
+                        hits   <- currentHits(searchIndex, queryRef)
+                        active <- activeRef.get
+                        idx = if active >= 0 && active < hits.size then active else 0
+                        _ <-
+                            if hits.isEmpty then Kyo.unit
+                            else
+                                navigate(hits(idx).route)
+                                    .andThen(queryRef.set(""))
+                                    .andThen(activeRef.set(-1))
+                    yield ()
+                case Keyboard.Escape =>
+                    queryRef.set("").andThen(activeRef.set(-1))
+                case _ => ()
+    end handleKey
+
+    private def currentHits(
+        searchIndex: Signal[DocsSearch.Index],
+        queryRef: SignalRef[String]
+    )(using Frame): Chunk[DocsSearch.Hit] < Sync =
+        for
+            q   <- queryRef.current
+            idx <- searchIndex.current
+        yield DocsSearch.filter(idx, q)
+
+    private def searchResults(
+        searchIndex: Signal[DocsSearch.Index],
+        queryRef: SignalRef[String],
+        activeRef: SignalRef[Int]
+    )(using Frame): UI =
+        // The dropdown reacts to the query, the index, and the highlight. combineLatest (NOT zip) is
+        // required: zip emits only when ALL inputs change since the last emit, so typing alone (only
+        // the query ticks) would never re-render. combineLatest re-emits when ANY input changes, so
+        // the dropdown updates on each keystroke, when the heading index finishes loading, and when
+        // the highlight moves.
+        val results = queryRef.combineLatest(searchIndex).combineLatest(activeRef).map {
+            case ((q, idx), active) => resultList(q, DocsSearch.filter(idx, q), active)
+        }
+        // Use UI.Ast.Reactive directly to avoid ambiguity with StringContext.render.
+        UI.Ast.Reactive(results)
+    end searchResults
+
+    private def resultList(query: String, hits: Chunk[DocsSearch.Hit], active: Int)(using Frame): UI =
+        // The element stays in the tree on the empty query for SSG<->bundle hydration parity. Three
+        // states:
+        //   - empty query: the dropdown is `hidden`, so the reset's `[hidden]{display:none!important}`
+        //     collapses it to nothing (no faint pill under the header). This is also the SSG first
+        //     render, keeping the bundle's hydration tree structurally identical.
+        //   - non-empty query with hits: render one `search-result` row per hit, as before.
+        //   - non-empty query with zero hits: render a single non-interactive "No results" row so the
+        //     user gets feedback instead of a silently-vanishing dropdown.
+        val queryEmpty = query.trim.isEmpty
+        if queryEmpty then
+            UI.div.cssClass("search-results").hidden(true)()
+        else if hits.isEmpty then
+            UI.div.cssClass("search-results")(
+                UI.div.cssClass("search-result").cssClass("search-no-results")(
+                    UI.span.cssClass("search-result-title")("No results")
+                )
+            )
+        else
+            UI.div.cssClass("search-results")(
+                hits.toSeq.zipWithIndex.map { case (hit, i) =>
+                    val base          = UI.a.cssClass("search-result")
+                    val row           = if i == active then base.cssClass("search-result-active") else base
+                    val titleSpan: UI = UI.span.cssClass("search-result-title")(hit.title)
+                    val subSpan: Seq[UI] =
+                        hit.sub.map(s => Seq[UI](UI.span.cssClass("search-result-sub")(s))).getOrElse(Seq.empty)
+                    val children: Seq[UI] = titleSpan +: subSpan
+                    row.href(Href.Path(hit.route))(html(children)*)
+                }*
+            )
+        end if
+    end resultList
+
+end SiteApp

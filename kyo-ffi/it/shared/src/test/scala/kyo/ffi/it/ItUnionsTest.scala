@@ -44,7 +44,7 @@ class ItUnionsTest extends ItTestBase:
         }
 
         // #248: a struct (case class) variant in a union parameter. JVM and Native write the struct's
-        // fields into the union scratch; before the fix JS threw FfiUnsupported at runtime. All three
+        // fields into the union scratch; before the fix JS threw FfiLoadError.Unsupported at runtime. All three
         // backends must now write the struct variant's fields into the union storage identically.
         "writes a struct variant's fields into a union parameter (Int | UnionPoint)" in {
             val b = Ffi.load[ItUnionsBindings]

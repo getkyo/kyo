@@ -3469,9 +3469,8 @@ object Tasty:
           * Returns an empty `Chunk` when no collisions occurred.
           */
         def collisionReport: Chunk[Classpath.FullNameCollision] =
-            indices.diagnostics.flatMap {
-                case c: Classpath.FullNameCollision => Chunk(c)
-                case _: Classpath.Diagnostic        => Chunk.empty
+            indices.diagnostics.collect {
+                case c: Classpath.FullNameCollision => c
             }
 
         /** Structural subtype check between two `Type` values.
@@ -4482,11 +4481,15 @@ object Tasty:
           * decode time from ~27,000 classfiles (all JDK modules) to ~7,000 (java.base only), making it suitable for test fixtures. The
           * production `initWithPlatformModules` always passes an empty filter, which walks all modules.
           *
+          * When `classFilter` is non-empty, only those classes (by fully-qualified name, e.g. `Set("java.lang.annotation.RetentionPolicy")`)
+          * are decoded, narrowing a module load to a handful of classes for a fixture that inspects only those.
+          *
           * The returned Classpath is immutable; this overload does not weaken that invariant.
           */
         private[kyo] def initWithPlatformModulesFiltered(
             roots: Seq[String],
-            moduleFilter: Set[String]
+            moduleFilter: Set[String],
+            classFilter: Set[String] = Set.empty
         )(using Frame): Classpath < (Async & Scope & Abort[TastyError]) =
             // Prepend every `.class` path under `jrt:/modules/<m>/...` to the user's roots so JDK class
             // symbols decode alongside user TASTy. The shape of `roots` is preserved (a Seq[String] of
@@ -4495,20 +4498,21 @@ object Tasty:
             // return Chunk.empty so this method degrades to the module-descriptor-only path.
             // Sync.Unsafe.defer supplies AllowUnsafe to just the listJdkClassFiles call, so the rest of
             // the for-comprehension cannot pick up the proof implicitly.
-            Sync.Unsafe.defer(kyo.internal.tasty.query.PlatformModuleOps.listJdkClassFiles(moduleFilter)).map { jdkClassFiles =>
-                for
-                    classpath  <- initImpl(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
-                    jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
-                yield
-                    val newModulesIndex = classpath.indices.modulesIndex ++ Dict.from(jdkModules)
-                    val newModulesBuf   = Chunk.newBuilder[Java.Module.Descriptor]
-                    newModulesIndex.foreach((_, v) => newModulesBuf += v)
-                    val newModules = newModulesBuf.result()
-                    classpath.copy(
-                        modules = newModules,
-                        indices = classpath.indices.copy(modulesIndex = newModulesIndex)
-                    )
-                end for
+            Sync.Unsafe.defer(kyo.internal.tasty.query.PlatformModuleOps.listJdkClassFiles(moduleFilter, classFilter)).map {
+                jdkClassFiles =>
+                    for
+                        classpath  <- initImpl(jdkClassFiles.toSeq ++ roots, ErrorMode.SoftFail)
+                        jdkModules <- PlatformModuleOps.readJdkModuleDescriptors
+                    yield
+                        val newModulesIndex = classpath.indices.modulesIndex ++ Dict.from(jdkModules)
+                        val newModulesBuf   = Chunk.newBuilder[Java.Module.Descriptor]
+                        newModulesIndex.foreach((_, v) => newModulesBuf += v)
+                        val newModules = newModulesBuf.result()
+                        classpath.copy(
+                            modules = newModules,
+                            indices = classpath.indices.copy(modulesIndex = newModulesIndex)
+                        )
+                    end for
             }
         end initWithPlatformModulesFiltered
 

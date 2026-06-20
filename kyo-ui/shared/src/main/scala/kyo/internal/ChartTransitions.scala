@@ -231,7 +231,8 @@ private[kyo] object ChartTransitions:
                 val la = if largeArc then 1 else 0
                 val sw = if sweep then 1 else 0
                 s"a${fmtD(rx)} ${fmtD(ry)} ${fmtD(xRot)} $la $sw ${fmtD(dx)} ${fmtD(dy)}"
-            case Svg.PathCommand.Close => "Z"
+            case Svg.PathCommand.Close  => "Z"
+            case Svg.PathCommand.Raw(d) => d
         Svg.PathData.commands(d).map(cmd).mkString(" ")
     end renderPathDataStr
 

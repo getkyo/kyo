@@ -62,7 +62,7 @@ val name: String          = found.fold("guest")(_.name)
 val list: List[User]      = found.toList
 ```
 
-Because `Maybe` is an opaque type that erases to the underlying value, `Maybe[Maybe[A]]` cannot be represented by collapse alone. `Present(Absent)` differs from `Absent`. The library represents that case via a small internal nesting wrapper so nesting roundtrips faithfully.
+In order to properly support nested values like `Maybe[Maybe[A]]`, the library automatically represents nestvalues via a internal wrapper so it roundtrips faithfully and complies with the monadic laws.
 
 > **Note:** `value.show` for `Maybe` requires a `Render` instance for the inner type in scope; the underlying `toString` can produce wrong output. For example, `Present(Absent)` prints as `Absent` via `toString` but `Present(Absent)` via `Render`.
 
@@ -184,7 +184,7 @@ Different collection cost models matter at different points in a program. Slicin
 
 ### Slicing without copying
 
-When you want a `Seq`-compatible collection that supports cheap slicing, use `Chunk`. `Chunk` is a `Seq[A]` whose `take`, `drop`, `slice`, and `concat` are O(1): each returns a view that shares the underlying buffer with the original. The iteration cost is paid lazily on traversal, not at construction.
+When you want a `Seq`-compatible collection that supports cheap slicing, use `Chunk`. `Chunk` is a `Seq[A]` whose `append`, `take`, `drop`, `slice`, and `concat` are O(1): each returns a view that shares the underlying buffer with the original. The iteration cost is paid lazily on traversal, not at construction.
 
 ```scala
 import kyo.*
@@ -578,8 +578,6 @@ val three: TypeMap[Int & String & Double] = two.add(3.14)
 val i: Int    = three.get[Int]
 val s: String = three.get[String]
 ```
-
-> **Caution:** `TypeMap.get[B]` throws `RuntimeException` if the requested type is not present. There is no `Maybe`-returning variant on the same name. Construct the map so the type parameter accurately reflects what was added; the compiler then ensures `get` finds the value.
 
 > **Note:** `TypeMap.get` requires `NotIntersection[B]` evidence at compile time. Querying by an intersection type (`get[Int & String]`) will not compile; query each component separately.
 

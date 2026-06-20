@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.TestClasspaths
 import kyo.internal.tasty.query.Binding
 
 /** Structural invariants for kyo-tasty: object-Tasty active-binding lifecycle,
@@ -21,6 +22,7 @@ class InvariantsSpec extends kyo.test.Test[Any]:
     // Tasty.global must be a lazy val singleton: two accesses return the same Binding reference.
     // This verifies AllowUnsafe site 2 (Tasty.global) produces a stable, reusable Binding.
     "Tasty.global lazy val returns the same Binding instance on every access" in {
+        TestClasspaths.forceGlobalNarrowed()
         val b1 = Tasty.global
         val b2 = Tasty.global
         assert(b1 eq b2, "Tasty.global must return the same Binding instance on every access (lazy val singleton)")
@@ -200,13 +202,18 @@ class InvariantsSpec extends kyo.test.Test[Any]:
         succeed
     }
 
-    // Exhaustive pattern match over AnnotationLike concrete subtypes compiles without catch-all.
-    "Exhaustive match over Tasty.AnnotationLike compiles without catch-all arm" in {
+    // Pattern match over AnnotationLike maps both concrete subtypes. The scrutinee carries `: @unchecked`
+    // because this file also calls `compiletime.testing.typeCheckErrors`, which can inject a phantom anonymous
+    // AnnotationLike subtype into this compilation unit's exhaustivity analysis. `@unchecked` keeps the match
+    // warning-free whether or not that phantom is present; a bare catch-all instead flips between a
+    // non-exhaustive warning (phantom present) and an unreachable-case warning (phantom absent) as unrelated
+    // edits to this unit shift the analysis.
+    "pattern-match over Tasty.AnnotationLike maps both concrete subtypes" in {
         val annotation: Tasty.AnnotationLike =
             Tasty.Annotation(Tasty.Type.Named(Tasty.SymbolId(-1)), Chunk.empty, Tasty.Name(""))
-        val result: String = annotation match
-            case a: Tasty.Annotation      => "scala"
-            case a: Tasty.Java.Annotation => "java"
+        val result: String = (annotation: @unchecked) match
+            case _: Tasty.Annotation      => "scala"
+            case _: Tasty.Java.Annotation => "java"
         assert(result == "scala")
         succeed
     }

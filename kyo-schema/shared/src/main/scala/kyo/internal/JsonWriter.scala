@@ -136,7 +136,7 @@ final class JsonWriter private (
     def char(value: Char): Unit =
         maybeComma()
         writeByte('"')
-        // Single char — inline UTF-8 encoding
+        // Single char: inline UTF-8 encoding
         if value < 0x80 then writeByte(value)
         else if value < 0x800 then
             ensure(2)
@@ -248,7 +248,7 @@ final class JsonWriter private (
         pos += 1
     end writeByte
 
-    // Write a long value directly as ASCII digits — zero allocation.
+    // Write a long value directly as ASCII digits: zero allocation.
     // Uses digit-pair lookup table to write 2 digits at a time.
     private def writeLong(v: Long): Unit =
         if v == 0L then
@@ -309,7 +309,7 @@ final class JsonWriter private (
     // Scan-first bulk-copy fast path: walks the input once looking for the first
     // index that is non-ASCII or requires escaping. The prefix [0, safeEnd) is
     // pure ASCII with no escaping, so every UTF-16 code unit maps to exactly one
-    // UTF-8 byte — bulk-copy it with a tight `buf(pos + j) = charAt(j).toByte`
+    // UTF-8 byte: bulk-copy it with a tight `buf(pos + j) = charAt(j).toByte`
     // loop. If safeEnd < len, fall through to the per-char slow path starting
     // at safeEnd.
     private def writeQuotedString(s: String): Unit =
@@ -357,7 +357,7 @@ final class JsonWriter private (
                 if c < 0x80 then
                     val esc = escapeTable(c)
                     if esc == 0 then
-                        // No escape needed — fast path
+                        // No escape needed: fast path
                         writeByte(c)
                     else if esc == -1 then
                         // \uXXXX escape for control chars
@@ -380,7 +380,7 @@ final class JsonWriter private (
                     pos += 2
                     loop(i + 1)
                 else if c >= 0xd800 && c <= 0xdbff && i + 1 < len then
-                    // High surrogate — check for low surrogate
+                    // High surrogate: check for low surrogate
                     val lo = s.charAt(i + 1)
                     if lo >= 0xdc00 && lo <= 0xdfff then
                         // 4-byte UTF-8 for supplementary character
@@ -393,7 +393,7 @@ final class JsonWriter private (
                         pos += 4
                         loop(i + 2) // skip the low surrogate
                     else
-                        // Lone high surrogate — encode as 3-byte UTF-8
+                        // Lone high surrogate: encode as 3-byte UTF-8
                         ensure(3)
                         buf(pos) = (0xe0 | (c >> 12)).toByte
                         buf(pos + 1) = (0x80 | ((c >> 6) & 0x3f)).toByte

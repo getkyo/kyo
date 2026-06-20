@@ -1,7 +1,10 @@
+import org.portablescala.sbtplatformdeps.PlatformDepsPlugin.autoImport.platformDepsCrossVersion
 import org.scalajs.linker.interface.ModuleKind
+import org.scalajs.sbtplugin.ScalaJSCrossVersion
 import org.scalajs.sbtplugin.ScalaJSPlugin
 import org.scalajs.sbtplugin.ScalaJSPlugin.autoImport.scalaJSLinkerConfig
 import sbt.*
+import sbt.Keys.crossVersion
 import sbtcrossproject.*
 import scala.language.implicitConversions
 
@@ -17,12 +20,23 @@ import scala.language.implicitConversions
 case object WasmPlatform extends Platform {
     def identifier: String = "wasm"
     def sbtSuffix: String  = "Wasm"
+
+    /** Published Maven coordinate suffix for WebAssembly artifacts, parallel to Scala.js `_sjs1` and Scala Native `_native0.5`. A wasm
+      * module publishes as e.g. `kyo-core_sjs1-wasm_3`, distinct from the JS `kyo-core_sjs1_3`, so the two never collide on Maven Central.
+      */
+    val wasmCrossVersion: CrossVersion = CrossVersion.binaryWith("sjs1-wasm_", "")
+
     def enable(project: Project): Project =
         project.enablePlugins(ScalaJSPlugin).settings(
             scalaJSLinkerConfig ~= {
                 _.withExperimentalUseWebAssembly(true)
                     .withModuleKind(ModuleKind.ESModule)
-            }
+            },
+            // Give kyo's own wasm artifacts a distinct coordinate the way the ScalaJS and ScalaNative platforms do for theirs. External
+            // `%%%` dependencies stay on `_sjs1`, since no upstream Scala.js library publishes a wasm build yet and the `_sjs1` artifacts
+            // link to WasmGC unchanged.
+            crossVersion             := wasmCrossVersion,
+            platformDepsCrossVersion := ScalaJSCrossVersion.binary
         )
 }
 

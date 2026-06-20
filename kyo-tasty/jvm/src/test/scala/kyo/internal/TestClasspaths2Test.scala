@@ -7,6 +7,15 @@ class TestClasspaths2Test extends kyo.test.Test[Any]:
 
     import AllowUnsafe.embrace.danger
 
+    // The cold-vs-warm leaf cold-loads the full standard classpath, writes a snapshot, and reads it back
+    // (warm), holding two full classpaths plus serialization buffers at once. Run the suite sequentially so
+    // this heavy leaf does not contend with the other full-classpath leaves here: concurrent loads exhaust
+    // the forked test JVM heap, the leaf goes STUCK and times out, and the runaway load can take the runner
+    // down with a shutdown signal. Mirrors TastyGlobalFallbackTest's sequential config; the 3-minute timeout
+    // matches SnapshotFidelity2Test's headroom for the 20-30s-per-load work on a loaded CI machine.
+    override def config  = super.config.sequential
+    override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
+
     "warning-sink-captures-tag-warnings" in {
         TestClasspaths2.loadStandardWithSink.map { (classpath, sink) =>
             val tagWarningCount = sink.unknownTagCount

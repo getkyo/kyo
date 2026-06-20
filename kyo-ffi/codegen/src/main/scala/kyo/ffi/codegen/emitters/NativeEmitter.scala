@@ -509,7 +509,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                             n,
                             throw new IllegalStateException(s"nested struct '$n' not found")
                         )
-                        val childPtr = s"${caseClassVal}_${f.name}_ptr"
+                        val childPtr = s"${localIdent(fieldAcc)}_ptr"
                         buf += s"val $childPtr = ($ptrVal + $offset)"
                         buf ++= emitStructWrite(fieldAcc, childPtr, child, structsByName, bindingFqn, methodName, teardownCollector)
                     case TypeRef.HandleT(_) =>
@@ -528,7 +528,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         val pushName = s"pushTransient_$shape"
                         val popName  = s"popTransient_$shape"
                         val cbType   = cFuncPtrType(params, ret)
-                        val ptrVal2  = s"${caseClassVal}_${f.name}_cfp"
+                        val ptrVal2  = s"${localIdent(fieldAcc)}_cfp"
                         val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
                         val fromFn =
                             if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
@@ -559,12 +559,12 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                             n,
                             throw new IllegalStateException(s"nested struct '$n' not found")
                         )
-                        val childPtr = s"${caseClassVal}_${f.name}_ptr"
+                        val childPtr = s"${localIdent(fieldAcc)}_ptr"
                         buf += s"val $childPtr = $ptrVal.at${i + 1}"
                         buf ++= emitStructWrite(fieldAcc, childPtr, child, structsByName, bindingFqn, methodName, teardownCollector)
                     case TypeRef.UnionT(variants) =>
                         // Union field: runtime type match at the field's offset in the struct.
-                        val unionPtr = s"${caseClassVal}_${f.name}_unionPtr"
+                        val unionPtr = s"${localIdent(fieldAcc)}_unionPtr"
                         buf += s"val $unionPtr = $ptrVal.at${i + 1}.asInstanceOf[Ptr[Byte]]"
                         buf ++= emitNativeUnionVariantMatch(fieldAcc, unionPtr, variants, structsByName, bindingFqn, methodName)
                     case TypeRef.HandleT(_) =>
@@ -588,7 +588,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                         val pushName = s"pushTransient_$shape"
                         val popName  = s"popTransient_$shape"
                         val cbType   = cFuncPtrType(params, ret)
-                        val ptrVal2  = s"${caseClassVal}_${f.name}_cfp"
+                        val ptrVal2  = s"${localIdent(fieldAcc)}_cfp"
                         val trampRef = s"kyo.ffi.internal.CallbackRegistry.${NativeCallbackCatalog.transientTrampolineName(shape)}"
                         val fromFn =
                             if params.isEmpty then s"CFuncPtr0.fromScalaFunction($trampRef)"
@@ -850,7 +850,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
                     throw new IllegalStateException(s"union variant type $other is not supported (only primitives and structs)")
             end match
         }
-        buf += s"""    case __other => throw new kyo.ffi.FfiUnsupported(s"Union variant not supported: $${__other.getClass}")"""
+        buf += s"""    case __other => throw new kyo.ffi.FfiLoadError.Unsupported(s"Union variant not supported: $${__other.getClass}")"""
         buf.result()
     end emitNativeUnionVariantMatch
 

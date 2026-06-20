@@ -1,6 +1,6 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiUnsupported
+import kyo.ffi.FfiLoadError
 import kyo.ffi.Test
 
 /** R11 / F1, NativeLoader platform-detection unit tests.
@@ -162,20 +162,20 @@ class NativeLoaderOsDetectTest extends Test:
     // -------------------------------------------------------------------------
 
     "checkPlatform: does not throw when isBit64=true" in {
-        // Must complete without raising FfiUnsupported.
+        // Must complete without raising FfiLoadError.Unsupported.
         NativeLoader.checkPlatform(true)
         succeed
     }
 
-    "checkPlatform: throws FfiUnsupported when isBit64=false" in {
-        val ex = intercept[FfiUnsupported] {
+    "checkPlatform: throws FfiLoadError.Unsupported when isBit64=false" in {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         assert(ex.getMessage.nonEmpty)
     }
 
     "checkPlatform: error message mentions 32-bit or the data model" in {
-        val ex = intercept[FfiUnsupported] {
+        val ex = intercept[FfiLoadError.Unsupported] {
             NativeLoader.checkPlatform(false)
         }
         // The error must give the user enough context to diagnose the issue.

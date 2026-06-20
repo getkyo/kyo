@@ -11,7 +11,7 @@ package kyo.internal
   * Algorithm reference: Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and Experience, 2021
   * ([arXiv:2101.11408](https://arxiv.org/abs/2101.11408)).
   *
-  * Do not edit by hand — regenerate via [[FastFloatPow10Gen]].
+  * Do not edit by hand; regenerate via [[FastFloatPow10Gen]].
   */
 private[internal] object FastFloatPow10Table:
     val pow10Min: Int = -348

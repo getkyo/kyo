@@ -17,18 +17,18 @@ class StructAbiCheckTest extends Test:
             succeed
         }
 
-        "throws FfiAbiMismatch when expected != actual" in {
-            val ex = intercept[FfiAbiMismatch](
+        "throws FfiLoadError.AbiMismatch when expected != actual" in {
+            val ex = intercept[FfiLoadError.AbiMismatch](
                 StructAbiCheck.verifyByteSize("kyo.example.Bindings", "Packed", 16L, 9L)
             )
-            assert(ex.traitFqn == "kyo.example.Bindings")
-            assert(ex.structName == "Packed")
-            assert(ex.expectedSize == 16L)
-            assert(ex.actualSize == 9L)
+            assert(ex.expected == "16")
+            assert(ex.actual == "9")
+            assert(ex.getMessage.contains("kyo.example.Bindings"))
+            assert(ex.getMessage.contains("Packed"))
         }
 
         "error message names the binding, struct, expected + actual sizes, and remediation hint" in {
-            val ex = intercept[FfiAbiMismatch](
+            val ex = intercept[FfiLoadError.AbiMismatch](
                 StructAbiCheck.verifyByteSize("kyo.example.Bindings", "Packed", 16L, 9L)
             )
             val msg = ex.getMessage
@@ -39,8 +39,8 @@ class StructAbiCheckTest extends Test:
             assert(msg.contains("packedStructs"))
         }
 
-        "FfiAbiMismatch is a subtype of FfiLoadError.AbiMismatch so a single `catch FfiLoadError` covers every load failure" in {
-            val ex = intercept[FfiAbiMismatch](
+        "FfiLoadError.AbiMismatch is a subtype of FfiLoadError.AbiMismatch so a single `catch FfiLoadError` covers every load failure" in {
+            val ex = intercept[FfiLoadError.AbiMismatch](
                 StructAbiCheck.verifyByteSize("kyo.example.Bindings", "Packed", 16L, 9L)
             )
             assert(ex.isInstanceOf[FfiLoadError.AbiMismatch])

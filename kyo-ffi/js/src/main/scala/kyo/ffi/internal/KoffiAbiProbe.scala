@@ -1,13 +1,13 @@
 package kyo.ffi.internal
 
-import kyo.ffi.FfiKoffiVersionMismatch
+import kyo.ffi.FfiLoadError
 import scala.scalajs.js
 
 /** Runtime ABI probe for the koffi npm package.
   *
   * kyo-ffi's JS backend targets the koffi 2.7.x ABI. A user environment can drift to an older 2.6.x release (missing variadic helpers) or
   * jump to a future 3.x with different marshalling semantics. This probe runs once per JVM/Node session at the first [[KoffiFacade.load]]
-  * call and fails fast with [[FfiKoffiVersionMismatch]] when either:
+  * call and fails fast with [[FfiLoadError.Unsupported]] when either:
   *
   *   - `koffi.version` is absent or outside the supported range (see [[FfiPlatformErrors.KoffiSupportedRange]]);
   *   - any of the methods kyo-ffi's generated code relies on is missing.
@@ -50,19 +50,19 @@ private[ffi] object KoffiAbiProbe:
 
     /** Core probe. Visible-for-tests so the spec can drive it with a `js.Dynamic.literal` that stands in for koffi.
       *
-      * @throws FfiKoffiVersionMismatch
+      * @throws FfiLoadError.Unsupported
       *   when either (a) `koffi.version` is absent or does not satisfy [[FfiPlatformErrors.KoffiSupportedRange]], or (b) any method listed
       *   in [[RequiredMethods]] is missing.
       */
     def probe(koffi: js.Dynamic): Unit =
         val detected = readVersion(koffi)
         if !isSupported(detected) then
-            throw new FfiKoffiVersionMismatch(FfiPlatformErrors.koffiVersionMismatch(detected))
+            throw new FfiLoadError.Unsupported(FfiPlatformErrors.koffiVersionMismatch(detected))
         end if
         RequiredMethods.foreach { m =>
             val v = koffi.selectDynamic(m)
             if js.isUndefined(v) || v == null || js.typeOf(v) != "function" then
-                throw new FfiKoffiVersionMismatch(FfiPlatformErrors.koffiMissingMethod(m, detected))
+                throw new FfiLoadError.Unsupported(FfiPlatformErrors.koffiMissingMethod(m, detected))
             end if
         }
     end probe

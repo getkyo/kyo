@@ -4,7 +4,7 @@ import kyo.*
 
 /** Uptime monitor with SSE dashboard.
   *
-  * Periodically pings real websites and streams health check results as SSE events. Demonstrates Async.parallel for concurrent health
+  * Periodically pings real websites and streams health check results as SSE events. Demonstrates Async.foreach for concurrent health
   * checks, SSE streaming, and periodic polling with Stream.
   */
 object UptimeMonitor extends KyoApp:

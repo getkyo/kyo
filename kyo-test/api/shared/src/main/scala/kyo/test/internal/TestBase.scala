@@ -194,17 +194,14 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         ): EnrichedTestBuilder[S1] =
             new EnrichedTestBuilder[S1](b, h)
 
-        def focus: TestBuilder = b.copy(focus = true)
-        def slow: TestBuilder  = b.copy(tags = b.tags + "slow")
+        def slow: TestBuilder = b.copy(tags = b.tags + "slow")
 
-        /** Non-terminal decorator: marks the leaf ignored; the body is registered but not run. `.ignore(reason)` records why. */
-        def ignore: TestBuilder                 = b.ignore("")
+        /** Non-terminal decorator: marks the leaf ignored; the body is registered but not run. The reason records why. */
         def ignore(reason: String): TestBuilder = b.copy(ignore = Maybe(reason))
 
         /** Non-terminal decorator: runs the body and inverts its outcome (still-failing -> Pending, now-passing -> Failed, the tripwire to
           * remove the marker). The kyo-native equivalent of ScalaTest's pendingUntilFixed. Runs once.
           */
-        def pendingUntilFixed: TestBuilder                 = b.pendingUntilFixed("")
         def pendingUntilFixed(reason: String): TestBuilder = b.copy(pendingUntilFixed = Maybe(reason))
 
         def tagged(tags: String*): TestBuilder  = b.copy(tags = b.tags ++ tags.toSet)
@@ -490,11 +487,12 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
 
     /** Default per-test timeout for every leaf in this suite that has no explicit `.timeout(...)`. Override to change it, e.g.
       * `override def timeout = 30.seconds`. Returns `Duration.Infinity` (no timeout) when a debugger is attached so breakpoints don't trip
-      * it; 60s otherwise (the slowest legitimate test is ~45s under CI load, and the bound stops a stuck leaf from burning CI credits).
+      * it; 120s otherwise (raised from 60s after legitimate tests intermittently exceeded 60s under CI load;
+      * the bound still stops a stuck leaf from burning CI credits).
       */
     protected def timeout: Duration =
         if kyo.internal.Platform.isDebugEnabled then Duration.Infinity
-        else Duration.fromJava(java.time.Duration.ofSeconds(60))
+        else Duration.fromJava(java.time.Duration.ofSeconds(120))
 
     /** User-overridable per-suite configuration hook: the runner uses this when the caller does not pass an explicit RunConfig. Override it
       * to opt a suite into, e.g., sequential execution: `override def config = super.config.sequential`.

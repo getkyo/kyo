@@ -4,7 +4,11 @@ import kyo.internal.cdp.PageDownload
 
 class BrowserDownloadTest extends BrowserTest:
 
-    override def timeout = 90.seconds
+    // Native CI drives a real chrome-headless-shell over CDP; under load the terminal download
+    // "completed" event can take longer to arrive than a tight budget allows, so the three-phase
+    // download leaf intermittently overran 90s. Give it more room (this is a wait budget, not a
+    // perf assertion); the leaf still fails fast on a real regression via its inverse polls.
+    override def timeout = 180.seconds
 
     // Inverse poll: asserts that `path` does NOT come into existence for `samples * period` total time.
     // The Loop exits cleanly iff `path.exists` stays `false` for every sample; Abort.fail (file landed)

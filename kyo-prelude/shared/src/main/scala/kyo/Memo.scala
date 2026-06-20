@@ -5,7 +5,7 @@ package kyo
   * Memo is used to cache the results of expensive computations, allowing them to be reused without re-computation.
   *
   * This effect is specifically designed for initializing global values or caching results of infrequent, expensive operations. For
-  * memoization in performance-sensitive code or hot paths, consider using `Async.memoize` or `kyo-cache` instead, which have lower
+  * memoization in performance-sensitive code or hot paths, consider using `Async.memoize` or `Cache` in kyo-core instead, which have lower
   * overhead.
   */
 opaque type Memo <: Var[Memo.Cache] = Var[Memo.Cache]

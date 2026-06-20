@@ -117,9 +117,18 @@ lazy val `kyo-settings` = Seq(
     // is not concurrency-safe in a single sbt JVM. See DocTag and Tags.limit(DocTag, 1) above.
     Compile / doc := (Compile / doc).tag(DocTag).value,
     scalacOptions += compilerOptionFailDiscard,
+    // Treat compiler warnings as errors on the Scala 3 series. The Scala 2.13 cross-builds (the kyo-scheduler
+    // family) carry a different, noisier warning set that is out of scope, so the flag is gated on Scala 3.
+    scalacOptions ++= (if (scalaVersion.value.startsWith("3")) Seq("-Werror") else Nil),
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
+    // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
+    // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
+    // ForkedTestGroup cap at 2, two 5GB forks plus the floor-less driver fit the 16GB box. Local dev
+    // keeps the auto-scaling default so small machines are not over-committed.
+    Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
     doctestPredef := Seq("import kyo.*"),
     // Non-LTS modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
     // dedups naturally. LTS fallback modules (3.3.7) must NOT have kyo-doctest on the Test
@@ -261,6 +270,7 @@ lazy val kyoJVM: Project = project
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-browser`.jvm,
+        `kyo-slack`.jvm,
         `kyo-ui`.jvm,
         `kyo-case-app`.jvm,
         `kyo-pod`.jvm,
@@ -281,7 +291,8 @@ lazy val kyoJVM: Project = project
         `kyo-test-runner`.jvm,
         `kyo-test-prop`.jvm,
         `kyo-test-snapshot`.jvm,
-        `root-readme`
+        `root-readme`,
+        `kyo-website`.jvm
     )
 
 lazy val kyoJS = project
@@ -318,8 +329,11 @@ lazy val kyoJS = project
         `kyo-http`.js,
         `kyo-flow`.js,
         `kyo-browser`.js,
+        `kyo-slack`.js,
         `kyo-ui`.js,
         `kyo-threejs`.js,
+        `kyo-website`.js,
+        `kyo-website-bundle`.js,
         `kyo-pod`.js,
         `kyo-compat-future`.js,
         `kyo-compat-kyo`.js,
@@ -366,6 +380,7 @@ lazy val kyoNative = project
         `kyo-stm`.native,
         `kyo-stats-otlp`.native,
         `kyo-browser`.native,
+        `kyo-slack`.native,
         `kyo-ui`.native,
         `kyo-pod`.native,
         `kyo-compat-future`.native,
@@ -411,6 +426,7 @@ lazy val kyoWasm = project
         `kyo-flow`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
+        `kyo-slack`.wasm,
         `kyo-ui`.wasm,
         `kyo-threejs`.wasm,
         `kyo-test-api`.wasm,
@@ -970,7 +986,6 @@ lazy val `kyo-actor` =
 
 lazy val `kyo-tasty` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty"))
         .dependsOn(`kyo-core`, `kyo-schema`)
@@ -1011,7 +1026,6 @@ lazy val `kyo-tasty` =
 
 lazy val `kyo-tasty-fixtures-internal` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
-        .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tasty/fixtures"))
         .withKyoTest
@@ -1648,6 +1662,28 @@ lazy val `kyo-browser` =
         )
         .wasmSettings(`wasm-settings`)
 
+lazy val `kyo-slack` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-slack"))
+        .dependsOn(`kyo-http`, `kyo-schema`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`
+        )
+        .jvmSettings(
+            mimaCheck(false)
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
 lazy val `kyo-ui` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -2028,6 +2064,56 @@ addCommandAlias(
     "demoClientFeedProve",
     """; kyo-threejs-feedprove-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedProve") ; kyo-threejs-demo-runner/run"""
 )
+
+// The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
+// transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the
+// SSG generator; JS side is the browser-mounted chrome. Native is not a target: the generator needs
+// one host and the deploy runs on JVM.
+lazy val `kyo-website` =
+    crossProject(JSPlatform, JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-website"))
+        .dependsOn(`kyo-ui`)
+        .dependsOn(`kyo-parse`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .settings(publish / skip := true)
+        .disablePlugins(MimaPlugin)
+        .jvmSettings(
+            // scalameta tokenizers: JVM-only build-time Scala highlighter; must not reach the JS
+            // link classpath. WebsiteBuildGraphTest enforces this placement.
+            // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
+            // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
+            // while the rest of the project uses sourcecode_3.
+            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.13.4")
+                .exclude("com.lihaoyi", "sourcecode_2.13")
+        )
+        .jsSettings(
+            `js-settings`,
+            // The content model shares WebsiteContent with the JVM generator, whose path.read pulls in
+            // node:path. Enable module support so the JS test link resolves it, matching kyo-ui. The
+            // browser bundle (kyo-website-bundle) re-links as ESModule for Chrome.
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+
+// The single browser-loadable ESModule bundle (chrome only). Its Compile classpath holds
+// kyo-website.js + kyo-ui.js so the linked bundle has no Node-only require calls and loads in
+// Chrome as `<script type="module">`. fullLinkJS in deploy.
+lazy val `kyo-website-bundle` =
+    crossProject(JSPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-website-bundle"))
+        .dependsOn(`kyo-website`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .settings(publish / skip := true)
+        .disablePlugins(MimaPlugin)
+        .jsSettings(
+            `js-settings`,
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("kyo.website.WebsiteBundleMain"),
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) }
+        )
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
