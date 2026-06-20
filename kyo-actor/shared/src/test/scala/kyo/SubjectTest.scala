@@ -156,6 +156,45 @@ class SubjectTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Subject.init with Hub" - {
+        "publishes messages to hub listeners" in {
+            for
+                hub      <- Hub.init[Int]
+                listener <- hub.listen
+                subject = Subject.init(hub)
+                _ <- subject.send(1)
+                _ <- subject.send(2)
+                a <- listener.take
+                b <- listener.take
+            yield assert(a == 1 && b == 2)
+        }
+        "trySend offers without blocking and returns true when accepted" in {
+            for
+                hub      <- Hub.init[Int]
+                listener <- hub.listen
+                subject = Subject.init(hub)
+                accepted <- subject.trySend(1)
+                v        <- listener.take
+            yield assert(accepted && v == 1)
+        }
+        "trySend fails with Closed after the hub is closed" in {
+            for
+                hub <- Hub.init[Int]
+                subject = Subject.init(hub)
+                _      <- hub.close
+                result <- Abort.run[Closed](subject.trySend(1))
+            yield assert(result.isFailure)
+        }
+        "send fails with Closed after the hub is closed" in {
+            for
+                hub <- Hub.init[Int]
+                subject = Subject.init(hub)
+                _      <- hub.close
+                result <- Abort.run[Closed](subject.send(1))
+            yield assert(result.isFailure)
+        }
+    }
+
     "Multiple Subjects" - {
         "can coordinate between different subject implementations" in {
             for

@@ -613,6 +613,24 @@ object Actor:
                 trySend = queue.add(_).andThen(true)
             )
 
+        /** Creates a Subject that publishes received messages to a Hub.
+          *
+          * The `send` operation uses the Hub's blocking `put`, while `trySend` uses the non-blocking `offer`. This is the publish side of
+          * actor pub/sub: any number of listeners created with `hub.listen` observe each published message.
+          *
+          * @param hub
+          *   The Hub to publish messages to
+          * @tparam A
+          *   The type of messages this Subject can receive
+          * @return
+          *   A Subject[A] that publishes received messages to the Hub
+          */
+        def init[A](hub: Hub[A]): Subject[A] =
+            init(
+                send = hub.put,
+                trySend = hub.offer
+            )
+
         /** Creates a custom Subject by directly specifying its send and trySend behaviors.
           *
           * This is a lower-level constructor that allows direct implementation of a Subject's behavior through its send and trySend
