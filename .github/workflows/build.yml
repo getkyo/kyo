@@ -183,12 +183,34 @@ jobs:
       - name: Test ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
+          target="${{ matrix.target }}"
           mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
-          cmd="testKyo $mode ${{ matrix.target }}"
 
-          if [ "${{ matrix.target }}" = "Native" ]; then
-            # Native tests need retry wrapper for libunwind crash tolerance
-            ./scripts/native-test.sh "$cmd"
+          # Native goes through the crash-retry wrapper (libunwind tolerance); it also links the native
+          # test binaries in its own process. Other targets run sbt directly.
+          run_tests() {
+            if [ "$target" = "Native" ]; then
+              ./scripts/native-test.sh "$1"
+            else
+              sbt "$1"
+            fi
+          }
+
+          if [ "${{ inputs.test-command }}" = "test" ] && [ "$target" != "Native" ]; then
+            # Full run on JVM/JS/Wasm: split compile from test into separate sbt processes so no single
+            # session holds the whole codebase's compile heap while the test phase runs (forking JVMs, or
+            # linking JS/Wasm). That single-session pattern over-commits the 16GB runner (exit 143). Each
+            # phase exits before the next, the compile phases have no forks, and the run phase finds
+            # everything compiled so it does not rebuild compiler state. The shell is fail-fast (bash -e).
+            #
+            # Native is intentionally excluded: it does not over-commit (it compiles, links, and runs the
+            # native binaries within memory), and splitting its compile from its nativeLink across separate
+            # processes leaves Scala Native's reachability analysis inconsistent ("Unreachable symbols").
+            # Native keeps the single-process native-test.sh flow below, which links upfront itself.
+            sbt "testKyo --phase compile-main --all $target"
+            sbt "testKyo --phase compile-test --all $target"
+            sbt "testKyo --all $target"
           else
-            sbt "$cmd"
+            # Native full run, and all diff-mode (PR) runs: single pass.
+            run_tests "testKyo $mode $target"
           fi

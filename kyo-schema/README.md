@@ -1,6 +1,6 @@
 # kyo-schema
 
-Define a case class and get JSON/YAML serialization, Protobuf encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
+Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
 <!-- doctest:setup
 ```scala
@@ -31,13 +31,13 @@ Schema[User].focus(_.address.city).update(alice)(_.toUpperCase)
 
 Everything flows from `Schema[A]`, the central type that captures a type's structure at compile time. It's the single source of truth that powers serialization, validation, navigation, and conversion.
 
-The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)`, `Ion.encode(value)`, and `Protobuf.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
+The serialization format is chosen at the call site, not baked into the type. `Json.encode(value)`, `Ion.encode(value)`, `Protobuf.encode(value)`, and `MsgPack.encode(value)` summon the `Schema[A]` from implicit scope; a schema you reshaped or enriched only takes effect when you encode through that instance with `s.encode[Json](value)`.
 
 These are the top-level entry points:
 
 | Entry point | Purpose |
 |-------------|---------|
-| `Json` / `Ion` / `Yaml` / `Protobuf` | Serialize to JSON strings, Ion text, YAML documents, or Protocol Buffers bytes |
+| `Json` / `Ion` / `Yaml` / `Protobuf` / `MsgPack` | Serialize to JSON strings, Ion text, YAML documents, Protocol Buffers bytes, or MessagePack bytes |
 | `Focus` | Type-safe lens for reading, writing, and updating fields at any depth |
 | `Compare` | Read-only field-by-field comparison of two values |
 | `Modify` | Batched field mutations applied as a single unit |
@@ -490,6 +490,66 @@ val proto = Protobuf.protoSchema[User]
 The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
 
 A few shapes that proto3 cannot express raise `IllegalArgumentException` at encode or `protoSchema` time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
+
+### MsgPack
+
+MessagePack is a compact, self-describing binary format. Like Protobuf it produces `Span[Byte]`, but every value carries its own type tag on the wire, so the bytes are readable by any standard MessagePack decoder without the schema:
+
+```scala
+val bytes: Span[Byte] = MsgPack.encode(alice)
+
+MsgPack.decode[User](bytes)
+// Result.Success(alice)
+```
+
+Case classes encode as a MessagePack map keyed by field name, collections as arrays, `Option`/`Maybe` as the value or `nil`, and `Span[Byte]` as a binary blob. `MsgPack.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
+
+The wire shape is configurable through `MsgPack.Config`. For a more compact payload, switch field keys from names to the same stable MurmurHash3 IDs the Protobuf codec uses:
+
+```scala
+given MsgPack = MsgPack(MsgPack.Config(keyEncoding = MsgPack.KeyEncoding.FieldId))
+
+MsgPack.decode[User](MsgPack.encode(alice))
+// Result.Success(alice)
+```
+
+`KeyEncoding.FieldId` trades self-description for size. Dynamic `Map` keys and the `Result`/`Either` discriminators always stay strings, since a hash is not reversible.
+
+`Instant` defaults to a lossless `[seconds, nanos]` array; `InstantEncoding.Extension` writes the spec-defined MessagePack timestamp extension (type -1), which standard MessagePack decoders in other languages read as a timestamp:
+
+```scala
+given MsgPack = MsgPack(MsgPack.Config(instantEncoding = MsgPack.InstantEncoding.Extension))
+
+MsgPack.decode[User](MsgPack.encode(alice))
+// Result.Success(alice)
+```
+
+`Duration` has no MessagePack standard, so `DurationEncoding` lets you choose: `Lossless` (default, a `[seconds, nanos]` array keeping the full `java.time.Duration` range) or `Compat` (a string of total nanoseconds, wire-compatible with upickle/weePickle, limited to the `Long` nanosecond range). Schemas are provided for both `java.time.Duration` and `scala.concurrent.duration.{Duration, FiniteDuration}`. The reader auto-detects the wire shape either way:
+
+```scala
+import scala.concurrent.duration.Duration
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
+
+case class Timeout(connect: FiniteDuration, idle: Duration) derives Schema
+
+given MsgPack = MsgPack(MsgPack.Config(durationEncoding = MsgPack.DurationEncoding.Compat))
+
+val t = Timeout(5.seconds, Duration.Inf)
+MsgPack.decode[Timeout](MsgPack.encode(t))
+// Result.Success(Timeout(5 seconds, Duration.Inf))
+```
+
+`scala.concurrent.duration.Duration` (the possibly-infinite type) always uses the string form so it can carry `Inf`/`MinusInf`/`Undefined`; `FiniteDuration` and `java.time.Duration` follow the `DurationEncoding` setting.
+
+Because MessagePack is self-describing, its reader can materialize an arbitrary payload into a `Structure.Value` without a schema. This makes MsgPack a binary transport for open-shaped wire protocols, the role JSON plays for JSON-RPC: an envelope can hold a `Structure.Value` slot whose concrete type is decided per message.
+
+```scala
+val bytes: Span[Byte] = MsgPack.encode(alice)
+
+summon[Schema[Structure.Value]].decode[MsgPack](bytes)
+// Result.Success(Structure.Value.Record(...))
+```
 
 ### Built-in Types
 
