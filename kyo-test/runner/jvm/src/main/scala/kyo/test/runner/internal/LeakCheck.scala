@@ -102,8 +102,12 @@ private[runner] object LeakCheck:
             if t.isAlive && !t.isDaemon && (t ne self) && !baseline.contains(t) && !carrierThreads.contains(t) then
                 val allowlisted = allowlist.exists(p => t.getName.contains(p) || st.exists(_.toString.contains(p)))
                 if !allowlisted then
-                    val top = if st.nonEmpty then st(0).toString else "<no frame>"
-                    out += s"${t.getName} @ $top"
+                    // Report the thread's state and full stack, not just the top frame: a leaked non-daemon thread blocks a clean
+                    // JVM exit, and the stack (what it is parked on or looping in) is what a CI reader needs to trace it back to the
+                    // test that started it. The top frame alone is usually an opaque park/wait.
+                    val stack = if st.nonEmpty then st.iterator.take(30).map(f => s"        at $f").mkString("\n") else "        <no frame>"
+                    out += s"${t.getName} (${t.getState})\n$stack"
+                end if
         }
         out.result()
     end leakedNonDaemonThreads
@@ -145,6 +149,28 @@ private[runner] object LeakCheck:
             res
         }
     end busyWorkerStack
+
+    /** A thread dump of every thread that is actually doing something at probe time, for an actionable fiber-leak report: each thread whose
+      * state is `RUNNABLE` or whose stack runs kyo code, with its name, state, and stack. Unlike [[busyWorkerStack]] (which sees only scheduler
+      * workers) this also captures NON-worker threads, e.g. a caller stuck mid-`offer` that holds a queue's race-repair counter while a worker
+      * spins in `close()` waiting for it. Idle pool/parked threads with no kyo frame are filtered out to keep the report focused. The leak
+      * check's own thread is excluded.
+      */
+    def runningThreadsDump(): String =
+        val self = Thread.currentThread()
+        val sb   = new StringBuilder
+        Thread.getAllStackTraces.asScala.toList
+            .filter { (t, st) =>
+                (t ne self) && st.nonEmpty &&
+                ((t.getState eq Thread.State.RUNNABLE) || st.exists(_.getClassName.startsWith("kyo.")))
+            }
+            .sortBy((t, _) => t.getName)
+            .foreach { (t, st) =>
+                sb.append(s"\n  \"${t.getName}\" ${t.getState}\n")
+                st.iterator.take(30).foreach(f => sb.append(s"    at $f\n"))
+            }
+        sb.toString
+    end runningThreadsDump
 
     /** Outcome of [[awaitSchedulerIdle]]. */
     enum IdleResult derives CanEqual:
@@ -291,7 +317,10 @@ private[runner] object LeakCheck:
                     val stack       = busyWorkerStack().getOrElse(frame.getOrElse(""))
                     val allowlisted = effectiveAllowlist.exists(stack.contains)
                     if !allowlisted then
-                        findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}\n    stack:\n$stack"
+                        findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
+                            s"\n    busy worker stack:\n$stack" +
+                            s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
+                    end if
         end match
 
         System.gc()
