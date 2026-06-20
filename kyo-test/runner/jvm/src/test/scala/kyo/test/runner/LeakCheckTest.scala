@@ -66,6 +66,21 @@ class LeakCheckTest extends AnyFunSuite with NonImplicitAssertions:
         assert(leaks.toSet == Set("socket:[99]", "/tmp/leaked.txt"), s"got $leaks")
     }
 
+    test("fdLeaksForCategories keeps only the enabled descriptor categories") {
+        val leaks = Chunk("socket:[99]", "/tmp/leaked.txt", "pipe:[7]")
+        // both categories on: every leak kept
+        assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = true, checkFileDescriptors = true).toSet == leaks.toSet)
+        // sockets off (e.g. BaseHttpTest): socket dropped, non-socket descriptors still reported
+        assert(
+            LeakCheck.fdLeaksForCategories(leaks, checkSockets = false, checkFileDescriptors = true).toSet ==
+                Set("/tmp/leaked.txt", "pipe:[7]")
+        )
+        // file descriptors off: only the socket remains
+        assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = true, checkFileDescriptors = false).toSet == Set("socket:[99]"))
+        // both off: nothing reported
+        assert(LeakCheck.fdLeaksForCategories(leaks, checkSockets = false, checkFileDescriptors = false).isEmpty)
+    }
+
     test("openFdTargets enumerates real descriptors and the diff clears on close (Linux only)") {
         LeakCheck.openFdTargets() match
             case Maybe.Absent =>

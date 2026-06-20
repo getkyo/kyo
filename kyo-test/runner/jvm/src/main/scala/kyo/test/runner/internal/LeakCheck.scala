@@ -200,6 +200,13 @@ private[runner] object LeakCheck:
         out.result()
     end fdLeaks
 
+    /** Restricts descriptor leaks to the enabled descriptor categories: a socket target (`socket:[inode]`) is kept only when `checkSockets` is
+      * on, every other target (files, directories, pipes) only when `checkFileDescriptors` is on. Lets a suite exempt the socket category while
+      * still detecting file-descriptor leaks (e.g. an unclosed `Files.list` directory stream).
+      */
+    def fdLeaksForCategories(leaks: Chunk[String], checkSockets: Boolean, checkFileDescriptors: Boolean): Chunk[String] =
+        leaks.filter(target => if target.startsWith("socket:[") then checkSockets else checkFileDescriptors)
+
     private val tcpStates = Map(
         "01" -> "ESTABLISHED",
         "02" -> "SYN_SENT",
@@ -251,8 +258,9 @@ private[runner] object LeakCheck:
     /** Captures a [[Baseline]] of the current open descriptors and live non-daemon threads. */
     def baseline(): Baseline = Baseline(openFdTargets(), liveNonDaemonThreads())
 
-    /** Runs the three end-of-run probes against `baseline`, excusing any finding matched by `allowlist`, and returns a leak report or `Absent`
-      * when the fork is clean.
+    /** Runs the enabled end-of-run probes against `baseline`, excusing any finding matched by `allowlist`, and returns a leak report or `Absent`
+      * when the fork is clean. The four `check*` flags gate the categories independently (a suite can exempt just sockets, say, and still detect
+      * file-descriptor, thread, and fiber leaks); the scheduler settle still runs whenever any category is enabled.
       *
       * Order: the scheduler/fiber probe first (it owns the settle window), then a `System.gc()` plus settle so Cleaner-closed abandoned
       * channels and finished threads drop out before the descriptor and thread diffs (a genuine leak stays referenced and survives the gc, so
@@ -263,6 +271,10 @@ private[runner] object LeakCheck:
     def detect(
         baseline: Baseline,
         allowlist: Chunk[String],
+        checkFibers: Boolean,
+        checkThreads: Boolean,
+        checkFileDescriptors: Boolean,
+        checkSockets: Boolean,
         idleBudgetNanos: Long,
         settleNanos: Long,
         pollNanos: Long
@@ -270,39 +282,49 @@ private[runner] object LeakCheck:
         val findings           = Chunk.newBuilder[String]
         val effectiveAllowlist = defaultAllowlist ++ allowlist
 
+        // Always settle on scheduler quiescence first: it lets in-flight fibers finish and release their resources before the thread and
+        // descriptor diffs run, which trims false positives for every category. Record a fiber finding only when that category is enabled.
         awaitSchedulerIdle(idleBudgetNanos, settleNanos, pollNanos) match
             case IdleResult.Idle => ()
             case IdleResult.Busy(la, frame) =>
-                val stack       = busyWorkerStack().getOrElse(frame.getOrElse(""))
-                val allowlisted = effectiveAllowlist.exists(stack.contains)
-                if !allowlisted then
-                    findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}\n    stack:\n$stack"
+                if checkFibers then
+                    val stack       = busyWorkerStack().getOrElse(frame.getOrElse(""))
+                    val allowlisted = effectiveAllowlist.exists(stack.contains)
+                    if !allowlisted then
+                        findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}\n    stack:\n$stack"
         end match
 
         System.gc()
         LockSupport.parkNanos(settleNanos)
 
-        val threadLeaks = leakedNonDaemonThreads(baseline.threads, effectiveAllowlist)
-        if threadLeaks.nonEmpty then
-            findings += s"non-daemon thread leak (${threadLeaks.size}): ${threadLeaks.mkString("; ")}"
+        if checkThreads then
+            val threadLeaks = leakedNonDaemonThreads(baseline.threads, effectiveAllowlist)
+            if threadLeaks.nonEmpty then
+                findings += s"non-daemon thread leak (${threadLeaks.size}): ${threadLeaks.mkString("; ")}"
+        end if
 
-        baseline.fds match
-            case Maybe.Present(before) =>
-                // A descriptor may be mid-close at done(): a client connection closes asynchronously while it processes the
-                // server's FIN (EOF -> pump teardown -> channel close). Require a descriptor to remain leaked across a second
-                // settle so an in-flight close is not mistaken for a leak; a genuinely leaked descriptor never closes and so
-                // survives the recheck. (Safe: this can only drop descriptors that closed during the window, never a real leak.)
-                val first = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
-                if first.nonEmpty then
-                    LockSupport.parkNanos(settleNanos)
-                    val second     = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
-                    val persistent = first.filter(second.contains)
-                    if persistent.nonEmpty then
-                        val described = persistent.map(t => t + describeSocket(t))
-                        findings += s"file-descriptor leak (${persistent.size}): ${described.mkString("; ")}"
-                end if
-            case Maybe.Absent => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
-        end match
+        if checkFileDescriptors || checkSockets then
+            baseline.fds match
+                case Maybe.Present(before) =>
+                    // A descriptor may be mid-close at done(): a client connection closes asynchronously while it processes the
+                    // server's FIN (EOF -> pump teardown -> channel close). Require a descriptor to remain leaked across a second
+                    // settle so an in-flight close is not mistaken for a leak; a genuinely leaked descriptor never closes and so
+                    // survives the recheck. (Safe: this can only drop descriptors that closed during the window, never a real leak.)
+                    def leaksNow(): Chunk[String] =
+                        val raw = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
+                        fdLeaksForCategories(raw, checkSockets, checkFileDescriptors)
+                    val first = leaksNow()
+                    if first.nonEmpty then
+                        LockSupport.parkNanos(settleNanos)
+                        val second     = leaksNow()
+                        val persistent = first.filter(second.contains)
+                        if persistent.nonEmpty then
+                            val described = persistent.map(t => t + describeSocket(t))
+                            findings += s"file-descriptor leak (${persistent.size}): ${described.mkString("; ")}"
+                    end if
+                case Maybe.Absent => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
+            end match
+        end if
 
         val all = findings.result()
         if all.isEmpty then Maybe.empty

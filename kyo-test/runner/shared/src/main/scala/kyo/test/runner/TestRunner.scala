@@ -207,8 +207,12 @@ object TestRunner:
                             suiteInfo.name,
                             leaf ++ synthetic,
                             duration,
-                            effectiveConfig.leakCheck,
-                            effectiveConfig.leakCheckAllowlist
+                            leakCheck = effectiveConfig.leakCheck,
+                            leakCheckSockets = effectiveConfig.leakCheckSockets,
+                            leakCheckFileDescriptors = effectiveConfig.leakCheckFileDescriptors,
+                            leakCheckThreads = effectiveConfig.leakCheckThreads,
+                            leakCheckFibers = effectiveConfig.leakCheckFibers,
+                            leakCheckAllowlist = effectiveConfig.leakCheckAllowlist
                         )
                         reporter.onSuiteComplete(suiteInfo, sr)
                         val report = TestReport(Chunk(sr))

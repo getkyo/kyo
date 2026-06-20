@@ -104,6 +104,7 @@ class NativeLoaderForkStressTest extends Test:
                     buf.toList
                 finally stream.close()
                 end try
+            end residue
             assert(residue == Nil)
         finally
             pool.shutdownNow(): Unit

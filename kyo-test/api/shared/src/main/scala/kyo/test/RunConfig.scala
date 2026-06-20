@@ -41,14 +41,26 @@ import kyo.minutes
   * @param leakCheck
   *   when `true` (the default), a forked test JVM runs end-of-run leak detection once all of its suites finish: it fails the run if a fiber is
   *   still running on the scheduler, a file descriptor opened during the run is still open, or a non-daemon thread the run started is still
-  *   alive. Only active inside an sbt forked JVM (the one quiescent, isolated point); a no-op otherwise. Override per suite with
-  *   `def config = super.config.leakCheck(false)` for a suite whose design legitimately holds a resource for the whole run.
+  *   alive. Only active inside an sbt forked JVM (the one quiescent, isolated point); a no-op otherwise. This is the master switch; the four
+  *   category toggles ([[leakCheckSockets]], [[leakCheckFileDescriptors]], [[leakCheckThreads]], [[leakCheckFibers]]) turn off one category
+  *   while keeping the rest. Override per suite with `def config = super.config.leakCheck(false)` (all categories) or a single category toggle
+  *   for a suite whose design legitimately holds one kind of resource for the whole run.
+  * @param leakCheckSockets
+  *   when `true` (the default), socket descriptors are included in the file-descriptor probe; set `false` for a suite whose fork legitimately
+  *   leaves sockets open (e.g. one exercising the shared NIO transport) so it still detects file, thread, and fiber leaks.
+  * @param leakCheckFileDescriptors
+  *   when `true` (the default), non-socket descriptors (files, directories, pipes) are included in the file-descriptor probe.
+  * @param leakCheckThreads
+  *   when `true` (the default), the non-daemon thread probe runs.
+  * @param leakCheckFibers
+  *   when `true` (the default), the scheduler/fiber probe runs.
   * @param leakCheckAllowlist
   *   substring patterns that excuse an expected long-lived resource from [[leakCheck]] without disabling the whole check. A fiber finding is
   *   excused if any pattern appears in the offending worker's full stack; a thread finding if any pattern appears in the thread's name or
-  *   stack; a descriptor finding if any pattern appears in the descriptor's target (e.g. a file path). A socket has no stable identifier to
-  *   match, so a suite holding a socket open for the whole run uses `leakCheck(false)` instead. Prefer the allowlist over disabling when an
-  *   expected resource is identifiable: the suite keeps detecting every other leak.
+  *   stack; a descriptor finding if any pattern appears in the descriptor's target (e.g. a file path). A socket's target is an opaque
+  *   `socket:[inode]` with a per-run inode, so it has no stable substring to match; a suite whose fork leaves sockets open uses
+  *   [[leakCheckSockets]]`(false)` instead. Prefer the allowlist over disabling when an expected resource is identifiable: the suite keeps
+  *   detecting every other leak.
   * @see
   *   `kyo.test.runner.TestRunner.runReport` which accepts a RunConfig as its second argument
   * @see
@@ -71,6 +83,10 @@ final case class RunConfig(
     failOnNoAssertion: Boolean = true,
     heartbeatInterval: Duration = 1.minutes,
     leakCheck: Boolean = true,
+    leakCheckSockets: Boolean = true,
+    leakCheckFileDescriptors: Boolean = true,
+    leakCheckThreads: Boolean = true,
+    leakCheckFibers: Boolean = true,
     leakCheckAllowlist: Chunk[String] = Chunk.empty
 ) derives CanEqual:
 
@@ -122,10 +138,28 @@ final case class RunConfig(
       */
     def heartbeatInterval(heartbeatInterval: Duration): RunConfig = copy(heartbeatInterval = heartbeatInterval)
 
-    /** Returns a copy with end-of-run leak detection enabled or disabled. Prefer [[leakCheckAllowlist]] over disabling when only a specific
-      * expected resource needs excusing.
+    /** Returns a copy with end-of-run leak detection enabled or disabled. This is the master switch: when `false`, none of the category probes
+      * (sockets, file descriptors, threads, fibers) run for this suite. Prefer a single category toggle below, or [[leakCheckAllowlist]], over
+      * disabling everything when only a specific category or resource needs excusing.
       */
     def leakCheck(leakCheck: Boolean): RunConfig = copy(leakCheck = leakCheck)
+
+    /** Returns a copy with socket-descriptor leak detection enabled or disabled, leaving the other categories on. Use this for a suite whose
+      * fork legitimately leaves sockets open (for example one that exercises the shared NIO transport, where a closed connection's fd can outlive
+      * the run pending the selector's deregistration), so the suite still detects file-descriptor, thread, and fiber leaks.
+      */
+    def leakCheckSockets(leakCheckSockets: Boolean): RunConfig = copy(leakCheckSockets = leakCheckSockets)
+
+    /** Returns a copy with non-socket file-descriptor leak detection (files, directories, pipes) enabled or disabled, leaving the other
+      * categories on.
+      */
+    def leakCheckFileDescriptors(leakCheckFileDescriptors: Boolean): RunConfig = copy(leakCheckFileDescriptors = leakCheckFileDescriptors)
+
+    /** Returns a copy with non-daemon thread leak detection enabled or disabled, leaving the other categories on. */
+    def leakCheckThreads(leakCheckThreads: Boolean): RunConfig = copy(leakCheckThreads = leakCheckThreads)
+
+    /** Returns a copy with fiber (scheduler-still-busy) leak detection enabled or disabled, leaving the other categories on. */
+    def leakCheckFibers(leakCheckFibers: Boolean): RunConfig = copy(leakCheckFibers = leakCheckFibers)
 
     /** Returns a copy with the given allowlist patterns ADDED to the existing ones (additive, so `super.config.leakCheckAllowlist(...)`
       * accumulates). A fiber, thread, or descriptor leak whose stack, thread name, or descriptor target contains any pattern is excused from

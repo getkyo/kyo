@@ -101,12 +101,22 @@ final private[runner] class SbtRunner(
         if forked && leakCheckRan.compareAndSet(false, true) then
             import scala.jdk.CollectionConverters.*
             val suites    = results.asScala.flatMap(_.suiteReports)
-            val enabled   = suites.exists(_.leakCheck)
             val allowlist = Chunk.from(suites.flatMap(_.leakCheckAllowlist)).distinct
-            if enabled then
+            // Each category runs if any suite in the fork enabled it (master on AND that category on); a suite exempts a category by
+            // turning just that one off, so the fork keeps detecting the rest. To exempt a category fork-wide, every suite must opt out,
+            // which is why the per-category toggles live on the shared suite base (e.g. BaseHttpTest disables only sockets).
+            val checkFibers          = suites.exists(s => s.leakCheck && s.leakCheckFibers)
+            val checkThreads         = suites.exists(s => s.leakCheck && s.leakCheckThreads)
+            val checkFileDescriptors = suites.exists(s => s.leakCheck && s.leakCheckFileDescriptors)
+            val checkSockets         = suites.exists(s => s.leakCheck && s.leakCheckSockets)
+            if checkFibers || checkThreads || checkFileDescriptors || checkSockets then
                 LeakCheck.detect(
                     leakBaseline,
                     allowlist = allowlist,
+                    checkFibers = checkFibers,
+                    checkThreads = checkThreads,
+                    checkFileDescriptors = checkFileDescriptors,
+                    checkSockets = checkSockets,
                     idleBudgetNanos = 2_000_000_000L,
                     settleNanos = 200_000_000L,
                     pollNanos = 10_000_000L

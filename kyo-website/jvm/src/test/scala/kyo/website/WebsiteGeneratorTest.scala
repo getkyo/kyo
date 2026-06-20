@@ -853,6 +853,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
                     finally stream.close()
                     end try
                 else 0
+                end if
             }
         yield
             assert(sitemap.startsWith("<?xml"), s"sitemap must be valid XML: $sitemap")
