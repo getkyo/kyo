@@ -121,6 +121,12 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
+    // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
+    // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
+    // ForkedTestGroup cap at 2, two 5GB forks plus the floor-less driver fit the 16GB box. Local dev
+    // keeps the auto-scaling default so small machines are not over-committed.
+    Test / javaOptions ++= (if (sys.env.contains("CI")) Seq("-Xmx5g") else Nil),
     doctestPredef := Seq("import kyo.*"),
     // Non-LTS modules pick up kyo-doctest through Test/unmanagedJars so Test/fullClasspath
     // dedups naturally. LTS fallback modules (3.3.7) must NOT have kyo-doctest on the Test

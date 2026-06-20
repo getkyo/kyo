@@ -495,14 +495,26 @@ import scala.quoted.*
 
         // WRITE: static per-field emission, no runtime field walk.
         def writeBody(v: Expr[A], w: Expr[Writer]): Expr[Unit] =
-            val header: Expr[Unit] = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }
-            val perField: List[Expr[Unit]] = fields.zipWithIndex.map { (f, idx) =>
+            val owner = Symbol.spliceOwner
+            // Pre-encode each field's UTF-8 name bytes once per serialization, mirroring the read side's
+            // nameByteSyms and the sealed-variant write path. Schema field keys go through `fieldBytes`
+            // (the canonical schema-field key method: the JSON writer's ASCII fast path, the Protobuf
+            // field tag, and the MsgPack key-encoding switch). Dynamic `Map` keys and the hand-written
+            // sum discriminator keys stay on `field`, which carries the raw String for escaping.
+            val nameByteSyms: List[Symbol] = fields.zipWithIndex.map { (f, idx) =>
+                Symbol.newVal(owner, s"_wnb${idx}", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol)
+            }
+            val nameByteDefs: List[Statement] = fields.zipWithIndex.map { (f, idx) =>
                 val nameExpr = Expr(f.name)
+                ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
+            }
+            val header: Term = '{ $w.objectStart(${ Expr(typeName) }, ${ Expr(n) }) }.asTerm
+            val perField: List[Term] = fields.zipWithIndex.map { (f, idx) =>
                 // Field header tag MUST be the hash-based field ID (CodecMacro.fieldId), NOT the
-                // positional index. The JSON writer ignores this id (it writes names), but the
-                // Protobuf wire stores it as the field tag and the Protobuf reader dispatches by it.
-                // Computed at macro time as a literal; identical to the runtime's meta.fieldIds(i).
+                // positional index. Computed at macro time as a literal; identical to the runtime's
+                // meta.fieldIds(i).
                 val idxExpr = Expr(CodecMacro.fieldId(f.name))
+                val nbRef   = Ref(nameByteSyms(idx)).asExprOf[Array[Byte]]
                 if isMaybeFlags(idx) then
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
@@ -511,11 +523,11 @@ import scala.quoted.*
                             '{
                                 $acc match
                                     case kyo.Present(inner) =>
-                                        $w.field($nameExpr, $idxExpr)
+                                        $w.fieldBytes($nbRef, $idxExpr)
                                         kyo.internal.writeField($s, inner, $w)
                                     case _ => ()
                                 end match
-                            }
+                            }.asTerm
                 else if isOptionFlags(idx) then
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
@@ -524,22 +536,22 @@ import scala.quoted.*
                             '{
                                 val _opt = $acc
                                 if _opt.asInstanceOf[Option[?]].isDefined then
-                                    $w.field($nameExpr, $idxExpr)
+                                    $w.fieldBytes($nbRef, $idxExpr)
                                     kyo.internal.writeField($s, _opt, $w)
-                            }
+                            }.asTerm
                 else
                     effectiveSchemaTypes(idx).asType match
                         case '[t] =>
                             val s   = fieldSchemaExprTyped[t](idx)
                             val acc = Select(v.asTerm, f).asExprOf[t]
                             '{
-                                $w.field($nameExpr, $idxExpr)
+                                $w.fieldBytes($nbRef, $idxExpr)
                                 kyo.internal.writeField($s, $acc, $w)
-                            }
+                            }.asTerm
                 end if
             }
-            val trailer: Expr[Unit] = '{ $w.objectEnd() }
-            Expr.block(header :: perField, trailer)
+            val trailer: Term = '{ $w.objectEnd() }.asTerm
+            Block(nameByteDefs ++ (header :: perField), trailer).asExprOf[Unit]
         end writeBody
 
         // READ: static per-field name-matched loop.
