@@ -797,7 +797,7 @@ The actor receives both topic events (as `AppMsg.SystemEvent`) and direct sends 
 |---|---|---|
 | `publish(value)` | `Async & Abort[Closed]` | Delivers to all subscribers; suspends until each delivery completes; prunes closed sinks |
 | `subscribe(subscriber)` | `Async & Abort[Closed] & Scope` | Adds a subscriber; `Scope` auto-removes it on close |
-| `subscriberCount` | `Async & Abort[Closed]` | Current subscriber count |
+| `subscriberCount` | `Async & Abort[Closed]` | Registered subscriber count; closed sinks are pruned lazily on the next publish, so a recently-closed sink may still be counted |
 | `close` | `Sync` | Closes the topic; subsequent publish/subscribe fail with `Closed` |
 
 ## Request/Reply

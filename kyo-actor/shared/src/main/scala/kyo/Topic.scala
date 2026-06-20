@@ -22,7 +22,10 @@ sealed abstract class Topic[A]:
     /** Registers a subscriber. The subscription is removed when the enclosing scope closes. */
     def subscribe(subscriber: Subject[A])(using Frame): Unit < (Async & Abort[Closed] & Scope)
 
-    /** The number of current subscribers. */
+    /** The number of registered subscribers.
+      *
+      * Subscribers whose sink has closed are pruned lazily on the next `publish`, so a recently-closed sink may still be counted until then.
+      */
     def subscriberCount(using Frame): Int < (Async & Abort[Closed])
 
     /** Closes the Topic. Subsequent `publish` and `subscribe` operations fail with `Closed`. Subscribers are not notified; their channels or
