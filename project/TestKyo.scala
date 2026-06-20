@@ -16,15 +16,38 @@ object TestKyo {
 
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
+    /** The per-module sbt task for a phase. compile-main compiles only main sources; compile-test
+      * compiles test sources (main resolved from disk); test (default) runs the tests. Running the
+      * phases as separate sbt processes keeps the driver from holding a full compile heap while test
+      * forks run, which is what over-commits the memory-constrained CI runners.
+      */
+    private def taskFor(phase: String, name: String): String = phase match {
+        case "compile-main" => s"$name/Compile/compile"
+        case "compile-test" => s"$name/Test/compile"
+        case _              => s"$name/test"
+    }
+
+    private def phaseLabel(phase: String): String = phase match {
+        case "compile-main" => "compiling main for"
+        case "compile-test" => "compiling test for"
+        case _              => "testing"
+    }
+
     def command: Command = Command.args("testKyo", "") { (state, args) =>
         val isAll           = args.contains("--all")
         val isDryRun        = args.contains("--dry-run")
         val scalaIdx        = args.indexOf("--scala")
         val scalaVersionArg = if (scalaIdx >= 0 && scalaIdx + 1 < args.length) Some(args(scalaIdx + 1)) else None
+        // Phase selects the per-module task: compile-main, compile-test, or test (default). CI runs the
+        // three phases as separate sbt processes so the driver never holds a full compile heap while test
+        // forks run (see .github/workflows/build.yml and taskFor).
+        val phaseIdx = args.indexOf("--phase")
+        val phase    = if (phaseIdx >= 0 && phaseIdx + 1 < args.length) args(phaseIdx + 1) else "test"
 
         val remaining = args
             .filterNot(a => a == "--all" || a == "--dry-run")
             .filterNot(a => a == "--scala" || (scalaIdx >= 0 && args.indexOf(a) == scalaIdx + 1))
+            .filterNot(a => a == "--phase" || (phaseIdx >= 0 && args.indexOf(a) == phaseIdx + 1))
 
         val (platformArgs, refArgs) = remaining.partition(a => platformNames.exists(_.equalsIgnoreCase(a)))
         val platform                = platformArgs.headOption.map(a => platformNames.find(_.equalsIgnoreCase(a)).get)
@@ -50,8 +73,8 @@ object TestKyo {
         }
 
         def runForScala(st: State, sv: String): State =
-            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun)
-            else runDiff(st, baseRef, platform, sv, isDryRun)
+            if (isAll || scalaVersionOpt.isDefined) runAll(st, platform, sv, isDryRun, phase)
+            else runDiff(st, baseRef, platform, sv, isDryRun, phase)
 
         val state2 = runForScala(state1, targetScala)
 
@@ -79,7 +102,13 @@ object TestKyo {
 
     // --- Full test mode ---
 
-    private def runAll(state: State, platform: Option[String], scalaVersion: String, isDryRun: Boolean = false): State = {
+    private def runAll(
+        state: State,
+        platform: Option[String],
+        scalaVersion: String,
+        isDryRun: Boolean = false,
+        phase: String = "test"
+    ): State = {
         val extracted = Project.extract(state)
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
@@ -104,8 +133,8 @@ object TestKyo {
             state
         } else {
             val sorted = testable.map(_.project).sorted
-            log(s"testing ${sorted.size} projects: ${sorted.mkString(", ")}")
-            val commands = sorted.map(name => s"$name/test").mkString("; ")
+            log(s"${phaseLabel(phase)} ${sorted.size} projects: ${sorted.mkString(", ")}")
+            val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
             log(s"running: $commands")
             if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
         }
@@ -115,7 +144,14 @@ object TestKyo {
     // If build/CI config changed (build.sbt, project/*, .github/*), run all modules.
     // Otherwise, run only affected modules + their transitive dependents.
 
-    private def runDiff(state: State, baseRef: String, platform: Option[String], scalaVersion: String, isDryRun: Boolean = false): State = {
+    private def runDiff(
+        state: State,
+        baseRef: String,
+        platform: Option[String],
+        scalaVersion: String,
+        isDryRun: Boolean = false,
+        phase: String = "test"
+    ): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
             log(s"no changed files vs $baseRef — skipping tests")
@@ -127,7 +163,7 @@ object TestKyo {
 
         if (buildConfigChanged(changedFiles)) {
             log("build/CI config changed — running all modules")
-            return runAll(state, platform, scalaVersion, isDryRun)
+            return runAll(state, platform, scalaVersion, isDryRun, phase)
         }
 
         val extracted = Project.extract(state)
@@ -170,8 +206,8 @@ object TestKyo {
         } else {
             val sorted = toTest.toSeq.sorted
             log(s"directly changed: ${filtered.toSeq.sorted.mkString(", ")}")
-            log(s"with dependents: ${sorted.mkString(", ")}")
-            val commands = sorted.map(name => s"$name/test").mkString("; ")
+            log(s"with dependents (${phaseLabel(phase)}): ${sorted.mkString(", ")}")
+            val commands = sorted.map(name => taskFor(phase, name)).mkString("; ")
             log(s"running: $commands")
             if (isDryRun) state else Command.process(commands, state, msg => state.log.error(msg))
         }

@@ -20,6 +20,13 @@ class DocsMarkdownTest extends WebsiteTest:
     private def transpile(source: String)(using Frame): DocsMarkdownRender.Rendered < Sync =
         DocsMarkdownRender.transpile(source)
 
+    // Helper: transpile with a link base (so intra-repo file links rewrite to GitHub) and render.
+    private def transpileHtml(source: String, base: DocsMarkdownRender.LinkBase)(using Frame): String < Async =
+        for
+            rendered <- DocsMarkdownRender.transpile(source, Present(base))
+            html     <- renderHtml(rendered.article)
+        yield html
+
     // ---- GFM pipe table ----
 
     "GFM pipe table -> UI.table subtree" in {
@@ -325,6 +332,77 @@ class DocsMarkdownTest extends WebsiteTest:
         val source = "Visit [site](https://example.com/README.md) now.\n"
         for html <- transpileHtml(source)
         yield assert(html.contains("https://example.com/README.md"), s"external link must be untouched: $html")
+    }
+
+    // ---- Intra-repo file links rewrite to GitHub ----
+
+    "a module-relative demo source link rewrites to a GitHub blob URL pinned to the version tag" in {
+        // The docs site hosts no source tree, so a same-origin demo link would 404 under the page
+        // route; with a LinkBase it must resolve to the file on GitHub at the version's tag.
+        val source = "Run the [ChatRoom](shared/src/test/scala/demo/ChatRoom.scala) demo.\n"
+        for html <- transpileHtml(source, DocsMarkdownRender.LinkBase("kyo-http", "v1.0.0-RC2"))
+        yield
+            assert(
+                html.contains("https://github.com/getkyo/kyo/blob/v1.0.0-RC2/kyo-http/shared/src/test/scala/demo/ChatRoom.scala"),
+                s"demo file link should become a GitHub blob URL: $html"
+            )
+            assert(!html.contains("href=\"shared/src"), s"the same-origin path must be gone: $html")
+        end for
+    }
+
+    "a module-relative directory link rewrites to a GitHub tree URL" in {
+        val source = "Demos live in [the demo dir](shared/src/test/scala/demo).\n"
+        for html <- transpileHtml(source, DocsMarkdownRender.LinkBase("kyo-http", "v1.0.0-RC2"))
+        yield assert(
+            html.contains("https://github.com/getkyo/kyo/tree/v1.0.0-RC2/kyo-http/shared/src/test/scala/demo"),
+            s"directory link should become a GitHub tree URL: $html"
+        )
+    }
+
+    "a ../ link escapes the module directory to a sibling module on GitHub" in {
+        val source = "See [the runner](../kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala).\n"
+        for html <- transpileHtml(source, DocsMarkdownRender.LinkBase("kyo-case-app", "main"))
+        yield assert(
+            html.contains("https://github.com/getkyo/kyo/blob/main/kyo-core/shared/src/main/scala/kyo/internal/KyoAppRunner.scala"),
+            s"../ link should resolve against the sibling module: $html"
+        )
+    }
+
+    "a root-README file link resolves at the repo root on GitHub" in {
+        val source = "Read the [contributing guide](CONTRIBUTING.md).\n"
+        for html <- transpileHtml(source, DocsMarkdownRender.LinkBase("", "v1.0.0-RC2"))
+        yield assert(
+            html.contains("https://github.com/getkyo/kyo/blob/v1.0.0-RC2/CONTRIBUTING.md"),
+            s"repo-root file link should resolve at the root: $html"
+        )
+    }
+
+    "a file link keeps its #fragment in the GitHub URL" in {
+        val source = "See [line 10](shared/src/test/scala/demo/ChatRoom.scala#L10).\n"
+        for html <- transpileHtml(source, DocsMarkdownRender.LinkBase("kyo-http", "v1.0.0-RC2"))
+        yield assert(
+            html.contains("blob/v1.0.0-RC2/kyo-http/shared/src/test/scala/demo/ChatRoom.scala#L10"),
+            s"fragment should be preserved: $html"
+        )
+    }
+
+    "with a base, a sibling README.md link still rewrites to the docs route, not GitHub" in {
+        // Doc-route links must keep mapping to the on-site route even when a base is present.
+        val source = "See [prelude](../kyo-prelude/README.md).\n"
+        for html <- transpileHtml(source, DocsMarkdownRender.LinkBase("kyo-http", "v1.0.0-RC2"))
+        yield
+            assert(html.contains("../kyo-prelude/"), s"README link must stay a docs route: $html")
+            assert(!html.contains("github.com"), s"README link must not go to GitHub: $html")
+        end for
+    }
+
+    "with no base, an intra-repo file link stays same-origin (the default behavior)" in {
+        val source = "Run the [ChatRoom](shared/src/test/scala/demo/ChatRoom.scala) demo.\n"
+        for html <- transpileHtml(source)
+        yield
+            assert(html.contains("shared/src/test/scala/demo/ChatRoom.scala"), s"path should be kept: $html")
+            assert(!html.contains("github.com"), s"no base means no GitHub rewrite: $html")
+        end for
     }
 
     // ---- Heading.text inline-markdown stripping ----

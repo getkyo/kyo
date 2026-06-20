@@ -1,8 +1,8 @@
 name: build-dispatch
-# Manually-triggered build/test for a single sbt command. Lets a maintainer run CI on a
-# branch on demand (without opening a PR) and scope to one module/platform for fast feedback,
-# e.g. `kyo-uiJVM/test` (JVM), `kyo-uiJS/test`, `kyo-uiNative/test`, `kyo-uiWasm/test`. The full
-# cross-platform matrix still runs via build-pr.yml on the PR; this is a focused, on-demand
+# Manually-triggered build/test that runs a maintainer-supplied shell command on a runner. Lets a
+# maintainer run CI on a branch on demand (without opening a PR) and scope to one module/platform for
+# fast feedback, e.g. `sbt 'kyo-uiJVM/test'`, or run a multi-step sequence like the full JVM phase-split.
+# The full cross-platform matrix still runs via build-pr.yml on the PR; this is a focused, on-demand
 # complement.
 #
 # Provisions JDK + sbt + Node + the kyo-browser Chrome cache + the Linux native libraries
@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'sbt command to run, e.g. "kyo-uiJVM/test", "kyo-uiJS/test", "kyo-uiNative/test", "kyo-uiWasm/test", or "testKyo JVM" (diff vs origin/main).'
+        description: "Shell command to run on the runner. e.g. sbt 'kyo-uiJVM/test'; ./scripts/native-test.sh 'testKyo --all Native'; or the full JVM phase-split: sbt 'testKyo --phase compile-main --all JVM' && sbt 'testKyo --phase compile-test --all JVM' && sbt 'testKyo --all JVM'"
         type: string
         required: true
-        default: 'testKyo JVM'
+        default: "sbt 'testKyo JVM'"
       ref:
         description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
         type: string
@@ -44,9 +44,11 @@ jobs:
       # exhaust the 12GB heap (java.lang.OutOfMemoryError) or overcommit the box (kernel OOM-kill,
       # exit 143). Mirrors build.yml; a single-module command has little parallelism to lose anyway.
       SBT_TASK_LIMIT: 1
-      # G1 is the JDK 24 default; pin it explicitly. -Xmx12G is the safe ceiling on a 16GB runner.
-      JAVA_OPTS: '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-      JVM_OPTS:  '-Xms8G -Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      # G1 is the JDK 24 default; pin it explicitly. -Xmx12G is the driver ceiling for the compile/link
+      # phase; no -Xms floor, so G1 releases that heap during the test phase, when the forked test JVMs
+      # (sized via build.sbt Test/javaOptions) do the work. Mirrors build.yml.
+      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
     steps:
       - uses: actions/checkout@v6.0.3
         with:
@@ -93,15 +95,15 @@ jobs:
           jvm: corretto:24
           apps: sbt
 
-      - name: Run sbt command
+      - name: Run command
         shell: bash
-        # Pass the input through the environment (never interpolated into the shell) to avoid command injection.
-        # Native tests run under scripts/native-test.sh for libunwind crash-retry tolerance, matching build.yml.
+        # The command is a maintainer-supplied shell line (workflow_dispatch requires write access). It is
+        # passed via the environment, not interpolated into the script, so the value cannot break out of the
+        # YAML template; it is then run as-is. Running an arbitrary command (rather than always wrapping in
+        # sbt) lets one dispatch run a multi-step sequence on a single runner, e.g. the JVM phase-split as
+        # three separate sbt processes, or scripts/native-test.sh for Native crash-retry tolerance.
         env:
-          SBT_COMMAND: ${{ inputs.command }}
+          RUN_COMMAND: ${{ inputs.command }}
         run: |
-          if [[ "$SBT_COMMAND" == *Native/* ]]; then
-            ./scripts/native-test.sh "$SBT_COMMAND"
-          else
-            sbt "$SBT_COMMAND"
-          fi
+          echo "+ $RUN_COMMAND"
+          eval "$RUN_COMMAND"

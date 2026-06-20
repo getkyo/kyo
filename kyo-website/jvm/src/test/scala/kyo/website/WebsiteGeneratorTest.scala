@@ -408,6 +408,34 @@ class WebsiteGeneratorTest extends WebsiteTest:
         end for
     }
 
+    // ---- intra-repo source links resolve to GitHub at the version tag ----
+
+    "module page rewrites a demo source link to a GitHub URL pinned to the version tag" in {
+        // A module README's demo link is README-relative; the docs site hosts no source tree, so the
+        // emitted page must point at the file on GitHub. The ref is the version's tag and the path is
+        // prefixed with the module slug, in both the versioned tree and the /latest/ mirror.
+        val readme = "# kyo-http\n## Demos\nRun the [ChatRoom](shared/src/test/scala/demo/ChatRoom.scala) demo.\n"
+        val mod    = WebsiteModule("kyo-http", "Applications", "kyo-http", readme, WebsiteModule.Platforms(true, true, true, true))
+        val content =
+            WebsiteContent(
+                "intro",
+                Chunk(WebsiteContent.Group("Applications", Chunk(mod))),
+                WebsiteVersion("v1.0.0-RC2", "1.0.0-RC2", true)
+            )
+        val expected = "https://github.com/getkyo/kyo/blob/v1.0.0-RC2/kyo-http/shared/src/test/scala/demo/ChatRoom.scala"
+        for
+            out         <- tmpDir
+            bundleDir   <- stubBundleDir
+            _           <- emit(Chunk(content), out, bundleDir)
+            latestHtml  <- readFile(out / "latest" / "kyo-http" / "index.html")
+            versionHtml <- readFile(out / "v1.0.0-RC2" / "kyo-http" / "index.html")
+        yield
+            assert(latestHtml.contains(expected), s"/latest/ page must link the demo on GitHub: $latestHtml")
+            assert(versionHtml.contains(expected), s"versioned page must link the demo on GitHub: $versionHtml")
+            assert(!latestHtml.contains("href=\"shared/src"), s"the same-origin path must be gone: $latestHtml")
+        end for
+    }
+
     // ---- full route set + per-route content.md + per-version manifest.json ----
 
     "full route set + per-route content.md + per-version manifest.json" in {

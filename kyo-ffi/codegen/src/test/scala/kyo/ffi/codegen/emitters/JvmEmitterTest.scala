@@ -352,6 +352,54 @@ class JvmEmitterTest extends kyo.test.Test[Any]:
         assert(src.contains("uSeg.set(JAVA_INT, 4L, u.value)"))
     }
 
+    "nested-struct param with a String field emits a legal local identifier (not a dotted member selection)" in {
+        // Regression for #1683: a struct param containing a nested struct that contains a String field made the
+        // emitter build the scratch-temp name from the dotted access path (`contact.address`), producing
+        // `val contact.address_city_cs = ...` which the parser reads as a member selection on `contact`.
+        val address = StructSpec(
+            "kyo.example.Address",
+            "Address",
+            List(StructField("zip", TypeRef.IntT), StructField("city", TypeRef.StringT)),
+            packed = false
+        )
+        val contact = StructSpec(
+            "kyo.example.Contact",
+            "Contact",
+            List(
+                StructField("id", TypeRef.IntT),
+                StructField("name", TypeRef.StringT),
+                StructField("address", TypeRef.StructT(address.fqcn))
+            ),
+            packed = false
+        )
+        val spec = mkTrait(
+            "ContactBindings",
+            "contacts",
+            List(mkMethod(
+                "contactsRouteCode",
+                "contacts_route_code",
+                List(ParamSpec("contact", TypeRef.StructT(contact.fqcn))),
+                ReturnShape.Primitive(TypeRef.IntT)
+            )),
+            structs = List(address, contact)
+        )
+        val src = JvmEmitter.emit(spec)
+        // The temp for the nested String field uses underscores throughout, and the allocUtf8 still reads from the
+        // real dotted access expression `contact.address.city`.
+        assert(src.contains(
+            """val contact_address_city_cs = __kyoScratch$.allocUtf8(contact.address.city, "kyo.example.ContactBindings", "contactsRouteCode")"""
+        ))
+        // The top-level String field keeps its existing flat name.
+        assert(src.contains(
+            """val contact_name_cs = __kyoScratch$.allocUtf8(contact.name, "kyo.example.ContactBindings", "contactsRouteCode")"""
+        ))
+        // The broken dotted local name must not appear.
+        assert(!src.contains("val contact.address_city_cs"))
+        // And the whole thing parses.
+        val (ok, errs) = ScalaParseProbe.parses(src)
+        assert(ok == true, s"emitted source did not parse:\n$src\n\nerrors:\n$errs\n")
+    }
+
     "struct-by-value param allocates scratch and writes each field" in {
         val ts = StructSpec(
             "kyo.example.Timespec",

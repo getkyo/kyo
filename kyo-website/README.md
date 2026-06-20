@@ -12,7 +12,7 @@ sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
 sbt 'kyo-websiteJVM/run --out site --content content --repo-root .'
 
 # 3. Serve the rendered directory for preview (default port 8474)
-sbt 'kyo-http/Test/runMain demo.ServeSite site'
+sbt 'kyo-httpJVM/Test/runMain demo.ServeSite site'
 ```
 
 The order is not arbitrary: step 2 copies the `main.js` that step 1 produces, and step 3 reads the files step 2 wrote.
@@ -61,7 +61,7 @@ The CLI is `WebsiteMain`, a `KyoApp` that drives `WebsiteGenerator.emit`. It tak
 <outDir>/kyo.svg  kyo.png  kyo.ico  main.js  main.js.map
 ```
 
-The preview server in step 3 is `demo.ServeSite`. It is a kyo-http test demo (`kyo-http/shared/src/test/scala/demo/ServeSite.scala`), not a `kyo-website` source: it loads a directory into memory and answers every GET by resolving the path to a file, mapping directory paths to `index.html`. Run it with the rendered directory and an optional port: `sbt 'kyo-http/Test/runMain demo.ServeSite site 8474'`.
+The preview server in step 3 is `demo.ServeSite`. It is a kyo-http test demo (`kyo-http/shared/src/test/scala/demo/ServeSite.scala`), not a `kyo-website` source: it loads a directory into memory and answers every GET by resolving the path to a file, mapping directory paths to `index.html`. Run it with the rendered directory and an optional port: `sbt 'kyo-httpJVM/Test/runMain demo.ServeSite site 8474'`.
 
 Two traps when iterating locally, both consequences of how the pieces load:
 

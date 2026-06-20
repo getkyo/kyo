@@ -612,10 +612,31 @@ contributor who moves or renames it breaks deploy loud by design.
 manifesto) else c)`, `WebsiteGenerator.scala:90-93,120-133`). README links to the
 manifesto are rewritten by `DocsMarkdownRender.rewriteReadmePath`
 (`if path == "MANIFESTO.md" then "manifesto/" + fragment`,
-`DocsMarkdownRender.scala:765-776`). Intra-repo README links use the
+`DocsMarkdownRender.scala:851-862`). Intra-repo README links use the
 `<dir>/README.md` form so they resolve to the site route
 (`../kyo-prelude/README.md` becomes `../kyo-prelude/`,
-`DocsMarkdownRender.scala:769-773`).
+`DocsMarkdownRender.scala:851-862`).
+
+### Intra-repo file links resolve to GitHub, not the site
+
+The docs site hosts only the rendered README pages, never the source tree, so a
+README-relative file link (`shared/src/test/scala/demo/ChatRoom.scala`,
+`CONTRIBUTING.md`, `LICENSE.txt`) would 404 if left same-origin: it would resolve
+under the page route. Every intra-repo link that is NOT a docs route (a sibling
+`README.md` or the repo-root `MANIFESTO.md`, see `isDocRouteLink`,
+`DocsMarkdownRender.scala:835-838`) is rewritten to an absolute GitHub URL by
+`gitHubHref` (`DocsMarkdownRender.scala:884-891`): the README-relative target is
+resolved against the README's repo directory (`resolveRepoPath` pops `../` segments,
+`DocsMarkdownRender.scala:898-908`) and joined as
+`https://github.com/getkyo/kyo/<blob|tree>/<ref>/<path>` (a file gets `blob`, a
+directory `tree`). The directory the README lives in and the git ref come from a
+`DocsMarkdownRender.LinkBase` (`DocsMarkdownRender.scala:117`) the generator threads
+in: `introLinkBase` / `moduleLinkBase` set the repo subdir (`""` for the root README
+and the manifesto, the slug for a module), and `gitRef` pins the ref to the version's
+release tag, falling back to `main` for the tagless `"current"` build
+(`WebsiteGenerator.scala:177-194`). The `LinkBase` is `Maybe`: when `Absent` (the
+`transpile` / `renderArticle` default used by unit tests and heading-only passes)
+file links stay same-origin, preserving the prior behavior.
 
 ### Add a new per-route emit-time output file
 

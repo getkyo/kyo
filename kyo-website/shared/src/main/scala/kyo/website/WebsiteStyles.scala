@@ -1072,9 +1072,15 @@ object WebsiteStyles:
             // The adoption code receipt sits on its own row under the four paths; `.code-card-wrap` centers
             // the card in the section and caps it to a readable measure (the two-line snippet would sprawl
             // edge to edge otherwise), mirroring the framed, contained feel of the hero card.
+            // width 100% + min-width 0 pin the wrap to its column instead of letting it size to the code's
+            // max-content: without them, the non-wrapping snippet sized the wrap to ~530px on a phone and
+            // overflowed the page horizontally (the card's own `.code` panel never got to scroll). With the
+            // wrap pinned to the column, max-width 600px still caps it on wide screens and the inner `.code`
+            // scrolls the long line within its bounds. (Same width-100%/min-width-0 fix the `.rungs` carry.)
             .rule(
                 "code-card-wrap",
-                Style.column.align(_.center).maxWidth(600.px).margin(40.px, Length.Auto, 0.px, Length.Auto)
+                Style.column.align(_.center).width(Length.Pct(100)).minWidth(0.px)
+                    .maxWidth(600.px).margin(40.px, Length.Auto, 0.px, Length.Auto)
             )
             .rule(
                 Selector.cls("code-card-wrap").descendant(Selector.cls("code-card")),

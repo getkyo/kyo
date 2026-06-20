@@ -168,6 +168,30 @@ object WebsiteGenerator:
         end for
     end emitDocs
 
+    /** The git ref to pin a version's intra-repo source links to. A version's own release tag when it
+      * parses as one: the deploy renders a published tag's checkout, so the tag tree IS the rendered
+      * content and the links resolve exactly at that tag (and the `/latest/` mirror reuses the
+      * picked-latest version's tag). Otherwise `main`, the tagless `"current"` fallback, where the live
+      * tree corresponds to the default branch (a `workflow_dispatch` preview of `main`).
+      */
+    private def gitRef(c: WebsiteContent): String =
+        if WebsiteVersion.parse(c.version.tag).isDefined then c.version.tag else "main"
+
+    /** The [[DocsMarkdownRender.LinkBase]] for a module README: its repo directory and the version's git
+      * ref. The repo directory is the slug, except the synthetic manifesto page whose source is the
+      * repo-root `MANIFESTO.md`, so its base is the repo root (`""`).
+      */
+    private def moduleLinkBase(c: WebsiteContent, module: WebsiteModule): Maybe[DocsMarkdownRender.LinkBase] =
+        val repoSubdir = if module.slug == "manifesto" then "" else module.slug
+        Present(DocsMarkdownRender.LinkBase(repoSubdir, gitRef(c)))
+    end moduleLinkBase
+
+    /** The [[DocsMarkdownRender.LinkBase]] for the root README / overview page: the repo root (`""`) and
+      * the version's git ref.
+      */
+    private def introLinkBase(c: WebsiteContent): Maybe[DocsMarkdownRender.LinkBase] =
+        Present(DocsMarkdownRender.LinkBase("", gitRef(c)))
+
     /** Render the section outline of every route in a version, keyed by route (`/<prefix>/` for the
       * overview, `/<prefix>/<slug>/` per module). Static build-time data the SPA rail reads to show a
       * module's sections instantly on navigation, with no per-route `content.html` fetch. Uses the
@@ -176,8 +200,10 @@ object WebsiteGenerator:
     private def outlinesByRoute(c: WebsiteContent, prefix: String)(using Frame): Map[String, Chunk[DocsMarkdown.Heading]] < Sync =
         val modules = c.groups.flatMap(_.modules)
         for
-            intro <- DocsMarkdownRender.transpile(c.intro)
-            mods  <- Kyo.foreach(modules)(m => DocsMarkdownRender.transpile(m.readme).map(r => s"/$prefix/${m.slug}/" -> r.headings))
+            intro <- DocsMarkdownRender.transpile(c.intro, introLinkBase(c))
+            mods <- Kyo.foreach(modules)(m =>
+                DocsMarkdownRender.transpile(m.readme, moduleLinkBase(c, m)).map(r => s"/$prefix/${m.slug}/" -> r.headings)
+            )
         yield Map(s"/$prefix/" -> intro.headings) ++ mods.toSeq
         end for
     end outlinesByRoute
@@ -246,7 +272,7 @@ object WebsiteGenerator:
             // article), so the page is real content: indexable, with its OWN heading outline driving
             // the rail's Overview sections. The raw `content.intro` is written as the route's content.md.
             // The pre-rendered article HTML ships in the island and as content.html.
-            rendered   <- DocsMarkdownRender.renderArticle(c.intro)
+            rendered   <- DocsMarkdownRender.renderArticle(c.intro, introLinkBase(c))
             fixedRoute <- Signal.initRef(route)
             // The SSG emits one fully-loaded static page per route, so content is never mid-load:
             // `contentLoading` is constant false and the prev/next pager renders exactly as the bundle's
@@ -288,7 +314,7 @@ object WebsiteGenerator:
     )(using Frame): Unit < (Async & Abort[WebsiteException]) =
         val route = s"/$prefix/${module.slug}/"
         for
-            rendered   <- DocsMarkdownRender.renderArticle(module.readme)
+            rendered   <- DocsMarkdownRender.renderArticle(module.readme, moduleLinkBase(c, module))
             fixedRoute <- Signal.initRef(route)
             // Constant-false `contentLoading`: a static SSG page is always loaded (see emitIntroPage).
             // The rail reads `outlines` (the whole-version section map) the same way the bundle does.
@@ -452,7 +478,7 @@ object WebsiteGenerator:
             entries <- Kyo.foreach(modules.toSeq.zipWithIndex) { case (m, i) =>
                 val prev = if i > 0 then Present(modules(i - 1).slug) else Absent
                 val next = if i < modules.size - 1 then Present(modules(i + 1).slug) else Absent
-                DocsMarkdownRender.transpile(m.readme).map(r => manifestEntry(m, prev, next, r.headings))
+                DocsMarkdownRender.transpile(m.readme, moduleLinkBase(c, m)).map(r => manifestEntry(m, prev, next, r.headings))
             }
             json = if entries.isEmpty then "[]" else entries.mkString("[\n", ",\n", "\n]")
             _ <- writeString(s"$prefix/manifest.json", outDir / prefix / "manifest.json", json)
