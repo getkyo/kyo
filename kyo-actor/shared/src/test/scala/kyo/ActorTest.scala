@@ -790,4 +790,37 @@ class ActorTest extends kyo.test.Test[Any]:
 
     }
 
+    "respond" - {
+        "handles a request and returns a non-Unit reply" in {
+            for
+                actor <- Actor.run(Actor.respond[Int, Int](x => x + 1))
+                r     <- actor.ask(5)
+                _     <- actor.close
+            yield assert(r == 6)
+        }
+        "handles a Unit-reply request" in {
+            for
+                acc   <- AtomicInt.init(0)
+                actor <- Actor.run(Actor.respond[Int, Unit](x => acc.addAndGet(x).unit))
+                _     <- actor.ask(10)
+                _     <- actor.close
+                v     <- acc.get
+            yield assert(v == 10)
+        }
+        "propagates a handler panic to the caller" in {
+            for
+                result <- Abort.run[Closed | Timeout] {
+                    Async.timeout(2.seconds) {
+                        Scope.run {
+                            for
+                                actor <- Actor.run(Actor.respond[Int, Int](_ => Abort.panic(new RuntimeException("boom"))))
+                                r     <- actor.ask(1)
+                            yield r
+                        }
+                    }
+                }
+            yield assert(result.isPanic)
+        }
+    }
+
 end ActorTest

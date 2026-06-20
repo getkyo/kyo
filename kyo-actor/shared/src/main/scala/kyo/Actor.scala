@@ -469,6 +469,44 @@ object Actor:
             }
         }
 
+    /** Envelope for a framework-owned request/reply actor created with [[respond]].
+      *
+      * @param request
+      *   The request payload
+      * @param replyTo
+      *   The reply Subject the framework sends the handler's result to
+      */
+    final case class Ask[Req, Resp](request: Req, replyTo: Subject[Resp])
+
+    /** Runs the actor as a uniform request/reply function `Req => Resp`.
+      *
+      * The framework sends the handler's returned value as the reply, so a forgotten reply cannot strand a caller. The actor processes one
+      * request at a time in FIFO order. A handler failure of type E or a panic terminates the actor; an in-flight caller observes it through
+      * the lifecycle-aware [[Actor.ask]]. Model expected per-request errors in `Resp` (for example a `Result`) rather than aborting.
+      *
+      * @param handler
+      *   Produces the reply for each request
+      * @tparam Req
+      *   The request type
+      * @tparam Resp
+      *   The single reply type for the whole actor
+      */
+    def respond[Req, Resp](using
+        Frame
+    )[S](handler: Req => Resp < S)(
+        using Tag[Poll[Ask[Req, Resp]]]
+    ): Unit < (Context[Ask[Req, Resp]] & S) =
+        receiveLoop[Ask[Req, Resp]](msg => handler(msg.request).map(resp => msg.replyTo.send(resp).andThen(Loop.continue)))
+
+    extension [E, Req, Resp, B](actor: Actor[E, Ask[Req, Resp], B])
+        /** Sends a request to a [[respond]] actor and awaits the reply, strand-safe via [[Actor.ask]].
+          *
+          * Note: prefer this for respond actors; the member `Actor.ask` remains available for manually-constructed `Ask` envelopes.
+          */
+        def ask(request: Req)(using Frame): Resp < (Async & Abort[Closed | E]) =
+            actor.ask(Ask(request, _))
+    end extension
+
     /** Creates and starts a new actor with default capacity from a message processing behavior.
       *
       * This is a convenience method that calls `run(defaultCapacity)(behavior)`. It creates an actor with the default mailbox capacity as
