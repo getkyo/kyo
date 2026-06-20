@@ -200,6 +200,48 @@ private[runner] object LeakCheck:
         out.result()
     end fdLeaks
 
+    private val tcpStates = Map(
+        "01" -> "ESTABLISHED",
+        "02" -> "SYN_SENT",
+        "03" -> "SYN_RECV",
+        "04" -> "FIN_WAIT1",
+        "05" -> "FIN_WAIT2",
+        "06" -> "TIME_WAIT",
+        "07" -> "CLOSE",
+        "08" -> "CLOSE_WAIT",
+        "09" -> "LAST_ACK",
+        "0A" -> "LISTEN",
+        "0B" -> "CLOSING"
+    )
+
+    /** For a `socket:[inode]` target, resolves the connection's TCP state and local/remote ports from `/proc/net/tcp{,6}`, so a leaked socket
+      * is actionable rather than an opaque inode: e.g. `CLOSE_WAIT` means the peer closed and this side held the connection open, and the ports
+      * say which side it is (an ephemeral local port to a server's remote port is a client connection). Returns "" for a non-socket target or an
+      * inode that cannot be resolved.
+      */
+    def describeSocket(target: String): String =
+        if !target.startsWith("socket:[") then ""
+        else
+            val inode = target.stripPrefix("socket:[").stripSuffix("]")
+            def scan(path: String): Maybe[String] =
+                try
+                    val lines              = java.nio.file.Files.readAllLines(Paths.get(path)).asScala
+                    var res: Maybe[String] = Maybe.empty
+                    lines.foreach { line =>
+                        val f = line.trim.split("\\s+")
+                        // columns: sl local rem st ... inode (index 9); the header row has no numeric inode at f(9)
+                        if res.isEmpty && f.length > 9 && f(9) == inode then
+                            val st = tcpStates.getOrElse(f(3).toUpperCase, f(3))
+                            val lp = Integer.parseInt(f(1).split(":")(1), 16)
+                            val rp = Integer.parseInt(f(2).split(":")(1), 16)
+                            res = Maybe(s" [$st local:$lp remote:$rp]")
+                        end if
+                    }
+                    res
+                catch case _: Throwable => Maybe.empty
+            scan("/proc/net/tcp").orElse(scan("/proc/net/tcp6")).getOrElse("")
+    end describeSocket
+
     /** Process-global resource snapshot taken once at runner construction, before any suite runs, and diffed at `done()`. Captures the open
       * descriptor targets and the set of live non-daemon threads so the JVM's own startup infrastructure (the `main` thread, the ForkMain
       * reader and socket) is excluded from the diff.
@@ -256,7 +298,8 @@ private[runner] object LeakCheck:
                     val second     = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
                     val persistent = first.filter(second.contains)
                     if persistent.nonEmpty then
-                        findings += s"file-descriptor leak (${persistent.size}): ${persistent.mkString("; ")}"
+                        val described = persistent.map(t => t + describeSocket(t))
+                        findings += s"file-descriptor leak (${persistent.size}): ${described.mkString("; ")}"
                 end if
             case Maybe.Absent => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
         end match
