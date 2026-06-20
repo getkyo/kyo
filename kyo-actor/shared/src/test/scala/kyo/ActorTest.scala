@@ -7,6 +7,20 @@ class ActorTest extends kyo.test.Test[Any]:
 
     private case class Publish(value: Int, replyTo: Subject[Int])
 
+    opaque type Amount = BigDecimal
+    object Amount:
+        val zero: Amount                     = BigDecimal(0)
+        def apply(value: BigDecimal): Amount = value
+        def apply(value: Int): Amount        = BigDecimal(value)
+        given CanEqual[Amount, Amount]       = CanEqual.derived
+    end Amount
+
+    extension (self: Amount)
+        private def plus(other: Amount): Amount        = self + other
+        private def minus(other: Amount): Amount       = self - other
+        private def isLessThan(other: Amount): Boolean = self < other
+    end extension
+
     "ask lifecycle (no stranded callers)" - {
         "completes the caller when a scoped actor closes with a queued ask message" in {
             for
@@ -419,15 +433,17 @@ class ActorTest extends kyo.test.Test[Any]:
     }
 
     "banking simulation" - {
-        case class Account(id: Int, balance: Double)
+        case class Account(id: Int, balance: Amount)
 
         enum AccountMessage:
-            case Deposit(amount: Double, replyTo: Subject[Double])
-            case Withdraw(amount: Double, replyTo: Subject[Either[String, Double]])
-            case GetBalance(replyTo: Subject[Double])
+            case Deposit(amount: Amount, replyTo: Subject[Amount])
+            case Withdraw(amount: Amount, replyTo: Subject[Result[String, Amount]])
+            case GetBalance(replyTo: Subject[Amount])
         end AccountMessage
 
-        case class Transaction(accountId: Int, kind: String, amount: Double, balance: Double)
+        case class Transaction(accountId: Int, kind: String, amount: Amount, balance: Amount) derives CanEqual
+
+        case class FraudSignal(tx: Transaction) derives CanEqual
 
         "handles concurrent transactions correctly" in {
             for
@@ -438,24 +454,25 @@ class ActorTest extends kyo.test.Test[Any]:
                     }
                 }
                 account <- Actor.run {
-                    Var.run(Account(1, 0.0)) {
+                    Var.run(Account(1, Amount.zero)) {
+                        // 10 deposits + 2 GetBalance + 2 withdraws = 14
                         Actor.receiveMax[AccountMessage](14) {
                             case AccountMessage.Deposit(amount, replyTo) =>
                                 for
-                                    newBalance <- Var.update[Account](acc => acc.copy(balance = acc.balance + amount))
+                                    newBalance <- Var.update[Account](acc => acc.copy(balance = acc.balance.plus(amount)))
                                     _          <- logger.send(Transaction(1, "deposit", amount, newBalance.balance))
                                     _          <- replyTo.send(newBalance.balance)
                                 yield ()
 
                             case AccountMessage.Withdraw(amount, replyTo) =>
                                 Var.use[Account] { acc =>
-                                    if acc.balance < amount then
-                                        replyTo.send(Left("Insufficient funds"))
+                                    if acc.balance.isLessThan(amount) then
+                                        replyTo.send(Result.fail("Insufficient funds"))
                                     else
                                         for
-                                            newBalance <- Var.update[Account](a => a.copy(balance = a.balance - amount))
+                                            newBalance <- Var.update[Account](a => a.copy(balance = a.balance.minus(amount)))
                                             _          <- logger.send(Transaction(1, "withdraw", amount, newBalance.balance))
-                                            _          <- replyTo.send(Right(newBalance.balance))
+                                            _          <- replyTo.send(Result.succeed(newBalance.balance))
                                         yield ()
                                 }
 
@@ -464,22 +481,116 @@ class ActorTest extends kyo.test.Test[Any]:
                         }
                     }
                 }
-                _        <- Async.fill(10)(account.ask(AccountMessage.Deposit(10.0, _)))
+                _        <- Async.fill(10)(account.ask(AccountMessage.Deposit(Amount(10), _)))
                 balance1 <- account.ask(AccountMessage.GetBalance(_))
-                result1  <- account.ask(AccountMessage.Withdraw(200.0, _))
-                result2  <- account.ask(AccountMessage.Withdraw(50.0, _))
+                result1  <- account.ask(AccountMessage.Withdraw(Amount(200), _))
+                result2  <- account.ask(AccountMessage.Withdraw(Amount(50), _))
                 balance2 <- account.ask(AccountMessage.GetBalance(_))
                 _        <- account.await
                 _        <- logger.await
                 logs     <- loggedTransactions.drain
             yield
-                assert(balance1 == 100.0)
-                assert(result1 == Left("Insufficient funds"))
-                assert(result2 == Right(50.0))
-                assert(balance2 == 50.0)
+                assert(balance1 == Amount(100))
+                assert(result1 == Result.fail("Insufficient funds"))
+                assert(result2 == Result.succeed(Amount(50)))
+                assert(balance2 == Amount(50))
                 assert(logs.count(_.kind == "deposit") == 10)
                 assert(logs.count(_.kind == "withdraw") == 1)
-                assert(logs.last.balance == 50.0)
+                assert(logs.last.balance == Amount(50))
+        }
+
+        "publishes transactions to multiple observers in a consistent order (linearized Topic)" in {
+            // nested Scope tears down the Topic's internal linearizer actor before the assertions run
+            Scope.run {
+                for
+                    topic      <- Topic.linearized[Transaction]
+                    auditQueue <- Queue.Unbounded.init[Transaction]()
+                    fraudQueue <- Queue.Unbounded.init[FraudSignal]()
+
+                    // audit observer: receives Transaction directly
+                    audit <- Actor.run {
+                        Actor.receiveMax[Transaction](4)(auditQueue.add(_))
+                    }
+                    // fraud observer: receives FraudSignal via contramap
+                    fraud <- Actor.run {
+                        Actor.receiveMax[FraudSignal](4)(fraudQueue.add(_))
+                    }
+
+                    // subscribe BOTH observers before any publish (subscribe is awaited, so deterministic)
+                    _ <- topic.subscribe(audit.subject)
+                    _ <- topic.subscribe(fraud.subject.contramap(FraudSignal(_)))
+
+                    makeAccountActor = (id: Int, capacity: Int) =>
+                        Actor.run {
+                            Var.run(Account(id, Amount.zero)) {
+                                Actor.receiveMax[AccountMessage](capacity) {
+                                    case AccountMessage.Deposit(amount, replyTo) =>
+                                        for
+                                            newBalance <- Var.update[Account](acc => acc.copy(balance = acc.balance.plus(amount)))
+                                            _          <- topic.publish(Transaction(id, "deposit", amount, newBalance.balance))
+                                            _          <- replyTo.send(newBalance.balance)
+                                        yield ()
+
+                                    case AccountMessage.Withdraw(amount, replyTo) =>
+                                        Var.use[Account] { acc =>
+                                            if acc.balance.isLessThan(amount) then
+                                                replyTo.send(Result.fail("Insufficient funds"))
+                                            else
+                                                for
+                                                    newBalance <- Var.update[Account](a => a.copy(balance = a.balance.minus(amount)))
+                                                    _          <- topic.publish(Transaction(id, "withdraw", amount, newBalance.balance))
+                                                    _          <- replyTo.send(Result.succeed(newBalance.balance))
+                                                yield ()
+                                        }
+
+                                    case AccountMessage.GetBalance(replyTo) =>
+                                        Var.use[Account](acc => replyTo.send(acc.balance))
+                                }
+                            }
+                        }
+
+                    // account A: handles 1 Deposit + 1 Withdraw = 2 messages
+                    accountA <- makeAccountActor(1, 2)
+                    // account B: handles 1 Deposit + 2 Withdraws = 3 messages
+                    accountB <- makeAccountActor(2, 3)
+
+                    // seed accounts sequentially (awaited), producing 2 deposit transactions in order
+                    _ <- accountA.ask(AccountMessage.Deposit(Amount(100), _))
+                    _ <- accountB.ask(AccountMessage.Deposit(Amount(50), _))
+
+                    // concurrent ATM withdraws: accountA succeeds, accountB succeeds, accountB fails (200 > 50)
+                    withdrawResults <- Async.gather(Seq(
+                        accountA.ask(AccountMessage.Withdraw(Amount(30), _)),
+                        accountB.ask(AccountMessage.Withdraw(Amount(20), _)),
+                        accountB.ask(AccountMessage.Withdraw(Amount(200), _))
+                    ))
+
+                    // wait for both observers to finish consuming their 4 transactions
+                    _ <- audit.await
+                    _ <- fraud.await
+
+                    auditObserved <- auditQueue.drain
+                    fraudSignals  <- fraudQueue.drain
+                yield
+                    // both observers received the same 4 transactions in the same total order
+                    assert(auditObserved.size == 4)
+                    assert(auditObserved == fraudSignals.map(_.tx))
+
+                    // the 4 successful transactions are exactly: deposit 100, deposit 50, withdraw 30, withdraw 20
+                    val expectedSet = Set(
+                        Transaction(1, "deposit", Amount(100), Amount(100)),
+                        Transaction(2, "deposit", Amount(50), Amount(50)),
+                        Transaction(1, "withdraw", Amount(30), Amount(70)),
+                        Transaction(2, "withdraw", Amount(20), Amount(30))
+                    )
+                    assert(auditObserved.toSet == expectedSet)
+
+                    // the failing withdraw returns a domain error, never published
+                    assert(withdrawResults.size == 3)
+                    val failResult = withdrawResults(2)
+                    assert(failResult == Result.fail("Insufficient funds"))
+                end for
+            }
         }
     }
 
