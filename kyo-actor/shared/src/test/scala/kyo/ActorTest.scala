@@ -839,6 +839,53 @@ class ActorTest extends kyo.test.Test[Any]:
         }
     }
 
+    private case class Job(id: Int)
+    private enum JobEvent derives CanEqual:
+        case Started(id: Int)
+        case Completed(id: Int)
+
+    "job dispatcher with worker pool" - {
+        "distributes jobs to workers and observers see start then completion for every job" in {
+            val jobCount    = 12
+            val workerCount = 4
+            for
+                hub          <- Hub.init[JobEvent]
+                observed     <- Queue.Unbounded.init[JobEvent]()
+                monitorReady <- Latch.init(1)
+                monitor <- Actor.run {
+                    Actor.subscribe(hub)(identity)
+                        .andThen(monitorReady.release)
+                        .andThen(Actor.receiveMax[JobEvent](jobCount * 2)(observed.add(_)))
+                }
+                _ <- monitorReady.await
+                workers <- Kyo.foreach(0 until workerCount) { _ =>
+                    Actor.run(Actor.receiveAll[Job](job => Abort.run[Closed](hub.put(JobEvent.Completed(job.id))).unit))
+                }
+                dispatcher <- Actor.run {
+                    Var.run(0) {
+                        Actor.receiveAll[Job] { job =>
+                            for
+                                i <- Var.use[Int](identity)
+                                _ <- Var.update[Int](x => (x + 1) % workerCount)
+                                _ <- Abort.run[Closed](hub.put(JobEvent.Started(job.id)))
+                                _ <- workers(i).send(job)
+                            yield ()
+                        }
+                    }
+                }
+                _      <- Kyo.foreach(1 to jobCount)(id => dispatcher.send(Job(id)))
+                _      <- monitor.await
+                events <- observed.drain
+            yield
+                val started   = events.collect { case JobEvent.Started(id) => id }
+                val completed = events.collect { case JobEvent.Completed(id) => id }
+                assert(started.toSet == (1 to jobCount).toSet)
+                assert(completed.toSet == (1 to jobCount).toSet)
+                assert(completed.size == jobCount)
+            end for
+        }
+    }
+
     "respond" - {
         "handles a request and returns a non-Unit reply" in {
             for
