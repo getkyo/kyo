@@ -1154,6 +1154,12 @@ final private class NioListener(
             driver.cleanupAccept(serverChannel)
             try serverChannel.close()
             catch case _: IOException => ()
+                // serverChannel.close() cancels the channel's SelectionKey but, on JDK 11+, defers the real fd close (kill()) until the selector
+                // deregisters the cancelled key on its next select(). The driver loop selects with no timeout, so an idle driver (no other channel
+                // activity) never runs that pass and the listen socket leaks in LISTEN indefinitely. Wake the selector unconditionally so the
+                // deferred deregistration + kill runs now, whether or not an accept was pending at close.
+            end try
+            driver.wakeup()
         end if
     end close
 end NioListener

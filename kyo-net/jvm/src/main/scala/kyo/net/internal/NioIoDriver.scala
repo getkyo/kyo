@@ -337,6 +337,16 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         }
     end cleanupAccept
 
+    /** Wake the selector so a deferred deregistration/close is processed on the next `select()` cycle even when the loop would otherwise park
+      * with no timeout. A closed channel's `SelectionKey` is only deregistered (and, on JDK 11+, its fd actually `kill()`ed) during a `select()`
+      * pass; nothing else wakes the selector on a listener close, so an idle driver would leave the cancelled key, and the listening socket,
+      * pending indefinitely. Mirrors the wakeup coalescing the interest-change paths use (`wakeupPending` is cleared post-select).
+      */
+    def wakeup()(using AllowUnsafe): Unit =
+        if wakeupPending.compareAndSet(false, true) then
+            discard(selector.wakeup())
+    end wakeup
+
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
             Log.live.unsafe.debug(
