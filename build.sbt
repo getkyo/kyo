@@ -257,6 +257,7 @@ lazy val kyoJVM: Project = project
         `kyo-flow`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
+        `kyo-lsp`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -324,6 +325,7 @@ lazy val kyoJS = project
         `kyo-flow`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
+        `kyo-lsp`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
@@ -371,6 +373,7 @@ lazy val kyoNative = project
         `kyo-flow`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
+        `kyo-lsp`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -423,6 +426,7 @@ lazy val kyoWasm = project
         `kyo-flow`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
+        `kyo-lsp`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
@@ -1214,6 +1218,18 @@ lazy val `kyo-jsonrpc-http` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
+
+lazy val `kyo-lsp` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-lsp"))
+        .withKyoTest
+        .dependsOn(`kyo-jsonrpc`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .wasmSettings(`wasm-settings`)
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
