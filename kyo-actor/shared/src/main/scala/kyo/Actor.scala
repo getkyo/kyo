@@ -2,7 +2,6 @@ package kyo
 
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArraySet
-import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import kyo.Actor.Subject
 import kyo.kernel.ArrowEffect
@@ -147,8 +146,12 @@ object Actor:
       * own signal, closing the add-after-termination race: either the sweep sees the freshly added signal, or the ask self-completes.
       */
     final private[kyo] class PendingReplies:
-        private val waiters    = new CopyOnWriteArraySet[Promise[Unit, Any]]
-        private val terminated = new AtomicBoolean(false)
+        private val waiters = new CopyOnWriteArraySet[Promise[Unit, Any]]
+        // Unsafe: a plain synchronous flag, read/written from the Sync-only termination callback that
+        // cannot suspend. Mirrors Channel's internal AtomicBoolean.Unsafe flags; no effect is observable.
+        private val terminated: AtomicBoolean.Unsafe =
+            import AllowUnsafe.embrace.danger
+            AtomicBoolean.Unsafe.init(false)
 
         def size: Int = waiters.size
 
@@ -156,8 +159,12 @@ object Actor:
         def terminate(using AllowUnsafe): Unit =
             terminated.set(true)
             // Unsafe: runs inside the fiber's Sync-only onComplete callback, which cannot suspend; each
-            // completeUnitDiscard is idempotent and the COWArraySet iteration is snapshot-safe.
-            waiters.forEach(signal => signal.unsafe.completeUnitDiscard())
+            // completeUnitDiscard is idempotent and the COWArraySet snapshot (toArray) is safe to iterate.
+            val snapshot = waiters.toArray()
+            var i        = 0
+            while i < snapshot.length do
+                snapshot(i).asInstanceOf[Promise[Unit, Any]].unsafe.completeUnitDiscard()
+                i += 1
         end terminate
 
         /** Awaits a reply, completing even if the actor terminates first, with no per-ask accumulation.
@@ -177,12 +184,12 @@ object Actor:
         )(using frame: Frame): C < (Async & Abort[Closed | E]) =
             Promise.init[Unit, Any].map { signal =>
                 val register: Unit < Sync =
-                    Sync.defer(discard(waiters.add(signal))).andThen {
+                    Sync.Unsafe.defer(discard(waiters.add(signal))).andThen(
                         // Close the add-after-termination race: if the sweep already set the flag, complete
                         // our own signal so the terminated branch fires instead of awaiting a reply that
                         // never comes. Either the sweep sees this freshly added signal, or we self-complete.
-                        if terminated.get() then signal.completeUnitDiscard else Kyo.unit
-                    }
+                        Sync.Unsafe.defer[Boolean, Any](terminated.get()).map(t => if t then signal.completeUnitDiscard else Kyo.unit)
+                    )
                 val raced: C < (Async & Abort[Closed | E]) =
                     Sync.ensure(Sync.defer(discard(waiters.remove(signal)))) {
                         // raceFirst (not race): complete on the first branch to finish, success or failure.
