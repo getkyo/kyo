@@ -311,9 +311,10 @@ class CdpBackendLifecycleTest extends kyo.BrowserTest:
                         // Verify drainer is alive before close.
                         aliveBefore <- drainer.done
                         _           <- backend.closeNow
-                        // After closeNow, dialogDrainer must be interrupted/done.
-                        // Poll briefly to allow fiber to settle (interrupt is async).
-                        _          <- Async.delay(50.millis)(Kyo.unit)
+                        // closeNow interrupts the dialogDrainer; getResult completes only once
+                        // the fiber has fully stopped, so it is a deterministic wait for the
+                        // interrupt to settle (no fixed sleep that can race under CI load).
+                        _          <- drainer.getResult
                         aliveAfter <- drainer.done
                     yield
                         assert(!aliveBefore, s"dialogDrainer should be running before close, but done=$aliveBefore")
