@@ -690,6 +690,116 @@ val pubSubExample: Unit < (Async & Scope & Abort[Closed]) =
 
 The `adapt` function in `Actor.subscribe(hub)(adapt)` converts the hub's event type to the actor's message type. When they are the same, use `identity`. When the actor handles a sealed union and hub events are one variant, use a case-class constructor: `Actor.subscribe(hub)(MyMessage.HubEvent(_))`.
 
+## Topic: push-based publish/subscribe
+
+`Topic[A]` is a push-based fan-out primitive. Publishing a value delivers it directly into each subscriber's mailbox (or other sink). There are two constructors with different ordering guarantees:
+
+| Constructor | Fan-out style | Order guarantee |
+|---|---|---|
+| `Topic.init[A]` | Concurrent: each subscriber is notified in a separate async fiber | Per-subscriber FIFO; no cross-subscriber total order under concurrent publishers |
+| `Topic.linearized[A]` | Sequential through one actor mailbox | Total order: every subscriber sees publishes in the same sequence |
+
+**Topic vs Hub.** `Hub` is a pull primitive: listeners drain buffered events at their own rate. `Topic` is push: it calls `send` on each subscriber sink and awaits delivery. Use `Topic` when subscribers are actors whose mailboxes are the natural buffer. Use `Hub` when you need rate-isolated streaming consumers that drain independently.
+
+### `Topic.init`: plain concurrent fan-out
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+enum Msg derives CanEqual:
+    case Direct(n: Int)
+    case Event(text: String)
+end Msg
+
+val topicInitExample: Set[String] < (Async & Scope & Abort[Closed]) =
+    for
+        topic <- Topic.init[String]
+        seen  <- Queue.Unbounded.init[String]()
+        actor <- Actor.run(Actor.receiveMax[Msg](2) {
+            case Msg.Direct(n) => seen.add(s"direct:$n")
+            case Msg.Event(t)  => seen.add(s"event:$t")
+        })
+        _   <- topic.subscribe(actor.subject.contramap(Msg.Event(_)))
+        _   <- topic.publish("hi")
+        _   <- actor.subject.send(Msg.Direct(1))
+        _   <- actor.await
+        out <- seen.drain
+    yield out.toSet
+```
+
+`actor.subject.contramap(Msg.Event(_))` adapts the `Subject[Msg]` into a `Subject[String]`. The topic holds a `Subject[String]` and calls `send` on it; the adapter maps each `String` to a `Msg.Event` before forwarding to the actor's mailbox. Direct sends to `actor.subject` and topic-delivered events share the same mailbox, so the actor processes them sequentially with no concurrent state access.
+
+`topic.subscribe` completes (is awaited) before control returns, so a subscriber added before a `publish` call is guaranteed to receive that value. No readiness latch is needed.
+
+`Scope` auto-unsubscribes: when the enclosing scope closes, the subscription is removed and subsequent publishes skip that sink. Subscribers whose `send` fails with `Closed` are pruned automatically on the next publish.
+
+### `Topic.linearized`: total order across subscribers
+
+`Topic.linearized` serializes all operations (publish, subscribe, unsubscribe) through one actor mailbox, so every subscriber observes events in the same sequence even under concurrent publishers. Use it when cross-subscriber ordering is required; accept the cost of one actor hop per publish.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+val topicLinearizedExample: Boolean < (Async & Scope & Abort[Closed]) =
+    for
+        topic <- Topic.linearized[Int]
+        a     <- Channel.init[Int](64)
+        b     <- Channel.init[Int](64)
+        _     <- topic.subscribe(Subject.init(a))
+        _     <- topic.subscribe(Subject.init(b))
+        _     <- Async.foreach(1 to 10)(topic.publish) // concurrent publishers
+        as    <- a.drainUpTo(10)
+        bs    <- b.drainUpTo(10)
+    yield as == bs && as.size == 10 // both subscribers agree on the same total order
+```
+
+The `as == bs` equality is exactly the property `Topic.init` does not guarantee: under concurrent publishers, two `init` subscribers may observe the same values in different orders, so swapping `Topic.linearized` for `Topic.init` here would no longer be guaranteed to hold.
+
+`Topic.linearized` requires `Scope & Async` because it spawns an actor. The actor's lifetime is tied to the enclosing scope: when the scope closes, the actor shuts down and the topic closes with it. Calling `topic.close` explicitly also shuts the backing actor; in-flight callers complete (with `Closed`) rather than being stranded, because every operation uses the strand-safe `actor.ask` path.
+
+### `Subject.contramap`: subscribing an actor with a sum message type
+
+An actor that handles several message kinds with a sum type subscribes to a `Topic[E]` by adapting its `Subject[Msg]` with `contramap`:
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+enum AppMsg derives CanEqual:
+    case UserAction(payload: String)
+    case SystemEvent(text: String)
+end AppMsg
+
+val contramapExample: Set[String] < (Async & Scope & Abort[Closed]) =
+    for
+        topic <- Topic.init[String]
+        log   <- Queue.Unbounded.init[String]()
+        actor <- Actor.run(Actor.receiveMax[AppMsg](3) {
+            case AppMsg.UserAction(p)  => log.add(s"action:$p")
+            case AppMsg.SystemEvent(t) => log.add(s"event:$t")
+        })
+        _       <- topic.subscribe(actor.subject.contramap(AppMsg.SystemEvent(_)))
+        _       <- topic.publish("startup")
+        _       <- topic.publish("ready")
+        _       <- actor.subject.send(AppMsg.UserAction("click"))
+        _       <- actor.await
+        entries <- log.drain
+    yield entries.toSet
+```
+
+The actor receives both topic events (as `AppMsg.SystemEvent`) and direct sends (as `AppMsg.UserAction`) through a single serialized mailbox. There is no separate fan-in fiber; `contramap` just wraps the `send`/`trySend` calls with the mapping function.
+
+### Topic API summary
+
+| Method | Effects | Description |
+|---|---|---|
+| `publish(value)` | `Async & Abort[Closed]` | Delivers to all subscribers; suspends until each delivery completes; prunes closed sinks |
+| `subscribe(subscriber)` | `Async & Abort[Closed] & Scope` | Adds a subscriber; `Scope` auto-removes it on close |
+| `subscriberCount` | `Async & Abort[Closed]` | Current subscriber count |
+| `close` | `Sync` | Closes the topic; subsequent publish/subscribe fail with `Closed` |
+
 ## Request/Reply
 
 `Actor.respond[Req, Resp](handler)` creates an actor whose sole job is to map requests to replies. The framework automatically sends the handler's return value back to the caller, so the actor can never accidentally forget to reply.
