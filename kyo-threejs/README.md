@@ -491,29 +491,89 @@ The `selected` signal is shared by both the kyo-ui controls (the button writes i
 
 > **Note:** The `frames` parameter defaults to `ThreeFrames.Raf`. Pass `Three.embed(scene, camera, ThreeFrames.Clock(interval))` to use a fixed-interval frame source.
 
-### Server-driven reactivity
+## Orbit controls
 
-`Three.embed` and signal-bound props work unchanged when the containing app runs server-driven via `UI.runHandlers(basePath, head)(ui)`. The split is clean: the server owns every `SignalRef` and every `onClick` closure; the browser owns WebGL and the frame loop. On each signal change the server pushes a diff over kyo-ui's WebSocket; the browser applies it, reacting the same way it would in a client-only mount. A raycast click in the browser calls the server-side `onClick` closure via the same WebSocket, so handler logic stays on the server with full access to server state.
-
-The one extra wiring step is shipping the Scala.js island that mounts the 3D host in the browser. kyo bundles it into a single self-contained, self-running ESM (your Scala island plus three.js, inlined by esbuild), so the page links one file and the browser needs no import map, no separately served three, and no bootstrap module:
-
-1. Run the bundle task: `sbt islandBundle`. It links the island and runs esbuild, producing one self-contained `main.js` under `kyo-threejs/island/target/scala-<ver>/esbuild/main/out/`.
-2. Serve that file at a route, for example `/island.js` (a one-line static handler, or copy it into your served resources).
-3. Link it from the page head with `moduleScript`:
+`Three.controls(...)` is a scene node, not a runner option: add it to a scene and the mount binds a three.js `OrbitControls` instance to the live camera and canvas, so drag orbits, scroll zooms, and right-drag pans the camera around `target`. Each affordance is a flag (`enableZoom`, `enablePan`, `enableRotate`), and `autoRotate = true` spins the camera around the scene with no input. The controls bind under the mount `Scope` and dispose on close, so a mount/unmount cycle leaks no listener; a scene with no `controls` node binds nothing and pays zero per-frame cost.
 
 ```scala
 import kyo.*
 
-val head =
-    UI.PageHead(
-        title = "3D App",
-        moduleScript = Present("/island.js")
+val orbited =
+    Three.scene(
+        Three.Light.ambient(intensity = 0.8),
+        Three.mesh(Three.Geometry.box(1.4, 1.4, 1.4), Three.Material.standard(color = Color.red)),
+        Three.controls(autoRotate = true)
     )
 ```
 
-`UI.runHandlers(basePath, head)(ui)` serves this head in the SSR page GET, so the browser loads the island on first paint; the island resolves three internally and self-runs, mounting every server-pushed 3D host on load. The 1-arg `UI.runHandlers(basePath)(ui)` uses a default head with no `moduleScript`; pass `head` explicitly whenever your page needs a client island. See the kyo-threejs demos (`sbt demoBouncingBalls`, `sbt demoEmbeddedScene`) for a full runnable example, including the server entry point and `DemoServe`, which serves the bundled island at its route.
+Because `Three.controls` is a pure factory returning a `Three.Ast.Controls` value, it composes into the scene tree like any other node. The imperative controls object is created at mount and never appears in the surface.
 
-If you prefer native import maps and want to avoid esbuild, link the island's raw linker output instead and resolve `three` yourself: serve the three.js build and emit `<script type="importmap">{ "imports": { "three": "/three.module.js" } }</script>` before the island script. A CDN map (`{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js" } }`) works the same way at the cost of a runtime network dependency. The bundled single-file path is the default because it just works with no extra serving or browser-side resolution.
+> **Note:** controls move the camera, an `onFrame` spin moves the object. A static scene plus `Three.controls(autoRotate = true)` orbits the camera around a still object; an `onFrame` that advances a `.rotation(signal)` spins the object under a still camera. Use both at once for an object that spins while the camera orbits it.
+
+## Server-fed reactivity
+
+The opening sections all run the scene client-side: closures compiled into the browser, the frame loop and raycast local. A second mode keeps that client-owned scene and adds a server feeding reactive DATA into it by signal id. The split is the inverse of a server-rendered UI: the client owns, builds, and animates the real scene (every `onFrame` and `onClick` closure runs locally on a real WebGL canvas), and the server feeds typed values addressed by a string id over kyo-ui's WebSocket. The two halves agree only on the set of ids; nothing else crosses the wire.
+
+The surface is `object Three.Feed`. `Three.Feed.serverSignal[A](id, initial)` declares a server-owned `SignalRef[A]` keyed by `id`: on the server an app fiber writes it and each emission is pushed to the client by id; on the client island the same call yields the mirror ref the inbound feed writes, which the scene's existing `.color(signal)`/`.position(signal)` setters already observe. The value crosses as a `Schema`-encoded string, so any `A: Schema` round-trips with no wire-type union.
+
+```scala
+import kyo.*
+
+val fedColor =
+    for
+        color <- Three.Feed.serverSignal[Int]("cube-color", 0xff0000)
+        cube = Three.mesh(
+            Three.Geometry.box(2.0, 2.0, 2.0),
+            // The cube's color follows the server-fed mirror; a spin keeps the client frame loop running.
+            Three.Material.standard().color(color.map(rgb => Color(rgb)))
+        )
+        spin <- Signal.initRef(0.0)
+        scene = Three.scene(
+            Three.Light.ambient(intensity = 1.0),
+            Three.group(cube)
+                .rotation(spin.map(a => Vec3(a * 0.6, a, 0)))
+                .onFrame(t => spin.updateAndGet(_ + t.delta.toMillis * 0.0015))
+        )
+    yield (scene, color)
+```
+
+The cube spins from the local `onFrame` while its color steps from the server feed: animation and server-driven reactivity on the same object at once, which a server-rendered scene cannot deliver (it would drop the client closures).
+
+A client `onClick` runs locally (the client raycasts its own live scene), and from inside that closure `Three.Feed.emit[A](id, event)` posts a typed event back to the server. The server routes it to a handler registered with `Three.Feed.onAppEvent[A](id)`, which typically reflects it into a server-fed signal, closing the loop: a click changes server state, which feeds back to the scene.
+
+```scala
+import kyo.*
+
+final case class Bump(amount: Int) derives CanEqual, Schema
+
+val clickable =
+    Three.mesh(Three.Geometry.box(2.0, 2.0, 2.0), Three.Material.standard())
+        .onClick { _ =>
+            // emit's typed FeedUnavailable Abort (no channel bound yet) is discharged here, not widened.
+            Abort.run[ThreeException](Three.Feed.emit[Bump]("bump", Bump(1))).unit
+        }
+```
+
+`Three.Feed.run(basePath, head)(ui)` is the serve entry. It returns the HTTP handlers (an SSR page GET and a WebSocket route) you compose with your static handlers via `HttpServer.init`. The page links the client island bundle through `head.moduleScript`; the `ui` builder declares the fed signals and app-event handlers (its `serverSignal`/`onAppEvent` calls record the ids) and renders the page body. Per WebSocket connection the runner runs the builder once, forks one observer per fed id, and routes inbound app events to their handlers; every fiber binds to the connection Scope and tears down on disconnect.
+
+```scala
+import kyo.*
+
+val served =
+    for
+        // The page links the per-app island bundle (the client half) through moduleScript.
+        handlers <- Three.Feed.run("", UI.PageHead("3D App", moduleScript = Present("/island.js"))) {
+            for
+                color <- Three.Feed.serverSignal[Int]("cube-color", 0xff0000)
+                // A server fiber cycles the fed color; each set is pushed to the client by id.
+                _ <- Fiber.initUnscoped(color.set(0x00ff00))
+            yield UI.host("canvas").id("app")
+        }
+        server <- HttpServer.init(0, "localhost")(handlers*)
+    yield server
+```
+
+The client half is a per-app Scala.js island: a small `@JSExportTopLevel` main that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). kyo bundles the island plus three.js into one self-contained ESM (esbuild), so the page links a single file with no import map and no separately served three. The kyo-threejs demos ship runnable examples: `sbt demoClientFeedProve` serves one cube that spins client-side and steps color from a server feed, and `sbt demoClientFlagship` serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera).
 
 ## Putting it together
 
@@ -553,7 +613,7 @@ val solarSystem =
 
 ## Demos
 
-The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as `KyoApp`s. Each live-scene demo runs a small server on Node that serves a server-pushed page; the 3D rendering happens in the browser. They are compile-checked by kyo-threejs's own test on both the JS and Wasm backends. See [Running the demos](#running-the-demos) for how to launch one.
+The demo scenes live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and are compile-checked by kyo-threejs's own test on both the JS and Wasm backends. Each launcher runs a small server on Node that serves a page; the 3D rendering happens in the browser through `Three.runMount`, so the scene owns and animates itself client-side. The server-fed demos (FeedProve, Flagship) additionally feed data over the WebSocket. See [Running the demos](#running-the-demos) for how to launch one.
 
 <table>
   <tr>
@@ -592,10 +652,10 @@ The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as 
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="shared/src/test/scala/demo/ServerClock.scala"><strong>ServerClock</strong></a>: a server-owned tick advanced by a <em>server-side</em> fiber (not a client <code>onFrame</code>), bound to a cube's color and rotation; every advance is pushed over the WebSocket and a kyo-ui HUD echoes the tick. The server-driven counterpart to <code>ReactiveCubeField</code>. (no preview: a live server-driven scene)
+      <a href="shared/src/test/scala/demo/EmbeddedScene.scala"><strong>EmbeddedScene</strong></a>: a kyo-ui tree (a button, a 3D canvas via <code>Three.embed</code>, and a HUD label) sharing one <code>SignalRef[String]</code>; the earth orbits the sun via a client <code>onFrame</code> and clicking a sphere or the button updates the label, proving bidirectional kyo-ui &lt;-&gt; 3D interop on one page. (no preview: a live client-mounted scene)
     </td>
     <td width="50%" valign="top">
-      <a href="shared/src/test/scala/demo/ServerStructure.scala"><strong>ServerStructure</strong></a>: a server-owned id list rendered with <code>foreachKeyed</code>; Add / Remove / Reverse buttons mutate it server-side, pushing new scene <em>structure</em> over the WebSocket (splice-in, dispose-once, identity-preserving reorder). (no preview: a live server-driven scene)
+      <a href="shared/src/test/scala/demo/FlagshipScene.scala"><strong>Flagship</strong></a>: one cube showing all four halves of the model at once: a client <code>onFrame</code> spin, a server-fed color that steps every ~1s (<code>serverSignal</code>), a click-driven scale via <code>Three.Feed.emit</code> the server reflects back, and a <code>Three.controls(autoRotate)</code> camera orbit. (no preview: a live server-fed scene)
     </td>
   </tr>
 </table>
@@ -604,24 +664,25 @@ The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as 
 
 kyo-threejs is a Scala.js/Wasm module with no JVM variant, and Scala.js has no `Test/runMain`, so `sbt 'kyo-threejsJS/Test/runMain demo.BouncingBalls'` does not work. The supported launch is one sbt command alias per demo. Each alias selects that demo's main on the `kyo-threejs-demo-runner` project (a Node-runnable Scala.js module that reuses the demo sources) and runs it.
 
-First bundle the browser island once, then launch a demo:
+Each alias does its own bundling, so no separate bundle step is needed; just launch a demo:
 
 ```sh
-sbt islandBundle        # bundle the self-contained self-running island the page loads
-sbt demoBouncingBalls   # launch one demo's server on Node
+sbt demoClientBouncingBalls   # link the demos bundle and launch one demo's server on Node
 ```
 
-The live-scene demos print a `http://localhost:<port>/` URL; open it to see the scene. Each alias launches exactly one demo, so re-run `islandBundle` only after changing demo or library sources. The aliases:
+The launcher prints a `http://localhost:<port>/` URL; open it to see the scene render in the browser through `Three.runMount`. Each alias launches exactly one demo. The aliases:
 
 | Command | Demo |
 |---------|------|
-| `sbt demoBouncingBalls` | BouncingBalls |
-| `sbt demoSolarSystem` | SolarSystem |
-| `sbt demoReactiveCubeField` | ReactiveCubeField |
-| `sbt demoSnake3D` | Snake3D |
-| `sbt demoGltfViewer` | GltfViewer |
-| `sbt demoEmbeddedScene` | EmbeddedScene |
-| `sbt demoServerClock` | ServerClock |
-| `sbt demoServerStructure` | ServerStructure |
+| `sbt demoClientBouncingBalls` | BouncingBalls |
+| `sbt demoClientSolarSystem` | SolarSystem |
+| `sbt demoClientReactiveCubeField` | ReactiveCubeField |
+| `sbt demoClientSnake3D` | Snake3D |
+| `sbt demoClientGltfViewer` | GltfViewer |
+| `sbt demoClientEmbedded` | EmbeddedScene |
+| `sbt demoClientFeedProve` | FeedProve (client spin + a server-fed color) |
+| `sbt demoClientFlagship` | Flagship (all four halves on one cube) |
+
+The pure-animation aliases (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene alias link the shared `kyo-threejs-demos` bundle and run entirely client-side. The two server-fed aliases (FeedProve, Flagship) additionally bundle their own per-app island and serve it through `Three.Feed.run`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
 
 `ThumbnailGallery` uses `Three.toImage`, which requires a browser WebGL context and cannot run via the Node demo runner. Its rendered output is the committed `docs/images/*.png` thumbnails in this repository. The `toImage` primitive is validated by `ThreeToImageBrowserTest` and `WebGLAcceptanceTest` in a real software-WebGL Chrome.

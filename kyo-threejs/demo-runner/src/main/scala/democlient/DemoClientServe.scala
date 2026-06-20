@@ -54,6 +54,38 @@ object DemoClientServe:
             _ <- server.await
         yield ()
 
+    /** Serves an EMBED client-mount demo: the same bundle/three/jsm stack as [[serve]], but the page host
+      * is a `<div id="app">` rather than a `<canvas>`, because the entry mounts a whole kyo-ui tree (a
+      * button, the embedded 3D canvas via `Three.embed`, and a HUD label) into that div through
+      * `UI.runMount`. The embedded 3D canvas is created by kyo-ui inside the tree, so the page itself need
+      * not provide one. Used by the `Embedded` launcher to serve [[demo.EmbeddedSceneScene]] under Y, where
+      * the earth's `onFrame` orbit and the sun/earth `onClick` selection both run client-side.
+      */
+    def serveEmbedded(name: String, motion: String, entry: String, call: String, port: Int)(using
+        Frame
+    ): Unit < (Async & Scope & Abort[FileException]) =
+        for
+            bundle    <- readFile(bundleFile)
+            module    <- readFile(threeBuild("three.module.js"))
+            core      <- readFile(threeBuild("three.core.js"))
+            gltf      <- readFile(threeJsm("loaders/GLTFLoader.js"))
+            bufUtils  <- readFile(threeJsm("utils/BufferGeometryUtils.js"))
+            skelUtils <- readFile(threeJsm("utils/SkeletonUtils.js"))
+            orbit     <- readFile(threeJsm("controls/OrbitControls.js"))
+            server <- HttpServer.init(port, "localhost")(
+                htmlHandler("", embedPage(entry, call)),
+                jsHandler(bundlePath, bundle),
+                jsHandler("/three.module.js", module),
+                jsHandler("/three.core.js", core),
+                jsHandler("/three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                jsHandler("/three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                jsHandler("/three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                jsHandler("/three/examples/jsm/controls/OrbitControls.js", orbit)
+            )
+            _ <- Console.printLine(s"$name running on http://localhost:${server.port}/  ($motion)")
+            _ <- server.await
+        yield ()
+
     /** A client-mount page: an import map for `three` and the GLTFLoader jsm, a sized `#app` canvas, and
       * a module script that imports the named `mountX` entry from the bundle and calls it. The mount
       * runs on a detached fiber whose Scope stays open for the page lifetime, so the frame loop animates
@@ -75,6 +107,39 @@ object DemoClientServe:
            |</head>
            |<body>
            |<canvas id="app" width="960" height="600"></canvas>
+           |<script type="module">
+           |try {
+           |    const { $entry } = await import("$bundlePath");
+           |    $call;
+           |} catch (e) {
+           |    document.body.innerHTML = "<pre style='color:#f88'>mount failed: " + String(e && e.message ? e.message : e) + "</pre>";
+           |}
+           |</script>
+           |</body>
+           |</html>""".stripMargin
+
+    /** The EMBED page variant: a `<div id="app">` host (not a `<canvas>`) the entry's `UI.runMount`
+      * mounts the whole kyo-ui tree into. The embedded 3D `<canvas>` is created by kyo-ui inside the tree
+      * at the `Three.embed` host, so the page supplies only the div container. The import map adds
+      * OrbitControls (in case the embedded scene declares `Three.controls`); the rest matches [[page]].
+      */
+    private def embedPage(entry: String, call: String): String =
+        s"""<!doctype html>
+           |<html>
+           |<head><meta charset="utf-8"><title>kyo-threejs embed demo</title>
+           |<script type="importmap">
+           |{ "imports": {
+           |    "three": "/three.module.js",
+           |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js",
+           |    "three/examples/jsm/utils/BufferGeometryUtils.js": "/three/examples/jsm/utils/BufferGeometryUtils.js",
+           |    "three/examples/jsm/utils/SkeletonUtils.js": "/three/examples/jsm/utils/SkeletonUtils.js",
+           |    "three/examples/jsm/controls/OrbitControls.js": "/three/examples/jsm/controls/OrbitControls.js"
+           |} }
+           |</script>
+           |<style>html,body{margin:0;background:#101018;color:#cdd}#app{margin:0 auto;max-width:960px;padding:12px}button{font-size:16px;padding:6px 14px}p{font-size:18px}</style>
+           |</head>
+           |<body>
+           |<div id="app"></div>
            |<script type="module">
            |try {
            |    const { $entry } = await import("$bundlePath");

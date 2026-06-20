@@ -71,6 +71,23 @@ object SolarSystem extends ClientDemoApp:
     }
 end SolarSystem
 
+/** Serves [[demo.EmbeddedSceneScene]] as an embed client mount: a kyo-ui tree (a "Focus Sun" button, an
+  * embedded 3D canvas via `Three.embed`, and a HUD label) where the earth orbits the sun and clicking a
+  * sphere updates the label. Under Option Y the embed is client-owned, so the orbit animates locally and
+  * the clicks fire locally; the page host is a `<div>`, so this uses [[DemoClientServe.serveEmbedded]].
+  */
+object Embedded extends ClientDemoApp:
+    run {
+        DemoClientServe.serveEmbedded(
+            "EmbeddedScene",
+            "the earth orbits the sun; click a sphere or the button to update the HUD label",
+            "mountEmbeddedScene",
+            """mountEmbeddedScene("#app")""",
+            port
+        )
+    }
+end Embedded
+
 /** Serves [[demo.GltfViewerScene]] as a client mount: the loaded glTF model spins. */
 object GltfViewer extends ClientDemoApp:
     run {

@@ -1973,6 +1973,47 @@ lazy val `kyo-threejs-controls-island` =
 // output lands at kyo-threejs/controls-island/target/scala-<ver>/esbuild/main/out/main.js.
 addCommandAlias("controlsIslandBundle", "; kyo-threejs-controls-island/esbuildBundle")
 
+// The Option-Y FLAGSHIP per-app island (design 02-design-r2, Decision D-001, G5): the self-contained ESM
+// the `democlient.Flagship` launcher links through `head.moduleScript`. Mirrors `kyo-threejs-feedprove-island`
+// exactly, but its main is `flagship.FlagshipIslandApp`, which mounts the consolidated Flagship scene at
+// `#app`: ONE cube that simultaneously spins client-side (`onFrame`), steps color from a server-fed
+// `serverSignal`, steps scale from a client `onClick` -> `Three.Feed.emit` the server reflects into a second
+// fed signal, AND is orbited by a live `Three.controls(autoRotate = true)`. The bundle inlines three AND
+// OrbitControls (esbuild), so the page needs no import map.
+lazy val `kyo-threejs-flagship-island` =
+    project
+        .in(file("kyo-threejs/flagship-island"))
+        .enablePlugins(ScalaJSPlugin, ScalaJSEsbuildPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("flagship.FlagshipIslandApp"),
+            // Reuse the demos' `demoharness.DemoMounts` (the `mountFlagship` entry) and the shared
+            // `demo.FlagshipScene`, so the island links the SAME compiled scene the demos test mounts.
+            Compile / unmanagedSourceDirectories ++= Seq(
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "demos" / "src" / "main" / "scala" / "demoharness",
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo"
+            ),
+            Test / sources := Seq.empty,
+            Compile / fastLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            ),
+            Compile / fullLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            )
+        )
+
+// Bundle the flagship per-app island into one self-contained ESM (three + OrbitControls inlined). The
+// output lands at kyo-threejs/flagship-island/target/scala-<ver>/esbuild/main/out/main.js, served by the launcher.
+addCommandAlias("flagshipIslandBundle", "; kyo-threejs-flagship-island/esbuildBundle")
+
 // The Node launcher for the demos. Scala.js has no `Test/runMain`, and kyo-threejs has no JVM
 // variant, so the kyo-ui `runMain` launch verb does not apply: instead, the client-mount launcher
 // `KyoApp`s in `democlient` run their HttpServer on Node, serving a static page that runs the scene in
@@ -2052,6 +2093,15 @@ addCommandAlias(
     "demoClientGltfViewer",
     """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.GltfViewer") ; kyo-threejs-demo-runner/run"""
 )
+// The EmbeddedScene client-mount launcher: serves the full `EmbeddedSceneScene.ui` kyo-ui tree (a button,
+// the embedded 3D canvas via `Three.embed`, and a HUD label) into a `<div id="app">`, mounted through
+// `UI.runMount`. Under Option Y the embed is client-owned, so the earth's `onFrame` orbit animates and the
+// sun/earth `onClick` selection fires LOCALLY in the browser, each writing the shared `SignalRef[String]`
+// the HUD observes. Like the pure-animation launchers it links the `kyo-threejs-demos` ESModule bundle.
+addCommandAlias(
+    "demoClientEmbedded",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Embedded") ; kyo-threejs-demo-runner/run"""
+)
 
 // The Option-Y prove-the-mechanism launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
 // that spins client-side AND steps color from a server feed over the WebSocket, and stays up so a human can
@@ -2063,6 +2113,17 @@ addCommandAlias(
 addCommandAlias(
     "demoClientFeedProve",
     """; kyo-threejs-feedprove-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedProve") ; kyo-threejs-demo-runner/run"""
+)
+
+// The Option-Y FLAGSHIP consolidated launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
+// that shows ALL FOUR halves of Y at once (client `onFrame` spin, a server-fed `serverSignal` color that
+// steps every ~1s, a client `onClick` -> `Three.Feed.emit` the server reflects into a fed scale signal, and
+// a `Three.controls(autoRotate)` camera orbit), and stays up so a human can open the printed URL. Bundles
+// the self-contained Flagship island (three + OrbitControls inlined) the page links through
+// `head.moduleScript`, then runs the `democlient.Flagship` launcher.
+addCommandAlias(
+    "demoClientFlagship",
+    """; kyo-threejs-flagship-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Flagship") ; kyo-threejs-demo-runner/run"""
 )
 
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown

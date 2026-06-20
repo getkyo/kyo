@@ -158,6 +158,45 @@ object DemoMounts:
             }
         }
 
+    /** Mounts the Option-Y FLAGSHIP consolidated scene at `selector` (design 02-design-r2 G5): ONE cube
+      * that shows ALL FOUR halves of Y at once. The mount runs the real `Three.runMount` GL pipeline (so
+      * the cube spins via client `onFrame` AND the camera orbits via the bound `OrbitControls`) AND
+      * connects BOTH server-fed mirrors under the SAME page Scope: `Three.Feed.connect(colorId, color)`
+      * for the auto-cycled palette color and `Three.Feed.connect(scaleId, scale)` for the click-driven
+      * scale. The server pushes `SignalUpdate(colorId, ...)` on its ~1s schedule and
+      * `SignalUpdate(scaleId, ...)` whenever a client click's `emit` reaches the server's app-event
+      * handler; the existing `forkBoundRef` patch fibers step the cube's color and size. A client click
+      * raycasts the cube locally, runs the `onClick` closure, and `emit`s the bump over the WS.
+      */
+    @JSExportTopLevel("mountFlagship")
+    def mountFlagship(selector: String): Unit =
+        runMounted {
+            FlagshipScene.sceneWithMirrors.map { case (scene, color, scale) =>
+                for
+                    // Connect both feed receivers FIRST (they register on window.__kyoHostChannels and flush
+                    // any feeds buffered before mount), then run the mount: Three.runMount parks on the RAF
+                    // loop and never returns, so the connects must precede it under the same page Scope.
+                    _ <- Three.Feed.connect(FlagshipScene.colorId, color)
+                    _ <- Three.Feed.connect(FlagshipScene.scaleId, scale)
+                    _ <- Three.runMount(scene, FlagshipScene.camera, selector, ThreeFrames.Raf)
+                yield ()
+            }
+        }
+
+    /** Mounts the full [[EmbeddedSceneScene.ui]] kyo-ui tree (a "Focus Sun" button, the embedded 3D
+      * canvas via `Three.embed`, and a HUD label) at `selector` through `UI.runMount`. Under Option Y
+      * the embed is client-owned: kyo-ui calls the 3D host mount once the canvas is attached, running the
+      * real `Three.runMount` GL pipeline inside it, so the earth's `onFrame` orbit animates LOCALLY and a
+      * raycast click on the sun or earth runs its `onClick` LOCALLY, writing the shared
+      * `SignalRef[String]` the HUD label observes. The button and the 3D click both drive the one shared
+      * cell, proving bidirectional kyo-ui <-> 3D interop on one page with no server round-trip.
+      */
+    @JSExportTopLevel("mountEmbeddedScene")
+    def mountEmbeddedScene(selector: String): Unit =
+        runMountedUI {
+            EmbeddedSceneScene.ui.map(tree => UI.runMount(tree, selector))
+        }
+
     /** Runs a client mount on a detached fiber whose ambient `Scope` stays open for the page
       * lifetime, mirroring the island host-mount boundary: the `Scope` holds the renderer, the frame
       * loop fiber, and the observe fibers, and `Async.never` parks the fiber so the loop runs until
@@ -180,5 +219,21 @@ object DemoMounts:
             }
         val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(held).unit)
     end runMounted
+
+    /** The kyo-ui variant of [[runMounted]] for an embed mount: `UI.runMount` carries `< (Async &
+      * Scope)` (no `Abort[ThreeException]`, since the 3D host-mount failure path is handled inside the
+      * kyo-ui DOM backend), so it parks the page Scope open without an `Abort.run`. A panic still logs
+      * rather than escaping the boundary.
+      */
+    private def runMountedUI(mount: Unit < (Async & Scope))(using Frame): Unit =
+        // Unsafe: the page-to-kyo boundary; launches the mount on a detached fiber whose ambient Scope
+        // stays open for the frame loop. The AllowUnsafe is scoped to this entry call.
+        import AllowUnsafe.embrace.danger
+        val held: Unit < Async =
+            Scope.run {
+                Fiber.init(mount).map(_ => Async.never)
+            }
+        val _ = Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(held).unit)
+    end runMountedUI
 
 end DemoMounts
