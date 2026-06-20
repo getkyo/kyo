@@ -847,7 +847,11 @@ class WebsiteGeneratorTest extends WebsiteTest:
             latestSlugPages <- Sync.defer {
                 val latestDir = java.nio.file.Paths.get(out.toString, "latest")
                 if Files.exists(latestDir) then
-                    Files.list(latestDir).filter(Files.isDirectory(_)).count().toInt
+                    // Files.list opens a directory stream that holds an fd; close so it is not leaked.
+                    val stream = Files.list(latestDir)
+                    try stream.filter(Files.isDirectory(_)).count().toInt
+                    finally stream.close()
+                    end try
                 else 0
             }
         yield

@@ -91,15 +91,19 @@ class NativeLoaderForkStressTest extends Test:
             assert(Files.exists(finalPath) == true)
             assert(Files.readAllBytes(finalPath).nn.toSeq == payload.toSeq)
             // No `.tmp-<uuid>` residue from any child, atomic rename cleaned up every interim write.
-            val tmpLeftovers = Files.list(dir).nn.iterator().nn
+            // Files.list opens a directory stream that holds an fd; close it so the dir fd is not leaked.
+            val stream = Files.list(dir).nn
             val residue =
-                val buf = scala.collection.mutable.Buffer.empty[String]
-                while tmpLeftovers.hasNext do
-                    val n = tmpLeftovers.next().nn.getFileName.nn.toString
-                    if n.contains(".tmp-") then buf += n
-                end while
-                buf.toList
-            end residue
+                try
+                    val tmpLeftovers = stream.iterator().nn
+                    val buf          = scala.collection.mutable.Buffer.empty[String]
+                    while tmpLeftovers.hasNext do
+                        val n = tmpLeftovers.next().nn.getFileName.nn.toString
+                        if n.contains(".tmp-") then buf += n
+                    end while
+                    buf.toList
+                finally stream.close()
+                end try
             assert(residue == Nil)
         finally
             pool.shutdownNow(): Unit

@@ -25,12 +25,17 @@ class WebsiteBuildGraphTest extends WebsiteTest:
         val root = repoRoot().resolve(subdir)
         if Files.exists(root) then
             import scala.jdk.CollectionConverters.*
-            Files.walk(root)
-                .iterator()
-                .asScala
-                .filter(p => p.toString.endsWith(".scala") || p.toString.endsWith(".sbt"))
-                .flatMap(p => new String(Files.readAllBytes(p)).linesIterator)
-                .toList
+            // Files.walk opens directory streams that hold fds; close so they are not leaked.
+            val walk = Files.walk(root)
+            try
+                walk
+                    .iterator()
+                    .asScala
+                    .filter(p => p.toString.endsWith(".scala") || p.toString.endsWith(".sbt"))
+                    .flatMap(p => new String(Files.readAllBytes(p)).linesIterator)
+                    .toList
+            finally walk.close()
+            end try
         else
             Nil
         end if

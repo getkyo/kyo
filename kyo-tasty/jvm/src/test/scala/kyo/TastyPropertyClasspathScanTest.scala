@@ -45,11 +45,16 @@ class TastyPropertyClasspathScanTest extends kyo.test.Test[Any]:
         TestClasspaths.all.foreach { root =>
             val f = new File(root)
             if f.exists && f.isDirectory then
-                Files.walk(f.toPath).iterator.asScala.foreach { p =>
-                    val s = p.toString
-                    if s.endsWith(".tasty") && !s.contains("/test/") && !s.contains("/fixtures/") then
-                        discard(accumulator += p.getParent.toString)
-                }
+                // Files.walk opens directory streams that hold fds; close so they are not leaked.
+                val walk = Files.walk(f.toPath)
+                try
+                    walk.iterator.asScala.foreach { p =>
+                        val s = p.toString
+                        if s.endsWith(".tasty") && !s.contains("/test/") && !s.contains("/fixtures/") then
+                            discard(accumulator += p.getParent.toString)
+                    }
+                finally walk.close()
+                end try
             end if
         }
         accumulator.toList.sorted

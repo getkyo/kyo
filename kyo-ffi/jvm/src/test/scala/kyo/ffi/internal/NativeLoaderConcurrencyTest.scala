@@ -104,11 +104,16 @@ class NativeLoaderConcurrencyTest extends Test:
             assert(Files.exists(out) == true)
             assert(Files.readAllBytes(out).nn.toSeq == data.toSeq)
             // No `.tmp-<uuid>` sibling should remain, the atomic rename consumed the temp file.
-            val entries = Files.list(dir).nn.iterator().nn
-            while entries.hasNext do
-                val name = entries.next().nn.getFileName.nn.toString
-                assert(!name.contains(".tmp-"))
-            end while
+            // Files.list opens a directory stream that holds an fd; close it so the dir fd is not leaked.
+            val entries = Files.list(dir).nn
+            try
+                val it = entries.iterator().nn
+                while it.hasNext do
+                    val name = it.next().nn.getFileName.nn.toString
+                    assert(!name.contains(".tmp-"))
+                end while
+            finally entries.close()
+            end try
         }
     }
 
