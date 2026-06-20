@@ -195,6 +195,36 @@ class SubjectTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Subject.contramap" - {
+        "adapts the message type via the mapping function" in {
+            for
+                chan <- Channel.init[Int](4)
+                base    = Subject.init(chan)
+                strings = base.contramap[String](_.length)
+                _ <- strings.send("hello")
+                v <- chan.take
+            yield assert(v == 5)
+        }
+        "composes with an actor subject" in {
+            for
+                sum   <- AtomicInt.init(0)
+                actor <- Actor.run(Actor.receiveMax[Int](1)(sum.addAndGet(_).unit))
+                sink = actor.subject.contramap[String](_.length)
+                _ <- sink.send("abcd")
+                _ <- actor.await
+                v <- sum.get
+            yield assert(v == 4)
+        }
+        "adapts trySend as well as send" in {
+            for
+                chan <- Channel.init[Int](4)
+                strings = Subject.init(chan).contramap[String](_.length)
+                accepted <- strings.trySend("hey")
+                v        <- chan.take
+            yield assert(accepted && v == 3)
+        }
+    }
+
     "Multiple Subjects" - {
         "can coordinate between different subject implementations" in {
             for

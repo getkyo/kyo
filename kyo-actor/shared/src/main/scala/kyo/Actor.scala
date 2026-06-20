@@ -738,6 +738,25 @@ object Actor:
         def ask[B](f: Subject[B] => A)(using Frame): B < (Async & Abort[Closed]) =
             Promise.init[B, Any].map(promise => send(f(Subject.init(promise))).andThen(awaitReply(promise)))
 
+        /** Adapts this sink to accept a different message type.
+          *
+          * `Subject` is a write-only sink, so it is contravariant in its message type: `contramap` adapts the input through `f`. There is no
+          * lawful `map`, because producing a sink that accepts `B` would require `B => A`, not `A => B` (`send` returns no value to map over).
+          *
+          * The result is a send-only view: `ask` on it uses the default reply-wait, not a lifecycle-aware one, so use the original handle
+          * when you need a strand-safe `ask`.
+          *
+          * @param f
+          *   Maps a `B` to this sink's message type `A`
+          * @tparam B
+          *   The message type of the adapted sink
+          */
+        def contramap[B](f: B => A): Subject[B] =
+            Subject.init(
+                send = b => this.send(f(b)),
+                trySend = b => this.trySend(f(b))
+            )
+
     end Subject
 
     object Subject:
