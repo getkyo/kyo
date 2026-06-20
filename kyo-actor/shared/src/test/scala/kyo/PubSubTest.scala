@@ -63,6 +63,44 @@ class PubSubTest extends kyo.test.Test[Any]:
                 result <- Abort.run[Closed](topic.publish(1))
             yield assert(result.isFailure)
         }
+        "with concurrency 1 delivers to all subscribers" in {
+            for
+                topic <- PubSub.init[Int](1)
+                a     <- Channel.init[Int](4)
+                b     <- Channel.init[Int](4)
+                c     <- Channel.init[Int](4)
+                _     <- topic.subscribe(Subject.init(a))
+                _     <- topic.subscribe(Subject.init(b))
+                _     <- topic.subscribe(Subject.init(c))
+                _     <- topic.publish(7)
+                va    <- a.take
+                vb    <- b.take
+                vc    <- c.take
+            yield assert(va == 7 && vb == 7 && vc == 7)
+        }
+        "with concurrency 2 delivers to all subscribers" in {
+            for
+                topic <- PubSub.init[Int](2)
+                a     <- Channel.init[Int](4)
+                b     <- Channel.init[Int](4)
+                c     <- Channel.init[Int](4)
+                d     <- Channel.init[Int](4)
+                _     <- topic.subscribe(Subject.init(a))
+                _     <- topic.subscribe(Subject.init(b))
+                _     <- topic.subscribe(Subject.init(c))
+                _     <- topic.subscribe(Subject.init(d))
+                _     <- topic.publish(7)
+                va    <- a.take
+                vb    <- b.take
+                vc    <- c.take
+                vd    <- d.take
+            yield assert(va == 7 && vb == 7 && vc == 7 && vd == 7)
+        }
+        "rejects a concurrency below 1" in {
+            Abort.run[IllegalArgumentException](Sync.defer(PubSub.init[Int](0)).map(_ => ())).map { result =>
+                assert(result.failure.exists(_.getMessage.contains("concurrency must be >= 1")))
+            }
+        }
     }
 
     "PubSub.linearized" - {
@@ -136,6 +174,44 @@ class PubSubTest extends kyo.test.Test[Any]:
                 _      <- topic.close
                 result <- Abort.run[Closed](Async.timeout(2.seconds)(fiber.get))
             yield assert(result.isSuccess || result.isFailure)
+        }
+        "with concurrency 1 delivers to all subscribers" in {
+            for
+                topic <- PubSub.linearized[Int](1)
+                a     <- Channel.init[Int](16)
+                b     <- Channel.init[Int](16)
+                c     <- Channel.init[Int](16)
+                _     <- topic.subscribe(Subject.init(a))
+                _     <- topic.subscribe(Subject.init(b))
+                _     <- topic.subscribe(Subject.init(c))
+                _     <- topic.publish(7)
+                va    <- a.take
+                vb    <- b.take
+                vc    <- c.take
+            yield assert(va == 7 && vb == 7 && vc == 7)
+        }
+        "with concurrency 2 delivers to all subscribers" in {
+            for
+                topic <- PubSub.linearized[Int](2)
+                a     <- Channel.init[Int](16)
+                b     <- Channel.init[Int](16)
+                c     <- Channel.init[Int](16)
+                d     <- Channel.init[Int](16)
+                _     <- topic.subscribe(Subject.init(a))
+                _     <- topic.subscribe(Subject.init(b))
+                _     <- topic.subscribe(Subject.init(c))
+                _     <- topic.subscribe(Subject.init(d))
+                _     <- topic.publish(7)
+                va    <- a.take
+                vb    <- b.take
+                vc    <- c.take
+                vd    <- d.take
+            yield assert(va == 7 && vb == 7 && vc == 7 && vd == 7)
+        }
+        "rejects a concurrency below 1" in {
+            Abort.run[IllegalArgumentException](Sync.defer(PubSub.linearized[Int](0)).map(_ => ())).map { result =>
+                assert(result.failure.exists(_.getMessage.contains("concurrency must be >= 1")))
+            }
         }
     }
 end PubSubTest

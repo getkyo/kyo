@@ -844,6 +844,8 @@ val topicInitExample: Set[String] < (Async & Scope & Abort[Closed]) =
 
 `Scope` auto-unsubscribes: when the enclosing scope closes, the subscription is removed and subsequent publishes skip that sink. Subscribers whose `send` fails with `Closed` are pruned automatically on the next publish.
 
+`PubSub.init[A](concurrency)` bounds how many subscribers a single publish delivers to in parallel (the no-arg `PubSub.init[A]` uses `Async.defaultConcurrency`). Pass `1` to deliver sequentially, or a higher value to cap fan-out parallelism. The bound must be `>= 1`. `PubSub.linearized[A](concurrency)` takes the same bound; for the linearized constructor it only limits parallelism within one publish's fan-out, so the total order across publishes still holds.
+
 ### `PubSub.linearized`: total order across subscribers
 
 `PubSub.linearized` serializes all operations (publish, subscribe, unsubscribe) through one actor mailbox, so every subscriber observes events in the same sequence even under concurrent publishers. Use it when cross-subscriber ordering is required; accept the cost of one actor hop per publish.

@@ -204,6 +204,8 @@ The pump stops when the listener or the actor mailbox closes (a `Result.Failure(
 | `PubSub.init[A]` | Concurrent via `Async.foreach` | Per-subscriber FIFO; no total order across subscribers under concurrent publishers |
 | `PubSub.linearized[A]` | Sequential through one actor mailbox | Total order: every subscriber observes publishes in the same sequence |
 
+Both constructors take an optional `concurrency: Int` (`PubSub.init[A](concurrency)`, `PubSub.linearized[A](concurrency)`): it bounds how many subscribers a single publish delivers to in parallel through `Async.foreach`. The no-arg forms delegate with `Async.defaultConcurrency`. The bound must be `>= 1` (a value of `1` delivers sequentially); a smaller value fails with `IllegalArgumentException`. For `linearized` the bound only limits parallelism within one publish's fan-out: the total order across publishes is unaffected.
+
 **When to use each:**
 
 - Use `PubSub.init` when per-subscriber FIFO suffices and you do not need all subscribers to agree on the relative order of concurrent publishes.
