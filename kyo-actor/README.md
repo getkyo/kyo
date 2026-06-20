@@ -25,7 +25,7 @@ val result: Int < (Async & Scope & Abort[Closed]) =
     yield count
 ```
 
-The sections below cover each building block. A full banking-account example that combines all of them appears in `Putting it together`.
+The sections below cover each building block. A full banking-account example that combines all of them appears in `Worked example: a bank, step by step`.
 
 ## Defining an actor's behavior
 
@@ -38,24 +38,35 @@ Run forever, processing every message, until something closes the mailbox.
 ```scala
 import kyo.*
 
-case class Account(id: Int, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount = self + other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
 
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 val accountActor = Actor.run {
-    Var.run(Account(1, 0.0)) {
+    Var.run(Account(1, Amount.zero)) {
         Actor.receiveAll[AccountMessage] {
             case AccountMessage.Deposit(amount, replyTo) =>
-                Var.update[Account](a => a.copy(balance = a.balance + amount))
+                Var.update[Account](a => a.copy(balance = a.balance.plus(amount)))
                     .map(a => replyTo.send(a.balance))
             case AccountMessage.GetBalance(replyTo) =>
                 Var.use[Account](a => replyTo.send(a.balance))
             case AccountMessage.Withdraw(_, replyTo) =>
-                replyTo.send(Left("Not implemented"))
+                replyTo.send(Result.fail("Not implemented"))
         }
     }
 }
@@ -70,19 +81,30 @@ Process at most `n` messages, then return. Useful when the caller knows exactly 
 ```scala
 import kyo.*
 
-case class Account(id: Int, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount = self + other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
 
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 val tenDeposits = Actor.run {
-    Var.run(Account(1, 0.0)) {
+    Var.run(Account(1, Amount.zero)) {
         Actor.receiveMax[AccountMessage](10) {
             case AccountMessage.Deposit(amount, replyTo) =>
-                Var.update[Account](a => a.copy(balance = a.balance + amount))
+                Var.update[Account](a => a.copy(balance = a.balance.plus(amount)))
                     .map(a => replyTo.send(a.balance))
             case _ => ()
         }
@@ -99,24 +121,35 @@ Process messages until the body returns `Loop.done`. The body decides the termin
 ```scala
 import kyo.*
 
-case class Account(id: Int, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount = self + other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
 
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 val untilGetBalance = Actor.run {
-    Var.run(Account(1, 0.0)) {
+    Var.run(Account(1, Amount.zero)) {
         Actor.receiveLoop[AccountMessage] {
             case AccountMessage.GetBalance(replyTo) =>
                 Var.use[Account](a => replyTo.send(a.balance)).andThen(Loop.done)
             case AccountMessage.Deposit(amount, replyTo) =>
-                Var.update[Account](a => a.copy(balance = a.balance + amount))
+                Var.update[Account](a => a.copy(balance = a.balance.plus(amount)))
                     .map(a => replyTo.send(a.balance)).andThen(Loop.continue)
             case AccountMessage.Withdraw(_, replyTo) =>
-                replyTo.send(Left("Closed")).andThen(Loop.continue)
+                replyTo.send(Result.fail("Closed")).andThen(Loop.continue)
         }
     }
 }
@@ -131,24 +164,37 @@ The state variants thread one to four values through the loop without `Var`. The
 ```scala
 import kyo.*
 
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount        = self + other
+        def minus(other: Amount): Amount       = self - other
+        def isLessThan(other: Amount): Boolean = self < other
+    end extension
+end Amount
+import Amount.*
+
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 // Single state value: accumulate a running balance, stop when GetBalance arrives.
-val accumulating: Double < (Async & Scope & Abort[Closed]) =
+val accumulating: Amount < (Async & Scope & Abort[Closed]) =
     Actor.run {
-        Actor.receiveLoop[AccountMessage](0.0) {
+        Actor.receiveLoop[AccountMessage](Amount.zero) {
             case (AccountMessage.Deposit(amount, replyTo), balance) =>
-                val next = balance + amount
+                val next = balance.plus(amount)
                 replyTo.send(next).andThen(Loop.continue(next))
-            case (AccountMessage.Withdraw(amount, replyTo), balance) if amount <= balance =>
-                val next = balance - amount
-                replyTo.send(Right(next)).andThen(Loop.continue(next))
+            case (AccountMessage.Withdraw(amount, replyTo), balance) if !balance.isLessThan(amount) =>
+                val next = balance.minus(amount)
+                replyTo.send(Result.succeed(next)).andThen(Loop.continue(next))
             case (AccountMessage.Withdraw(_, replyTo), balance) =>
-                replyTo.send(Left("Insufficient funds")).andThen(Loop.continue(balance))
+                replyTo.send(Result.fail("Insufficient funds")).andThen(Loop.continue(balance))
             case (AccountMessage.GetBalance(replyTo), balance) =>
                 replyTo.send(balance).andThen(Loop.done(balance))
         }
@@ -227,28 +273,39 @@ The handle exposes:
 ```scala
 import kyo.*
 
-case class Account(id: Int, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount = self + other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
 
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
-val driveActor: Double < (Async & Abort[Closed] & Scope) =
+val driveActor: Amount < (Async & Abort[Closed] & Scope) =
     for
         actor <- Actor.run {
-            Var.run(Account(1, 0.0)) {
+            Var.run(Account(1, Amount.zero)) {
                 Actor.receiveMax[AccountMessage](2) {
                     case AccountMessage.Deposit(amount, replyTo) =>
-                        Var.update[Account](a => a.copy(balance = a.balance + amount))
+                        Var.update[Account](a => a.copy(balance = a.balance.plus(amount)))
                             .map(a => replyTo.send(a.balance))
                     case _ => ()
                 }
             }
         }
-        _       <- actor.send(AccountMessage.Deposit(50.0, Actor.Subject.noop))
-        balance <- actor.ask(AccountMessage.Deposit(25.0, _))
+        _       <- actor.send(AccountMessage.Deposit(Amount(50), Actor.Subject.noop))
+        balance <- actor.ask(AccountMessage.Deposit(Amount(25), _))
         _       <- actor.await
     yield balance
 ```
@@ -264,19 +321,26 @@ These come from `Subject`, exported on the `Actor` handle for convenience. The d
 ```scala
 import kyo.*
 
-case class Account(id: Int, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+end Amount
+
+case class Account(id: Int, balance: Amount)
 
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
-val accountUse: Double < (Async & Abort[Closed] & Scope) =
+val accountUse: Amount < (Async & Abort[Closed] & Scope) =
     for
         actor    <- Actor.run(Actor.receiveAll[AccountMessage](_ => ()))
-        accepted <- actor.trySend(AccountMessage.Deposit(10.0, Actor.Subject.noop))
-        _        <- actor.send(AccountMessage.Deposit(20.0, Actor.Subject.noop))
+        accepted <- actor.trySend(AccountMessage.Deposit(Amount(10), Actor.Subject.noop))
+        _        <- actor.send(AccountMessage.Deposit(Amount(20), Actor.Subject.noop))
         balance  <- actor.ask(AccountMessage.GetBalance(_))
     yield balance
 ```
@@ -350,18 +414,25 @@ val scheduler = Actor.run {
 ```scala
 import kyo.*
 
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+end Amount
+
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
-val accountQuery: Double < (Async & Abort[Closed] & Scope) =
+val accountQuery: Amount < (Async & Abort[Closed] & Scope) =
     for
         actor   <- Actor.run(Actor.receiveAll[AccountMessage](_ => ()))
         balance <- actor.ask(AccountMessage.GetBalance(_))
         // Equivalent without ask:
-        promise <- Promise.init[Double, Any]
+        promise <- Promise.init[Amount, Any]
         _       <- actor.send(AccountMessage.GetBalance(Actor.Subject.init(promise)))
         manual  <- promise.get
     yield balance
@@ -394,15 +465,22 @@ A subject that discards every message. `trySend` always returns `false`.
 ```scala
 import kyo.*
 
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+end Amount
+
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 // Fire-and-forget into a void:
 val drop: Unit < (Async & Abort[Closed]) =
-    Actor.Subject.noop[AccountMessage].send(AccountMessage.Deposit(10.0, Actor.Subject.noop))
+    Actor.Subject.noop[AccountMessage].send(AccountMessage.Deposit(Amount(10), Actor.Subject.noop))
 ```
 
 Useful when an actor's protocol requires a `replyTo` but you don't care about the reply, or as a placeholder during testing.
@@ -412,12 +490,12 @@ Useful when an actor's protocol requires a `replyTo` but you don't care about th
 Wraps a `Promise[A, Any]` as a one-shot subject. The first message completes the promise with a successful `Result`. Subsequent messages abort with `Closed`.
 
 ```scala
-val singleShot: Double < (Async & Abort[Closed]) =
+val singleShot: Int < (Async & Abort[Closed]) =
     for
-        promise <- Promise.init[Double, Any]
+        promise <- Promise.init[Int, Any]
         subject = Actor.Subject.init(promise)
-        _ <- subject.send(42.0)
-        // subject.send(99.0) here would Abort[Closed]
+        _ <- subject.send(42)
+        // subject.send(99) here would Abort[Closed]
         value <- promise.get
     yield value
 ```
@@ -431,18 +509,25 @@ Wraps a bounded `Channel[A]` as a subject. `send` uses `channel.put` (suspends u
 ```scala
 import kyo.*
 
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+end Amount
+
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 val buffered: Boolean < (Async & Abort[Closed] & Scope) =
     for
         channel <- Channel.init[AccountMessage](capacity = 8)
         subject = Actor.Subject.init(channel)
-        _  <- subject.send(AccountMessage.Deposit(1.0, Actor.Subject.noop))
-        ok <- subject.trySend(AccountMessage.Deposit(2.0, Actor.Subject.noop))
+        _  <- subject.send(AccountMessage.Deposit(Amount(1), Actor.Subject.noop))
+        ok <- subject.trySend(AccountMessage.Deposit(Amount(2), Actor.Subject.noop))
     yield ok
 ```
 
@@ -453,14 +538,21 @@ Wraps an unbounded `Queue.Unbounded[A]` as a subject. Both `send` and `trySend` 
 ```scala
 import kyo.*
 
-case class Transaction(id: Int, kind: String, amount: Double, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+end Amount
+
+case class Transaction(id: Int, kind: String, amount: Amount, balance: Amount)
 
 val sink: Boolean < (Async & Abort[Closed] & Scope) =
     for
         queue <- Queue.Unbounded.init[Transaction]()
         subject = Actor.Subject.init(queue)
-        _  <- subject.send(Transaction(1, "deposit", 10.0, 10.0))
-        ok <- subject.trySend(Transaction(1, "deposit", 20.0, 30.0))
+        _  <- subject.send(Transaction(1, "deposit", Amount(10), Amount(10)))
+        ok <- subject.trySend(Transaction(1, "deposit", Amount(20), Amount(30)))
     yield ok
 ```
 
@@ -474,7 +566,14 @@ The low-level constructor. You supply the two operations directly.
 import java.lang.System as J
 import kyo.*
 
-case class Transaction(id: Int, kind: String, amount: Double, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+end Amount
+
+case class Transaction(id: Int, kind: String, amount: Amount, balance: Amount)
 
 val logger: Actor.Subject[Transaction] =
     Actor.Subject.init(
@@ -592,20 +691,31 @@ After the first negative message, the actor switches from the primary to the fal
 ```scala
 import kyo.*
 
-case class Account(id: Int, balance: Double)
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount = self + other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
 
 enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
+    case Deposit(amount: Amount, replyTo: Actor.Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Actor.Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Actor.Subject[Amount])
 end AccountMessage
 
 val stateful =
     Actor.run {
-        Var.run(Account(1, 0.0)) {
+        Var.run(Account(1, Amount.zero)) {
             Actor.receiveMax[AccountMessage](10) {
                 case AccountMessage.Deposit(amount, replyTo) =>
-                    Var.update[Account](a => a.copy(balance = a.balance + amount))
+                    Var.update[Account](a => a.copy(balance = a.balance.plus(amount)))
                         .map(a => replyTo.send(a.balance))
                 case _ => ()
             }
@@ -825,7 +935,7 @@ The `actor.ask(request)` extension on a `respond` actor is lifecycle-aware. It c
 
 The caller is never stranded: `ask` races the reply promise against the actor's termination signal, so it always completes even if the actor exits mid-request.
 
-For per-request errors, model them in the reply type (for example `Result[E, Resp]` or `Either[E, Resp]`) rather than aborting. A handler that calls `Abort.fail` terminates the actor, surfacing the failure to every in-flight caller.
+For per-request errors, model them in the reply type (for example `Result[E, Resp]`) rather than aborting. A handler that calls `Abort.fail` terminates the actor, surfacing the failure to every in-flight caller.
 
 ```scala
 import kyo.*
@@ -845,54 +955,6 @@ val safeDiv: DivResult < (Async & Scope & Abort[Closed]) =
         result <- actor.ask(DivRequest(10, 2))
         _      <- actor.close
     yield result
-```
-
-## Putting it together
-
-The example below combines `Actor.run`, `Var.run`, `Actor.receiveAll`, `send`, `ask`, and `close` in a single banking-account actor. It is the kind of program you would write after reading the sections above.
-
-```scala
-import kyo.*
-
-case class Account(id: Int, balance: Double)
-
-enum AccountMessage:
-    case Deposit(amount: Double, replyTo: Actor.Subject[Double])
-    case Withdraw(amount: Double, replyTo: Actor.Subject[Either[String, Double]])
-    case GetBalance(replyTo: Actor.Subject[Double])
-end AccountMessage
-
-// Start an actor that owns Account state and serves messages.
-val program: Double < (Async & Scope & Abort[Closed]) =
-    for
-        account <- Actor.run {
-            Var.run(Account(1, 0.0)) {
-                Actor.receiveAll[AccountMessage] {
-                    case AccountMessage.Deposit(amount, replyTo) =>
-                        Var.update[Account](a => a.copy(balance = a.balance + amount))
-                            .map(a => replyTo.send(a.balance))
-                    case AccountMessage.Withdraw(amount, replyTo) =>
-                        Var.use[Account] { a =>
-                            if a.balance < amount then replyTo.send(Left("Insufficient funds"))
-                            else
-                                Var.update[Account](_.copy(balance = a.balance - amount))
-                                    .map(a => replyTo.send(Right(a.balance)))
-                        }
-                    case AccountMessage.GetBalance(replyTo) =>
-                        Var.use[Account](a => replyTo.send(a.balance))
-                }
-            }
-        }
-        // Request-response: ask threads a one-shot reply Subject into the message.
-        _      <- account.ask(AccountMessage.Deposit(100.0, _))
-        result <- account.ask(AccountMessage.Withdraw(40.0, _))
-        // Fire-and-forget: send returns once the mailbox accepts the message.
-        _ <- account.send(AccountMessage.Deposit(10.0, Actor.Subject.noop))
-        // Close: stop accepting new messages, in-flight processing finishes.
-        _ <- account.close
-        // Await: get the actor's final value (or its failure).
-        balance <- account.ask(AccountMessage.GetBalance(_))
-    yield balance
 ```
 
 ## Job dispatcher with a worker pool
@@ -954,3 +1016,385 @@ val dispatcherExample: Unit < (Async & Scope & Abort[Closed]) =
 ```
 
 The split between Hub and `send` reflects two different communication shapes: a Hub delivers each event to all current listeners (fan-out, for observability), while a direct `send` to a worker delivers each job to exactly one recipient (point-to-point, for work distribution). Using a Hub for both would duplicate work across workers; using only point-to-point would leave the monitor blind to events.
+
+## Worked example: a bank, step by step
+
+This section builds a banking system in five stages. Each stage introduces one new concept and shows the full picture at that point. Every block is self-contained and compiles as a doctest.
+
+### Stage 0: a single account actor
+
+An actor owns mutable state privately. Callers send commands via `ask`, which threads a one-shot reply subject into the message and suspends until the reply arrives. Domain errors travel in the reply type, here `Result[String, Amount]` for a withdrawal that may fail due to insufficient funds.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount        = self + other
+        def minus(other: Amount): Amount       = self - other
+        def isLessThan(other: Amount): Boolean = self < other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
+
+enum AccountMessage:
+    case Deposit(amount: Amount, replyTo: Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Subject[Amount])
+end AccountMessage
+
+// A single account actor: 4 messages (deposit, withdraw-fail, withdraw-ok, balance).
+val stage0: (Result[String, Amount], Result[String, Amount], Amount) < (Async & Scope & Abort[Closed]) =
+    for
+        account <- Actor.run {
+            Var.run(Account(1, Amount.zero)) {
+                Actor.receiveMax[AccountMessage](4) {
+                    case AccountMessage.Deposit(amt, replyTo) =>
+                        Var.update[Account](a => a.copy(balance = a.balance.plus(amt)))
+                            .map(a => replyTo.send(a.balance))
+                    case AccountMessage.Withdraw(amt, replyTo) =>
+                        Var.use[Account] { a =>
+                            if a.balance.isLessThan(amt) then
+                                replyTo.send(Result.fail("Insufficient funds"))
+                            else
+                                Var.update[Account](a => a.copy(balance = a.balance.minus(amt)))
+                                    .map(a => replyTo.send(Result.succeed(a.balance)))
+                        }
+                    case AccountMessage.GetBalance(replyTo) =>
+                        Var.use[Account](a => replyTo.send(a.balance))
+                }
+            }
+        }
+        _       <- account.ask(AccountMessage.Deposit(Amount(100), _))
+        fail    <- account.ask(AccountMessage.Withdraw(Amount(200), _)) // insufficient funds
+        ok      <- account.ask(AccountMessage.Withdraw(Amount(30), _))  // succeeds
+        balance <- account.ask(AccountMessage.GetBalance(_))
+        _       <- account.await
+    yield (fail, ok, balance)
+```
+
+### Stage 1: concurrent ATM clients
+
+Multiple ATMs hit the same account at the same time. The actor's mailbox serializes them, so the balance stays consistent even though the senders are concurrent. `Async.foreach` launches each send in its own fiber; the final balance reflects all deposits in whatever order they arrived.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount        = self + other
+        def minus(other: Amount): Amount       = self - other
+        def isLessThan(other: Amount): Boolean = self < other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
+
+enum AccountMessage:
+    case Deposit(amount: Amount, replyTo: Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Subject[Amount])
+end AccountMessage
+
+// Ten ATMs each deposit 10; the final balance must be exactly 100
+// even though the deposits race each other.
+val stage1: Amount < (Async & Scope & Abort[Closed]) =
+    for
+        account <- Actor.run {
+            Var.run(Account(1, Amount.zero)) {
+                Actor.receiveMax[AccountMessage](11) { // 10 deposits + 1 balance
+                    case AccountMessage.Deposit(amt, replyTo) =>
+                        Var.update[Account](a => a.copy(balance = a.balance.plus(amt)))
+                            .map(a => replyTo.send(a.balance))
+                    case AccountMessage.Withdraw(amt, replyTo) =>
+                        Var.use[Account] { a =>
+                            if a.balance.isLessThan(amt) then
+                                replyTo.send(Result.fail("Insufficient funds"))
+                            else
+                                Var.update[Account](a => a.copy(balance = a.balance.minus(amt)))
+                                    .map(a => replyTo.send(Result.succeed(a.balance)))
+                        }
+                    case AccountMessage.GetBalance(replyTo) =>
+                        Var.use[Account](a => replyTo.send(a.balance))
+                }
+            }
+        }
+        // Ten concurrent ATM deposits of 10 each.
+        _       <- Async.foreach(1 to 10)(_ => account.ask(AccountMessage.Deposit(Amount(10), _)))
+        balance <- account.ask(AccountMessage.GetBalance(_))
+        _       <- account.await
+    yield balance // always Amount(100) regardless of deposit order
+```
+
+### Stage 2: observe transactions with a Topic
+
+Adding a `Topic[Transaction]` lets the account publish a record of every committed operation. An audit actor subscribes before any publish; `topic.subscribe` completes (is awaited) before returning, so there is no readiness race and no latch is needed. The account sends to the topic inside each handler after the state update, so subscribers see only committed transactions.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount        = self + other
+        def minus(other: Amount): Amount       = self - other
+        def isLessThan(other: Amount): Boolean = self < other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
+case class Transaction(accountId: Int, kind: String, amount: Amount, balance: Amount) derives CanEqual
+
+enum AccountMessage:
+    case Deposit(amount: Amount, replyTo: Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Subject[Amount])
+end AccountMessage
+
+// Account publishes each committed transaction; audit actor collects them.
+val stage2: Chunk[Transaction] < (Async & Scope & Abort[Closed]) =
+    for
+        topic      <- Topic.init[Transaction]
+        auditQueue <- Queue.Unbounded.init[Transaction]()
+        // Audit actor: collects 3 transactions (deposit, withdraw-ok, second deposit).
+        audit <- Actor.run {
+            Actor.receiveMax[Transaction](3)(auditQueue.add(_))
+        }
+        // Subscribe before any publish so no event is lost.
+        _ <- topic.subscribe(audit.subject)
+        account <- Actor.run {
+            Var.run(Account(1, Amount.zero)) {
+                Actor.receiveMax[AccountMessage](4) {
+                    case AccountMessage.Deposit(amt, replyTo) =>
+                        for
+                            a <- Var.update[Account](a => a.copy(balance = a.balance.plus(amt)))
+                            _ <- topic.publish(Transaction(1, "deposit", amt, a.balance))
+                            _ <- replyTo.send(a.balance)
+                        yield ()
+                    case AccountMessage.Withdraw(amt, replyTo) =>
+                        Var.use[Account] { a =>
+                            if a.balance.isLessThan(amt) then
+                                replyTo.send(Result.fail("Insufficient funds"))
+                            else
+                                for
+                                    a2 <- Var.update[Account](a => a.copy(balance = a.balance.minus(amt)))
+                                    _  <- topic.publish(Transaction(1, "withdraw", amt, a2.balance))
+                                    _  <- replyTo.send(Result.succeed(a2.balance))
+                                yield ()
+                        }
+                    case AccountMessage.GetBalance(replyTo) =>
+                        Var.use[Account](a => replyTo.send(a.balance))
+                }
+            }
+        }
+        _            <- account.ask(AccountMessage.Deposit(Amount(100), _))
+        _            <- account.ask(AccountMessage.Withdraw(Amount(30), _))
+        _            <- account.ask(AccountMessage.Deposit(Amount(50), _))
+        _            <- account.ask(AccountMessage.GetBalance(_))
+        _            <- account.await
+        _            <- audit.await
+        transactions <- auditQueue.drain
+    yield transactions
+```
+
+### Stage 3: a second observer via contramap
+
+Any actor can subscribe to the same topic by adapting its own message type with `contramap`. Here a fraud observer handles `FraudSignal` rather than `Transaction`. The topic holds a `Subject[Transaction]`; `contramap(FraudSignal(_))` maps each published `Transaction` into a `FraudSignal` before it reaches the fraud actor's mailbox. Both observers receive every event; they just see different types.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount        = self + other
+        def minus(other: Amount): Amount       = self - other
+        def isLessThan(other: Amount): Boolean = self < other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
+case class Transaction(accountId: Int, kind: String, amount: Amount, balance: Amount) derives CanEqual
+case class FraudSignal(tx: Transaction) derives CanEqual
+
+enum AccountMessage:
+    case Deposit(amount: Amount, replyTo: Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Subject[Amount])
+end AccountMessage
+
+// Two observers: audit receives Transaction, fraud receives FraudSignal via contramap.
+val stage3: Boolean < (Async & Scope & Abort[Closed]) =
+    for
+        topic      <- Topic.init[Transaction]
+        auditQueue <- Queue.Unbounded.init[Transaction]()
+        fraudQueue <- Queue.Unbounded.init[FraudSignal]()
+        audit <- Actor.run {
+            Actor.receiveMax[Transaction](2)(auditQueue.add(_))
+        }
+        fraud <- Actor.run {
+            Actor.receiveMax[FraudSignal](2)(fraudQueue.add(_))
+        }
+        // audit gets Transaction directly; fraud adapts via contramap.
+        _ <- topic.subscribe(audit.subject)
+        _ <- topic.subscribe(fraud.subject.contramap(FraudSignal(_)))
+        account <- Actor.run {
+            Var.run(Account(1, Amount.zero)) {
+                Actor.receiveMax[AccountMessage](2) {
+                    case AccountMessage.Deposit(amt, replyTo) =>
+                        for
+                            a <- Var.update[Account](a => a.copy(balance = a.balance.plus(amt)))
+                            _ <- topic.publish(Transaction(1, "deposit", amt, a.balance))
+                            _ <- replyTo.send(a.balance)
+                        yield ()
+                    case AccountMessage.Withdraw(amt, replyTo) =>
+                        Var.use[Account] { a =>
+                            if a.balance.isLessThan(amt) then
+                                replyTo.send(Result.fail("Insufficient funds"))
+                            else
+                                for
+                                    a2 <- Var.update[Account](a => a.copy(balance = a.balance.minus(amt)))
+                                    _  <- topic.publish(Transaction(1, "withdraw", amt, a2.balance))
+                                    _  <- replyTo.send(Result.succeed(a2.balance))
+                                yield ()
+                        }
+                    case AccountMessage.GetBalance(replyTo) =>
+                        Var.use[Account](a => replyTo.send(a.balance))
+                }
+            }
+        }
+        _             <- account.ask(AccountMessage.Deposit(Amount(100), _))
+        _             <- account.ask(AccountMessage.Withdraw(Amount(30), _))
+        _             <- account.await
+        _             <- audit.await
+        _             <- fraud.await
+        auditObserved <- auditQueue.drain
+        fraudSignals  <- fraudQueue.drain
+    // Both observers received every event; fraud just sees it through FraudSignal.
+    yield auditObserved == fraudSignals.map(_.tx)
+```
+
+### Stage 4: consistent order across observers with Topic.linearized
+
+With `Topic.init` and concurrent publishers (two accounts publishing at the same time), two observers may see events arrive in different orders because fan-out to subscribers happens in separate fibers. `Topic.linearized` routes every publish through a single actor mailbox first, then fans out, so every subscriber observes the same total order. The `auditObserved == fraudObserved` equality below is exactly the property `Topic.init` does not guarantee.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+opaque type Amount = BigDecimal
+object Amount:
+    val zero: Amount               = BigDecimal(0)
+    def apply(n: Int): Amount      = BigDecimal(n)
+    given CanEqual[Amount, Amount] = CanEqual.derived
+    extension (self: Amount)
+        def plus(other: Amount): Amount        = self + other
+        def minus(other: Amount): Amount       = self - other
+        def isLessThan(other: Amount): Boolean = self < other
+    end extension
+end Amount
+import Amount.*
+
+case class Account(id: Int, balance: Amount)
+case class Transaction(accountId: Int, kind: String, amount: Amount, balance: Amount) derives CanEqual
+case class FraudSignal(tx: Transaction) derives CanEqual
+
+enum AccountMessage:
+    case Deposit(amount: Amount, replyTo: Subject[Amount])
+    case Withdraw(amount: Amount, replyTo: Subject[Result[String, Amount]])
+    case GetBalance(replyTo: Subject[Amount])
+end AccountMessage
+
+// Two accounts, two observers, linearized topic: both observers see the same order.
+val stage4: Boolean < (Async & Abort[Closed]) =
+    Scope.run {
+        for
+            topic      <- Topic.linearized[Transaction]
+            auditQueue <- Queue.Unbounded.init[Transaction]()
+            fraudQueue <- Queue.Unbounded.init[FraudSignal]()
+            // audit observes Transaction; fraud observes FraudSignal via contramap.
+            audit <- Actor.run {
+                Actor.receiveMax[Transaction](4)(auditQueue.add(_))
+            }
+            fraud <- Actor.run {
+                Actor.receiveMax[FraudSignal](4)(fraudQueue.add(_))
+            }
+            _ <- topic.subscribe(audit.subject)
+            _ <- topic.subscribe(fraud.subject.contramap(FraudSignal(_)))
+
+            // Helper: create an account actor publishing to the shared topic.
+            makeAccount = (id: Int, capacity: Int) =>
+                Actor.run {
+                    Var.run(Account(id, Amount.zero)) {
+                        Actor.receiveMax[AccountMessage](capacity) {
+                            case AccountMessage.Deposit(amt, replyTo) =>
+                                for
+                                    a <- Var.update[Account](a => a.copy(balance = a.balance.plus(amt)))
+                                    _ <- topic.publish(Transaction(id, "deposit", amt, a.balance))
+                                    _ <- replyTo.send(a.balance)
+                                yield ()
+                            case AccountMessage.Withdraw(amt, replyTo) =>
+                                Var.use[Account] { a =>
+                                    if a.balance.isLessThan(amt) then
+                                        replyTo.send(Result.fail("Insufficient funds"))
+                                    else
+                                        for
+                                            a2 <- Var.update[Account](a => a.copy(balance = a.balance.minus(amt)))
+                                            _  <- topic.publish(Transaction(id, "withdraw", amt, a2.balance))
+                                            _  <- replyTo.send(Result.succeed(a2.balance))
+                                        yield ()
+                                }
+                            case AccountMessage.GetBalance(replyTo) =>
+                                Var.use[Account](a => replyTo.send(a.balance))
+                        }
+                    }
+                }
+
+            // Account A: 1 deposit + 1 withdraw = 2 messages.
+            accountA <- makeAccount(1, 2)
+            // Account B: 1 deposit + 1 withdraw + 1 over-limit withdraw = 3 messages.
+            accountB <- makeAccount(2, 3)
+
+            // Seed balances sequentially for a deterministic first two transactions.
+            _ <- accountA.ask(AccountMessage.Deposit(Amount(100), _))
+            _ <- accountB.ask(AccountMessage.Deposit(Amount(50), _))
+
+            // Concurrent ATM withdraws: A and B race; linearized topic serializes publication.
+            _ <- Async.gather(Seq(
+                accountA.ask(AccountMessage.Withdraw(Amount(30), _)),
+                accountB.ask(AccountMessage.Withdraw(Amount(20), _)),
+                accountB.ask(AccountMessage.Withdraw(Amount(200), _))
+            ))
+
+            // Wait for both observers to finish.
+            _ <- audit.await
+            _ <- fraud.await
+
+            auditObserved <- auditQueue.drain
+            fraudObserved <- fraudQueue.drain
+            // linearized guarantees both observers agree on the same total order.
+        yield auditObserved == fraudObserved.map(_.tx)
+    }
