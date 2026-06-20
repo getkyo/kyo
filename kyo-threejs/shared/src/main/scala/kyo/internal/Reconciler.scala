@@ -140,6 +140,13 @@ private[kyo] object Reconciler:
                 ThreeFacadeOps.makeHolder().flatMap(obj =>
                     Sync.Unsafe.defer(record(mounted, f, obj, Chunk.empty, attachChildren = false))
                 )
+            case c: Ast.Controls =>
+                // Controls renders no object of its own (it drives the camera); materialize an empty holder
+                // so the node is recorded in the live map. The mount pipeline reads the recorded Controls
+                // node to bind a live OrbitControls instance over the camera and canvas (ThreeMount).
+                ThreeFacadeOps.makeHolder().flatMap(obj =>
+                    Sync.Unsafe.defer(record(mounted, c, obj, Chunk.empty, attachChildren = false))
+                )
         end match
     end materialize
 

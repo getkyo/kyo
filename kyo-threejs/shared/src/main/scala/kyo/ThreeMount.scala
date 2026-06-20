@@ -34,11 +34,12 @@ object ThreeMount:
             renderer    <- ThreeMount.makeRenderer(canvas)
             mountResult <- Reconciler.mount(scene)
             (rootLive, mounted) = mountResult
-            cam <- ThreeFacadeOps.makeCamera(camera)
-            _   <- ThreeMount.subscribeRegions(mounted)
-            _   <- ThreeMount.subscribeReactiveRegions(mounted)
-            _   <- ThreeMount.setupPointerDelegation(canvas, mounted, cam)
-            _   <- ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames)
+            cam      <- ThreeFacadeOps.makeCamera(camera)
+            _        <- ThreeMount.subscribeRegions(mounted)
+            _        <- ThreeMount.subscribeReactiveRegions(mounted)
+            _        <- ThreeMount.setupPointerDelegation(canvas, mounted, cam)
+            controls <- ThreeMount.setupControls(canvas, mounted, cam)
+            _        <- ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames, controls)
         yield ()
 
     /** Yields a deterministic [[Three.Driver]] over the materialized scene, the same driver the
@@ -113,14 +114,11 @@ object ThreeMount:
         camera: Three.Ast.Camera,
         frames: ThreeFrames = ThreeFrames.Raf
     )(using Frame): UI.Ast.Host =
-        // The server bridge carries the scene's server-side bindings so the server-push runner can
-        // observe the host's signals and route picks. The client DomHostMount closure (below) is
-        // unchanged in shape; it wires the GL pipeline on the client under UI.runMount AND, under
-        // UI.runHandlers, observes the per-slot client mirror the island channel feeds.
-        val host = UI.host("canvas") { canvas =>
+        // The client DomHostMount closure wires the GL pipeline on the client under UI.runMount: the
+        // scene builds, animates, and raycasts locally (closures intact), the same pipeline runMount runs.
+        UI.host("canvas") { canvas =>
             hostMountPipeline(scene, camera, frames, canvas)
         }
-        host.withServerBridge(ThreeMount.serverBridge(scene, camera))
     end embed
 
     private def hostMountPipeline(
@@ -161,12 +159,13 @@ object ThreeMount:
                         val _ = cam.updateProjectionMatrix()
                     end if
                 }
-                _ <- ThreeMount.subscribeRegions(mounted)
-                _ <- ThreeMount.subscribeReactiveRegions(mounted)
-                _ <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
-                _ <- onMounted(rootLive, mounted)
+                _        <- ThreeMount.subscribeRegions(mounted)
+                _        <- ThreeMount.subscribeReactiveRegions(mounted)
+                _        <- ThreeMount.setupPointerDelegation(canvasDyn, mounted, cam)
+                controls <- ThreeMount.setupControls(canvasDyn, mounted, cam)
+                _        <- onMounted(rootLive, mounted)
                 _ <- Fiber.init {
-                    Abort.run[ThreeException](ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames)).map {
+                    Abort.run[ThreeException](ThreeMount.runLoop(mounted, rootLive, cam, renderer, frames, controls)).map {
                         case Result.Success(_) => (): Unit < Sync
                         case Result.Failure(e) => Log.error(s"Three.embed frame loop failed: ${e.getMessage}")
                         case Result.Panic(e) =>
@@ -184,182 +183,126 @@ object ThreeMount:
         }
     end hostMountPipeline
 
-    /** Reads the inline boot init for a host element: parses the nested
-      * `<script type="application/json" data-kyo-host-init>` data island the SSR page emitted (a
-      * `Json`-encoded [[kyo.internal.HostPayload]] boot payload) and reconstitutes the client scene
-      * with one mirror `SignalRef` per prop slot, plus the server's actual camera (from the `Boot`
-      * envelope's [[kyo.internal.CameraDescriptor]]) and frame mode. A host with no init island, a
-      * malformed payload, or a legacy payload that carries no camera falls back to the default
-      * perspective camera, so a malformed page mounts an empty scene rather than throwing.
+    /** The client feed receiver (design 02-design-r2, Decision D-002, the wire leaf seam): wires
+      * a per-signal-id mirror into the existing inbound `HostUpdate` routing. Registers a receiver on
+      * `window.__kyoHostChannels[id]` (the SAME registry the inline kyo-ui clientJs routes a `HostUpdate`
+      * into, `HtmlRenderer.scala:771-799`, with the same late-registration flush) that decodes an inbound
+      * `HostPayload.SignalUpdate` for this `id`, decodes its `encoded` payload with `Schema[A]`, and writes
+      * the value into `mirror`. The scene mount already forked a `forkBoundRef` observe fiber for `mirror`
+      * (the user bound it with `.color(mirror)`/`.position(mirror)`), so the write drives exactly one
+      * targeted `patchProp` on the one bound live node. A malformed payload, a non-`SignalUpdate` leaf, or
+      * a decode failure is a silent no-op (the fire-and-forget feed policy). The receiver is dropped on
+      * `Scope` close so a closed page leaves no stale entry.
       */
-    private[kyo] def readHostInit(el: org.scalajs.dom.Element)(using Frame): kyo.internal.HostInit < Sync =
-        // Unsafe: a one-shot DOM read of the nested init script's text content at mount.
-        Sync.Unsafe.defer {
-            val script = Maybe(el.querySelector("[data-kyo-host-init]"))
-            script.map(_.textContent).getOrElse("")
-        }.map { json =>
-            val payload =
-                if json.isEmpty then emptyBoot
-                else
-                    Json.decode[kyo.internal.HostPayload](json) match
-                        case Result.Success(p) => p
-                        case _                 => emptyBoot
-            ThreeBridge.reconstitute(payload).map { case (scene, _) =>
-                kyo.internal.HostInit(scene, bootCamera(payload), ThreeFrames.Raf)
-            }
-        }
-    end readHostInit
-
-    // The empty boot payload a missing or malformed init island falls back to: an empty scene with the
-    // default perspective camera descriptor, so the host mounts nothing rather than throwing.
-    private def emptyBoot(using Frame): kyo.internal.HostPayload =
-        kyo.internal.HostPayload.Boot(
-            kyo.internal.StructuralOp.Insert(ThreeBridge.rootId, 0, kyo.internal.SceneDescriptor("scene", Seq.empty, Seq.empty)),
-            defaultCameraDescriptor
-        )
-
-    // The camera the boot payload carries, reconstituted via the bridge. A `Boot` envelope carries the
-    // server's actual camera; any other payload shape (a bare structural insert, a legacy payload) falls
-    // back to the default perspective camera.
-    private def bootCamera(payload: kyo.internal.HostPayload)(using Frame): Three.Ast.Camera =
-        payload match
-            case kyo.internal.HostPayload.Boot(_, camera) => ThreeBridge.materializeCamera(camera)
-            case _                                        => Three.Camera.perspective()
-
-    // The serializable form of the default perspective camera, matching Three.Camera.perspective()'s
-    // defaults (fov 75deg, near 0.1, far 1000, position (0,0,5), lookAt origin).
-    private def defaultCameraDescriptor: kyo.internal.CameraDescriptor =
-        kyo.internal.CameraDescriptor.Perspective(
-            fovRadians = Radians.deg(75).toDouble,
-            near = 0.1,
-            far = 1000.0,
-            position = kyo.internal.HostValue.V3(0.0, 0.0, 5.0),
-            lookAt = kyo.internal.HostValue.V3(0.0, 0.0, 0.0)
-        )
-
-    /** The host's path segments, read from its `data-kyo-path` attribute (the same scheme the inline
-      * clientJs routes a HostUpdate by). An empty attribute is the root path.
-      */
-    private[kyo] def hostPath(el: org.scalajs.dom.Element): Seq[String] =
-        val attr = Maybe(el.getAttribute("data-kyo-path")).getOrElse("")
-        if attr.isEmpty then Seq.empty else attr.split('.').toSeq
-
-    /** Registers the per-path receiver the inline clientJs routes a HostUpdate into:
-      * `window.__kyoHostChannels[path] = rx`, where `rx(payload)` decodes the JS payload to a
-      * [[kyo.internal.HostPayload]] and applies it to the channel synchronously (one mirror write per
-      * Prop). Idempotent per path: a re-register overwrites the same key (the mount runs once per host,
-      * so this is the single registration).
-      */
-    private def registerChannelReceiver(
-        host: org.scalajs.dom.Element,
-        path: Seq[String],
-        channel: HostChannel
-    )(using Frame): Unit =
-        // Unsafe: a JS-callback bridge from the WS onmessage handler into the channel. evalOrThrow runs
-        // the channel apply synchronously, the same Sync.Unsafe convention as the pointer listeners.
+    private[kyo] def connectFeed[A: Schema](id: String, mirror: SignalRef[A])(using Frame): Unit < (Async & Scope) =
+        // Unsafe: a JS-callback bridge from the inbound WS onmessage routing into the mirror SignalRef.
+        // evalOrThrow runs the mirror write synchronously, the same Sync.Unsafe convention as
+        // connectFeedChunk and the pointer listeners.
         import AllowUnsafe.embrace.danger
         val rx: js.Function1[js.Any, Unit] = (payload: js.Any) =>
             val json = js.JSON.stringify(payload)
             Json.decode[kyo.internal.HostPayload](json) match
-                case Result.Success(p) => Sync.Unsafe.evalOrThrow(channel.apply(p))
-                case _                 => ()
-        // Register through the inline clientJs helper, which sets the receiver AND flushes any
-        // HostUpdate payloads the WS delivered for this path before the island registered: a host's
-        // one-shot initial structure (a foreach's initial children) is pushed when the WS session
-        // starts, which can precede the island mount, so a direct set would drop it. The flushing
-        // register closes that startup race. Falls back to a direct set if the inline client predates
-        // the helper.
-        val w = dom.window.asInstanceOf[js.Dynamic]
-        if js.isUndefined(w.__kyoHostChannelRegister) then
-            val channels = window_kyoHostChannels()
-            channels.update(path.mkString("."), rx)
-        else
-            discard(w.__kyoHostChannelRegister(path.mkString("."), rx))
-        end if
-    end registerChannelReceiver
-
-    /** Drops the per-path receiver on scope close so a closed page leaves no stale entry. */
-    private def unregisterChannelReceiver(
-        host: org.scalajs.dom.Element,
-        path: Seq[String]
-    )(using Frame): Unit =
-        // Unsafe: deletes the window.__kyoHostChannels entry for this host path on teardown.
-        import AllowUnsafe.embrace.danger
-        val channels = window_kyoHostChannels()
-        discard(channels.remove(path.mkString(".")))
-    end unregisterChannelReceiver
-
-    // The window.__kyoHostChannels registry the inline clientJs initializes (a plain JS object the WS
-    // onmessage handler reads to route a HostUpdate). Read here as a js.Dictionary so update/remove
-    // by key are the Map-like Unit-returning ops, matching the inline clientJs's object access.
-    private def window_kyoHostChannels()(using AllowUnsafe): js.Dictionary[js.Any] =
-        // Unsafe: reads/initializes the shared window registry the inline clientJs owns.
-        val w = dom.window.asInstanceOf[js.Dynamic]
-        if js.isUndefined(w.__kyoHostChannels) then w.__kyoHostChannels = js.Dynamic.literal()
-        w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]]
-    end window_kyoHostChannels
-
-    /** Wires the client raycast back-channel: registers a capture-phase pointerdown listener on the
-      * host that posts a `HostPick` over the WS (via `window.__kyoPostPick`) instead of running a
-      * client onClick (the reconstituted client scene carries no closures; the server owns them under
-      * server-push). The pick names the host-root node and carries the pointer NDC; the server's
-      * `onPick` resolves the closure. The listener is removed on scope close.
-      */
-    private def wirePickBackChannel(
-        host: org.scalajs.dom.Element,
-        path: Seq[String],
-        channel: HostChannel
-    )(using Frame): Unit < (Async & Scope) =
-        val handler: js.Function1[dom.PointerEvent, Unit] = (evt: dom.PointerEvent) =>
-            // Unsafe: a JS pointer-event callback posting a typed HostPick back over the WS.
-            import AllowUnsafe.embrace.danger
-            val hostDyn = host.asInstanceOf[js.Dynamic]
-            val (ndcX, ndcY) =
-                if js.isUndefined(hostDyn.getBoundingClientRect) then (0.0, 0.0)
-                else ThreeMount.toNdc(hostDyn, evt)
-            val w = dom.window.asInstanceOf[js.Dynamic]
-            if !js.isUndefined(w.__kyoPostPick) then
-                val pathArr = js.Array(path*)
-                val pointer = js.Dynamic.literal(
-                    pointX = 0.0,
-                    pointY = 0.0,
-                    pointZ = 0.0,
-                    distance = 0.0,
-                    ndcX = ndcX,
-                    ndcY = ndcY
-                )
-                discard(w.__kyoPostPick(pathArr, ThreeBridge.rootId, pointer))
-            end if
+                case Result.Success(kyo.internal.HostPayload.SignalUpdate(sid, encoded)) if sid == id =>
+                    Json.decode[A](encoded) match
+                        case Result.Success(value) => Sync.Unsafe.evalOrThrow(mirror.set(value))
+                        case _                     => ()
+                case _ => ()
+            end match
         for
-            _ <- Sync.Unsafe.defer(host.addEventListener("pointerdown", handler, true))
-            _ <- Scope.ensure(Sync.Unsafe.defer(host.removeEventListener("pointerdown", handler, true)))
+            _ <- Sync.Unsafe.defer {
+                val w = dom.window.asInstanceOf[js.Dynamic]
+                if js.isUndefined(w.__kyoHostChannelRegister) then
+                    if js.isUndefined(w.__kyoHostChannels) then w.__kyoHostChannels = js.Dynamic.literal()
+                    w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].update(id, rx)
+                else
+                    discard(w.__kyoHostChannelRegister(id, rx))
+                end if
+            }
+            _ <- Scope.ensure(Sync.Unsafe.defer {
+                val w = dom.window.asInstanceOf[js.Dynamic]
+                if !js.isUndefined(w.__kyoHostChannels) then
+                    discard(w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].remove(id))
+            })
         yield ()
         end for
-    end wirePickBackChannel
+    end connectFeed
 
-    /** Builds the server-side HostBridge for a host scene: serverInit flattens the initial scene
-      * to a SceneDescriptor; subscriptions observe each server-owned Signal[Chunk[A]] bound by
-      * foreach/foreachKeyed and emit HostPayload.Structural by diffing the keyed children server-
-      * side (pure over the declarative children + key fn, no GL), alongside the per-slot prop
-      * pushes; onPick runs the user's onClick closure for the hit node. The closure stays
-      * server-side; only the typed payload/event cross.
+    /** The Option-Y client STRUCTURAL feed receiver (design 02-design-r2, Decision D-002, DY-03): the
+      * structural analog of [[connectFeed]]. Registers a receiver on `window.__kyoHostChannels[id]` (the
+      * SAME registry, with the same late-registration flush) that decodes an inbound
+      * `HostPayload.SignalChunk` for this `id`, decodes its `encoded` payload with `Schema[Chunk[A]]`, and
+      * writes the whole snapshot into `mirror`. The scene bound `mirror` with `.foreachKeyed(key)(render)`,
+      * so the write drives the client's own keyed reconciler (`subscribeReactiveRegions`), which diffs the
+      * snapshot locally: an unchanged key reuses its live object (GPU buffers survive), a new key
+      * materializes, a dropped key disposes. A malformed payload, a non-`SignalChunk` leaf, or a decode
+      * failure is a silent no-op. The receiver is dropped on `Scope` close.
       */
-    private[kyo] def serverBridge(scene: Three, camera: Three.Ast.Camera)(using Frame): UI.Ast.HostBridge =
-        new UI.Ast.HostBridge:
-            def serverInit(path: Seq[String]): kyo.internal.HostPayload < Sync =
-                ThreeBridge.flattenInit(scene, camera)
-            def subscriptions(
-                path: Seq[String],
-                emit: kyo.internal.HostPayload => Unit < Async
-            )(using Frame): Unit < (Async & Scope) =
-                ThreeBridge.observeProps(scene, emit).andThen(ThreeBridge.observeStructure(scene, emit))
-            def onPick(
-                path: Seq[String],
-                nodeId: String,
-                pointer: kyo.internal.PointerData
-            )(using Frame): Unit < Async =
-                ThreeBridge.runPick(scene, nodeId, pointer)
-    end serverBridge
+    private[kyo] def connectFeedChunk[A: Schema](id: String, mirror: SignalRef[Chunk[A]])(using Frame): Unit < (Async & Scope) =
+        // Unsafe: a JS-callback bridge from the inbound WS onmessage routing into the mirror SignalRef.
+        // evalOrThrow runs the mirror write synchronously, the same Sync.Unsafe convention as
+        // connectFeed and the pointer listeners.
+        import AllowUnsafe.embrace.danger
+        val rx: js.Function1[js.Any, Unit] = (payload: js.Any) =>
+            val json = js.JSON.stringify(payload)
+            Json.decode[kyo.internal.HostPayload](json) match
+                case Result.Success(kyo.internal.HostPayload.SignalChunk(sid, encoded)) if sid == id =>
+                    Json.decode[Chunk[A]](encoded) match
+                        case Result.Success(value) => Sync.Unsafe.evalOrThrow(mirror.set(value))
+                        case _                     => ()
+                case _ => ()
+            end match
+        for
+            _ <- Sync.Unsafe.defer {
+                val w = dom.window.asInstanceOf[js.Dynamic]
+                if js.isUndefined(w.__kyoHostChannelRegister) then
+                    if js.isUndefined(w.__kyoHostChannels) then w.__kyoHostChannels = js.Dynamic.literal()
+                    w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].update(id, rx)
+                else
+                    discard(w.__kyoHostChannelRegister(id, rx))
+                end if
+            }
+            _ <- Scope.ensure(Sync.Unsafe.defer {
+                val w = dom.window.asInstanceOf[js.Dynamic]
+                if !js.isUndefined(w.__kyoHostChannels) then
+                    discard(w.__kyoHostChannels.asInstanceOf[js.Dictionary[js.Any]].remove(id))
+            })
+        yield ()
+        end for
+    end connectFeedChunk
+
+    /** The client app-event POST (design 02-design-r2, Decision D-003, DY-04): the client leg of
+      * `Three.Feed.emit`. Encodes `event` with `Schema[A]`, then posts a `UIEvent.AppEvent(path, id,
+      * encoded)` over the page's single WS via the inline kyo-ui client helper `window.__kyoPostAppEvent`
+      * (installed by the page's clientJs). When that helper is not
+      * present (called outside an island feed context: no page WS bound), the effect fails with the typed
+      * `ThreeException.FeedUnavailable(id)` rather than dropping the event silently. The `path` is the host
+      * path segments (empty for a root host); routing is by `id` server-side.
+      */
+    private[kyo] def postAppEvent[A: Schema](id: String, event: A)(using Frame): Unit < (Async & Abort[ThreeException]) =
+        Sync.defer(Json.encode[A](event)).map { encoded =>
+            Sync.Unsafe.defer {
+                // Unsafe: a one-shot read of the inline-client post helper on the live window. The helper
+                // sends the AppEvent over the page's single WS (or buffers it until open). Guard the global
+                // `window` itself: outside a DOM context (a server/test call) there is no window, which is
+                // the no-channel-bound case, surfaced as FeedUnavailable rather than a ReferenceError.
+                import AllowUnsafe.embrace.danger
+                // `js.typeOf(...)` keeps the global `window` selection on the LHS of a `.`-access (the only
+                // legal way to probe the global scope on Scala.js); "undefined" means no DOM context.
+                if js.typeOf(js.Dynamic.global.window) == "undefined" then Maybe.empty[Unit]
+                else
+                    val w = js.Dynamic.global.window
+                    if js.isUndefined(w.__kyoPostAppEvent) then Maybe.empty[Unit]
+                    else
+                        discard(w.__kyoPostAppEvent(js.Array[String](), id, encoded))
+                        Present(())
+                    end if
+                end if
+            }.map {
+                case Present(_) => Kyo.unit
+                case Absent     => Abort.fail(ThreeException.FeedUnavailable(id))
+            }
+        }
+    end postAppEvent
 
     /** Resolves the `<canvas>` at `selector`; `CanvasNotFound` when no element matches. */
     def resolveCanvas(selector: String)(using Frame): js.Dynamic < (Sync & Abort[ThreeException]) =
@@ -492,14 +435,15 @@ object ThreeMount:
         root: Reconciler.Live,
         camera: js.Dynamic,
         renderer: js.Dynamic,
-        frames: ThreeFrames
+        frames: ThreeFrames,
+        controls: Chunk[js.Dynamic] = Chunk.empty
     )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
         for
             frameRef <- AtomicLong.init(0L)
             now0     <- Clock.now
             startRef <- AtomicRef.init(now0)
             lastRef  <- AtomicRef.init(now0)
-            submit = renderSubmit(root, camera, renderer)
+            submit = renderSubmit(root, camera, renderer, controls)
             tick   = oneTick(mounted, frameRef, startRef, lastRef, submit)
             _ <- frames match
                 case ThreeFrames.Raf                => rafLoop(tick)
@@ -538,10 +482,24 @@ object ThreeMount:
     )(using Frame): Unit < (Async & Abort[ThreeException]) =
         Kyo.foreachDiscard(onFrameClosures(mounted))(f => f(tick).unit).andThen(submit)
 
-    /** The live render submit: a tight FFI call to `renderer.render`, never a fresh per-tick effect. */
-    private def renderSubmit(root: Reconciler.Live, camera: js.Dynamic, renderer: js.Dynamic)(using Frame): Unit < Sync =
+    /** The live render submit: a tight FFI call to `renderer.render`, never a fresh per-tick effect. When
+      * the mount bound any `OrbitControls`, each one's `update()` runs first (required for `autoRotate` and
+      * damping), then the single render submit reflects the updated camera.
+      */
+    private def renderSubmit(
+        root: Reconciler.Live,
+        camera: js.Dynamic,
+        renderer: js.Dynamic,
+        controls: Chunk[js.Dynamic] = Chunk.empty
+    )(using Frame): Unit < Sync =
         // Unsafe: the per-tick render submit is a tight FFI call: no fresh effect per frame.
-        Sync.Unsafe.defer { val _ = renderer.render(root.obj, camera) }
+        Sync.Unsafe.defer {
+            var i = 0
+            while i < controls.size do
+                val _ = controls(i).update()
+                i += 1
+            val _ = renderer.render(root.obj, camera)
+        }
 
     /** A `Driver` advancing exactly one tick per `step` (the deterministic test seam). */
     private def manualDriver(tick: Unit < (Async & Abort[ThreeException]))(using Frame): Three.Driver =
@@ -640,6 +598,86 @@ object ThreeMount:
             _ <- Sync.Unsafe.defer(canvas.addEventListener("pointermove", moveHandler, true))
             _ <- Scope.ensure(Sync.Unsafe.defer(canvas.removeEventListener("pointermove", moveHandler, true)))
         yield ()
+
+    /** Binds a live three.js `OrbitControls` instance for each `Three.Ast.Controls` node in the mounted
+      * scene (design 02-design-r2 D-005, DY-06): `new OrbitControls(camera, canvas)` over the live camera
+      * and the mount canvas, applies the node's `enableZoom`/`enablePan`/`enableRotate`/`autoRotate`/
+      * `target` fields, and registers `controls.dispose()` on `Scope` close (the same Scope the renderer
+      * and listeners bind to), so a mount/unmount cycle leaks no controls listener. Returns the live
+      * controls objects so the frame loop calls `controls.update()` once per frame (required for
+      * `autoRotate` and for damping). A scene with no `Controls` node binds nothing and returns empty.
+      *
+      * One camera drives the view, so if a scene declares more than one `controls` node the first binds and
+      * the rest are logged and skipped; the guard keeps a misuse from stacking conflicting controls on one
+      * camera.
+      */
+    def setupControls(
+        canvas: js.Dynamic,
+        mounted: Reconciler.Mounted,
+        camera: js.Dynamic
+    )(using Frame): Chunk[js.Dynamic] < (Async & Scope) =
+        val nodes = controlsNodes(mounted)
+        if nodes.isEmpty then (Chunk.empty[js.Dynamic]: Chunk[js.Dynamic] < (Async & Scope))
+        else
+            val first = nodes.head
+            if nodes.size > 1 then
+                Log.warn(s"Three.controls: ${nodes.size} controls nodes in one scene; binding the first, ignoring the rest")
+                    .andThen(bindOneControls(canvas, camera, first).map(Chunk(_)))
+            else
+                bindOneControls(canvas, camera, first).map(Chunk(_))
+            end if
+        end if
+    end setupControls
+
+    /** Collects every `Three.Ast.Controls` node from the mounted live map (in no particular order; one
+      * controls node per scene is the supported shape, the guard in [[setupControls]] handles more).
+      */
+    private def controlsNodes(mounted: Reconciler.Mounted): Chunk[Three.Ast.Controls] =
+        var buf = Chunk.empty[Three.Ast.Controls]
+        mounted.live.values.foreach { live =>
+            live.node match
+                case c: Three.Ast.Controls => buf = buf.appended(c)
+                case _                     => ()
+        }
+        buf
+    end controlsNodes
+
+    /** Constructs and configures one live `OrbitControls` over `camera` and `canvas` from the `Controls`
+      * AST node, registering its dispose on `Scope` close. The `target` (a `Bound.Const` from the
+      * `Three.controls` factory) seeds the orbit center.
+      */
+    private def bindOneControls(
+        canvas: js.Dynamic,
+        camera: js.Dynamic,
+        node: Three.Ast.Controls
+    )(using Frame): js.Dynamic < (Async & Scope) =
+        Scope.acquireRelease(
+            // Unsafe: constructing the OrbitControls over the live camera and canvas, applying the node's
+            // flags. OrbitControls attaches its own pointer/wheel listeners on the canvas; dispose() (the
+            // release below) removes them, so the mount Scope owns the listener lifecycle.
+            Sync.Unsafe.defer {
+                import AllowUnsafe.embrace.danger
+                val controls = js.Dynamic.newInstance(ThreeFacade_OrbitControls)(camera, canvas)
+                controls.enableZoom = node.enableZoom
+                controls.enablePan = node.enablePan
+                controls.enableRotate = node.enableRotate
+                controls.autoRotate = node.autoRotate
+                val t = node.target match
+                    case Bound.Const(v) => v
+                    case Bound.Ref(_)   => Vec3.zero
+                discard(controls.target.set(t.x, t.y, t.z))
+                discard(controls.update())
+                controls
+            }
+        ) { controls =>
+            // Unsafe: dispose the controls on Scope close, removing its canvas listeners (no leak).
+            Sync.Unsafe.defer(discard(controls.dispose()))
+        }
+    end bindOneControls
+
+    /** The `OrbitControls` constructor from the examples/jsm facade, read once at bind time. */
+    private def ThreeFacade_OrbitControls: js.Dynamic =
+        kyo.internal.OrbitControlsFacade.OrbitControls
 
     /** Decides the hover transition between two consecutive pointer hits. Returns `(fireOut,
       * fireOver)`: the live object to dispatch `onPointerOut` on (the one left) and the one to
@@ -863,261 +901,5 @@ object ThreeMount:
 
         buf
     end extractBoundRefs
-
-    /** Builds the per-host client channel: one mirror `SignalRef` per bound prop slot plus a
-      * structural inbox. The client reconciler observes these mirrors (the same forkBoundRef /
-      * subscribeReactiveRegions path it uses for a local signal), so an inbound HostUpdate that
-      * writes a mirror drives exactly one targeted patchProp or one keyed splice. Holds for the page
-      * lifetime under the ambient Scope: the mount runs once, no re-fire, and server pushes flow
-      * through this channel rather than a re-mount.
-      */
-    private[kyo] def islandMount(
-        host: org.scalajs.dom.Element,
-        path: Seq[String],
-        init: kyo.internal.HostInit
-    )(using Frame): Unit < (Async & Scope & Abort[ThreeException]) =
-        for
-            channel <- HostChannel.init(init)
-            // Register the per-path receiver the inline clientJs routes a HostUpdate into. Unsafe:
-            // a JS-callback bridge from the WS onmessage handler into the channel; evalOrThrow runs
-            // the apply synchronously (the same Sync.Unsafe convention as the pointer listeners).
-            _ <- Sync.Unsafe.defer(registerChannelReceiver(host, path, channel))
-            _ <- Scope.ensure(Sync.Unsafe.defer(unregisterChannelReceiver(host, path)))
-            // Run the GL pipeline observing the channel's mirror signals (init seeded the scene). The
-            // onMounted hook wires the channel's structural inbox to a client keyed splice once the live
-            // root is materialized, so an inbound StructuralOp splices/removes/reorders a subtree on the
-            // same channel without a re-mount.
-            _ <- hostMountPipeline(
-                init.scene,
-                init.camera,
-                init.frames,
-                host,
-                (rootLive, mounted) => subscribeStructuralInbox(channel, mounted, rootLive)
-            )
-            // Wire the client raycast to post a HostPick back over the WS instead of running onClick
-            // locally (the server owns the closure under server-push).
-            _ <- wirePickBackChannel(host, path, channel)
-        yield ()
-    end islandMount
-
-    /** Resolves a host-subtree node id (`"r"`, `"r.0"`, `"r.2.1"`, the depth-first index path the
-      * flatten/reconstitute scheme assigns) to its live object by walking `rootLive`'s children
-      * positionally. The reconstituted client tree materializes children in AST order, so the same
-      * index path that names a server node names the matching live node. A path that runs past the
-      * live tree (a stale region id) resolves to `Absent`, so an op for an unknown region is a no-op.
-      */
-    private[kyo] def liveByNodeId(rootLive: Reconciler.Live, nodeId: String): Maybe[Reconciler.Live] =
-        val parts = nodeId.split('.').toList
-        parts match
-            case "r" :: rest =>
-                @scala.annotation.tailrec
-                def walk(live: Reconciler.Live, indices: List[String]): Maybe[Reconciler.Live] =
-                    indices match
-                        case Nil => Present(live)
-                        case head :: tail =>
-                            head.toIntOption match
-                                case Some(i) if i >= 0 && i < live.children.length =>
-                                    walk(live.children(i), tail)
-                                case _ => Absent
-                walk(rootLive, rest)
-            case _ => Absent
-        end match
-    end liveByNodeId
-
-    /** Observes the channel's structural inbox and applies each newly-appended `(regionId, StructuralOp)`
-      * to the live holder named by `regionId` in FIFO order, the client half of structural reactivity.
-      * The inbox is a `SignalRef[Chunk[(regionId, StructuralOp)]]` the WS receiver appends to; this forks
-      * one observe fiber under the island's ambient Scope that tracks how many ops it has already drained
-      * (a single-owner cursor on the observe loop), so each op applies exactly once even as the
-      * accumulated chunk grows. The ordered keyed children are tracked PER REGION, so a scene with several
-      * `foreach`/`reactive` regions (and static siblings) splices each region's ops into its own holder
-      * without colliding. An `Insert` reconstitutes the descriptor and materializes it under a fresh
-      * per-element scope, then splices it into that region holder at the given index; a `Remove` closes
-      * that key's element scope exactly once (disposing its GL resources) and a stale second `Remove` for
-      * the same key is a no-op; a `Move` reuses the live node (no dispose, the GPU buffers survive) and
-      * relinks the holder's children in the new order. The per-region keyed live map is single-owner on
-      * this fiber. An op whose `regionId` resolves to no live holder is a logged no-op.
-      */
-    private[kyo] def subscribeStructuralInbox(
-        channel: HostChannel,
-        mounted: Reconciler.Mounted,
-        rootLive: Reconciler.Live
-    )(using Frame): Unit < (Async & Scope) =
-        // The ordered keyed children per region, single-owner on the drain loop. A Remove drops its entry
-        // (and closes its scope once); a Move reorders it; an Insert adds one. The cursor counts the ops
-        // already drained so each accumulated op applies exactly once.
-        //
-        // The drain loop reads the inbox via `next` rather than `Signal.observe`, deliberately: observe
-        // runs each value inside a fresh per-value Scope that closes when the value changes, which would
-        // dispose an inserted element's per-element scope on the next op. The `next`-driven loop runs the
-        // splice under the island's long-lived ambient Scope, so an inserted subtree lives until its
-        // Remove closes its own per-element scope.
-        AtomicRef.init(Map.empty[String, Chunk[(String, Reconciler.Live)]]).map { byRegion =>
-            AtomicInt.init(0).map { drained =>
-                def applyOne(regionId: String, op: kyo.internal.StructuralOp): Unit < (Async & Scope & Abort[ThreeException]) =
-                    liveByNodeId(rootLive, regionId) match
-                        case Present(regionLive) =>
-                            byRegion.get.map { regions =>
-                                val current = regions.getOrElse(regionId, Chunk.empty[(String, Reconciler.Live)])
-                                val binding = Present(RegionBinding(channel, regionId))
-                                applyStructuralOp(op, current, regionLive, mounted, binding).map { next =>
-                                    byRegion.updateAndGet(_.updated(regionId, next)).unit
-                                }
-                            }
-                        case Absent =>
-                            // A region id with no live holder (a stale or unmatched path): log and skip,
-                            // never throw into the drain loop.
-                            Log.error(s"structural op for unknown region '$regionId' dropped")
-                def drainOnce(ops: Chunk[(String, kyo.internal.StructuralOp)]): Unit < (Async & Scope & Abort[ThreeException]) =
-                    drained.get.map { already =>
-                        val pending = ops.drop(already)
-                        Kyo.foreachDiscard(pending) { case (regionId, op) =>
-                            applyOne(regionId, op)
-                        }.andThen(drained.set(already + pending.size))
-                    }
-                Fiber.init {
-                    Abort.run[Throwable] {
-                        // Drain the current accumulation first (ops that arrived before this fiber started),
-                        // then loop: wait for the next emission, then re-read `current` and drain the latest
-                        // accumulated chunk. Reading `current` after each wakeup (rather than draining the
-                        // value `next` yields) is lossless under a burst: several appends between two wakeups
-                        // coalesce into one `next`, and re-reading `current` recovers every appended op (the
-                        // cursor drops the already-drained prefix), so a boot that splices N children in a
-                        // burst applies all N rather than only the one `next` happened to observe.
-                        Abort.recover[ThreeException](e => Abort.panic(e)) {
-                            channel.structuralInbox.current.map(drainOnce).andThen {
-                                Loop.foreach {
-                                    channel.structuralInbox.next
-                                        .andThen(channel.structuralInbox.current)
-                                        .map(drainOnce)
-                                        .andThen(Loop.continue)
-                                }
-                            }
-                        }
-                    }.map { result =>
-                        result.fold(
-                            _ => (): Unit < Sync,
-                            err => Log.error(s"structural inbox fiber failed: ${err.getMessage}"),
-                            panic =>
-                                if panic.isInstanceOf[Interrupted] then (): Unit < Sync
-                                else Log.error("structural inbox fiber panicked", panic)
-                        )
-                    }
-                }.unit
-            }
-        }
-    end subscribeStructuralInbox
-
-    /** The channel binding that gives a spliced region child its own per-slot mirrors: the host
-      * `channel` whose mirror map an Insert grows and a Remove shrinks, and the `regionId` of the holder
-      * the child is spliced into. The child's node ids are `s"$regionId#$key"`, the stable per-key id the
-      * server emits its `HostPayload.Prop` pushes against, so a `foreach` child's bound prop (a cube's
-      * index-driven position) updates over the channel exactly like a static node's. Absent on the
-      * isolated test path, which splices structure without per-child prop reactivity.
-      */
-    final private[kyo] case class RegionBinding(channel: HostChannel, regionId: String):
-        def childId(key: String): String = s"$regionId#$key"
-
-    /** Applies one `StructuralOp` against the current ordered keyed children, returning the next ordered
-      * list. `Insert` reconstitutes + materializes the descriptor under a per-element scope and splices
-      * it at the index; `Remove` disposes the key's element scope exactly once (a missing key is a
-      * no-op, so a stale second Remove cannot double-dispose); `Move` reorders the existing live node
-      * with no dispose (the live object reference is preserved, GPU buffers survive). After each op the
-      * root's children are relinked in the new order. When a `binding` is present, an Insert registers
-      * the child's reconstituted mirrors on the channel (keyed by the child's `regionId#key` node id) and
-      * a Remove unregisters them, so the child's bound props update over the channel; the isolated test
-      * path passes `Absent` and reconstitutes the child at the host root with no channel side effect.
-      */
-    private[kyo] def applyStructuralOp(
-        op: kyo.internal.StructuralOp,
-        current: Chunk[(String, Reconciler.Live)],
-        rootLive: Reconciler.Live,
-        mounted: Reconciler.Mounted,
-        binding: Maybe[RegionBinding] = Absent
-    )(using Frame): Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException]) =
-        op match
-            case kyo.internal.StructuralOp.Insert(key, index, descriptor) =>
-                // Reconstitute the child under its stable per-key node id when bound (so its mirrors match
-                // the ids the server pushes props against), otherwise at the host root (the test path).
-                val baseId = binding.fold(ThreeBridge.rootId)(_.childId(key))
-                ThreeBridge.reconstituteAt(baseId, descriptor).map { case (node, mirrors) =>
-                    val register = binding.fold(Kyo.unit: Unit < Sync)(_.channel.registerMirrors(mirrors.toSeq))
-                    register.andThen {
-                        Reconciler.materializeInElemScope(node, mounted).map { live =>
-                            val clamped = math.max(0, math.min(index, current.size))
-                            val next    = current.take(clamped).appended((key, live)).concat(current.drop(clamped))
-                            relinkRoot(rootLive, current, next).andThen(next)
-                        }
-                    }
-                }
-            case kyo.internal.StructuralOp.Remove(key) =>
-                Maybe.fromOption(current.find(_._1 == key)) match
-                    case Present((_, live)) =>
-                        val unregister = binding.fold(Kyo.unit: Unit < Sync)(b => b.channel.unregisterMirrors(b.childId(key)))
-                        unregister.andThen {
-                            Reconciler.disposeElemScope(live, mounted).andThen {
-                                val next = current.filterNot(_._1 == key)
-                                relinkRoot(rootLive, current, next).andThen(next)
-                            }
-                        }
-                    case Absent =>
-                        // A stale Remove for a key already removed: no live entry, so no dispose. This is
-                        // the double-dispose guard (the first Remove cleared the entry).
-                        current: Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException])
-            case kyo.internal.StructuralOp.Move(key, toIndex) =>
-                Maybe.fromOption(current.find(_._1 == key)) match
-                    case Present(entry) =>
-                        val without = current.filterNot(_._1 == key)
-                        val clamped = math.max(0, math.min(toIndex, without.size))
-                        val next    = without.take(clamped).appended(entry).concat(without.drop(clamped))
-                        relinkRoot(rootLive, current, next).andThen(next)
-                    case Absent =>
-                        current: Chunk[(String, Reconciler.Live)] < (Async & Scope & Abort[ThreeException])
-    end applyStructuralOp
-
-    /** Detaches every prior-spliced child from the root and re-attaches the next keyed set in order, the
-      * structural analog of the reconciler's holder relink. Detaching the PRIOR set (not the next set)
-      * is what unlinks a removed child, and re-attaching the next set in order is what realizes an
-      * insert position or a reorder; only the spliced children are touched, so the host root's initial
-      * (boot) content is undisturbed. The live nodes (and their GPU buffers) are unchanged, so a Move
-      * keeps its object identity.
-      */
-    private def relinkRoot(
-        rootLive: Reconciler.Live,
-        prior: Chunk[(String, Reconciler.Live)],
-        next: Chunk[(String, Reconciler.Live)]
-    )(using Frame): Unit < Sync =
-        // Unsafe: a synchronous scene-graph relink on the root and its spliced children.
-        Sync.Unsafe.defer {
-            prior.foreach { case (_, l) => ThreeFacadeOps.detachUnsafe(rootLive.obj, l.obj) }
-            next.foreach { case (_, l) => ThreeFacadeOps.attachUnsafe(rootLive.obj, l.obj) }
-        }
-    end relinkRoot
-
-    /** Applies one inbound HostUpdate to the channel: a Prop writes the matching slot's mirror
-      * SignalRef (the reconciler's forkBoundRef then drives one patchProp); a Structural writes the
-      * structural inbox (the keyed reconciler then splices). A payload for a slot/node the channel
-      * does not know is a silent no-op.
-      */
-    private[kyo] def applyHostUpdate(
-        channel: HostChannel,
-        payload: kyo.internal.HostPayload
-    )(using Frame): Unit < (Async & Scope) =
-        payload match
-            case kyo.internal.HostPayload.Prop(nodeId, slot, value) =>
-                channel.writeProp(nodeId, slot, value)
-            case kyo.internal.HostPayload.Structural(op, regionId) =>
-                // A keyed splice instruction for one region: appended to the structural inbox, a
-                // Signal[Chunk[(regionId, StructuralOp)]] the subscribeStructuralInbox drain observes.
-                // On the next drain tick an Insert materializes the descriptor under a fresh
-                // per-element scope, a Remove closes exactly one element scope (disposing its GL
-                // resources once), and a Move reuses the live node (GPU buffers survive); each op
-                // applies into the holder named by regionId, not the host root.
-                channel.writeStructural(regionId, op)
-            case _: kyo.internal.HostPayload.Boot =>
-                // The boot envelope is consumed once at island mount via readHostInit; it never arrives
-                // over the live channel, so a stray Boot is a silent no-op.
-                Kyo.unit
-    end applyHostUpdate
 
 end ThreeMount

@@ -2,6 +2,8 @@ import WasmCrossProject.*
 import WithKyoTest._
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
 import org.scalajs.jsenv.nodejs.*
+import scalajs.esbuild.ScalaJSEsbuildPlugin
+import scalajs.esbuild.ScalaJSEsbuildPlugin.autoImport.*
 import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
@@ -1760,15 +1762,15 @@ lazy val `kyo-threejs` =
         )
 
 // The visual-review demo bundle: kyo-threejs MAIN plus the demos' scene-graph builders, exposing the
-// client island entry (`@JSExportTopLevel("kyoThreeIsland")` in ThreeIsland, which mounts the
-// server-pushed 3D hosts on a page) and the DemoHarness browser-test probes (`@JSExportTopLevel`
-// mountOrderingProbe / mountRendererReleaseProbe / mountHostProbe / mountEmbedProbe /
-// mountEmbedInteractive / mountEmbedSiblingProbe). Each demo is its own self-serving KyoApp, never
-// mounted through one shared entry; the `kyo-threejs-demo-runner` project below launches a chosen demo
-// on Node. Linked as a browser-clean ESModule (one external `three` import, no node:* / require). The
-// demo sources stay in
-// kyo-threejs's test tree (so they remain compile-checked by kyo-threejs's own test on both backends)
-// and are pulled in here via unmanagedSourceDirectories; this project never links the kyo-threejs test
+// DemoMounts client-mount entries (`@JSExportTopLevel` mountBouncingBalls / mountReactiveCubeField /
+// mountSnake3D / mountSolarSystem / mountGltfViewer / mountFeedProve / mountFeedChunk / mountFeedEmit /
+// mountControls, each mounting a real scene via `Three.runMount`) and the DemoHarness browser-test
+// probes (`@JSExportTopLevel` mountOrderingProbe / mountRendererReleaseProbe / mountHostProbe /
+// mountEmbedProbe / mountEmbedInteractive / mountEmbedSiblingProbe). The per-app island sub-projects
+// (feedprove/emit/controls) link their own `@JSExportTopLevel` main against these same entries. Linked
+// as a browser-clean ESModule (one external `three` import, no node:* / require). The demo sources stay
+// in kyo-threejs's test tree (so they remain compile-checked by kyo-threejs's own test on both
+// backends) and are pulled in here via unmanagedSourceDirectories; this project never links the kyo-threejs test
 // stack (kyo-ui DOM mount, HttpServer, kyo-browser) because the entries reach only the island
 // reconciler and the demos' scene-graph builders, so the linker's dead-code elimination drops the
 // node:*-carrying paths. kyo-ui is a compile dependency because the demos reference UI.embed /
@@ -1791,20 +1793,165 @@ lazy val `kyo-threejs-demos` =
             Test / sources := Seq.empty
         )
 
+// The esbuild bundle script shared by every per-app island sub-project (feedprove / emit / controls):
+// bundle the linked island ESM (`main.js`) and its `three` dependency into a single self-contained ESM.
+// Forces `format: 'esm'` (the page links it as a module script) and `bundle: true` so `three` is inlined
+// and no bare `import "three"` survives.
+def islandEsbuildScript(stageDir: File, outDir: File): String = {
+    val relativeOut = stageDir.toPath.relativize(outDir.toPath).toString.replace('\\', '/')
+    // language=JS
+    s"""const esbuild = require('esbuild');
+       |esbuild.build({
+       |  entryPoints: ['main.js'],
+       |  bundle: true,
+       |  format: 'esm',
+       |  platform: 'browser',
+       |  outdir: '$relativeOut',
+       |  minify: true,
+       |  logLevel: 'info',
+       |  logOverride: { 'equals-negative-zero': 'silent' }
+       |}).catch(() => process.exit(1));
+       |""".stripMargin
+}
+
+// The Option-Y FeedProve per-app island (design 02-design-r2, Decision D-001): the self-contained ESM the
+// `democlient.FeedProve` launcher links through `head.moduleScript` on the page `Three.Feed.run` serves.
+// A `ModuleKind.ESModule` linked with a main initializer, then esbuild-bundled with `three` inlined so
+// the page needs no import map; its main is
+// `feedprove.FeedProveIslandApp`, which mounts the FeedProve scene at `#app` (the cube spins client-side)
+// and connects the color feed mirror, rather than scanning `[data-kyo-host]`. It reuses the demos'
+// `demoharness.DemoMounts` (the `mountFeedProve` entry) and the shared `demo.FeedProveScene`, so the
+// island runs the SAME compiled scene the browser prove test mounts. This is the per-app island the Y
+// build model ships: the client half owns and animates the real scene; the server half (the launcher)
+// runs only the `ui` builder to learn the fed ids and fork the feed observers.
+lazy val `kyo-threejs-feedprove-island` =
+    project
+        .in(file("kyo-threejs/feedprove-island"))
+        .enablePlugins(ScalaJSPlugin, ScalaJSEsbuildPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("feedprove.FeedProveIslandApp"),
+            // Reuse the demos' `demoharness.DemoMounts` (the `mountFeedProve` entry) and the shared
+            // `demo.FeedProveScene`, so the island links the SAME compiled scene the prove test mounts.
+            Compile / unmanagedSourceDirectories ++= Seq(
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "demos" / "src" / "main" / "scala" / "demoharness",
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo"
+            ),
+            Test / sources := Seq.empty,
+            Compile / fastLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            ),
+            Compile / fullLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            )
+        )
+
+// Bundle the FeedProve per-app island into one self-contained ESM (three inlined). The output lands at
+// kyo-threejs/feedprove-island/target/scala-<ver>/esbuild/main/out/main.js, served by the launcher.
+addCommandAlias("feedProveIslandBundle", "; kyo-threejs-feedprove-island/esbuildBundle")
+
+// The Option-Y app-event per-app island (design 02-design-r2, Decision D-001, DY-04): the self-contained
+// ESM the emit browser test links through `head.moduleScript` on the page `Three.Feed.run` serves. Mirrors
+// `kyo-threejs-feedprove-island` exactly, but its main is `emitisland.EmitIslandApp`, which mounts the
+// FeedEmit scene at `#app` (a clickable cube whose onClick calls `Three.Feed.emit`) and connects the color
+// feed mirror, so the server's `onAppEvent` handler can feed the bumped color back.
+lazy val `kyo-threejs-emit-island` =
+    project
+        .in(file("kyo-threejs/emit-island"))
+        .enablePlugins(ScalaJSPlugin, ScalaJSEsbuildPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("emitisland.EmitIslandApp"),
+            // Reuse the demos' `demoharness.DemoMounts` (the `mountFeedEmit` entry) and the shared
+            // `demo.FeedEmitScene`, so the island links the SAME compiled scene the emit test mounts.
+            Compile / unmanagedSourceDirectories ++= Seq(
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "demos" / "src" / "main" / "scala" / "demoharness",
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo"
+            ),
+            Test / sources := Seq.empty,
+            Compile / fastLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            ),
+            Compile / fullLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            )
+        )
+
+// Bundle the emit per-app island into one self-contained ESM (three inlined). The output lands at
+// kyo-threejs/emit-island/target/scala-<ver>/esbuild/main/out/main.js, served by the emit browser test.
+addCommandAlias("emitIslandBundle", "; kyo-threejs-emit-island/esbuildBundle")
+
+// The Option-Y orbit-controls per-app island (design 02-design-r2, Decision D-001, DY-06): the
+// self-contained ESM the controls browser test links through `head.moduleScript`. Mirrors
+// `kyo-threejs-feedprove-island` exactly, but its main is `controlsisland.ControlsIslandApp`, which mounts
+// the ControlsScene at `#app` (a static object plus `Three.controls(autoRotate = true)`), so the island
+// binds a live OrbitControls and the camera orbits the scene. The bundle inlines three AND OrbitControls
+// (esbuild), so the page needs no import map.
+lazy val `kyo-threejs-controls-island` =
+    project
+        .in(file("kyo-threejs/controls-island"))
+        .enablePlugins(ScalaJSPlugin, ScalaJSEsbuildPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("controlsisland.ControlsIslandApp"),
+            // Reuse the demos' `demoharness.DemoMounts` (the `mountControls` entry) and the shared
+            // `demo.ControlsScene`, so the island links the SAME compiled scene the controls test mounts.
+            Compile / unmanagedSourceDirectories ++= Seq(
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "demos" / "src" / "main" / "scala" / "demoharness",
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo"
+            ),
+            Test / sources := Seq.empty,
+            Compile / fastLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            ),
+            Compile / fullLinkJS / esbuildBundleScript := islandEsbuildScript(
+                (Compile / esbuildStage / crossTarget).value,
+                (Compile / esbuildBundle / crossTarget).value
+            )
+        )
+
+// Bundle the controls per-app island into one self-contained ESM (three + OrbitControls inlined). The
+// output lands at kyo-threejs/controls-island/target/scala-<ver>/esbuild/main/out/main.js.
+addCommandAlias("controlsIslandBundle", "; kyo-threejs-controls-island/esbuildBundle")
+
 // The Node launcher for the demos. Scala.js has no `Test/runMain`, and kyo-threejs has no JVM
-// variant, so the kyo-ui `runMain` launch verb does not apply: instead, the live-scene demo
-// `KyoApp`s run their HttpServer on Node. This project reuses the same demo sources as
-// `kyo-threejs-demos`; each demo is already an `object X extends KyoApp` with its own main, so a demo
-// is selected by the `demo<Name>` command aliases below (each sets `mainClass` to that demo's main and
-// runs it). A Scala.js main initializer takes no command-line arguments, so the demo cannot be chosen
-// as a `run` argument; the alias selects it through `mainClass` instead. There is no god dispatcher:
-// one `run` launches exactly one demo's server.
+// variant, so the kyo-ui `runMain` launch verb does not apply: instead, the client-mount launcher
+// `KyoApp`s in `democlient` run their HttpServer on Node, serving a static page that runs the scene in
+// the browser through `Three.runMount`. This project reuses the same demo sources as `kyo-threejs-demos`;
+// each launcher is an `object X extends KyoApp` with its own main, so a launcher is selected by the
+// `demoClient<Name>` / `feedProve` command aliases below (each sets `mainClass` to that launcher's main
+// and runs it). A Scala.js main initializer takes no command-line arguments, so the launcher cannot be
+// chosen as a `run` argument; the alias selects it through `mainClass` instead. There is no god
+// dispatcher: one `run` launches exactly one launcher's server.
 //
-// It is a SEPARATE project from `kyo-threejs-demos` on purpose. `kyo-threejs-demos` links the browser
-// island bundle as a no-main ESModule (the SSR page loads it and the browser tests depend on it). A
-// Node runner needs the opposite linker shape: a main initializer over a CommonJSModule that can pull
-// in the demos' HttpServer (node:* carrying) code. Keeping the two outputs in distinct projects leaves
-// the island bundle's shape untouched while giving the runner the Node-runnable main it needs.
+// It is a SEPARATE project from `kyo-threejs-demos` on purpose. `kyo-threejs-demos` links the demo
+// bundle as a no-main ESModule (the served page imports its `mountX` entry and the browser tests depend
+// on it). A Node runner needs the opposite linker shape: a main initializer over a CommonJSModule that
+// can pull in the launchers' HttpServer (node:* carrying) code. Keeping the two outputs in distinct
+// projects leaves the demo bundle's shape untouched while giving the runner the Node-runnable main it needs.
 lazy val `kyo-threejs-demo-runner` =
     project
         .in(file("kyo-threejs/demo-runner"))
@@ -1817,9 +1964,10 @@ lazy val `kyo-threejs-demo-runner` =
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Link a Node main initializer so `run` executes a demo's main. The default main is one of
-            // the demos; the `demo<Name>` aliases override it to select another before running.
+            // the client-mount launchers; the `demoClient<Name>` / `feedProve` aliases override it to
+            // select another before running.
             scalaJSUseMainModuleInitializer := true,
-            Compile / mainClass             := Some("demo.BouncingBalls"),
+            Compile / mainClass             := Some("democlient.BouncingBalls"),
             Compile / unmanagedSourceDirectories +=
                 (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
             // No test sources; this project exists only to run a demo on Node.
@@ -1841,40 +1989,44 @@ lazy val `kyo-threejs-demo-runner` =
             Compile / fastLinkJS := (Compile / fastLinkJS).dependsOn(installThree).value
         )
 
-// One command alias per demo: set the runner project's main to that demo, then run it. Each alias
-// launches exactly one demo's server on Node, so the demos stay independently runnable with no shared
-// dispatcher. The live-scene demos print a `http://localhost:<port>/` URL to open.
+// The CLIENT-MOUNT launchers for the five pure-animation demos (BouncingBalls, ReactiveCubeField,
+// Snake3D, SolarSystem, GltfViewer). These serve a static page
+// that runs the scene IN THE BROWSER through `Three.runMount`, so the per-frame `onFrame` loop animates
+// locally. Each alias first links the `kyo-threejs-demos` ESModule bundle (which the served page imports
+// its `mountX` entry from, and which lands `three` at the demos target the launcher serves), then sets
+// the runner main to that demo's `democlient` launcher and runs it. The launcher prints a
+// `http://localhost:<port>/` URL to open; opening it animates the scene.
 addCommandAlias(
-    "demoBouncingBalls",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.BouncingBalls") ; kyo-threejs-demo-runner/run"""
+    "demoClientBouncingBalls",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.BouncingBalls") ; kyo-threejs-demo-runner/run"""
 )
 addCommandAlias(
-    "demoSolarSystem",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.SolarSystem") ; kyo-threejs-demo-runner/run"""
+    "demoClientReactiveCubeField",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.ReactiveCubeField") ; kyo-threejs-demo-runner/run"""
 )
 addCommandAlias(
-    "demoReactiveCubeField",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ReactiveCubeField") ; kyo-threejs-demo-runner/run"""
+    "demoClientSnake3D",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Snake3D") ; kyo-threejs-demo-runner/run"""
 )
 addCommandAlias(
-    "demoSnake3D",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.Snake3D") ; kyo-threejs-demo-runner/run"""
+    "demoClientSolarSystem",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.SolarSystem") ; kyo-threejs-demo-runner/run"""
 )
 addCommandAlias(
-    "demoGltfViewer",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.GltfViewer") ; kyo-threejs-demo-runner/run"""
+    "demoClientGltfViewer",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.GltfViewer") ; kyo-threejs-demo-runner/run"""
 )
+
+// The Option-Y prove-the-mechanism launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
+// that spins client-side AND steps color from a server feed over the WebSocket, and stays up so a human can
+// open the printed URL. Unlike the client-mount launchers above (pure local animation), this also declares a
+// server-owned fed signal (`Three.Feed.serverSignal`) and forks a `Clock` fiber that cycles a palette every
+// ~1s; `Three.Feed.run` forks one observer per fed id, pushing each step as a `HostUpdate` over the WS, so
+// the open page shows BOTH halves of Y on one cube. Bundles the self-contained FeedProve island (three
+// inlined) the page links through `head.moduleScript`, then runs the `democlient.FeedProve` launcher.
 addCommandAlias(
-    "demoEmbeddedScene",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.EmbeddedScene") ; kyo-threejs-demo-runner/run"""
-)
-addCommandAlias(
-    "demoServerClock",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ServerClock") ; kyo-threejs-demo-runner/run"""
-)
-addCommandAlias(
-    "demoServerStructure",
-    """; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("demo.ServerStructure") ; kyo-threejs-demo-runner/run"""
+    "demoClientFeedProve",
+    """; kyo-threejs-feedprove-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedProve") ; kyo-threejs-demo-runner/run"""
 )
 
 lazy val `kyo-examples` =

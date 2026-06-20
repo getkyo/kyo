@@ -2,32 +2,14 @@ package demo
 
 import kyo.*
 
-/** Many meshes with per-`onFrame` physics: the frame-loop and many-object showcase. Each ball
-  * carries its own `SignalRef[(Vec3, Vec3)]` holding position and velocity, and an `onFrame`
-  * closure integrating gravity and bouncing off the floor. All 24 closures drain on one scoped
-  * fiber per tick, keeping the hot path off heavy effect machinery.
+/** The scene-graph builder for the bouncing-balls demo: many meshes with per-`onFrame` physics, the
+  * frame-loop and many-object showcase. Each ball carries its own `SignalRef[(Vec3, Vec3)]` holding
+  * position and velocity, and an `onFrame` closure integrating gravity and bouncing off the floor. All
+  * 24 closures drain on one scoped fiber per tick, keeping the hot path off heavy effect machinery.
   *
-  * Demonstrates per-ball reactive state, signal position binding, and the many-object
-  * `onFrame` pattern. `CanEqual` for the `(Vec3, Vec3)` pair derives automatically from
-  * `Vec3 derives CanEqual`.
-  */
-object BouncingBalls extends KyoApp:
-    run {
-        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
-        for
-            scene <- BouncingBallsScene.scene
-            ui = UI.div(Three.embed(scene, BouncingBallsScene.camera).id("app"))
-            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
-            _        <- Console.printLine(s"BouncingBalls running on http://localhost:${server.port}/")
-            _        <- server.await
-        yield ()
-        end for
-    }
-end BouncingBalls
-
-/** The scene-graph builder for [[BouncingBalls]], shared by the `KyoApp` and the visual-review
-  * harness so both mount the same compiled scene.
+  * Demonstrates per-ball reactive state, signal position binding, and the many-object `onFrame`
+  * pattern. `CanEqual` for the `(Vec3, Vec3)` pair derives automatically from `Vec3 derives CanEqual`.
+  * The client mount in `demoharness.DemoMounts` runs this scene through `Three.runMount` in the browser.
   */
 object BouncingBallsScene:
 

@@ -2,7 +2,6 @@ package kyo
 
 import kyo.UI.Ast.*
 import kyo.internal.HostPayload
-import kyo.internal.HostValue
 import kyo.internal.HtmlOp
 import kyo.internal.HtmlRenderer
 
@@ -65,7 +64,7 @@ class HostNodeTest extends kyo.test.Test[Any]:
 
     // HostUpdate is a pure construction (no effect row at the call site).
     "HostUpdate constructs as a plain HtmlOp value" in {
-        val payload = HostPayload.Prop("n0", "color", HostValue.Col(16711680))
+        val payload = HostPayload.SignalUpdate("feed-color", """"#ff0000"""")
         val op      = HtmlOp.HostUpdate(Seq("0", "2"), payload)
         assert(op.path == Seq("0", "2"))
         assert(op.payload == payload)

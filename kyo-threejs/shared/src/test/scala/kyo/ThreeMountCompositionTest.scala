@@ -51,73 +51,6 @@ class ThreeMountCompositionTest extends ThreeTest:
         succeed
     }
 
-    "BouncingBalls is a self-serving KyoApp" in {
-        // The converted demo is an object extends KyoApp: ascribing it to KyoApp compiles only
-        // because it self-serves (no Three.runMount client-only entry remains). It links
-        // browser-clean on JS+Wasm as part of Test/compile.
-        val app: KyoApp = demo.BouncingBalls
-        assert(app eq demo.BouncingBalls)
-    }
-
-    "SolarSystem is a self-serving KyoApp composing the HUD beside the embed" in {
-        val app: KyoApp = demo.SolarSystem
-        assert(app eq demo.SolarSystem)
-    }
-
-    "ReactiveCubeField is a self-serving KyoApp" in {
-        val app: KyoApp = demo.ReactiveCubeField
-        assert(app eq demo.ReactiveCubeField)
-    }
-
-    "Snake3D is a self-serving KyoApp keeping its ThreeFrames.Clock driver" in {
-        val app: KyoApp = demo.Snake3D
-        // The Clock driver the converted embed threads through is the fixed-interval source.
-        assert(demo.Snake3DScene.frames == ThreeFrames.Clock(150.millis))
-        assert(app eq demo.Snake3D)
-    }
-
-    "GltfViewer is a self-serving KyoApp loading through the existing loadGltf path" in {
-        val app: KyoApp = demo.GltfViewer
-        // The scene builder carries Abort[ThreeException], absorbed by KyoApp.run's Abort[Any].
-        val _: Three.Ast.Scene < (Async & Scope & Abort[ThreeException]) =
-            demo.GltfViewerScene.scene(demo.GltfViewerScene.defaultModelUrl)
-        assert(app eq demo.GltfViewer)
-    }
-
-    "EmbeddedScene is a self-serving KyoApp wrapping its controls + embed + HUD tree" in {
-        val app: KyoApp = demo.EmbeddedScene
-        // The builder companion (renamed to mirror the XScene pattern) still exposes the composed
-        // ui the KyoApp serves; building it is a plain Sync value (the page tree, no server bind).
-        val _: UI < Sync = demo.EmbeddedSceneScene.ui
-        assert(app eq demo.EmbeddedScene)
-    }
-
-    "ServerClock is a self-serving KyoApp driving a 3D prop from a server-owned tick" in {
-        val app: KyoApp = demo.ServerClock
-        // The builder forks a server-side engine fiber, so its row is < Async (not the pure < Sync
-        // of the client-onFrame demos): the server owns the clock and pushes each tick.
-        val _: UI < Async = demo.ServerClockScene.ui
-        assert(app eq demo.ServerClock)
-    }
-
-    "ServerStructure is a self-serving KyoApp pushing scene structure from a server-owned id list" in {
-        val app: KyoApp = demo.ServerStructure
-        // The builder is a plain Sync value (server-owned id list mutated by buttons); the structural
-        // change is pushed over the wire, not driven by a client onFrame.
-        val _: UI < Sync = demo.ServerStructureScene.ui
-        assert(app eq demo.ServerStructure)
-    }
-
-    "the island handler serves the demos bundle bytes with the right shape and head link" in {
-        // The head links the island at the route the handler serves, and the handler is the
-        // binary route serving those bytes (Content-Type set on the response when the bundle is
-        // present; a 500 naming the link command when it is absent).
-        assert(demo.DemoServe.head.moduleScript == Present(demo.DemoServe.islandPath))
-        assert(demo.DemoServe.islandPath == "/_kyo/island.js")
-        val _: HttpHandler[Any, "body" ~ Span[Byte], Nothing] = demo.DemoServe.islandHandler
-        succeed
-    }
-
     "ThumbnailGallery renders PNGs via toImage with no Browser in the row" in {
         val app: KyoApp = demo.ThumbnailGallery
         // The gallery render path is the headless toImage: its row is Async & Scope &
@@ -125,24 +58,6 @@ class ThreeMountCompositionTest extends ThreeTest:
         val _: kyo.internal.Image < (Async & Scope & Abort[ThreeException]) =
             Three.toImage(demo.ThumbnailGalleryScene.representative, demo.ThumbnailGalleryScene.camera, 512, 512)
         assert(app eq demo.ThumbnailGallery)
-    }
-
-    "no god dispatcher: each demo is its own KyoApp, not one shared entry" in {
-        // The demos are nine distinct KyoApp singletons, each its own independent entry; there is
-        // no single object that mounts or dispatches all of them.
-        val apps: Seq[KyoApp] = Seq(
-            demo.BouncingBalls,
-            demo.SolarSystem,
-            demo.ReactiveCubeField,
-            demo.Snake3D,
-            demo.GltfViewer,
-            demo.EmbeddedScene,
-            demo.ThumbnailGallery,
-            demo.ServerClock,
-            demo.ServerStructure
-        )
-        assert(apps.distinct.length == apps.length)
-        assert(apps.length == 9)
     }
 
 end ThreeMountCompositionTest

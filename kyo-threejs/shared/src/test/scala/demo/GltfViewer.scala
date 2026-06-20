@@ -2,38 +2,20 @@ package demo
 
 import kyo.*
 
-/** A glTF model viewer: `loadGltf` with `Async` loads a model, the loaded subtree wraps in a
-  * rotating `Group` driven by a `SignalRef[Double]`, and the orbit angle advances via `onFrame`
-  * on that group. Pointer interaction attaches directly on `asset.root` (typed
+/** The scene-graph builder for a glTF model viewer: `loadGltf` with `Async` loads a model, the loaded
+  * subtree wraps in a rotating `Group` driven by a `SignalRef[Double]`, and the orbit angle advances
+  * via `onFrame` on that group. Pointer interaction attaches directly on `asset.root` (typed
   * `Three.Ast.Custom[js.Dynamic]`, which is `Interactive`) with no cast.
   *
-  * Demonstrates asset loading, structured concurrency, reactive transforms over a loaded glTF
-  * subtree, and direct pointer event attachment on `Asset.Gltf.root`.
-  */
-object GltfViewer extends KyoApp:
-    run {
-        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
-        for
-            scene <- GltfViewerScene.scene(GltfViewerScene.defaultModelUrl)
-            ui = UI.div(Three.embed(scene, GltfViewerScene.camera).id("app"))
-            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
-            _        <- Console.printLine(s"GltfViewer running on http://localhost:${server.port}/")
-            _        <- server.await
-        yield ()
-        end for
-    }
-end GltfViewer
-
-/** The scene-graph builder for [[GltfViewer]], used by the `GltfViewer` `KyoApp` to load and mount
-  * the compiled scene. The model URL is a parameter so tests can point it at a served fixture while
-  * the `KyoApp` uses the default.
+  * Demonstrates asset loading, structured concurrency, reactive transforms over a loaded glTF subtree,
+  * and direct pointer event attachment on `Asset.Gltf.root`. The model URL is a parameter so tests can
+  * point it at a served fixture. The client mount in `demoharness.DemoMounts` runs this scene through
+  * `Three.runMount` in the browser.
   */
 object GltfViewerScene:
 
-    /** The model the live `KyoApp` loads by default. The asset is served separately from the demo
-      * page (the demo's `HttpServer` does not bundle a model); point a static file route at this
-      * path, or pass a reachable URL, to load a real model.
+    /** The model the client mount loads by default. The asset is served separately from the demo page;
+      * point a static file route at this path, or pass a reachable URL, to load a real model.
       */
     val defaultModelUrl: String = "/models/helmet.glb"
 

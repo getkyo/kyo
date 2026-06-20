@@ -180,6 +180,7 @@ class ThreeEmbedBrowserTest extends WebGLSceneHarness:
             gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
             bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
             skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
             server <- HttpServer.init(0, "localhost")(
                 WebGLSceneHarness.htmlHandler(html),
                 WebGLSceneHarness.jsHandler("main.js", bundle),
@@ -187,7 +188,8 @@ class ThreeEmbedBrowserTest extends WebGLSceneHarness:
                 WebGLSceneHarness.jsHandler("three.core.js", core),
                 WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
                 WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
-                WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils)
+                WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
             )
             result <- f(s"http://localhost:${server.port}/")
         yield result
@@ -268,7 +270,8 @@ object ThreeEmbedBrowserTest:
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",
-          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js"
+          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js",
+          |    "three/examples/jsm/controls/OrbitControls.js": "/three/examples/jsm/controls/OrbitControls.js"
           |} }
           |</script>
           |</head>
@@ -301,7 +304,8 @@ object ThreeEmbedBrowserTest:
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",
-          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js"
+          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js",
+          |    "three/examples/jsm/controls/OrbitControls.js": "/three/examples/jsm/controls/OrbitControls.js"
           |} }
           |</script>
           |</head>
@@ -330,7 +334,8 @@ object ThreeEmbedBrowserTest:
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",
-          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js"
+          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js",
+          |    "three/examples/jsm/controls/OrbitControls.js": "/three/examples/jsm/controls/OrbitControls.js"
           |} }
           |</script>
           |</head>

@@ -2,28 +2,12 @@ package demo
 
 import kyo.*
 
-/** A 3D scene embedded as a first-class child of a kyo-ui tree, served over kyo-ui's server-push
-  * transport: demonstrates `Three.embed` with surrounding kyo-ui controls and a HUD, all sharing a
-  * single `SignalRef[String]`. A button in the kyo-ui controls panel writes "Sun" into the shared
-  * signal; clicking the 3D earth sphere writes "Earth"; the HUD label below the canvas tracks both,
-  * proving bidirectional `SignalRef` interop through the embed seam on one page.
-  */
-object EmbeddedScene extends KyoApp:
-    run {
-        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
-        for
-            ui       <- EmbeddedSceneScene.ui
-            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
-            _        <- Console.printLine(s"EmbeddedScene running on http://localhost:${server.port}/")
-            _        <- server.await
-        yield ()
-        end for
-    }
-end EmbeddedScene
-
-/** The scene-graph and kyo-ui builder for [[EmbeddedScene]], used by the `EmbeddedScene` `KyoApp`
-  * to compose the embedded scene.
+/** The scene-graph and kyo-ui builder for a 3D scene embedded as a first-class child of a kyo-ui tree:
+  * demonstrates `Three.embed` with surrounding kyo-ui controls and a HUD, all sharing a single
+  * `SignalRef[String]`. A button in the kyo-ui controls panel writes "Sun" into the shared signal;
+  * clicking the 3D earth sphere writes "Earth"; the HUD label below the canvas tracks both, proving
+  * bidirectional `SignalRef` interop through the embed seam on one page. The client mount path
+  * (`demoharness.DemoHarness`, `ThreeEmbedBrowserTest`) runs this through `UI.runMount` in the browser.
   *
   * The `camera` def is pure (no effect); `scene` and `ui` carry `< Sync` from `Signal.initRef`.
   */

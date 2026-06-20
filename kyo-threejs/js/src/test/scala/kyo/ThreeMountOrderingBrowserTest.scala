@@ -52,6 +52,7 @@ class ThreeMountOrderingBrowserTest extends WebGLSceneHarness:
             gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
             bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
             skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
             server <- HttpServer.init(0, "localhost")(
                 WebGLSceneHarness.htmlHandler(ThreeMountOrderingBrowserTest.page),
                 WebGLSceneHarness.jsHandler("main.js", bundle),
@@ -59,7 +60,8 @@ class ThreeMountOrderingBrowserTest extends WebGLSceneHarness:
                 WebGLSceneHarness.jsHandler("three.core.js", core),
                 WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
                 WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
-                WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils)
+                WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
             )
             result <- f(s"http://localhost:${server.port}/")
         yield result
@@ -99,7 +101,8 @@ object ThreeMountOrderingBrowserTest:
           |<script type="importmap">
           |{ "imports": {
           |    "three": "/three.module.js",
-          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js"
+          |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js",
+          |    "three/examples/jsm/controls/OrbitControls.js": "/three/examples/jsm/controls/OrbitControls.js"
           |} }
           |</script>
           |<style>body { margin: 0; background: #000; }</style>

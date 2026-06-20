@@ -2,31 +2,14 @@ package demo
 
 import kyo.*
 
-/** A grid of cubes whose colors and heights bind to signals: the fine-grained reactivity showcase.
-  * A single phase signal drives a wave across the field; each cube's height and color is a targeted
-  * mutation, never a scene rebuild.
+/** The scene-graph builder for the reactive-cube-field demo: a grid of cubes whose colors and heights
+  * bind to signals, the fine-grained reactivity showcase. A single phase signal drives a wave across
+  * the field; each cube's height and color is a targeted mutation, never a scene rebuild.
   *
-  * Demonstrates `Signal.map` composing derived reactive props, signal binding on both color and
-  * scale, and the `onFrame` advance pattern on a `Group` scene child. `Group` implements `Animated`
-  * so a `Three.group().onFrame(...)` serves as the phase ticker with no scene geometry.
-  */
-object ReactiveCubeField extends KyoApp:
-    run {
-        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
-        for
-            scene <- ReactiveCubeFieldScene.scene
-            ui = UI.div(Three.embed(scene, ReactiveCubeFieldScene.camera).id("app"))
-            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
-            _        <- Console.printLine(s"ReactiveCubeField running on http://localhost:${server.port}/")
-            _        <- server.await
-        yield ()
-        end for
-    }
-end ReactiveCubeField
-
-/** The scene-graph builder for [[ReactiveCubeField]], shared by the `KyoApp` and the visual-review
-  * harness so both mount the same compiled scene.
+  * Demonstrates `Signal.map` composing derived reactive props, signal binding on both color and scale,
+  * and the `onFrame` advance pattern on a `Group` scene child. `Group` implements `Animated` so a
+  * `Three.group().onFrame(...)` serves as the phase ticker with no scene geometry. The client mount in
+  * `demoharness.DemoMounts` runs this scene through `Three.runMount` in the browser.
   */
 object ReactiveCubeFieldScene:
 

@@ -39,41 +39,6 @@ private[kyo] object ReactiveUI:
                 if acc.nonEmpty then acc else findNode(child, path)
             }
 
-    /** Collects every host node carrying a server [[UI.Ast.HostBridge]], paired with its
-      * data-kyo-path. The server-push runner forks each host's subscriptions and routes picks by
-      * this path. A host with no server bridge (a bare cross-platform host, or a client-only mount)
-      * is skipped.
-      *
-      * Walks the resolved declarative UI tree (the same value the renderer addresses), mirroring the
-      * renderer's data-kyo-path scheme: element children are index-addressed, a `Fragment`'s
-      * `KeyedChild` by its key and other children by index, a `Reactive`/`Foreach` boundary keeps the
-      * path. A host lives in a const subtree, so the walk does not descend into `Reactive`/`Foreach`
-      * zones (a host is never reached through a reactive boundary); the walk stays pure.
-      */
-    private[kyo] def hostBridges(uiTree: UI): Seq[(Seq[String], UI.Ast.HostBridge)] =
-        collectHostBridges(uiTree, Seq.empty)
-
-    private def collectHostBridges(ui: UI, path: Seq[String]): Seq[(Seq[String], UI.Ast.HostBridge)] =
-        ui match
-            case host: HostNode =>
-                host.serverBridge match
-                    case Present(b: UI.Ast.HostBridge) => Seq((path, b))
-                    case _                             => Seq.empty
-            case elem: Element =>
-                elem.children.toSeq.zipWithIndex.flatMap { (child, i) =>
-                    collectHostBridges(child, path :+ i.toString)
-                }
-            case Fragment(children) =>
-                children.toSeq.zipWithIndex.flatMap { (child, i) =>
-                    val childPath = child match
-                        case kc: KeyedChild[?] => path :+ kc.key
-                        case _                 => path :+ i.toString
-                    collectHostBridges(child, childPath)
-                }
-            case KeyedChild(_, child) =>
-                collectHostBridges(child, path)
-            case _ => Seq.empty
-
     def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
         given Frame = ui.frame
         ui match

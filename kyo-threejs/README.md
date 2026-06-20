@@ -495,7 +495,11 @@ The `selected` signal is shared by both the kyo-ui controls (the button writes i
 
 `Three.embed` and signal-bound props work unchanged when the containing app runs server-driven via `UI.runHandlers(basePath, head)(ui)`. The split is clean: the server owns every `SignalRef` and every `onClick` closure; the browser owns WebGL and the frame loop. On each signal change the server pushes a diff over kyo-ui's WebSocket; the browser applies it, reacting the same way it would in a client-only mount. A raycast click in the browser calls the server-side `onClick` closure via the same WebSocket, so handler logic stays on the server with full access to server state.
 
-The one extra wiring step is linking the Scala.js island bundle that mounts the 3D host in the browser. Pass a `UI.PageHead` with `moduleScript` set to the island URL:
+The one extra wiring step is shipping the Scala.js island that mounts the 3D host in the browser. kyo bundles it into a single self-contained, self-running ESM (your Scala island plus three.js, inlined by esbuild), so the page links one file and the browser needs no import map, no separately served three, and no bootstrap module:
+
+1. Run the bundle task: `sbt islandBundle`. It links the island and runs esbuild, producing one self-contained `main.js` under `kyo-threejs/island/target/scala-<ver>/esbuild/main/out/`.
+2. Serve that file at a route, for example `/island.js` (a one-line static handler, or copy it into your served resources).
+3. Link it from the page head with `moduleScript`:
 
 ```scala
 import kyo.*
@@ -507,7 +511,9 @@ val head =
     )
 ```
 
-`UI.runHandlers(basePath, head)(ui)` serves this head in the SSR page GET so the browser loads the island on first paint. The 1-arg `UI.runHandlers(basePath)(ui)` uses a default head with no `moduleScript`; pass `head` explicitly whenever your page needs a client island. See the kyo-threejs demos (`sbt demoBouncingBalls`, `sbt demoEmbeddedScene`) for a full runnable example including the server entry point and the island bundle wiring.
+`UI.runHandlers(basePath, head)(ui)` serves this head in the SSR page GET, so the browser loads the island on first paint; the island resolves three internally and self-runs, mounting every server-pushed 3D host on load. The 1-arg `UI.runHandlers(basePath)(ui)` uses a default head with no `moduleScript`; pass `head` explicitly whenever your page needs a client island. See the kyo-threejs demos (`sbt demoBouncingBalls`, `sbt demoEmbeddedScene`) for a full runnable example, including the server entry point and `DemoServe`, which serves the bundled island at its route.
+
+If you prefer native import maps and want to avoid esbuild, link the island's raw linker output instead and resolve `three` yourself: serve the three.js build and emit `<script type="importmap">{ "imports": { "three": "/three.module.js" } }</script>` before the island script. A CDN map (`{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js" } }`) works the same way at the cost of a runtime network dependency. The bundled single-file path is the default because it just works with no extra serving or browser-side resolution.
 
 ## Putting it together
 
@@ -598,14 +604,14 @@ The demos live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) as 
 
 kyo-threejs is a Scala.js/Wasm module with no JVM variant, and Scala.js has no `Test/runMain`, so `sbt 'kyo-threejsJS/Test/runMain demo.BouncingBalls'` does not work. The supported launch is one sbt command alias per demo. Each alias selects that demo's main on the `kyo-threejs-demo-runner` project (a Node-runnable Scala.js module that reuses the demo sources) and runs it.
 
-First link the browser island bundle once, then launch a demo:
+First bundle the browser island once, then launch a demo:
 
 ```sh
-sbt kyo-threejs-demos/fastLinkJS   # link the browser island bundle the page loads
-sbt demoBouncingBalls              # launch one demo's server on Node
+sbt islandBundle        # bundle the self-contained self-running island the page loads
+sbt demoBouncingBalls   # launch one demo's server on Node
 ```
 
-The live-scene demos print a `http://localhost:<port>/` URL; open it to see the scene. Each alias launches exactly one demo, so re-link the island bundle only after changing demo or library sources. The aliases:
+The live-scene demos print a `http://localhost:<port>/` URL; open it to see the scene. Each alias launches exactly one demo, so re-run `islandBundle` only after changing demo or library sources. The aliases:
 
 | Command | Demo |
 |---------|------|

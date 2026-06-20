@@ -4,32 +4,16 @@ import kyo.*
 import kyo.Three.foreachKeyed
 import kyo.Three.render
 
-/** A playable 3D Snake on a grid: a `SignalRef` holds the game state, a `Clock`-clocked
-  * `onFrame` hook steps the snake each tick, and `foreachKeyed` reactive reconciliation renders
-  * one cube per body segment keyed by segment id so GPU buffers survive each step.
+/** The scene-graph builder for a playable 3D Snake on a grid: a `SignalRef` holds the game state, a
+  * `Clock`-clocked `onFrame` hook steps the snake each tick, and `foreachKeyed` reactive
+  * reconciliation renders one cube per body segment keyed by segment id so GPU buffers survive each
+  * step.
   *
-  * Demonstrates reactive game state, keyed reconciliation (no full-scene rebuilds on tick), and
-  * the `ThreeFrames.Clock` fixed-interval source. The step ticker is a `Group` with an `onFrame` hook
-  * added as a scene child; `Group` implements `Animated` so the ticker carries no geometry. The
-  * head wraps at the grid edges so the snake stays inside the playfield.
-  */
-object Snake3D extends KyoApp:
-    run {
-        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
-        for
-            scene <- Snake3DScene.scene
-            ui = UI.div(Three.embed(scene, Snake3DScene.camera, Snake3DScene.frames).id("app"))
-            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
-            _        <- Console.printLine(s"Snake3D running on http://localhost:${server.port}/")
-            _        <- server.await
-        yield ()
-        end for
-    }
-end Snake3D
-
-/** The scene-graph builder for [[Snake3D]], used by the `Snake3D` `KyoApp` to mount the compiled
-  * scene.
+  * Demonstrates reactive game state, keyed reconciliation (no full-scene rebuilds on tick), and the
+  * `ThreeFrames.Clock` fixed-interval source. The step ticker is a `Group` with an `onFrame` hook
+  * added as a scene child; `Group` implements `Animated` so the ticker carries no geometry. The head
+  * wraps at the grid edges so the snake stays inside the playfield. The client mount in
+  * `demoharness.DemoMounts` runs this scene through `Three.runMount` in the browser.
   */
 object Snake3DScene:
 

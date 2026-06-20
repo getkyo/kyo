@@ -4,7 +4,7 @@ import kyo.*
 
 private[kyo] object UIServer:
 
-    private def normalizePath(basePath: String): String =
+    private[kyo] def normalizePath(basePath: String): String =
         if basePath.endsWith("/") then basePath.dropRight(1) else basePath
 
     def handlers(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
@@ -15,6 +15,18 @@ private[kyo] object UIServer:
         ))
     end handlers
 
+    // The SSR page GET handler in isolation, for a serve path that supplies its own WebSocket route
+    // (the kyo-threejs feed runner forks per-signal feed observers rather than host-bridge
+    // subscriptions, so it reuses this page handler but composes its own /_kyo/ws session). The page is
+    // identical to the handlers() page: it links head.moduleScript and carries the inline clientJs that
+    // routes a HostUpdate into window.__kyoHostChannels.
+    private[kyo] def pageHandler(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using
+        Frame
+    ): HttpHandler[?, ?, ?] =
+        val base = normalizePath(basePath)
+        getPage(base, basePath, head, Sync.defer(ui))
+    end pageHandler
+
     private def getPage(base: String, pagePath: String, head: UI.PageHead, ui: => UI < Async)(using
         Frame
     ): HttpHandler[?, ?, ?] =
@@ -22,84 +34,49 @@ private[kyo] object UIServer:
             for
                 uiTree <- ui
                 html   <- HtmlRenderer.render(uiTree, Seq.empty)
-                // Inject each host's boot init payload as a nested
-                // <script type="application/json" data-kyo-host-init> island plus a data-kyo-host
-                // marker on the host element, keyed by data-kyo-path, so the client island can scan
-                // [data-kyo-host], read its init island, and mount the initial scene with no WS
-                // round-trip. Hosts with no HostBridge are left untouched (a bare host with no
-                // external renderer needs no island).
-                hosted <- injectHostInit(uiTree, html)
-                page = HtmlRenderer.renderPage(head.title, hosted, head.css, base, head.moduleScript)
+                page = HtmlRenderer.renderPage(head.title, html, head.css, base, head.moduleScript)
             yield HttpResponse.ok(page)
                 .addHeader("Content-Type", "text/html; charset=utf-8")
         }
 
-    // Walks the host bridges in the tree and injects, for each, a data-kyo-host marker attribute and
-    // a nested <script type="application/json" data-kyo-host-init> island carrying that host's boot
-    // payload (Json.encode[HostPayload] of bridge.serverInit), into the rendered host element at the
-    // matching data-kyo-path. This is the server-push-only init-island emission; the shared
-    // renderTo host arm stays a plain cross-platform <canvas> for the SPA/SSG paths.
-    private def injectHostInit(uiTree: UI, html: String)(using Frame): String < Sync =
-        val hosts = ReactiveUI.hostBridges(uiTree)
-        Kyo.foldLeft(hosts)(html) { case (acc, (path, bridge)) =>
-            bridge.serverInit(path).map { init =>
-                val json    = Json.encode[HostPayload](init)
-                val pathStr = path.mkString(".")
-                HtmlRenderer.injectHostIsland(acc, pathStr, json)
-            }
-        }
-    end injectHostInit
-
     private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(using Frame): Unit < (Async & Abort[Closed]) =
+        serveSession(ws, ui)(_ => Kyo.unit)((_, _) => Kyo.unit)
+
+    // The reactive session, parameterized by an `afterTree` hook the caller forks under the SAME session
+    // Scope once the UI tree is evaluated and subscribed. The default hook is a no-op (the plain
+    // server-push path). The kyo-threejs feed runner passes a hook that forks one observer per fed signal
+    // id registered DURING this `ui` evaluation, so the feed fibers share the session Scope and tear down
+    // on disconnect. The `ui` builder runs exactly once; the hook reads what that single run registered.
+    private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(
+        afterTree: UI => Unit < (Async & Scope)
+    )(using Frame): Unit < (Async & Abort[Closed]) =
+        serveSession(ws, ui)(afterTree)((_, _) => Kyo.unit)
+
+    // The reactive session, additionally parameterized by an `appEvent` router the caller supplies to
+    // route an inbound `UIEvent.AppEvent(path, eventId, encoded)` to its registered server-side
+    // handler by eventId (the kyo-threejs feed runner reads the per-session app-event registry). The
+    // default router is a no-op (the plain server-push path has no app-event handlers). The router runs
+    // under the session, so a handler that reflects into a fed signal feeds back over the same WS.
+    private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(
+        afterTree: UI => Unit < (Async & Scope)
+    )(
+        appEvent: (String, String) => Unit < Async
+    )(using Frame): Unit < (Async & Abort[Closed]) =
         Scope.run {
             for
                 uiTree <- ui
                 root   <- ReactiveUI.normalize(uiTree, Seq.empty)
                 exchange = wsExchange(root, ws)
                 sub <- ReactiveUI.subscribe(root, exchange)
-                // Register each host's server-side observers: a host whose serverBridge is a
-                // HostBridge gets its subscriptions forked, each emission emitting a HostUpdate
-                // over this WS (the host-update sink). The pick-router closure (handlePick) routes
-                // an inbound HostPick to the matching host's onPick.
-                handlePick <- registerHosts(uiTree, ws)
+                // Caller-supplied per-session setup (the feed runner's per-id observers), forked under
+                // this Scope so it is interrupted on disconnect alongside the reactive subscription.
+                _ <- afterTree(uiTree)
                 _ <- Async.race(
-                    ws.stream.foreach(payload => dispatchEvent(sub.handle, payload, handlePick)),
+                    ws.stream.foreach(payload => dispatchEvent(sub.handle, payload, appEvent)),
                     ws.onPeerClose
                 )
             yield ()
         }
-
-    // Walks the resolved UI tree, finds every host node carrying a HostBridge, forks each host's
-    // subscriptions (each emission -> emitHostUpdate over the WS), and returns a router that routes
-    // an inbound (path, nodeId, pointer) HostPick to the right host's onPick. The router is a plain
-    // closure over a pending-pick Channel, so dispatchEvent stays Async only; a consumer fiber under
-    // the session Scope drains the Channel and forks each onPick on its own session-Scoped fiber, so
-    // a parked pick never blocks the WS message loop and every fiber is interrupted on teardown.
-    private def registerHosts(uiTree: UI, ws: HttpWebSocket)(using
-        Frame
-    ): ((Seq[String], String, PointerData) => Unit < Async) < (Async & Scope) =
-        val hosts = ReactiveUI.hostBridges(uiTree)
-        for
-            _ <- Kyo.foreachDiscard(hosts) { case (path, bridge) =>
-                bridge.subscriptions(path, payload => emitHostUpdate(ws, path, payload))
-            }
-            pending <- Channel.init[(Seq[String], String, PointerData)](Int.MaxValue)
-            _ <- Fiber.init {
-                Loop.forever {
-                    pending.take.map { case (path, nodeId, pointer) =>
-                        val routed = Maybe.fromOption(hosts.find(_._1 == path)) match
-                            case Present((p, bridge)) => bridge.onPick(p, nodeId, pointer)
-                            case Absent               => Kyo.unit
-                        // Fork each pick on its own session-Scoped fiber so a parked onPick does not
-                        // block draining the next pick.
-                        Fiber.init(routed)
-                    }
-                }
-            }
-        yield (path: Seq[String], nodeId: String, pointer: PointerData) =>
-            Abort.runPartial[Closed](pending.put((path, nodeId, pointer))).unit
-        end for
-    end registerHosts
 
     // Emits one HostUpdate op for a host subtree over the existing single WS, reusing the
     // Json.encode[HtmlOp] sink. runPartial drops only a Closed (the socket closed mid-push -> the
@@ -134,16 +111,16 @@ private[kyo] object UIServer:
     private def dispatchEvent(
         handle: (Seq[String], UIEvent) => Boolean < Async,
         payload: HttpWebSocket.Payload,
-        handlePick: (Seq[String], String, PointerData) => Unit < Async
+        appEvent: (String, String) => Unit < Async
     )(using Frame): Unit < Async =
         payload match
             case HttpWebSocket.Payload.Text(data) =>
                 Json.decode[UIEvent](data) match
-                    // A HostPick routes to the host's server-side onPick via handlePick; every other
+                    // An AppEvent routes by eventId to its registered server-side handler; every other
                     // event routes to the DOM handler. The closure runs server-side; only this typed
                     // event crossed the wire.
-                    case Result.Success(UIEvent.HostPick(path, nodeId, pointer)) =>
-                        handlePick(path, nodeId, pointer)
+                    case Result.Success(UIEvent.AppEvent(_, eventId, encoded)) =>
+                        appEvent(eventId, encoded)
                     case Result.Success(event) => handle(event.path, event).unit
                     // A malformed inbound frame (DecodeException) is dropped: a buggy client must not be able to tear
                     // down the session. A Panic is a decoder defect, not bad input, and must propagate.

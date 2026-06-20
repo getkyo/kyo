@@ -32,8 +32,11 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case Scroll(path: Seq[String], deltaX: Double, deltaY: Double, modifiers: UI.Modifiers, targetId: Maybe[String])
     case Hover(path: Seq[String], mouse: MouseEventData)
     case Unhover(path: Seq[String], mouse: MouseEventData)
-    // A host-originated raycast pick (the 3D back-channel): the client raycasts on its
-    // live scene and sends this typed event; the server routes it to the host's registered
-    // server-side handler. PointerData is the FFI-free wire form of a three.js pointer hit.
-    case HostPick(path: Seq[String], nodeId: String, pointer: PointerData)
+    // The client->server typed app-event back-channel (design 02-design-r2 D-003): a client
+    // onClick (running locally on the live scene) calls `Three.Feed.emit[A](eventId, event)`, which posts
+    // this variant carrying the `Json.encode`d typed event `A` as an opaque string under `eventId`. The
+    // server routes it to the host's registered app-event handler by `eventId`, which decodes with the
+    // same `Schema[A]` and reflects it into a server-owned fed signal. `path` is the host path (unused for
+    // routing, which is by `eventId`); the `encoded` string keeps the event total for any `A: Schema`.
+    case AppEvent(path: Seq[String], eventId: String, encoded: String)
 end UIEvent

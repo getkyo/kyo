@@ -2,41 +2,15 @@ package demo
 
 import kyo.*
 
-/** Nested groups orbiting on a `Raf`-driven `onFrame`, with raycast-to-select and a shared
-  * `SignalRef[String]` tracking the selected body. Demonstrates groups, the frame loop, reactive
-  * transforms, signal-driven interaction, and kyo-ui HUD composition alongside a kyo-threejs scene.
+/** The scene-graph builder for a solar-system demo: nested groups orbiting on a `Raf`-driven
+  * `onFrame`, with raycast-to-select and a shared `SignalRef[String]` tracking the selected body.
+  * Demonstrates groups, the frame loop, reactive transforms, and signal-driven interaction.
   *
-  * The orbit angle advances via `onFrame` on the earth `Group` (groups are `Animated` and carry
-  * their own frame hook). The earth group's `rotation` binds to the same `SignalRef[Double]` via
+  * The orbit angle advances via `onFrame` on the earth `Group` (groups are `Animated` and carry their
+  * own frame hook). The earth group's `rotation` binds to the same `SignalRef[Double]` via
   * `.rotation(signal)`, so the transform updates reactively on each emission. Clicking sun or earth
-  * writes the selected body name into a `SignalRef[String]` shared with the HUD.
-  *
-  * The kyo-ui HUD and the embedded 3D scene compose in one `UI.div` tree: the HUD `UI.p` and the
-  * `Three.embed` host share the same selection `SignalRef[String]`, so a click on the 3D earth
-  * updates the HUD label on the same server-push page.
-  */
-object SolarSystem extends KyoApp:
-    run {
-        val port = args.headMaybe.flatMap(s => Maybe.fromOption(s.toIntOption)).getOrElse(0)
-        for
-            built <- SolarSystemScene.scene
-            (scene, selected) = built
-            ui = UI.div(
-                UI.p(selected.map(s => s"Selected: $s")).id("hud"),
-                Three.embed(scene, SolarSystemScene.camera, ThreeFrames.Raf).id("app")
-            )
-            handlers <- UI.runHandlers("/", DemoServe.head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ DemoServe.islandHandler)*)
-            _        <- Console.printLine(s"SolarSystem running on http://localhost:${server.port}/")
-            _        <- server.await
-        yield ()
-        end for
-    }
-end SolarSystem
-
-/** The scene-graph builder for [[SolarSystem]], kept off the `KyoApp` object so it carries no
-  * `UI.runMount` reference. The harness mounts this scene without the kyo-ui HUD; the `KyoApp`
-  * composes the same scene with its HUD via the returned selection signal.
+  * writes the selected body name into the returned `SignalRef[String]`, which a HUD can bind to. The
+  * client mount in `demoharness.DemoMounts` runs this scene through `Three.runMount` in the browser.
   */
 object SolarSystemScene:
 
