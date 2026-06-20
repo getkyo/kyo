@@ -210,7 +210,10 @@ object HttpServer:
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
             listenFiber.map { listener =>
-                new ListenerUnsafe(listener, connections)
+                val l = new ListenerUnsafe(listener, connections)
+                // SCRATCH(diagnostic): map a leaked LISTEN socket's port back to the test that bound it. Remove after.
+                java.lang.System.err.println(s"[srvtrack] CREATE port=${l.port} ${summon[Frame]}")
+                l
             }
         end init
     end Unsafe
