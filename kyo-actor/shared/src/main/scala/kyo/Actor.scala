@@ -558,6 +558,37 @@ object Actor:
     ): Unit < (Context[Ask[Req, Resp]] & S) =
         receiveLoop[Ask[Req, Resp]](msg => handler(msg.request).map(resp => msg.replyTo.send(resp).andThen(Loop.continue)))
 
+    /** Runs the actor as a stateful request/reply loop, threading `State` across requests.
+      *
+      * The stateful analogue of [[respond]]: the handler receives each request with the current state and returns the reply plus the next
+      * state; the framework sends the reply (so it cannot be forgotten) and continues with the next state. This gives the request/reply loop
+      * local state and access to effects between requests without reaching for `Var`. The actor processes one request at a time in FIFO order
+      * and runs until its mailbox closes. For early termination or to observe a final result, use [[receiveLoop]] with a manual reply via the
+      * request's `replyTo`. A handler failure of type E or a panic terminates the actor; an in-flight caller observes it through the
+      * lifecycle-aware [[Actor.ask]]. Model expected per-request errors in `Resp` (for example a `Result`) rather than aborting.
+      *
+      * @param state
+      *   The initial state value to use for the first request
+      * @param handler
+      *   Produces the reply and the next state for each request from the request payload and the current state
+      * @tparam Req
+      *   The request type
+      * @tparam Resp
+      *   The single reply type for the whole actor
+      * @tparam State
+      *   The type of state threaded between requests
+      */
+    def respondLoop[Req, Resp, State](using
+        Frame
+    )[S](state: State)(
+        handler: (Req, State) => (Resp, State) < S
+    )(using Tag[Poll[Ask[Req, Resp]]]): Unit < (Context[Ask[Req, Resp]] & S) =
+        receiveLoop[Ask[Req, Resp]](state) { (msg, st) =>
+            handler(msg.request, st).map { case (resp, next) =>
+                msg.replyTo.send(resp).andThen(Loop.continue(next))
+            }
+        }.unit
+
     /** Creates and starts a new actor with default capacity from a message processing behavior.
       *
       * This is a convenience method that calls `run(defaultCapacity)(behavior)`. It creates an actor with the default mailbox capacity as

@@ -1030,4 +1030,58 @@ class ActorTest extends kyo.test.Test[Any]:
         }
     }
 
+    "respondLoop" - {
+        "threads state across requests, replying the running total without Var" in {
+            Scope.run {
+                for
+                    actor <- Actor.run {
+                        Actor.respondLoop[Int, Int, Int](0) { (req, total) =>
+                            val next = total + req
+                            (next, next)
+                        }
+                    }
+                    r1 <- actor.ask(10)
+                    r2 <- actor.ask(5)
+                    r3 <- actor.ask(3)
+                    _  <- actor.close
+                yield
+                    assert(r1 == 10)
+                    assert(r2 == 15)
+                    assert(r3 == 18)
+            }
+        }
+        "threads a compound state, replying a value that diverges from any single input" in {
+            Scope.run {
+                for
+                    actor <- Actor.run {
+                        // State is (runningTotal, requestCount); the reply is total minus count, which echoes
+                        // neither the input nor the prior reply, so a correct reply requires threading both values.
+                        Actor.respondLoop[Int, Int, (Int, Int)]((0, 0)) { (req, state) =>
+                            val (total, count) = state
+                            val nextTotal      = total + req
+                            val nextCount      = count + 1
+                            (nextTotal - nextCount, (nextTotal, nextCount))
+                        }
+                    }
+                    r1 <- actor.ask(10)
+                    r2 <- actor.ask(5)
+                    r3 <- actor.ask(3)
+                    _  <- actor.close
+                yield
+                    assert(r1 == 9)  // total 10, count 1
+                    assert(r2 == 13) // total 15, count 2
+                    assert(r3 == 15) // total 18, count 3
+            }
+        }
+        "ask(req) resolves via the =:= instance method for a respondLoop actor" in {
+            Scope.run {
+                for
+                    actor <- Actor.run(Actor.respondLoop[Int, Int, Int](0)((req, total) => (total + req, total + req)))
+                    reply <- actor.ask(7)
+                    _     <- actor.close
+                yield assert(reply == 7)
+            }
+        }
+    }
+
 end ActorTest
