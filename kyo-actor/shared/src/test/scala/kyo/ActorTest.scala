@@ -1102,14 +1102,16 @@ class ActorTest extends kyo.test.Test[Any]:
                             (next, next)
                         }
                     }
-                    r1 <- actor.ask(10)
-                    r2 <- actor.ask(5)
-                    r3 <- actor.ask(3)
-                    _  <- actor.close
+                    r1         <- actor.ask(10)
+                    r2         <- actor.ask(5)
+                    r3         <- actor.ask(3)
+                    _          <- actor.close
+                    finalState <- actor.await
                 yield
                     assert(r1 == 10)
                     assert(r2 == 15)
                     assert(r3 == 18)
+                    assert(finalState == 18) // final threaded state after the last processed request (10 + 5 + 3)
             }
         }
         "threads a compound state, replying a value that diverges from any single input" in {
@@ -1125,14 +1127,16 @@ class ActorTest extends kyo.test.Test[Any]:
                             (nextTotal - nextCount, (nextTotal, nextCount))
                         }
                     }
-                    r1 <- actor.ask(10)
-                    r2 <- actor.ask(5)
-                    r3 <- actor.ask(3)
-                    _  <- actor.close
+                    r1         <- actor.ask(10)
+                    r2         <- actor.ask(5)
+                    r3         <- actor.ask(3)
+                    _          <- actor.close
+                    finalState <- actor.await
                 yield
-                    assert(r1 == 9)  // total 10, count 1
-                    assert(r2 == 13) // total 15, count 2
-                    assert(r3 == 15) // total 18, count 3
+                    assert(r1 == 9)               // total 10, count 1
+                    assert(r2 == 13)              // total 15, count 2
+                    assert(r3 == 15)              // total 18, count 3
+                    assert(finalState == (18, 3)) // final threaded (runningTotal, requestCount)
             }
         }
         "ask(req) resolves via the =:= instance method for a respondLoop actor" in {

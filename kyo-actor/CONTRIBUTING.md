@@ -167,10 +167,10 @@ def respond[Req, Resp](handler: Req => Resp < S): Unit < (Context[Ask[Req, Resp]
 
 The framework sends `handler(msg.request)` to `msg.replyTo` before looping. A handler that forgets to reply cannot strand a caller because there is no opportunity to forget: `handler` only produces the response value, not the send.
 
-`respondLoop` is the stateful variant, threading `State` across requests:
+`respondLoop` is the stateful variant, threading `State` across requests. Like the other stateful loops it returns the final `State`, the state after the last processed request, yielded when the mailbox closes:
 
 ```scala
-def respondLoop[Req, Resp, State](state: State)(handler: (Req, State) => (Resp, State) < S): Unit < (Context[Ask[Req, Resp]] & S)
+def respondLoop[Req, Resp, State](state: State)(handler: (Req, State) => (Resp, State) < S): State < (Context[Ask[Req, Resp]] & S)
 ```
 
 Both require `Tag[Poll[Ask[Req, Resp]]]` in scope. The `Ask[Req, Resp]` envelope is what the actor's message type is set to; callers use `actor.ask(request)` via the `A =:= Ask[Req, Resp]` evidence on the instance method.

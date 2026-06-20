@@ -121,8 +121,10 @@ sealed abstract class Actor[+E, A, B](
 
     /** Retrieves the final result of this actor.
       *
-      * Waits for the actor to complete processing all messages and return its final value. Will fail with error E if an unhandled error
-      * occurs during message processing, or with Closed if the actor is closed prematurely.
+      * Waits for the actor to complete processing all messages and return its final value. Closing the mailbox signals end-of-stream to the
+      * receive loop, so a behavior that consumes to end-of-stream (the receive combinators) completes with its final value B. Fails with error
+      * E if an unhandled error occurs during message processing, or with Closed if the actor is closed while its behavior is mid-message and
+      * does not resolve to a final value.
       *
       * @return
       *   The actor's final result of type B
@@ -639,17 +641,19 @@ object Actor:
       *   The single reply type for the whole actor
       * @tparam State
       *   The type of state threaded between requests
+      * @return
+      *   The final threaded `State`, the state after the last processed request, yielded when the mailbox closes
       */
     def respondLoop[Req, Resp, State](using
         Frame
     )[S](state: State)(
         handler: (Req, State) => (Resp, State) < S
-    )(using Tag[Poll[Ask[Req, Resp]]]): Unit < (Context[Ask[Req, Resp]] & S) =
+    )(using Tag[Poll[Ask[Req, Resp]]]): State < (Context[Ask[Req, Resp]] & S) =
         receiveLoop[Ask[Req, Resp]](state) { (msg, st) =>
             handler(msg.request, st).map { case (resp, next) =>
                 msg.replyTo.send(resp).andThen(Loop.continue(next))
             }
-        }.unit
+        }
 
     /** Creates and starts a new actor with default capacity from a message processing behavior.
       *
@@ -748,7 +752,14 @@ object Actor:
                         case Left(r) =>
                             Loop.done(r)
                         case Right(cont) =>
-                            mailbox.take.map(v => Loop.continue(cont(Maybe(v))))
+                            // A graceful mailbox close signals end-of-stream: feed Absent so the behavior's poll
+                            // resolves to its natural completion (the loop combinators yield their final state),
+                            // rather than aborting the actor with Closed. A present message continues the loop.
+                            Abort.run[Closed](mailbox.take).map {
+                                case Result.Success(v) => Loop.continue(cont(Maybe(v)))
+                                case Result.Failure(_) => Loop.continue(cont(Absent))
+                                case Result.Panic(e)   => Abort.panic(e)
+                            }
                     }
                 }.handle(
                     Sync.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
