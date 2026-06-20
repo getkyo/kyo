@@ -379,7 +379,7 @@ final private[net] class PosixTransport private[posix] (
                     awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true)
                 else
                     addr.close()
-                    closeRawFd(handle.writeFd)
+                    closeHandleFd(handle)
                     promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(result.errorCode))))
                 end if
             case Absent =>
@@ -410,17 +410,17 @@ final private[net] class PosixTransport private[posix] (
                     val err = if checkSoError then soError(handle.writeFd) else 0
                     if err != 0 then
                         addr.close()
-                        closeRawFd(handle.writeFd)
+                        closeHandleFd(handle)
                         promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
                     else completeOrTls(handle, addr, driver, target, port, tls, promise)
                     end if
                 case Result.Failure(closed) =>
                     addr.close()
-                    closeRawFd(handle.writeFd)
+                    closeHandleFd(handle)
                     promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
                 case Result.Panic(e) =>
                     addr.close()
-                    closeRawFd(handle.writeFd)
+                    closeHandleFd(handle)
                     promise.completeDiscard(Result.panic(e))
             end match
         }
@@ -463,7 +463,7 @@ final private[net] class PosixTransport private[posix] (
                     try buildEngine(cfg, host, isServer = false)
                     catch
                         case closed: Closed =>
-                            closeRawFd(handle.writeFd)
+                            closeHandleFd(handle)
                             PosixHandle.close(handle)
                             promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
                             return
@@ -479,13 +479,13 @@ final private[net] class PosixTransport private[posix] (
                         // only frees an attached engine) cannot free it. Free it directly here: the handshake is over and no pump started, so
                         // nothing else touches the engine. It is mutually exclusive with onFinished, so there is no double-free.
                         engine.free()
-                        closeRawFd(handle.writeFd)
+                        closeHandleFd(handle)
                         PosixHandle.close(handle)
                         promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
                     ,
                     onPanic = e =>
                         engine.free()
-                        closeRawFd(handle.writeFd)
+                        closeHandleFd(handle)
                         PosixHandle.close(handle)
                         promise.completeDiscard(Result.panic(e))
                 )
@@ -1071,6 +1071,16 @@ final private[net] class PosixTransport private[posix] (
         given Frame = Frame.internal
         discard(takeNow(sockets.close(fd)))
     end closeRawFd
+
+    /** Close a handle's socket fd EXACTLY ONCE across every close path, through the single `claimFdClose` guard. A connect / TLS-handshake
+      * failure path and the driver's own `closeNow` can both target the same started handle's fd; without the shared claim each would call
+      * `close(fd)` and the second would land on a fd the OS has already recycled to another connection (or a test's socket), wrongly closing it.
+      * Routing every handle-fd close through `claimFdClose` makes the close one-shot, so a recycled fd is never closed by a stale path. The
+      * fresh-fd setup-failure closes that own no handle yet (a just-`socket`ed listen/client fd) stay on the plain [[closeRawFd]].
+      */
+    private def closeHandleFd(handle: PosixHandle)(using AllowUnsafe): Unit =
+        if handle.claimFdClose() then closeRawFd(handle.writeFd)
+    end closeHandleFd
 
     /** The non-blocking fcntl shim (loaded once), used to set client / accepted sockets non-blocking on every architecture (RI: variadic
       * fcntl is ABI-unsafe on arm64).
