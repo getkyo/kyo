@@ -149,9 +149,15 @@ private[kyo] object CancellationEngine:
         policy: JsonRpcCancellationPolicy,
         writerChannel: Channel[WriterMsg]
     )(using Frame): Unit < (Async & Abort[Closed]) =
-        policy.encodeParams(id, reason).map { params =>
-            val cancelEnv = JsonRpcNotification(policy.cancelMethod, Present(params), info.extras)
-            writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
+        // Wait until the originating request has been handed to writerChannel before enqueuing the
+        // cancel. Otherwise, under scheduler load the cancel envelope can be enqueued (and so delivered
+        // to the single-reader peer) ahead of its own request, which the peer drops as an unknown id;
+        // the inbound handler then blocks on ctx.cancelled and the caller on the reply until timeout.
+        info.requestEnqueued.get.andThen {
+            policy.encodeParams(id, reason).map { params =>
+                val cancelEnv = JsonRpcNotification(policy.cancelMethod, Present(params), info.extras)
+                writerChannel.put(WriterMsg.SendEnvelope(cancelEnv))
+            }
         }
 
     /** Handles timeout auto-fire: fires the cancel notification (if policy present) and completes the abortSignal. */

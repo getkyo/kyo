@@ -37,7 +37,11 @@ private[kyo] object CallEngine:
                 Sync.Unsafe.defer {
                     idSignal.poll() match
                         case Maybe.Present(Result.Success(id)) =>
-                            discard(callerRegistry.remove(id))
+                            // Catch-all: release any cancel still waiting on requestEnqueued (e.g. the send was
+                            // interrupted before it could signal) as the call's registry entry is removed.
+                            Maybe(callerRegistry.remove(id)).foreach { info =>
+                                info.requestEnqueued.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                            }
                         case _ => ()
                 }
             }

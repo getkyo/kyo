@@ -18,7 +18,12 @@ private[kyo] case class CallerInfo(
     extras: Maybe[Structure.Value],
     abortSignal: Fiber.Promise[JsonRpcError, Any],
     // AtomicRef.Unsafe aliases java.util.concurrent.atomic.AtomicReference; cross-platform via JS/Native JDK shim
-    pendingCancelError: AtomicRef.Unsafe[Maybe[JsonRpcError]]
+    pendingCancelError: AtomicRef.Unsafe[Maybe[JsonRpcError]],
+    // Completed once this call's request envelope has been handed to writerChannel (or the call has
+    // terminated). An outbound cancel for this id waits on it, so a cancel can never be enqueued, and
+    // thus delivered, ahead of its own request; the peer would otherwise drop the cancel as an unknown
+    // id and the handler would block on ctx.cancelled (or the caller on the reply) until timeout.
+    requestEnqueued: Fiber.Promise[Unit, Sync]
 )
 
 sealed private[kyo] trait InboundEntry
@@ -89,7 +94,7 @@ final class JsonRpcEndpointImpl private[kyo] (
         params: In,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Out, Abort[JsonRpcError | Closed]] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(CallEngine.callEffect[In, Out](
+        Fiber.Unsafe.init(CallEngine.callEffect[In, Out](
             method,
             params,
             extras,
@@ -100,14 +105,14 @@ final class JsonRpcEndpointImpl private[kyo] (
             writerChannel,
             exchange,
             config
-        ))).unsafe
+        ))
 
     def notify[In: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(CallEngine.notifyEffect[In](method, params, extras, writerChannel))).unsafe
+        Fiber.Unsafe.init(CallEngine.notifyEffect[In](method, params, extras, writerChannel))
 
     def sendUnmatched[In: Schema](
         method: String,
@@ -115,14 +120,14 @@ final class JsonRpcEndpointImpl private[kyo] (
         id: JsonRpcId,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(CallEngine.sendUnmatchedEffect[In](method, params, id, extras, writerChannel))).unsafe
+        Fiber.Unsafe.init(CallEngine.sendUnmatchedEffect[In](method, params, id, extras, writerChannel))
 
     def callWithProgress[In: Schema, Out: Schema](
         method: String,
         params: In,
         extras: JsonRpcExtrasEncoder
     )(using AllowUnsafe, Frame): Fiber.Unsafe[JsonRpcHandler.Pending[Out], Abort[JsonRpcError | Closed]] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(CallEngine.callWithProgressEffect[In, Out](
+        Fiber.Unsafe.init(CallEngine.callWithProgressEffect[In, Out](
             method,
             params,
             extras,
@@ -136,7 +141,7 @@ final class JsonRpcEndpointImpl private[kyo] (
             progressPolicy,
             progressStreams,
             tokenToDeadline
-        ))).unsafe
+        ))
 
     def callPartialResults[In: Schema, T: Schema: Tag](
         method: String,
@@ -162,22 +167,22 @@ final class JsonRpcEndpointImpl private[kyo] (
         Sync.Unsafe.evalOrThrow(ProgressEngine.subscribeProgressEffect(token, progressPolicy, progressStreams, initFrame))
 
     def unsubscribeProgress(token: Structure.Value)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(ProgressEngine.unsubscribeProgressEffect(token, progressStreams))).unsafe
+        Fiber.Unsafe.init(ProgressEngine.unsubscribeProgressEffect(token, progressStreams))
 
     def cancel(id: JsonRpcId, reason: Maybe[String])(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Abort[Closed]] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(CancellationEngine.cancelEffect(
+        Fiber.Unsafe.init(CancellationEngine.cancelEffect(
             id,
             reason,
             callerRegistry,
             config,
             writerChannel
-        ))).unsafe
+        ))
 
     def awaitDrain(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(LifecycleEngine.awaitDrainEffect(inFlight, drainSignal))).unsafe
+        Fiber.Unsafe.init(LifecycleEngine.awaitDrainEffect(inFlight, drainSignal))
 
     def close(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        Sync.Unsafe.evalOrThrow(Fiber.initUnscoped(closeEffect(gracePeriod))).unsafe
+        Fiber.Unsafe.init(closeEffect(gracePeriod))
 
     def dispatch(
         name: String,
@@ -267,9 +272,10 @@ object JsonRpcEndpointImpl:
                                 Sync.Unsafe.defer {
                                     // AtomicRef.Unsafe aliases java.util.concurrent.atomic.AtomicReference: per-request pending-cancel cell
                                     val pendingCancel = AtomicRef.Unsafe.init[Maybe[JsonRpcError]](Absent)(using AllowUnsafe.embrace.danger)
+                                    val requestEnqueued = Promise.Unsafe.init[Unit, Sync]()(using AllowUnsafe.embrace.danger)
                                     callerRegistry.put(
                                         id,
-                                        CallerInfo(req.method, extrasVal, req.abortSignal, pendingCancel)
+                                        CallerInfo(req.method, extrasVal, req.abortSignal, pendingCancel, requestEnqueued.safe)
                                     )
                                     req.idSignal.completeDiscard(Result.succeed(id))(using AllowUnsafe.embrace.danger)
                                 }.andThen {
@@ -296,11 +302,25 @@ object JsonRpcEndpointImpl:
                                     // Malformed envelope rather than a Result.Failure, so getOrElse never falls back.
                                     val env = Structure.decode[JsonRpcEnvelope](sv)(using config.codec, frame)
                                         .getOrElse(JsonRpcMalformedMessage(Absent, "decode failed", sv))
-                                    Abort.run[Closed](writerChannel.put(WriterMsg.SendEnvelope(env))).map {
-                                        case Result.Success(_) => ()
-                                        case Result.Failure(c) =>
-                                            Abort.fail(JsonRpcTransportError(s"transport closed: ${c.getMessage}", c))
-                                        case Result.Panic(t) => Abort.panic(t)
+                                    Abort.run[Closed](writerChannel.put(WriterMsg.SendEnvelope(env))).map { putResult =>
+                                        // Now that this request envelope is on writerChannel, release any cancel for its
+                                        // id that is waiting on requestEnqueued, so the cancel can only be enqueued behind
+                                        // the request. Completed on put failure too, so a racing cancel never hangs.
+                                        (env match
+                                            case r: JsonRpcRequest =>
+                                                Sync.Unsafe.defer {
+                                                    Maybe(callerRegistry.get(r.id)).foreach { info =>
+                                                        info.requestEnqueued.unsafe.completeUnitDiscard()(using AllowUnsafe.embrace.danger)
+                                                    }
+                                                }
+                                            case _ => Kyo.unit
+                                        ).andThen {
+                                            putResult match
+                                                case Result.Success(_) => ()
+                                                case Result.Failure(c) =>
+                                                    Abort.fail(JsonRpcTransportError(s"transport closed: ${c.getMessage}", c))
+                                                case Result.Panic(t) => Abort.panic(t)
+                                        }
                                     }
                                 case Result.Failure(e) => Abort.fail(JsonRpcTransportError(
                                         "wire decode error",
