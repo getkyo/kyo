@@ -183,23 +183,31 @@ jobs:
       - name: Test ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
+          target="${{ matrix.target }}"
           mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
-          cmd="testKyo $mode ${{ matrix.target }}"
 
-          if [ "${{ matrix.target }}" = "Native" ]; then
-            # Native tests need retry wrapper for libunwind crash tolerance
-            ./scripts/native-test.sh "$cmd"
-          elif [ "${{ matrix.target }}" = "JVM" ] && [ "${{ inputs.test-command }}" = "test" ]; then
-            # Full JVM run: split compile from test into three separate sbt processes. A single session
-            # that compiles every module's main+test while test forks run holds the whole codebase's
-            # compile heap at once and over-commits the 16GB runner (exit 143 / shutdown). Each phase
-            # exits before the next (returning its heap to the OS), and the compile phases have no forks,
-            # so no process ever holds a large driver heap and a test fork at the same time. The run phase
-            # finds everything compiled, so it does not rebuild compiler state. The shell is fail-fast
-            # (bash -e), so a failure in any phase fails the step.
-            sbt 'testKyo --phase compile-main --all JVM'
-            sbt 'testKyo --phase compile-test --all JVM'
-            sbt 'testKyo --all JVM'
+          # Final "test" phase: Native needs the crash-retry wrapper for libunwind tolerance; the others
+          # run sbt directly. (The compile phases never run a native binary, so they use plain sbt.)
+          run_tests() {
+            if [ "$target" = "Native" ]; then
+              ./scripts/native-test.sh "$1"
+            else
+              sbt "$1"
+            fi
+          }
+
+          if [ "${{ inputs.test-command }}" = "test" ]; then
+            # Full run: split compile from test into separate sbt processes so no single session holds the
+            # whole codebase's compile heap while the test phase runs (forking JVMs, or linking JS/Native/
+            # Wasm). That single-session pattern over-commits the 16GB runner (exit 143 / shutdown). Each
+            # phase exits before the next (returning its heap to the OS), the compile phases have no forks,
+            # and the run phase finds everything compiled so it does not rebuild compiler state. The shell
+            # is fail-fast (bash -e). Applies to every platform: JVM, JS, Native, and Wasm over-commit the
+            # same way.
+            sbt "testKyo --phase compile-main --all $target"
+            sbt "testKyo --phase compile-test --all $target"
+            run_tests "testKyo --all $target"
           else
-            sbt "$cmd"
+            # Diff mode (PR): only affected modules, no over-commit, single pass.
+            run_tests "testKyo $mode $target"
           fi
