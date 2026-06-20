@@ -321,13 +321,12 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
                                         callFib.get.map {
                                             case Result.Failure(e: JsonRpcError) =>
                                                 assert(e.code == -32800)
-                                                Sync.defer {
-                                                    val cancelSent = capA.sentList.exists {
+                                                assertEventually(Sync.defer {
+                                                    capA.sentList.exists {
                                                         case JsonRpcNotification(m, _, _) => m == "$/cancelRequest"
                                                         case _                            => false
                                                     }
-                                                    assert(cancelSent, "$/cancelRequest notification not found on transport")
-                                                }
+                                                })
                                             case other => fail(s"expected -32800, got $other")
                                         }
                                     }
@@ -364,13 +363,12 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
                                     endpointA.cancel(id, Present("user requested")).andThen {
                                         callFib.get.map {
                                             case Result.Failure(e: JsonRpcError) =>
-                                                Sync.defer {
-                                                    val cancelNotif = capA.sentList.collectFirst {
-                                                        case n @ JsonRpcNotification(m, _, _)
-                                                            if m == "notifications/cancelled" => n
+                                                assertEventually(Sync.defer {
+                                                    capA.sentList.exists {
+                                                        case JsonRpcNotification(m, _, _) => m == "notifications/cancelled"
+                                                        case _                            => false
                                                     }
-                                                    assert(cancelNotif.isDefined, "notifications/cancelled not found on transport")
-                                                }
+                                                })
                                             case other => fail(s"expected failure, got $other")
                                         }
                                     }
@@ -639,16 +637,23 @@ class JsonRpcHandlerCancellationPolicyTest extends JsonRpcTest:
                                 case Present(id) =>
                                     endpointA.cancel(id, Absent).andThen {
                                         callFib.get.andThen {
-                                            Sync.defer {
-                                                val cancelNotif = capA.sentList.collectFirst {
-                                                    case n @ JsonRpcNotification(m, _, _)
-                                                        if m == "$/cancelRequest" => n
+                                            assertEventually(Sync.defer {
+                                                capA.sentList.exists {
+                                                    case JsonRpcNotification(m, _, _) => m == "$/cancelRequest"
+                                                    case _                            => false
                                                 }
-                                                assert(cancelNotif.isDefined, "cancel notification not found")
-                                                assert(
-                                                    cancelNotif.get.extras == Present(sessionExtras),
-                                                    s"expected extras to match, got ${cancelNotif.get.extras}"
-                                                )
+                                            }).andThen {
+                                                Sync.defer {
+                                                    val cancelNotif = capA.sentList.collectFirst {
+                                                        case n @ JsonRpcNotification(m, _, _)
+                                                            if m == "$/cancelRequest" => n
+                                                    }
+                                                    assert(cancelNotif.isDefined, "cancel notification not found")
+                                                    assert(
+                                                        cancelNotif.get.extras == Present(sessionExtras),
+                                                        s"expected extras to match, got ${cancelNotif.get.extras}"
+                                                    )
+                                                }
                                             }
                                         }
                                     }
