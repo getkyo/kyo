@@ -238,6 +238,7 @@ object HttpServer:
         def address: HttpAddress = listener.address
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+            java.lang.System.err.println(s"[srvtrack] CLOSE port=$port") // SCRATCH(diagnostic): did closeFiber run? Remove after.
             listener.close() // stop accepting new connections first
 
             def forceCloseAndComplete(): Unit =
