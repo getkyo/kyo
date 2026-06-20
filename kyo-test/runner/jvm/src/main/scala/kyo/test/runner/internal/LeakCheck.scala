@@ -244,12 +244,21 @@ private[runner] object LeakCheck:
         if threadLeaks.nonEmpty then
             findings += s"non-daemon thread leak (${threadLeaks.size}): ${threadLeaks.mkString("; ")}"
 
-        (baseline.fds, openFdTargets()) match
-            case (Maybe.Present(before), Maybe.Present(after)) =>
-                val leaks = fdLeaks(before, after, effectiveAllowlist)
-                if leaks.nonEmpty then
-                    findings += s"file-descriptor leak (${leaks.size}): ${leaks.mkString("; ")}"
-            case _ => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
+        baseline.fds match
+            case Maybe.Present(before) =>
+                // A descriptor may be mid-close at done(): a client connection closes asynchronously while it processes the
+                // server's FIN (EOF -> pump teardown -> channel close). Require a descriptor to remain leaked across a second
+                // settle so an in-flight close is not mistaken for a leak; a genuinely leaked descriptor never closes and so
+                // survives the recheck. (Safe: this can only drop descriptors that closed during the window, never a real leak.)
+                val first = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
+                if first.nonEmpty then
+                    LockSupport.parkNanos(settleNanos)
+                    val second     = openFdTargets().map(fdLeaks(before, _, effectiveAllowlist)).getOrElse(Chunk.empty)
+                    val persistent = first.filter(second.contains)
+                    if persistent.nonEmpty then
+                        findings += s"file-descriptor leak (${persistent.size}): ${persistent.mkString("; ")}"
+                end if
+            case Maybe.Absent => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
         end match
 
         val all = findings.result()
