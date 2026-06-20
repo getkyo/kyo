@@ -276,7 +276,7 @@ private[runner] object LeakCheck:
                 val stack       = busyWorkerStack().getOrElse(frame.getOrElse(""))
                 val allowlisted = effectiveAllowlist.exists(stack.contains)
                 if !allowlisted then
-                    findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}"
+                    findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}\n    stack:\n$stack"
         end match
 
         System.gc()
