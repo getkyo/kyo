@@ -86,6 +86,22 @@ sealed abstract class Actor[+E, A, B](
             }
         }
 
+    /** Sends a request to a [[respond]] actor and awaits the reply, strand-safe via the lifecycle-aware [[ask]].
+      *
+      * Available only when the actor's message type `A` is an `Ask[Req, Resp]` envelope, witnessed by the `A =:= Actor.Ask[Req, Resp]`
+      * evidence. It builds the envelope, wiring the framework's reply `Subject`, and delegates to the member `ask`. For
+      * manually-constructed envelopes or non-`respond` actors, use the `ask` overload taking a `Subject[C] => A` builder directly.
+      *
+      * @param request
+      *   The request payload to send to the actor
+      * @tparam Req
+      *   The request payload type sent to the actor
+      * @tparam Resp
+      *   The response type returned by the actor
+      */
+    def ask[Req, Resp](request: Req)(using frame: Frame, ev: A =:= Actor.Ask[Req, Resp]): Resp < (Async & Abort[Closed | E]) =
+        ask[Resp](replyTo => ev.flip(Actor.Ask(request, replyTo)))
+
     /** The number of in-flight `ask` replies currently registered with this actor.
       *
       * Exposed for tests: it must be bounded by concurrent in-flight asks and must drop back to zero once they resolve, never growing with
@@ -541,15 +557,6 @@ object Actor:
         using Tag[Poll[Ask[Req, Resp]]]
     ): Unit < (Context[Ask[Req, Resp]] & S) =
         receiveLoop[Ask[Req, Resp]](msg => handler(msg.request).map(resp => msg.replyTo.send(resp).andThen(Loop.continue)))
-
-    extension [E, Req, Resp, B](actor: Actor[E, Ask[Req, Resp], B])
-        /** Sends a request to a [[respond]] actor and awaits the reply, strand-safe via [[Actor.ask]].
-          *
-          * Note: prefer this for respond actors; the member `Actor.ask` remains available for manually-constructed `Ask` envelopes.
-          */
-        def ask(request: Req)(using Frame): Resp < (Async & Abort[Closed | E]) =
-            actor.ask(Ask(request, _))
-    end extension
 
     /** Creates and starts a new actor with default capacity from a message processing behavior.
       *
