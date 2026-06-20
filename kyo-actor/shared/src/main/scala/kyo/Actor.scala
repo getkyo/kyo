@@ -206,7 +206,7 @@ object Actor:
 
     /** Default mailbox capacity for actors.
       *
-      * This value can be configured through the system property "kyo.actor.capacity.default". If not specified, it defaults to 100
+      * This value can be configured through the system property "kyo.actor.capacity.default". If not specified, it defaults to 128
       * messages.
       */
     val defaultCapacity =
