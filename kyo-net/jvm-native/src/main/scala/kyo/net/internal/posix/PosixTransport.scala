@@ -1196,9 +1196,10 @@ final private[net] class PosixTransport private[posix] (
                         // single-recv gate drops every recv arm requested for this fd, so no NEW recv can register during the upgrade: the only recv
                         // that can be in flight is the genuine stale one the plaintext ReadPump armed before detach (kernel-owned, uncancellable). The
                         // no-stale-recv decision is therefore made later, ON THE REAP CARRIER, by the handshake's first read (driveUpgradeRead), whose
-                        // hasInFlightRead reads `pending` authoritatively: the genuine stale recv registered before driveUpgradeRead runs (FIFO on the
-                        // reap carrier), and a stray ReadPump re-arm racing the upgrade was gated away and never reached `pending`. Making the decision
-                        // here on the upgrade carrier instead would be a TOCTOU (a hasInFlightRead snapshot could miss a not-yet-registered stale recv).
+                        // hasInFlightRead scans both `pending` AND `stalledSubmits` authoritatively: the genuine stale recv is registered before
+                        // driveUpgradeRead runs (FIFO on the reap carrier), in `pending` if its SQE went out or in `stalledSubmits` if it parked on a
+                        // full SQ, and a stray ReadPump re-arm racing the upgrade was gated away and reached neither. Making the decision here on the
+                        // upgrade carrier instead would be a TOCTOU (a hasInFlightRead snapshot could miss a not-yet-registered stale recv).
                         // On the pollers upgradeActive was never set (inlineRecvSafe), so this carries through as false and the handshake reads normally.
                         driveHandshake(
                             handle,

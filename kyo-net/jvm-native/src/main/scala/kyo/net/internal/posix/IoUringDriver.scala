@@ -769,23 +769,28 @@ final private[net] class IoUringDriver private[posix] (
         }
     end closeListener
 
-    /** True when a recv SQE for `handle` is kernel-owned (registered in `pending`). The STARTTLS upgrade read path consults this ON THE REAP CARRIER
+    /** True when a recv for `handle` is in flight: a recv SQE kernel-owned (registered in `pending`) OR a recv parked on a full submission queue
+      * (held in `stalledSubmits`, re-armed next reap turn by `reArmStalledSubmits`). The STARTTLS upgrade read path consults this ON THE REAP CARRIER
       * (inside the handshake's `driveUpgradeRead`, which runs as an engine op) to learn whether the plaintext ReadPump left a stale recv that will
       * consume the peer's first handshake flight; if so the handshake routes through the handle's `upgradeHandoff` instead of issuing a second, racing
-      * recv. `pending` alone is authoritative here: the genuine stale recv was armed BEFORE `upgradeActive` was set, so its `submitRecv` registered it
-      * on the reap carrier before this `driveUpgradeRead` op runs (FIFO). A stray ReadPump re-arm requested DURING the upgrade can never register a
-      * competing recv: `awaitRead`'s single-recv gate drops any arm requested while `upgradeActive` is set, so it never reaches `pending` (and the
-      * earlier queued-arm counting that guarded against it is no longer needed). Scans `pending` (close-path cost, not the hot read path); a handle
-      * has at most one recv in flight at a time.
+      * recv. Both queues must be scanned: under SQ-full saturation the stale recv's `submitRecv` `unregister`s it from `pending` and parks it in
+      * `stalledSubmits`, so a `pending`-only check would answer "no stale recv coming" while one genuinely is, and the upgrade would clear
+      * `upgradeActive` and arm a racing recv, stranding the re-armed stale recv's flight on the now-normal read path (the upgrade stall under load).
+      * A stray ReadPump re-arm requested DURING the upgrade can never register a competing recv: `awaitRead`'s single-recv gate drops any arm requested
+      * while `upgradeActive` is set, so it reaches neither queue. Both queues are touched only on the reap carrier (this runs there), so the scan is
+      * race-free. Close-path cost, not the hot read path; a handle has at most one recv in flight at a time.
       */
     override def hasInFlightRead(handle: PosixHandle)(using AllowUnsafe): Boolean =
-        val it    = pending.values().iterator()
-        var found = false
-        while !found && it.hasNext do
-            it.next() match
-                case PendingOp.Read(_, h, _) if h.id == handle.id => found = true
-                case _                                            => ()
-        end while
+        def isReadFor(op: PendingOp): Boolean = op match
+            case PendingOp.Read(_, h, _) => h.id == handle.id
+            case _                       => false
+        val pendingIt = pending.values().iterator()
+        var found     = false
+        while !found && pendingIt.hasNext do
+            if isReadFor(pendingIt.next()) then found = true
+        val stalledIt = stalledSubmits.iterator()
+        while !found && stalledIt.hasNext do
+            if isReadFor(stalledIt.next()) then found = true
         found
     end hasInFlightRead
 
