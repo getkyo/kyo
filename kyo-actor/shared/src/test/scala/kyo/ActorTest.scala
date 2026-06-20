@@ -790,6 +790,55 @@ class ActorTest extends kyo.test.Test[Any]:
 
     }
 
+    "subscribe" - {
+        "delivers hub events through the actor mailbox" in {
+            // A Hub listener only receives events published after it is created. The actor establishes
+            // its subscription asynchronously, so the publisher must wait on `subscribed` before sending,
+            // otherwise early events are dropped and receiveMax(3) never completes.
+            for
+                hub        <- Hub.init[Int]
+                acc        <- AtomicInt.init(0)
+                subscribed <- Latch.init(1)
+                actor <- Actor.run {
+                    Actor.subscribe(hub)(identity)
+                        .andThen(subscribed.release)
+                        .andThen(Actor.receiveMax[Int](3)(acc.addAndGet(_).unit))
+                }
+                pub = Subject.init(hub)
+                _ <- subscribed.await
+                _ <- pub.send(1)
+                _ <- pub.send(2)
+                _ <- pub.send(3)
+                _ <- actor.await
+                v <- acc.get
+            yield assert(v == 6)
+        }
+        "preserves single-consumer serialization across interleaved direct sends and hub events" in {
+            // The accumulator lives in Var, touched only by the single consumer loop. If a second
+            // consumer existed, concurrent updates would lose increments and the sum would be wrong.
+            // `subscribed` gates hub publishing until the listener exists so no event is dropped.
+            for
+                hub        <- Hub.init[Int]
+                subscribed <- Latch.init(1)
+                total <- Actor.run {
+                    Var.run(0) {
+                        Actor.subscribe(hub)(identity)
+                            .andThen(subscribed.release)
+                            .andThen {
+                                Actor.receiveMax[Int](200)(n => Var.update[Int](_ + n).unit).andThen(Var.use[Int](identity))
+                            }
+                    }
+                }
+                pub    = Subject.init(hub)
+                direct = total.subject
+                _      <- subscribed.await
+                _      <- Async.foreach(1 to 100)(_ => Abort.run[Closed](direct.send(1)).unit)
+                _      <- Async.foreach(1 to 100)(_ => Abort.run[Closed](pub.send(1)).unit)
+                result <- total.await
+            yield assert(result == 200)
+        }
+    }
+
     "respond" - {
         "handles a request and returns a non-Unit reply" in {
             for

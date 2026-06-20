@@ -270,6 +270,42 @@ object Actor:
     def reenqueue[A](msg: A)(using Frame, Tag[Subject[A]]): Unit < Context[A] =
         Env.use[Subject[A]](_.send(msg))
 
+    /** Subscribes the current actor to a Hub, funneling each published event into the actor's own mailbox.
+      *
+      * A Scope-managed listener is created (released when the actor's scope ends) and an enqueue-only pump fiber forwards each event,
+      * mapped through `adapt`, into the actor via its own subject. The pump is a producer only: the actor keeps a single consumer, so
+      * serialized mailbox processing (and the thread-safety it provides) is unchanged. Subscribed events are indistinguishable from direct
+      * sends, so the ordinary `receive*` combinators handle them. The pump stops when the hub/listener or the actor's mailbox closes.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E])(adapt: E => A): Unit < Context[A] =
+        for
+            self     <- Actor.self[A]
+            listener <- hub.listen
+            _ <- Fiber.init {
+                Loop.foreach {
+                    Abort.run[Closed](listener.take).map {
+                        case Result.Success(event) =>
+                            Abort.run[Closed](self.send(adapt(event))).map {
+                                case Result.Success(_) => Loop.continue
+                                case Result.Failure(_) => Loop.done      // mailbox closed: stop cleanly
+                                case Result.Panic(e)   => Abort.panic(e) // surface real failures
+                            }
+                        case Result.Failure(_) => Loop.done      // hub/listener closed: stop cleanly
+                        case Result.Panic(e)   => Abort.panic(e) // surface real failures
+                    }
+                }
+            }
+        yield ()
+
     /** Receives and processes a single message from the actor's mailbox.
       *
       * This method polls for the next available message and applies the provided processing function. Message processing is done
