@@ -209,12 +209,7 @@ object HttpServer:
                     transport.listen(config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
-            listenFiber.map { listener =>
-                val l = new ListenerUnsafe(listener, connections)
-                // SCRATCH(diagnostic): map a leaked LISTEN socket's port back to the test that bound it. Remove after.
-                java.lang.System.err.println(s"[srvtrack] CREATE port=${l.port} ${summon[Frame]}")
-                l
-            }
+            listenFiber.map(listener => new ListenerUnsafe(listener, connections))
         end init
     end Unsafe
 
@@ -238,7 +233,6 @@ object HttpServer:
         def address: HttpAddress = listener.address
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-            java.lang.System.err.println(s"[srvtrack] CLOSE port=$port") // SCRATCH(diagnostic): did closeFiber run? Remove after.
             listener.close() // stop accepting new connections first
 
             def forceCloseAndComplete(): Unit =
