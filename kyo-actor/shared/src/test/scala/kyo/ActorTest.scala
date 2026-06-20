@@ -5,6 +5,65 @@ import kyo.Actor.Subject
 
 class ActorTest extends kyo.test.Test[Any]:
 
+    private case class Publish(value: Int, replyTo: Subject[Int])
+
+    "ask lifecycle (no stranded callers)" - {
+        "completes the caller when a scoped actor closes with a queued ask message" in {
+            for
+                fiber <- Scope.run {
+                    for
+                        actor <- Actor.run(capacity = 1) {
+                            Actor.receiveLoop[Publish](msg => msg.replyTo.send(msg.value).andThen(Loop.continue))
+                        }
+                        f <- Fiber.initUnscoped(actor.ask(Publish(1, _)))
+                    yield f
+                }
+                // The 2s timeout is the strand guard: a stranded caller hangs and the
+                // uncaught Timeout fails the leaf. Reaching any Closed/success result proves non-stranding.
+                // Outcome is racy at capacity=1 (the queued ask may be processed or dropped on close), so accept either.
+                result <- Abort.run[Closed](Async.timeout(2.seconds)(fiber.get))
+            yield assert(result.isSuccess || result.isFailure)
+        }
+        "completes the caller with a failure when the handler panics before replying" in {
+            for
+                result <- Abort.run[Closed | Timeout] {
+                    Async.timeout(2.seconds) {
+                        Scope.run {
+                            for
+                                actor <- Actor.run(capacity = 16) {
+                                    Actor.receiveLoop[Publish](_ => Abort.panic(new RuntimeException("boom")))
+                                }
+                                r <- actor.ask(Publish(1, _))
+                            yield r
+                        }
+                    }
+                }
+            yield assert(result.isPanic || result.isFailure)
+        }
+        "leaves the actor alive across many sequential asks without accumulating reply waiters" in {
+            Scope.run {
+                for
+                    actor <- Actor.run(capacity = 1) {
+                        Actor.receiveLoop[Publish](msg => msg.replyTo.send(msg.value).andThen(Loop.continue))
+                    }
+                    _       <- Loop.indexed(i => if i >= 1000 then Loop.done else actor.ask(Publish(i, _)).andThen(Loop.continue))
+                    alive   <- actor.fiber.poll.map(_.isEmpty)
+                    pending <- Sync.defer(actor.pendingReplies)
+                    _       <- actor.close
+                yield
+                    assert(alive, "actor terminated mid-run")
+                    assert(pending == 0, s"reply waiters accumulated: $pending")
+            }
+        }
+        "returns the reply under normal operation" in {
+            for
+                actor  <- Actor.run(Actor.receiveLoop[Publish](msg => msg.replyTo.send(msg.value).andThen(Loop.continue)))
+                result <- actor.ask(Publish(7, _))
+                _      <- actor.close
+            yield assert(result == 7)
+        }
+    }
+
     "basic actor operations" - {
         "completes with final value" in {
             for

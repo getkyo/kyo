@@ -1,6 +1,8 @@
 package kyo
 
 import java.io.IOException
+import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import kyo.Actor.Subject
 import kyo.kernel.ArrowEffect
@@ -46,7 +48,11 @@ import scala.annotation.nowarn
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abort[Closed | E]]):
+sealed abstract class Actor[+E, A, B](
+    _subject: Subject[A],
+    _fiber: Fiber[B, Abort[Closed | E]],
+    _pending: Actor.PendingReplies
+):
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -57,7 +63,42 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abo
       */
     def subject: Subject[A] = _subject
 
-    export _subject.*
+    export _subject.send
+    export _subject.trySend
+
+    /** Sends a request and awaits the reply, completing even if the actor terminates first.
+      *
+      * Unlike the bare `Subject.ask`, this surfaces the actor's failure `E` or a panic when the actor ends before replying, instead of
+      * collapsing to `Closed`. The caller is never stranded.
+      */
+    def ask[C](f: Subject[C] => A)(using frame: Frame): C < (Async & Abort[Closed | E]) =
+        Promise.init[C, Any].map { reply =>
+            _pending.awaitReply[C, E](reply, _subject.send(f(Subject.init(reply)))) {
+                // The actor ended before replying: surface its terminal outcome via non-blocking polls,
+                // which register no interrupts and so leave the actor fiber untouched. An interruption
+                // (scope close / mailbox close) reads as Closed from the caller's perspective; a genuine
+                // handler panic stays a panic.
+                reply.poll.map {
+                    case Present(Result.Success(value)) => value: C < Abort[Closed | E]
+                    case Present(Result.Failure(e))     => Abort.fail(e)
+                    case Present(Result.Panic(ex))      => Abort.panic(ex)
+                    case Absent =>
+                        _fiber.poll.map {
+                            case Present(Result.Success(_)) | Absent   => Abort.fail(Closed("Actor", frame))
+                            case Present(Result.Failure(e))            => Abort.fail(e)
+                            case Present(Result.Panic(_: Interrupted)) => Abort.fail(Closed("Actor", frame))
+                            case Present(Result.Panic(ex))             => Abort.panic(ex)
+                        }
+                }
+            }
+        }
+
+    /** The number of in-flight `ask` replies currently registered with this actor.
+      *
+      * Exposed for tests: it must be bounded by concurrent in-flight asks and must drop back to zero once they resolve, never growing with
+      * the actor's lifetime.
+      */
+    private[kyo] def pendingReplies: Int = _pending.size
 
     /** Returns the fiber executing this actor's message processing.
       *
@@ -94,6 +135,67 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abo
 end Actor
 
 object Actor:
+
+    /** Per-actor registry of in-flight `ask` reply waiters, used to keep `ask` strand-safe without leaking.
+      *
+      * Each `ask` registers a fresh `signal` promise here before awaiting and removes it once the await resolves (reply, actor termination,
+      * or caller interrupt), so the set is bounded by concurrently in-flight asks and never grows with the actor's lifetime. A single
+      * termination sweep (installed once on the consumer fiber, not per ask) completes every registered signal so no caller is stranded when
+      * the actor ends without replying.
+      *
+      * The `terminated` flag is set before the sweep iterates. An ask that registers its signal then observes the flag set will complete its
+      * own signal, closing the add-after-termination race: either the sweep sees the freshly added signal, or the ask self-completes.
+      */
+    final private[kyo] class PendingReplies:
+        private val waiters    = new CopyOnWriteArraySet[Promise[Unit, Any]]
+        private val terminated = new AtomicBoolean(false)
+
+        def size: Int = waiters.size
+
+        /** Completes every registered waiter. Called once when the actor's consumer fiber ends. */
+        def terminate(using AllowUnsafe): Unit =
+            terminated.set(true)
+            // Unsafe: runs inside the fiber's Sync-only onComplete callback, which cannot suspend; each
+            // completeUnitDiscard is idempotent and the COWArraySet iteration is snapshot-safe.
+            waiters.forEach(signal => signal.unsafe.completeUnitDiscard())
+        end terminate
+
+        /** Awaits a reply, completing even if the actor terminates first, with no per-ask accumulation.
+          *
+          * Registers a fresh signal, runs `send`, then races `reply.get` against the signal. `onTerminated` interprets the actor's terminal
+          * outcome (the bare subject collapses to `Closed`; `Actor.ask` refines to `E`/panic). The waiter is removed when the race resolves.
+          *
+          * @param reply
+          *   The reply promise the recipient completes
+          * @param send
+          *   The send action that enqueues the request; run after the signal is registered
+          * @param onTerminated
+          *   The continuation evaluated when the actor terminates before the reply arrives
+          */
+        def awaitReply[C, E](reply: Promise[C, Any], send: => Unit < (Async & Abort[Closed]))(
+            onTerminated: => C < (Async & Abort[Closed | E])
+        )(using frame: Frame): C < (Async & Abort[Closed | E]) =
+            Promise.init[Unit, Any].map { signal =>
+                val register: Unit < Sync =
+                    Sync.defer(discard(waiters.add(signal))).andThen {
+                        // Close the add-after-termination race: if the sweep already set the flag, complete
+                        // our own signal so the terminated branch fires instead of awaiting a reply that
+                        // never comes. Either the sweep sees this freshly added signal, or we self-complete.
+                        if terminated.get() then signal.completeUnitDiscard else Kyo.unit
+                    }
+                val raced: C < (Async & Abort[Closed | E]) =
+                    Sync.ensure(Sync.defer(discard(waiters.remove(signal)))) {
+                        // raceFirst (not race): complete on the first branch to finish, success or failure.
+                        // A plain race only completes on the first success, so a stranded caller whose actor
+                        // terminated without replying (a failure on the terminated branch) would hang forever.
+                        Async.raceFirst[Closed | E, C, Any](
+                            reply.get,
+                            signal.get.andThen(onTerminated)
+                        )
+                    }
+                register.andThen(send).andThen(raced)
+            }
+    end PendingReplies
 
     /** Default mailbox capacity for actors.
       *
@@ -439,10 +541,28 @@ object Actor:
             mailbox <-
                 // Create a bounded channel to serve as the actor's mailbox
                 Channel.init[A](capacity, Access.MultiProducerSingleConsumer)
+            pending =
+                // Per-actor registry of in-flight ask waiters; entries are removed as each ask resolves so
+                // the set is bounded by concurrent in-flight asks, never by the actor's lifetime.
+                new PendingReplies
             _subject =
                 // Create the actor's message interface (Subject)
-                // Messages sent through this subject are queued in the mailbox
-                Subject.init(mailbox)
+                // Messages sent through this subject are queued in the mailbox; awaitReply also
+                // completes when the consumer fiber ends so an ask caller is never stranded
+                new Subject[A]:
+                    def send(message: A)(using Frame): Unit < (Async & Abort[Closed])      = mailbox.put(message)
+                    def trySend(message: A)(using Frame): Boolean < (Sync & Abort[Closed]) = mailbox.offer(message)
+                    override private[kyo] def awaitReply[C](reply: Promise[C, Any])(using frame: Frame): C < (Async & Abort[Closed]) =
+                        // Subject.ask has already sent, so no send action here. The bare subject contract only
+                        // distinguishes "replied" from "recipient closed": any terminal outcome reads as Closed.
+                        pending.awaitReply[C, Closed](reply, Kyo.unit) {
+                            reply.poll.map {
+                                case Present(Result.Success(value)) => value: C < Abort[Closed]
+                                case Present(Result.Failure(_))     => Abort.fail(Closed("Actor", frame))
+                                case Present(Result.Panic(ex))      => Abort.panic(ex)
+                                case Absent                         => Abort.fail(Closed("Actor", frame))
+                            }
+                        }
             _consumer <-
                 Loop(behavior) { b =>
                     Poll.runFirst(b).map {
@@ -457,7 +577,11 @@ object Actor:
                     Scope.run,                  // Close used resources
                     Fiber.init                  // Start the actor's processing loop in an async context
                 )
-        yield new Actor[E, A, B](_subject, _consumer):
+            _ <-
+                // Single termination hook (installed once, not per ask): sweep the pending registry so every
+                // outstanding ask completes when the actor's consumer fiber ends.
+                _consumer.onComplete(_ => Sync.Unsafe.defer(pending.terminate))
+        yield new Actor[E, A, B](_subject, _consumer, pending):
             def close(using Frame) = mailbox.close
 
     /** Interface for sending messages to a recipient.
@@ -500,6 +624,14 @@ object Actor:
           */
         def trySend(message: A)(using Frame): Boolean < (Sync & Abort[Closed])
 
+        /** Awaits the reply for an `ask`. Default: wait for the reply promise.
+          *
+          * The actor mailbox subject overrides this to also complete when the actor terminates without replying, so a caller is never
+          * stranded. A bare sink (channel, queue, hub, promise, custom) has no recipient-terminated signal, so the default simply waits.
+          */
+        private[kyo] def awaitReply[B](reply: Promise[B, Any])(using Frame): B < (Async & Abort[Closed]) =
+            reply.get
+
         /** Sends a message and waits for a response.
           *
           * This method implements the request-response pattern by automatically creating a temporary reply channel. It's useful when you
@@ -523,11 +655,7 @@ object Actor:
           *   The response of type B
           */
         def ask[B](f: Subject[B] => A)(using Frame): B < (Async & Abort[Closed]) =
-            for
-                promise <- Promise.init[B, Any]
-                _       <- send(f(Subject.init(promise)))
-                result  <- promise.get
-            yield result
+            Promise.init[B, Any].map(promise => send(f(Subject.init(promise))).andThen(awaitReply(promise)))
 
     end Subject
 
