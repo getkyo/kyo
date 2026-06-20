@@ -641,6 +641,102 @@ val supervisedActor =
 
 The actor's behavior is just a Kyo computation; handlers compose around it the same way they would around any other Kyo program. There's no separate "supervisor" type because there doesn't need to be one.
 
+## Publish/Subscribe
+
+Actors can participate in a fan-out topology by combining two building blocks:
+
+- `Subject.init(hub)` creates a publish-side subject that forwards every `send` or `trySend` call into the hub, broadcasting to all active listeners.
+- `Actor.subscribe(hub)(adapt)` subscribes the current actor to a hub, funneling each event through `adapt` into the actor's own mailbox as an ordinary message.
+
+The key property is that subscription preserves the single-consumer invariant. The pump fiber created by `Actor.subscribe` is a producer only: it enqueues events into the actor's mailbox. The actor remains the sole consumer, so all mailbox messages (both direct sends and hub-delivered events) are processed sequentially by the same loop, with no concurrent access to state.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+// Log levels for the hub.
+enum LogLevel derives CanEqual:
+    case Info
+    case Warn
+    case Error
+end LogLevel
+
+case class LogEvent(level: LogLevel, message: String)
+
+// A subscriber actor that prints log events.
+// The latch signals when the subscription is ready, so no hub
+// event is published before the listener exists.
+val pubSubExample: Unit < (Async & Scope & Abort[Closed]) =
+    for
+        hub <- Hub.init[LogEvent]
+        publisher = Subject.init(hub) // publish bridge: send/trySend -> hub.put/offer
+        subscribed <- Latch.init(1)
+        logger <- Actor.run {
+            Actor.subscribe(hub)(identity) // funnels hub events into this actor's mailbox
+                .andThen(subscribed.release)
+                .andThen(Actor.receiveMax[LogEvent](3) { event =>
+                    Sync.defer(()) // handle the event (print, record, etc.)
+                })
+        }
+        _ <- subscribed.await // wait until the listener exists before publishing
+        _ <- publisher.send(LogEvent(LogLevel.Info, "server started"))
+        _ <- publisher.send(LogEvent(LogLevel.Warn, "high memory usage"))
+        _ <- publisher.send(LogEvent(LogLevel.Error, "disk full"))
+        _ <- logger.await
+    yield ()
+```
+
+`Subject.init(hub)` and `Actor.subscribe` are symmetric: the former is the write side (any code can hold a `Subject[E]` and publish without knowing who is listening), and the latter is the read side (the actor registers once and receives all subsequent events through its normal mailbox). Multiple actors can each call `Actor.subscribe` on the same hub, and each will receive every event independently.
+
+The `adapt` function in `Actor.subscribe(hub)(adapt)` converts the hub's event type to the actor's message type. When they are the same, use `identity`. When the actor handles a sealed union and hub events are one variant, use a case-class constructor: `Actor.subscribe(hub)(MyMessage.HubEvent(_))`.
+
+## Request/Reply
+
+`Actor.respond[Req, Resp](handler)` creates an actor whose sole job is to map requests to replies. The framework automatically sends the handler's return value back to the caller, so the actor can never accidentally forget to reply.
+
+```scala
+import kyo.*
+
+// A simple echo actor that doubles integers.
+val requestReplyExample: Int < (Async & Scope & Abort[Closed]) =
+    for
+        doubler <- Actor.run(Actor.respond[Int, Int](n => n * 2))
+        result  <- doubler.ask(21) // strand-safe: never strands the caller
+        _       <- doubler.close
+    yield result
+```
+
+The `actor.ask(request)` extension on a `respond` actor is lifecycle-aware. It completes with one of four outcomes:
+
+- The reply the handler produced (success).
+- `Abort[Closed]` if the actor shut down before replying.
+- `Abort[E]` if the handler failed with a typed error.
+- A panic if the handler panicked.
+
+The caller is never stranded: `ask` races the reply promise against the actor's termination signal, so it always completes even if the actor exits mid-request.
+
+For per-request errors, model them in the reply type (for example `Result[E, Resp]` or `Either[E, Resp]`) rather than aborting. A handler that calls `Abort.fail` terminates the actor, surfacing the failure to every in-flight caller.
+
+```scala
+import kyo.*
+
+// Request/reply with a typed error carried in the reply.
+case class DivRequest(a: Int, b: Int)
+enum DivResult derives CanEqual:
+    case Ok(value: Int)
+    case DivByZero
+
+val safeDiv: DivResult < (Async & Scope & Abort[Closed]) =
+    for
+        actor <- Actor.run(Actor.respond[DivRequest, DivResult] { req =>
+            if req.b == 0 then DivResult.DivByZero
+            else DivResult.Ok(req.a / req.b)
+        })
+        result <- actor.ask(DivRequest(10, 2))
+        _      <- actor.close
+    yield result
+```
+
 ## Putting it together
 
 The example below combines `Actor.run`, `Var.run`, `Actor.receiveAll`, `send`, `ask`, and `close` in a single banking-account actor. It is the kind of program you would write after reading the sections above.
@@ -688,3 +784,63 @@ val program: Double < (Async & Scope & Abort[Closed]) =
         balance <- account.ask(AccountMessage.GetBalance(_))
     yield balance
 ```
+
+## Job dispatcher with a worker pool
+
+This example shows when to use a Hub versus point-to-point `send`. The Hub is for events that every observer must see (started, completed). The worker `send` is for work distribution: each job goes to exactly one worker via round-robin, so work is not fanned out.
+
+```scala
+import kyo.*
+import kyo.Actor.Subject
+
+case class Job(id: Int) derives CanEqual
+
+enum JobEvent derives CanEqual:
+    case Started(id: Int)
+    case Completed(id: Int)
+
+// A minimal dispatcher: a small worker pool (two workers), one monitor, three jobs.
+// Round-robin index lives in Var; there is no Var.getAndUpdate,
+// so Var.use reads the index and Var.update advances it.
+val dispatcherExample: Unit < (Async & Scope & Abort[Closed]) =
+    for
+        hub          <- Hub.init[JobEvent]
+        monitorReady <- Latch.init(1)
+        // Monitor subscribes to the hub and collects all events.
+        monitor <- Actor.run {
+            Actor.subscribe(hub)(identity)
+                .andThen(monitorReady.release)
+                .andThen(Actor.receiveMax[JobEvent](6) { _ => () }) // 3 started + 3 completed
+        }
+        _ <- monitorReady.await // ensure listener exists before any publish
+        workers <- Kyo.foreach(0 until 2) { _ =>
+            Actor.run {
+                // Each worker processes jobs and publishes completion to the shared hub.
+                Actor.receiveAll[Job] { job =>
+                    Abort.run[Closed](hub.put(JobEvent.Completed(job.id))).unit
+                }
+            }
+        }
+        workerCount = workers.size
+        dispatcher <- Actor.run {
+            Var.run(0) {
+                Actor.receiveAll[Job] { job =>
+                    for
+                        i <- Var.use[Int](identity)                               // read current index
+                        _ <- Var.update[Int](x => (x + 1) % workerCount)          // advance round-robin
+                        _ <- Abort.run[Closed](hub.put(JobEvent.Started(job.id))) // fan-out: observers see start
+                        _ <- workers(i).send(job)                                 // point-to-point: one worker gets the job
+                    yield ()
+                }
+            }
+        }
+        _ <- Kyo.foreach(1 to 3)(id => dispatcher.send(Job(id)))
+        _ <- monitor.await
+        // Close the dispatcher first so every dispatched job reaches a worker
+        // before the workers stop, then close the workers.
+        _ <- dispatcher.close
+        _ <- Kyo.foreachDiscard(workers)(_.close)
+    yield ()
+```
+
+The split between Hub and `send` reflects two different communication shapes: a Hub delivers each event to all current listeners (fan-out, for observability), while a direct `send` to a worker delivers each job to exactly one recipient (point-to-point, for work distribution). Using a Hub for both would duplicate work across workers; using only point-to-point would leave the monitor blind to events.
