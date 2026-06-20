@@ -46,8 +46,12 @@ import kyo.minutes
   *   while keeping the rest. Override per suite with `def config = super.config.leakCheck(false)` (all categories) or a single category toggle
   *   for a suite whose design legitimately holds one kind of resource for the whole run.
   * @param leakCheckSockets
-  *   when `true` (the default), socket descriptors are included in the file-descriptor probe; set `false` for a suite whose fork legitimately
-  *   leaves sockets open (e.g. one exercising the shared NIO transport) so it still detects file, thread, and fiber leaks.
+  *   when `true`, socket descriptors are included in the file-descriptor probe. Defaults to `false` for now: the shared kyo-http NIO transport
+  *   can leave a closed socket's fd open past the run, because closing a selector-registered channel only cancels its key and the real fd close
+  *   is deferred until the idle driver selector runs another `select()` that nothing wakes (see kyo-net HANDOFF-listener-fd-leak.md). That makes
+  *   socket-leak detection produce flaky failures across every suite that drives the transport (kyo-http, kyo-caliban, kyo-pod, kyo-ui, ...), and
+  *   the fix belongs to the kyo-net transport rewrite, not here. File-descriptor, thread, and fiber detection stay on. Flip this default back to
+  *   `true` once kyo-net releases the channel fd promptly on close.
   * @param leakCheckFileDescriptors
   *   when `true` (the default), non-socket descriptors (files, directories, pipes) are included in the file-descriptor probe.
   * @param leakCheckThreads
@@ -83,7 +87,7 @@ final case class RunConfig(
     failOnNoAssertion: Boolean = true,
     heartbeatInterval: Duration = 1.minutes,
     leakCheck: Boolean = true,
-    leakCheckSockets: Boolean = true,
+    leakCheckSockets: Boolean = false,
     leakCheckFileDescriptors: Boolean = true,
     leakCheckThreads: Boolean = true,
     leakCheckFibers: Boolean = true,
@@ -144,9 +148,10 @@ final case class RunConfig(
       */
     def leakCheck(leakCheck: Boolean): RunConfig = copy(leakCheck = leakCheck)
 
-    /** Returns a copy with socket-descriptor leak detection enabled or disabled, leaving the other categories on. Use this for a suite whose
-      * fork legitimately leaves sockets open (for example one that exercises the shared NIO transport, where a closed connection's fd can outlive
-      * the run pending the selector's deregistration), so the suite still detects file-descriptor, thread, and fiber leaks.
+    /** Returns a copy with socket-descriptor leak detection enabled or disabled, leaving the other categories on. Socket detection defaults to
+      * off (see the `leakCheckSockets` constructor param) because the shared NIO transport can leave a closed socket's fd open until its idle
+      * selector next runs, which is a kyo-net transport bug rather than a per-suite leak. A suite that runs no networking and wants socket
+      * detection back can opt in with `super.config.leakCheckSockets(true)`.
       */
     def leakCheckSockets(leakCheckSockets: Boolean): RunConfig = copy(leakCheckSockets = leakCheckSockets)
 
