@@ -296,10 +296,8 @@ object Actor:
 
     /** Subscribes the current actor to a Hub, funneling each published event into the actor's own mailbox.
       *
-      * A Scope-managed listener is created (released when the actor's scope ends) and an enqueue-only pump fiber forwards each event,
-      * mapped through `adapt`, into the actor via its own subject. The pump is a producer only: the actor keeps a single consumer, so
-      * serialized mailbox processing (and the thread-safety it provides) is unchanged. Subscribed events are indistinguishable from direct
-      * sends, so the ordinary `receive*` combinators handle them. The pump stops when the hub/listener or the actor's mailbox closes.
+      * Uses the default listener buffer size (`Hub.DefaultBufferSize`) and accepts all events. Delegates to the canonical
+      * `subscribe(hub, bufferSize, filter)(adapt)`, which describes the pump mechanics and the single-consumer guarantee.
       *
       * @param hub
       *   The Hub to subscribe to
@@ -311,9 +309,73 @@ object Actor:
       *   The hub's event type
       */
     def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E])(adapt: E => A): Unit < Context[A] =
+        subscribe(hub, Hub.DefaultBufferSize, (_: E) => true)(adapt)
+
+    /** Subscribes the current actor to a Hub with a custom listener buffer size.
+      *
+      * Behaves identically to `subscribe(hub)(adapt)` but creates the listener with the given `bufferSize` instead of the default.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param bufferSize
+      *   The capacity of the listener's private buffer
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E], bufferSize: Int)(adapt: E => A): Unit < Context[A] =
+        subscribe(hub, bufferSize, (_: E) => true)(adapt)
+
+    /** Subscribes the current actor to a Hub, delivering only events that satisfy `filter`.
+      *
+      * Behaves identically to `subscribe(hub)(adapt)` but creates the listener with a filter predicate applied at the hub level, so
+      * non-matching events are discarded before reaching the listener's buffer. Note: when `E` is `Int`, `subscribe(hub, n)` selects the
+      * `bufferSize` overload, so pass the filter as a lambda to reach this one.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param filter
+      *   Predicate applied to each hub event; only matching events are forwarded
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E], filter: E => Boolean)(adapt: E => A): Unit < Context[A] =
+        subscribe(hub, Hub.DefaultBufferSize, filter)(adapt)
+
+    /** Subscribes the current actor to a Hub with a custom buffer size and filter predicate.
+      *
+      * This is the canonical overload: all other `subscribe` variants delegate here. A Scope-managed listener is created with `bufferSize`
+      * and `filter`; an enqueue-only pump fiber forwards each matching event, mapped through `adapt`, into the actor via its subject. The
+      * pump is a producer only: the actor keeps a single consumer, so serialized mailbox processing is unchanged. The pump stops when the
+      * hub/listener or the actor's mailbox closes.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param bufferSize
+      *   The capacity of the listener's private buffer
+      * @param filter
+      *   Predicate applied to each hub event; only matching events are forwarded
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using
+        Frame,
+        Tag[Subject[A]]
+    )[E](hub: Hub[E], bufferSize: Int, filter: E => Boolean)(adapt: E => A): Unit < Context[A] =
         for
             self     <- Actor.self[A]
-            listener <- hub.listen
+            listener <- hub.listen(bufferSize, filter)
             _ <- Fiber.init {
                 Loop.foreach {
                     Abort.run[Closed](listener.take).map {

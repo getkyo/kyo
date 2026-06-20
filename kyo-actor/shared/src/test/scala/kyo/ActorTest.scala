@@ -924,6 +924,68 @@ class ActorTest extends kyo.test.Test[Any]:
                 v <- acc.get
             yield assert(v == 6)
         }
+        "filter delivers only matching events" in {
+            for
+                hub        <- Hub.init[Int]
+                acc        <- Queue.Unbounded.init[Int]()
+                subscribed <- Latch.init(1)
+                actor <- Actor.run {
+                    Actor.subscribe(hub, (_: Int) % 2 == 0)(identity)
+                        .andThen(subscribed.release)
+                        .andThen(Actor.receiveMax[Int](3)(acc.add(_).unit))
+                }
+                pub = Subject.init(hub)
+                _ <- subscribed.await
+                _ <- pub.send(1)
+                _ <- pub.send(2)
+                _ <- pub.send(3)
+                _ <- pub.send(4)
+                _ <- pub.send(5)
+                _ <- pub.send(6)
+                _ <- actor.await
+                v <- acc.drain
+            yield assert(v == List(2, 4, 6))
+        }
+        "custom bufferSize delivers all events" in {
+            for
+                hub        <- Hub.init[Int]
+                acc        <- Queue.Unbounded.init[Int]()
+                subscribed <- Latch.init(1)
+                actor <- Actor.run {
+                    Actor.subscribe(hub, 16)(identity)
+                        .andThen(subscribed.release)
+                        .andThen(Actor.receiveMax[Int](3)(acc.add(_).unit))
+                }
+                pub = Subject.init(hub)
+                _ <- subscribed.await
+                _ <- pub.send(10)
+                _ <- pub.send(20)
+                _ <- pub.send(30)
+                _ <- actor.await
+                v <- acc.drain
+            yield assert(v == List(10, 20, 30))
+        }
+        "bufferSize and filter delivers only matching events" in {
+            for
+                hub        <- Hub.init[Int]
+                acc        <- Queue.Unbounded.init[Int]()
+                subscribed <- Latch.init(1)
+                actor <- Actor.run {
+                    Actor.subscribe(hub, 16, (_: Int) > 2)(identity)
+                        .andThen(subscribed.release)
+                        .andThen(Actor.receiveMax[Int](3)(acc.add(_).unit))
+                }
+                pub = Subject.init(hub)
+                _ <- subscribed.await
+                _ <- pub.send(1)
+                _ <- pub.send(2)
+                _ <- pub.send(3)
+                _ <- pub.send(4)
+                _ <- pub.send(5)
+                _ <- actor.await
+                v <- acc.drain
+            yield assert(v == List(3, 4, 5))
+        }
         "preserves single-consumer serialization across interleaved direct sends and hub events" in {
             // The accumulator lives in Var, touched only by the single consumer loop. If a second
             // consumer existed, concurrent updates would lose increments and the sum would be wrong.
