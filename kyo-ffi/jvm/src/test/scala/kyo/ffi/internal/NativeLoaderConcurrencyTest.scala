@@ -1,10 +1,9 @@
 package kyo.ffi.internal
 
 import java.nio.channels.FileChannel
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import kyo.*
+import kyo.AllowUnsafe.embrace.danger
 import kyo.ffi.Test
 
 /** Resource-extraction concurrency.
@@ -24,32 +23,37 @@ class NativeLoaderConcurrencyTest extends Test:
     override def config = super.config.sequential
 
     private def tempDir(): Path =
-        Files.createTempDirectory("kyo-ffi-f11-").nn
+        Sync.Unsafe.evalOrThrow(Path.tempDir("kyo-ffi-f11-"))
+
+    // NativeLoader's API, FileChannel, and the extracted-file registry are java.nio.file.Path infra (FFM, cross-process
+    // advisory locks, atomic-move fallback); bridge the test's kyo.Path values to java only at those call sites.
+    private def j(p: Path): java.nio.file.Path =
+        java.nio.file.Path.of(p.toString)
 
     "tryCleanupStaleLock" - {
         "removes an abandoned .lck file with no live lock holder" in {
             val dir = tempDir()
-            val lck = dir.resolve("libabc-deadbeef.lck").nn
-            Files.createFile(lck): Unit
-            assert(Files.exists(lck) == true)
+            val lck = dir / "libabc-deadbeef.lck"
+            lck.unsafe.mkFile().getOrThrow
+            assert(lck.unsafe.exists() == true)
 
-            val removed = NativeLoader.tryCleanupStaleLock(lck)
+            val removed = NativeLoader.tryCleanupStaleLock(j(lck))
 
             assert(removed == true)
-            assert(Files.exists(lck) == false)
+            assert(lck.unsafe.exists() == false)
         }
 
         "leaves a live-locked .lck file in place" in {
             val dir = tempDir()
-            val lck = dir.resolve("libxyz-cafef00d.lck").nn
-            val ch  = FileChannel.open(lck, StandardOpenOption.CREATE, StandardOpenOption.WRITE).nn
+            val lck = dir / "libxyz-cafef00d.lck"
+            val ch  = FileChannel.open(j(lck), StandardOpenOption.CREATE, StandardOpenOption.WRITE).nn
             try
                 val lk = ch.lock().nn
                 try
-                    val removed = NativeLoader.tryCleanupStaleLock(lck)
+                    val removed = NativeLoader.tryCleanupStaleLock(j(lck))
                     // Another in-JVM lock holder → tryLock throws OverlappingFileLockException, caller must NOT delete.
                     assert(removed == false)
-                    assert(Files.exists(lck) == true)
+                    assert(lck.unsafe.exists() == true)
                 finally lk.release()
                 end try
             finally ch.close()
@@ -58,14 +62,14 @@ class NativeLoaderConcurrencyTest extends Test:
 
         "returns false for a missing lock file" in {
             val dir = tempDir()
-            val lck = dir.resolve("does-not-exist.lck").nn
-            assert(NativeLoader.tryCleanupStaleLock(lck) == false)
+            val lck = dir / "does-not-exist.lck"
+            assert(NativeLoader.tryCleanupStaleLock(j(lck)) == false)
         }
     }
 
     "resolveExtractDir" - {
         "honours -Dkyo.ffi.extractDir= verbatim" in {
-            val explicit = tempDir().resolve("f11-explicit").nn
+            val explicit = tempDir() / "f11-explicit"
             val prop     = "kyo.ffi.extractDir"
             val prior    = Option(java.lang.System.getProperty(prop))
             java.lang.System.setProperty(prop, explicit.toString): Unit
@@ -96,64 +100,57 @@ class NativeLoaderConcurrencyTest extends Test:
     "writeAtomicRename" - {
         "atomically installs the full payload and leaves no .tmp-<uuid> residue on success" in {
             val dir  = tempDir()
-            val out  = dir.resolve("libpayload-cafebabe.so").nn
-            val data = "kyo-ffi F11 atomic payload".getBytes
+            val out  = dir / "libpayload-cafebabe.so"
+            val data = "kyo-ffi F11 atomic payload"
 
-            NativeLoader.writeAtomicRename(dir, out, data)
+            NativeLoader.writeAtomicRename(j(dir), j(out), data.getBytes)
 
-            assert(Files.exists(out) == true)
-            assert(Files.readAllBytes(out).nn.toSeq == data.toSeq)
+            assert(out.unsafe.exists() == true)
+            assert(out.unsafe.read().getOrThrow == data)
             // No `.tmp-<uuid>` sibling should remain, the atomic rename consumed the temp file.
-            // Files.list opens a directory stream that holds an fd; close it so the dir fd is not leaked.
-            val entries = Files.list(dir).nn
-            try
-                val it = entries.iterator().nn
-                while it.hasNext do
-                    val name = it.next().nn.getFileName.nn.toString
-                    assert(!name.contains(".tmp-"))
-                end while
-            finally entries.close()
-            end try
+            // Path.Unsafe.list closes the dir stream as it collects (no leaked fd).
+            val entries = dir.unsafe.list().getOrThrow
+            entries.foreach(entry => assert(!entry.name.getOrElse("").contains(".tmp-")))
         }
     }
 
     "cleanupExtractedFiles" - {
         "removes files newer than install epoch" in {
             val dir   = tempDir()
-            val fresh = dir.resolve("libfresh-00112233.so").nn
-            Files.write(fresh, "fresh bytes".getBytes): Unit
+            val fresh = dir / "libfresh-00112233.so"
+            fresh.unsafe.write("fresh bytes").getOrThrow
 
             val reg =
                 classOf[NativeLoader.type].nn.getDeclaredField("extractedThisJvm").nn
             reg.setAccessible(true)
-            val set = reg.get(NativeLoader).asInstanceOf[java.util.Set[Path]]
-            set.add(fresh): Unit
+            val set = reg.get(NativeLoader).asInstanceOf[java.util.Set[java.nio.file.Path]]
+            set.add(j(fresh)): Unit
             try
                 // Install epoch is BEFORE file creation, so fresh file's mtime ≥ install → deleted.
                 NativeLoader.cleanupExtractedFiles(0L)
-                assert(Files.exists(fresh) == false)
-            finally set.remove(fresh): Unit
+                assert(fresh.unsafe.exists() == false)
+            finally set.remove(j(fresh)): Unit
             end try
         }
 
         "leaves files older than install epoch alone" in {
             val dir  = tempDir()
-            val old_ = dir.resolve("libold-44556677.so").nn
-            Files.write(old_, "old bytes".getBytes): Unit
+            val old_ = dir / "libold-44556677.so"
+            old_.unsafe.write("old bytes").getOrThrow
 
             val reg =
                 classOf[NativeLoader.type].nn.getDeclaredField("extractedThisJvm").nn
             reg.setAccessible(true)
-            val set = reg.get(NativeLoader).asInstanceOf[java.util.Set[Path]]
-            set.add(old_): Unit
+            val set = reg.get(NativeLoader).asInstanceOf[java.util.Set[java.nio.file.Path]]
+            set.add(j(old_)): Unit
             try
                 // Install epoch is FAR in the future, every file is older → none deleted.
                 val farFuture = java.lang.System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 365)
                 NativeLoader.cleanupExtractedFiles(farFuture)
-                assert(Files.exists(old_) == true)
+                assert(old_.unsafe.exists() == true)
             finally
-                set.remove(old_): Unit
-                Files.deleteIfExists(old_): Unit
+                set.remove(j(old_)): Unit
+                discard(old_.unsafe.remove())
             end try
         }
     }

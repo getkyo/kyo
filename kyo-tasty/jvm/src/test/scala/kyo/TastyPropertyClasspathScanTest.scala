@@ -1,12 +1,7 @@
 package kyo
 
-import java.io.File
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
 import kyo.internal.TestClasspaths
 import kyo.internal.tasty.query.ClasspathOrchestrator
-import scala.jdk.CollectionConverters.*
 
 /** Walks every kyo-* directory on the live JVM test classpath (via java.class.path) and decodes each as an independent single-root
   * Classpath, asserting zero UnknownTagInPosition errors across the full set.
@@ -42,20 +37,19 @@ class TastyPropertyClasspathScanTest extends kyo.test.Test[Any]:
       */
     private def discoverKyoClasspathRoots: List[String] =
         val accumulator = new scala.collection.mutable.LinkedHashSet[String]()
+        // Path.Unsafe.list collects each directory's entries and closes the stream before returning (no leaked fd);
+        // recurse to cover the full tree without following symlinks.
+        def recurse(dir: Path): Unit =
+            dir.unsafe.list().getOrThrow.foreach { entry =>
+                if entry.unsafe.isDirectory() && !entry.unsafe.isSymbolicLink() then recurse(entry)
+                else
+                    val s = entry.toString
+                    if s.endsWith(".tasty") && !s.contains("/test/") && !s.contains("/fixtures/") then
+                        entry.parent.foreach(parent => discard(accumulator += parent.toString))
+            }
         TestClasspaths.all.foreach { root =>
-            val f = new File(root)
-            if f.exists && f.isDirectory then
-                // Files.walk opens directory streams that hold fds; close so they are not leaked.
-                val walk = Files.walk(f.toPath)
-                try
-                    walk.iterator.asScala.foreach { p =>
-                        val s = p.toString
-                        if s.endsWith(".tasty") && !s.contains("/test/") && !s.contains("/fixtures/") then
-                            discard(accumulator += p.getParent.toString)
-                    }
-                finally walk.close()
-                end try
-            end if
+            val dir = Path(root)
+            if dir.unsafe.exists() && dir.unsafe.isDirectory() then recurse(dir)
         }
         accumulator.toList.sorted
     end discoverKyoClasspathRoots
