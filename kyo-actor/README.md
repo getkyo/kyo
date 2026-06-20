@@ -800,18 +800,18 @@ val pubSubExample: Unit < (Async & Scope & Abort[Closed]) =
 
 The `adapt` function in `Actor.subscribe(hub)(adapt)` converts the hub's event type to the actor's message type. When they are the same, use `identity`. When the actor handles a sealed union and hub events are one variant, use a case-class constructor: `Actor.subscribe(hub)(MyMessage.HubEvent(_))`.
 
-## Topic: push-based publish/subscribe
+## PubSub: push-based publish/subscribe
 
-`Topic[A]` is a push-based fan-out primitive. Publishing a value delivers it directly into each subscriber's mailbox (or other sink). There are two constructors with different ordering guarantees:
+`PubSub[A]` is a push-based fan-out primitive. Publishing a value delivers it directly into each subscriber's mailbox (or other sink). There are two constructors with different ordering guarantees:
 
 | Constructor | Fan-out style | Order guarantee |
 |---|---|---|
-| `Topic.init[A]` | Concurrent: each subscriber is notified in a separate async fiber | Per-subscriber FIFO; no cross-subscriber total order under concurrent publishers |
-| `Topic.linearized[A]` | Sequential through one actor mailbox | Total order: every subscriber sees publishes in the same sequence |
+| `PubSub.init[A]` | Concurrent: each subscriber is notified in a separate async fiber | Per-subscriber FIFO; no cross-subscriber total order under concurrent publishers |
+| `PubSub.linearized[A]` | Sequential through one actor mailbox | Total order: every subscriber sees publishes in the same sequence |
 
-**Topic vs Hub.** `Hub` is a pull primitive: listeners drain buffered events at their own rate. `Topic` is push: it calls `send` on each subscriber sink and awaits delivery. Use `Topic` when subscribers are actors whose mailboxes are the natural buffer. Use `Hub` when you need rate-isolated streaming consumers that drain independently.
+**PubSub vs Hub.** `Hub` is a pull primitive: listeners drain buffered events at their own rate. `PubSub` is push: it calls `send` on each subscriber sink and awaits delivery. Use `PubSub` when subscribers are actors whose mailboxes are the natural buffer. Use `Hub` when you need rate-isolated streaming consumers that drain independently.
 
-### `Topic.init`: plain concurrent fan-out
+### `PubSub.init`: plain concurrent fan-out
 
 ```scala
 import kyo.*
@@ -824,7 +824,7 @@ end Msg
 
 val topicInitExample: Set[String] < (Async & Scope & Abort[Closed]) =
     for
-        topic <- Topic.init[String]
+        topic <- PubSub.init[String]
         seen  <- Queue.Unbounded.init[String]()
         actor <- Actor.run(Actor.receiveMax[Msg](2) {
             case Msg.Direct(n) => seen.add(s"direct:$n")
@@ -844,9 +844,9 @@ val topicInitExample: Set[String] < (Async & Scope & Abort[Closed]) =
 
 `Scope` auto-unsubscribes: when the enclosing scope closes, the subscription is removed and subsequent publishes skip that sink. Subscribers whose `send` fails with `Closed` are pruned automatically on the next publish.
 
-### `Topic.linearized`: total order across subscribers
+### `PubSub.linearized`: total order across subscribers
 
-`Topic.linearized` serializes all operations (publish, subscribe, unsubscribe) through one actor mailbox, so every subscriber observes events in the same sequence even under concurrent publishers. Use it when cross-subscriber ordering is required; accept the cost of one actor hop per publish.
+`PubSub.linearized` serializes all operations (publish, subscribe, unsubscribe) through one actor mailbox, so every subscriber observes events in the same sequence even under concurrent publishers. Use it when cross-subscriber ordering is required; accept the cost of one actor hop per publish.
 
 ```scala
 import kyo.*
@@ -854,7 +854,7 @@ import kyo.Actor.Subject
 
 val topicLinearizedExample: Boolean < (Async & Scope & Abort[Closed]) =
     for
-        topic <- Topic.linearized[Int]
+        topic <- PubSub.linearized[Int]
         a     <- Channel.init[Int](64)
         b     <- Channel.init[Int](64)
         _     <- topic.subscribe(Subject.init(a))
@@ -865,13 +865,13 @@ val topicLinearizedExample: Boolean < (Async & Scope & Abort[Closed]) =
     yield as == bs && as.size == 10 // both subscribers agree on the same total order
 ```
 
-The `as == bs` equality is exactly the property `Topic.init` does not guarantee: under concurrent publishers, two `init` subscribers may observe the same values in different orders, so swapping `Topic.linearized` for `Topic.init` here would no longer be guaranteed to hold.
+The `as == bs` equality is exactly the property `PubSub.init` does not guarantee: under concurrent publishers, two `init` subscribers may observe the same values in different orders, so swapping `PubSub.linearized` for `PubSub.init` here would no longer be guaranteed to hold.
 
-`Topic.linearized` requires `Scope & Async` because it spawns an actor. The actor's lifetime is tied to the enclosing scope: when the scope closes, the actor shuts down and the topic closes with it. Calling `topic.close` explicitly also shuts the backing actor; in-flight callers complete (with `Closed`) rather than being stranded, because every operation uses the strand-safe `actor.ask` path.
+`PubSub.linearized` requires `Scope & Async` because it spawns an actor. The actor's lifetime is tied to the enclosing scope: when the scope closes, the actor shuts down and the topic closes with it. Calling `topic.close` explicitly also shuts the backing actor; in-flight callers complete (with `Closed`) rather than being stranded, because every operation uses the strand-safe `actor.ask` path.
 
 ### `Subject.contramap`: subscribing an actor with a sum message type
 
-An actor that handles several message kinds with a sum type subscribes to a `Topic[E]` by adapting its `Subject[Msg]` with `contramap`:
+An actor that handles several message kinds with a sum type subscribes to a `PubSub[E]` by adapting its `Subject[Msg]` with `contramap`:
 
 ```scala
 import kyo.*
@@ -884,7 +884,7 @@ end AppMsg
 
 val contramapExample: Set[String] < (Async & Scope & Abort[Closed]) =
     for
-        topic <- Topic.init[String]
+        topic <- PubSub.init[String]
         log   <- Queue.Unbounded.init[String]()
         actor <- Actor.run(Actor.receiveMax[AppMsg](3) {
             case AppMsg.UserAction(p)  => log.add(s"action:$p")
@@ -901,7 +901,7 @@ val contramapExample: Set[String] < (Async & Scope & Abort[Closed]) =
 
 The actor receives both topic events (as `AppMsg.SystemEvent`) and direct sends (as `AppMsg.UserAction`) through a single serialized mailbox. There is no separate fan-in fiber; `contramap` just wraps the `send`/`trySend` calls with the mapping function.
 
-### Topic API summary
+### PubSub API summary
 
 | Method | Effects | Description |
 |---|---|---|
@@ -1139,9 +1139,9 @@ val stage1: Amount < (Async & Scope & Abort[Closed]) =
     yield balance // always Amount(100) regardless of deposit order
 ```
 
-### Stage 2: observe transactions with a Topic
+### Stage 2: observe transactions with a PubSub
 
-Adding a `Topic[Transaction]` lets the account publish a record of every committed operation. An audit actor subscribes before any publish; `topic.subscribe` completes (is awaited) before returning, so there is no readiness race and no latch is needed. The account sends to the topic inside each handler after the state update, so subscribers see only committed transactions.
+Adding a `PubSub[Transaction]` lets the account publish a record of every committed operation. An audit actor subscribes before any publish; `topic.subscribe` completes (is awaited) before returning, so there is no readiness race and no latch is needed. The account sends to the topic inside each handler after the state update, so subscribers see only committed transactions.
 
 ```scala
 import kyo.*
@@ -1172,7 +1172,7 @@ end AccountMessage
 // Account publishes each committed transaction; audit actor collects them.
 val stage2: Chunk[Transaction] < (Async & Scope & Abort[Closed]) =
     for
-        topic      <- Topic.init[Transaction]
+        topic      <- PubSub.init[Transaction]
         auditQueue <- Queue.Unbounded.init[Transaction]()
         // Audit actor: collects 3 transactions (deposit, withdraw-ok, second deposit).
         audit <- Actor.run {
@@ -1249,7 +1249,7 @@ end AccountMessage
 // Two observers: audit receives Transaction, fraud receives FraudSignal via contramap.
 val stage3: Boolean < (Async & Scope & Abort[Closed]) =
     for
-        topic      <- Topic.init[Transaction]
+        topic      <- PubSub.init[Transaction]
         auditQueue <- Queue.Unbounded.init[Transaction]()
         fraudQueue <- Queue.Unbounded.init[FraudSignal]()
         audit <- Actor.run {
@@ -1297,9 +1297,9 @@ val stage3: Boolean < (Async & Scope & Abort[Closed]) =
     yield auditObserved == fraudSignals.map(_.tx)
 ```
 
-### Stage 4: consistent order across observers with Topic.linearized
+### Stage 4: consistent order across observers with PubSub.linearized
 
-With `Topic.init` and concurrent publishers (two accounts publishing at the same time), two observers may see events arrive in different orders because fan-out to subscribers happens in separate fibers. `Topic.linearized` routes every publish through a single actor mailbox first, then fans out, so every subscriber observes the same total order. The `auditObserved == fraudObserved` equality below is exactly the property `Topic.init` does not guarantee.
+With `PubSub.init` and concurrent publishers (two accounts publishing at the same time), two observers may see events arrive in different orders because fan-out to subscribers happens in separate fibers. `PubSub.linearized` routes every publish through a single actor mailbox first, then fans out, so every subscriber observes the same total order. The `auditObserved == fraudObserved` equality below is exactly the property `PubSub.init` does not guarantee.
 
 ```scala
 import kyo.*
@@ -1332,7 +1332,7 @@ end AccountMessage
 val stage4: Boolean < (Async & Abort[Closed]) =
     Scope.run {
         for
-            topic      <- Topic.linearized[Transaction]
+            topic      <- PubSub.linearized[Transaction]
             auditQueue <- Queue.Unbounded.init[Transaction]()
             fraudQueue <- Queue.Unbounded.init[FraudSignal]()
             // audit observes Transaction; fraud observes FraudSignal via contramap.

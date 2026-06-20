@@ -2,12 +2,12 @@ package kyo
 
 import kyo.Actor.Subject
 
-class TopicTest extends kyo.test.Test[Any]:
+class PubSubTest extends kyo.test.Test[Any]:
 
-    "Topic.init" - {
+    "PubSub.init" - {
         "fans out a published value to all subscribers" in {
             for
-                topic <- Topic.init[Int]
+                topic <- PubSub.init[Int]
                 a     <- Channel.init[Int](4)
                 b     <- Channel.init[Int](4)
                 _     <- topic.subscribe(Subject.init(a))
@@ -19,7 +19,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "reports the subscriber count" in {
             for
-                topic <- Topic.init[Int]
+                topic <- PubSub.init[Int]
                 a     <- Channel.init[Int](4)
                 _     <- topic.subscribe(Subject.init(a))
                 n     <- topic.subscriberCount
@@ -27,7 +27,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "prunes a subscriber whose send fails with Closed" in {
             for
-                topic <- Topic.init[Int]
+                topic <- PubSub.init[Int]
                 chan  <- Channel.init[Int](4)
                 _     <- topic.subscribe(Subject.init(chan))
                 _     <- chan.close
@@ -37,7 +37,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "removes a subscriber when its scope closes" in {
             for
-                topic <- Topic.init[Int]
+                topic <- PubSub.init[Int]
                 chan  <- Channel.init[Int](4)
                 _     <- Scope.run(topic.subscribe(Subject.init(chan)))
                 n     <- topic.subscriberCount
@@ -45,7 +45,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "delivers to live subscribers even when a dead one is pruned in the same publish" in {
             for
-                topic <- Topic.init[Int]
+                topic <- PubSub.init[Int]
                 dead  <- Channel.init[Int](4)
                 live  <- Channel.init[Int](4)
                 _     <- topic.subscribe(Subject.init(dead))
@@ -58,17 +58,17 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "publish after close fails with Closed" in {
             for
-                topic  <- Topic.init[Int]
+                topic  <- PubSub.init[Int]
                 _      <- topic.close
                 result <- Abort.run[Closed](topic.publish(1))
             yield assert(result.isFailure)
         }
     }
 
-    "Topic.linearized" - {
+    "PubSub.linearized" - {
         "fans out to all subscribers" in {
             for
-                topic <- Topic.linearized[Int]
+                topic <- PubSub.linearized[Int]
                 a     <- Channel.init[Int](16)
                 b     <- Channel.init[Int](16)
                 _     <- topic.subscribe(Subject.init(a))
@@ -80,7 +80,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "delivers the same order to all subscribers under concurrent publishers" in {
             for
-                topic <- Topic.linearized[Int]
+                topic <- PubSub.linearized[Int]
                 a     <- Channel.init[Int](1024)
                 b     <- Channel.init[Int](1024)
                 _     <- topic.subscribe(Subject.init(a))
@@ -94,7 +94,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "an actor subscribes via contramap and also takes direct sends through one mailbox" in {
             for
-                topic <- Topic.linearized[Int]
+                topic <- PubSub.linearized[Int]
                 seen  <- Queue.Unbounded.init[String]()
                 actor <- Actor.run(Actor.receiveMax[String](2)(seen.add(_)))
                 _     <- topic.subscribe(actor.subject.contramap[Int](i => s"event:$i"))
@@ -106,7 +106,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "removes a subscriber when its scope closes" in {
             for
-                topic <- Topic.linearized[Int]
+                topic <- PubSub.linearized[Int]
                 chan  <- Channel.init[Int](4)
                 _     <- Scope.run(topic.subscribe(Subject.init(chan)))
                 n     <- topic.subscriberCount
@@ -114,7 +114,7 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "publish after close fails with Closed" in {
             for
-                topic  <- Topic.linearized[Int]
+                topic  <- PubSub.linearized[Int]
                 _      <- topic.close
                 result <- Abort.run[Closed](topic.publish(1))
             yield assert(result.isFailure)
@@ -123,7 +123,7 @@ class TopicTest extends kyo.test.Test[Any]:
             // Abort.run[Closed] (not [Closed | Timeout]): a genuine strand hangs past the 2s timeout and the
             // uncaught Timeout fails the leaf. A completed call (success or Closed) satisfies isSuccess || isFailure.
             for
-                topic  <- Topic.linearized[Int]
+                topic  <- PubSub.linearized[Int]
                 fiber  <- Fiber.initUnscoped(topic.publish(1))
                 _      <- topic.close
                 result <- Abort.run[Closed](Async.timeout(2.seconds)(fiber.get))
@@ -131,11 +131,11 @@ class TopicTest extends kyo.test.Test[Any]:
         }
         "does not strand a subscriberCount caller when the topic closes" in {
             for
-                topic  <- Topic.linearized[Int]
+                topic  <- PubSub.linearized[Int]
                 fiber  <- Fiber.initUnscoped(topic.subscriberCount)
                 _      <- topic.close
                 result <- Abort.run[Closed](Async.timeout(2.seconds)(fiber.get))
             yield assert(result.isSuccess || result.isFailure)
         }
     }
-end TopicTest
+end PubSubTest

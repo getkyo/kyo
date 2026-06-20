@@ -499,11 +499,11 @@ class ActorTest extends kyo.test.Test[Any]:
                 assert(logs.last.balance == Amount(50))
         }
 
-        "publishes transactions to multiple observers in a consistent order (linearized Topic)" in {
-            // nested Scope tears down the Topic's internal linearizer actor before the assertions run
+        "publishes transactions to multiple observers in a consistent order (linearized PubSub)" in {
+            // nested Scope tears down the PubSub's internal linearizer actor before the assertions run
             Scope.run {
                 for
-                    topic      <- Topic.linearized[Transaction]
+                    topic      <- PubSub.linearized[Transaction]
                     auditQueue <- Queue.Unbounded.init[Transaction]()
                     fraudQueue <- Queue.Unbounded.init[FraudSignal]()
 

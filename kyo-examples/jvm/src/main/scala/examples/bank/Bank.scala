@@ -45,7 +45,7 @@ def showResult(result: Result[String, Amount]): String =
 // Creates an account actor that owns its balance in a Var, publishes committed Transactions
 // to the shared topic, and replies to each caller. It handles exactly `capacity` messages
 // before completing.
-private def makeAccountActor(id: Int, capacity: Int, topic: Topic[Transaction])(
+private def makeAccountActor(id: Int, capacity: Int, topic: PubSub[Transaction])(
     using Frame
 ): Actor[Closed, AccountMessage, Unit] < (Scope & Async) =
     Actor.run {
@@ -88,7 +88,7 @@ object Bank extends KyoApp:
             for
                 // Shared ordered topic: every published Transaction reaches all subscribers
                 // in the same total order.
-                topic <- Topic.linearized[Transaction]
+                topic <- PubSub.linearized[Transaction]
 
                 // Backing queues so we can print results after actors finish.
                 auditQueue <- Queue.Unbounded.init[Transaction]()

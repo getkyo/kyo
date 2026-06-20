@@ -12,7 +12,7 @@ kyo-actor provides three layered abstractions, all composing through `Actor.Subj
 |-------|-------|---------|
 | Core actor | `Actor[E, A, B]`, `Actor.Context[A]`, `Actor.Subject[A]` | Private bounded mailbox, single sequential consumer, FIFO, typed errors |
 | Strand-safe request/reply | `Actor.ask`, `Actor.respond`, `Actor.respondLoop`, `Actor.PendingReplies`, `Actor.Ask[Req, Resp]` | Reply always completes; actor termination is never a strand |
-| Publish/subscribe | `Topic[A]`, `Subject.init(hub)`, `Actor.subscribe` | Push fan-out (`Topic`) and pull fan-out (`Hub`) both surfaced through `Subject` |
+| Publish/subscribe | `PubSub[A]`, `Subject.init(hub)`, `Actor.subscribe` | Push fan-out (`PubSub`) and pull fan-out (`Hub`) both surfaced through `Subject` |
 
 Source layout: all code lives in `shared/src/main/scala/kyo/` and is cross-platform (JVM, Scala.js, Scala Native). There are no platform-specific source trees in this module.
 
@@ -63,7 +63,7 @@ B: the value produced when the behavior completes normally
 
 The `fiber` field is `Fiber[B, Abort[Closed | E]]`. The covariance `+E` on the class means an `Actor[Nothing, A, B]` is a subtype of `Actor[Throwable, A, B]`; do not widen the error type unnecessarily.
 
-`close` keeps its name because it is consistent with `Channel.close`, `Hub.close`, `Queue.close`, and `Topic.close`, all of which produce `Closed`. The actor-domain verbs `stop` / `Terminated` are reserved for a future death-watch feature and must not be introduced here.
+`close` keeps its name because it is consistent with `Channel.close`, `Hub.close`, `Queue.close`, and `PubSub.close`, all of which produce `Closed`. The actor-domain verbs `stop` / `Terminated` are reserved for a future death-watch feature and must not be introduced here.
 
 ---
 
@@ -195,26 +195,26 @@ The pump is producer-only. It never calls `mailbox.take`. The actor keeps a sing
 
 The pump stops when the listener or the actor mailbox closes (a `Result.Failure(Closed)` from either direction). Real failures (panics) propagate.
 
-### Topic: push-based
+### PubSub: push-based
 
-`Topic[A]` delivers each published value directly into subscriber sinks by calling `send` on each one. The subscriber's own mailbox (or channel, or queue) is the buffer.
+`PubSub[A]` delivers each published value directly into subscriber sinks by calling `send` on each one. The subscriber's own mailbox (or channel, or queue) is the buffer.
 
 | Constructor | Fan-out style | Order guarantee |
 |-------------|---------------|-----------------|
-| `Topic.init[A]` | Concurrent via `Async.foreach` | Per-subscriber FIFO; no total order across subscribers under concurrent publishers |
-| `Topic.linearized[A]` | Sequential through one actor mailbox | Total order: every subscriber observes publishes in the same sequence |
+| `PubSub.init[A]` | Concurrent via `Async.foreach` | Per-subscriber FIFO; no total order across subscribers under concurrent publishers |
+| `PubSub.linearized[A]` | Sequential through one actor mailbox | Total order: every subscriber observes publishes in the same sequence |
 
 **When to use each:**
 
-- Use `Topic.init` when per-subscriber FIFO suffices and you do not need all subscribers to agree on the relative order of concurrent publishes.
-- Use `Topic.linearized` when all subscribers must observe events in the same total order (for example: audit and fraud observers on the same transaction stream, where `auditObserved == fraudObserved.map(_.tx)` must hold).
-- Use `Hub` (pull) when subscribers need to drain at their own rate. A slow subscriber to a `Topic` applies backpressure to every publisher; a slow `Hub` listener falls behind independently.
+- Use `PubSub.init` when per-subscriber FIFO suffices and you do not need all subscribers to agree on the relative order of concurrent publishes.
+- Use `PubSub.linearized` when all subscribers must observe events in the same total order (for example: audit and fraud observers on the same transaction stream, where `auditObserved == fraudObserved.map(_.tx)` must hold).
+- Use `Hub` (pull) when subscribers need to drain at their own rate. A slow subscriber to a `PubSub` applies backpressure to every publisher; a slow `Hub` listener falls behind independently.
 
 **Closed-sink pruning:** on each publish, subscribers that return `Closed` are collected and removed from the set in one atomic update. This is lazy: a recently-closed sink may still appear in `subscriberCount` until the next publish reaches it.
 
-### `Topic.Command[A]` and the dynamic-Tag rule
+### `PubSub.Command[A]` and the dynamic-Tag rule
 
-`Topic.linearized` creates an actor whose message type is `Command[A]`, a sealed enum. The method signature requires several composed tags as `using` parameters:
+`PubSub.linearized` creates an actor whose message type is `Command[A]`, a sealed enum. The method signature requires several composed tags as `using` parameters:
 
 ```scala
 def linearized[A: Tag](using
@@ -224,14 +224,14 @@ def linearized[A: Tag](using
     pollTag: Tag[Poll[Command[A]]],
     emitTag: Tag[Emit[Command[A]]],
     subjectTag: Tag[Subject[Command[A]]]
-): Topic[A] < (Scope & Async)
+): PubSub[A] < (Scope & Async)
 ```
 
 This is the dynamic-Tag rule in `package kyo`: the compiler cannot synthesize a tag for a composed type like `Command[A]` when `A` is abstract inside the method. The tags must be lifted to `using` parameters so they are resolved at the concrete call site where `A` is known. Any new method in this module that creates an actor or effect whose type involves an abstract type parameter must follow the same pattern.
 
 ### `Subject.contramap` in pub/sub
 
-`contramap` is the standard way to subscribe an actor with a sum message type to a `Topic[E]`:
+`contramap` is the standard way to subscribe an actor with a sum message type to a `PubSub[E]`:
 
 ```scala
 topic.subscribe(actor.subject.contramap(MyMsg.Event(_)))
@@ -267,7 +267,7 @@ Any new mutable state holder introduced to `Actor.run` must be allocated inside 
 
 ### `private[kyo]` over `protected`
 
-The root CONTRIBUTING.md prohibits `protected`. Use `private[kyo]` for cross-package visibility within the `kyo` package. `Actor.PendingReplies`, `Subject.awaitReply`, and `Topic.Command` are all `private[kyo]`.
+The root CONTRIBUTING.md prohibits `protected`. Use `private[kyo]` for cross-package visibility within the `kyo` package. `Actor.PendingReplies`, `Subject.awaitReply`, and `PubSub.Command` are all `private[kyo]`.
 
 ### Kyo types
 
@@ -284,7 +284,7 @@ Test files follow the 1:1 rule with source files:
 | Source | Test file |
 |--------|-----------|
 | `Actor.scala` | `ActorTest.scala`, `SubjectTest.scala` |
-| `Topic.scala` | `TopicTest.scala` |
+| `PubSub.scala` | `PubSubTest.scala` |
 
 `Actor.scala` defines both `Actor` and its nested `Subject`, so it has two test files split by aspect: `ActorTest.scala` covers the actor surface, `SubjectTest.scala` covers the `Subject` surface. Both share the `Actor.scala` source prefix, so neither is an orphan. Do not create orphan test files. Scratch / reproduction files must be removed before a change is considered complete: fold the validated assertions into the matching `*Test.scala` and delete the scratch file.
 
@@ -326,10 +326,10 @@ Run through this list before touching the actor internals or adding a new public
 
 3. **New `ask`-style method.** Does it register with `PendingReplies` before sending the message? Does it have a `Sync.ensure` that removes the registration on all exit paths (reply, failure, interruption)? Does the caller always complete; can it strand?
 
-4. **New pub/sub primitive.** Is it push (like `Topic`) or pull (like `Hub` bridge)? Does subscriber delivery preserve the single-consumer invariant? Does a slow subscriber apply backpressure only to itself (pull) or to all publishers (push)?
+4. **New pub/sub primitive.** Is it push (like `PubSub`) or pull (like `Hub` bridge)? Does subscriber delivery preserve the single-consumer invariant? Does a slow subscriber apply backpressure only to itself (pull) or to all publishers (push)?
 
 5. **New actor-internal mutable state.** Is it allocated inside `Sync.defer`? Is each `AllowUnsafe` site annotated with `// Unsafe:`?
 
 6. **New method with abstract type parameters involving composed tags.** Are the composed tags lifted to `using` parameters so they are resolved at the concrete call site? (See the dynamic-Tag rule above.)
 
-7. **New test.** Does it fold into the existing `ActorTest`, `SubjectTest`, or `TopicTest`? Does it assert on a concrete value, not just `assert(true)` or type membership? Does it include at least one edge case (closed actor, empty mailbox, concurrent senders)?
+7. **New test.** Does it fold into the existing `ActorTest`, `SubjectTest`, or `PubSubTest`? Does it assert on a concrete value, not just `assert(true)` or type membership? Does it include at least one edge case (closed actor, empty mailbox, concurrent senders)?
