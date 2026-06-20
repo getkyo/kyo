@@ -173,8 +173,12 @@ final private[kyo] class NioTransport private (
             given Frame = frame
             upgradeToTls(connection, tls, channelCapacity)
         }
-        // Wire in the TLS certificate hash function.
-        connection.certHashFn = Present(() => NioTransport.serverCertificateHash(handle))
+        // Wire in the TLS certificate hash function. Compute the hash ONCE here, at handshake completion before connection.start() launches the
+        // pumps, so the single getPeerCertificates read cannot race the Selector carrier's concurrent engine ops (concurrent SSLEngine/SSLSession
+        // access is undefined behavior). The installed function then returns the cached value (engine-free) gated on isOpen, mirroring
+        // PosixTransport.installCertHash. Without the cache, a live read on the caller's carrier raced the engine and returned Absent under load.
+        val cachedCertHash = NioTransport.serverCertificateHash(handle)
+        connection.certHashFn = Present(() => if handle.channel.isOpen then cachedCertHash else Absent)
         // Wire in the TLS close-reason function so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. Only a TLS
         // handle has the close_notify-vs-bare-FIN signal (a plaintext handle has no close_notify exchange and keeps the default Active), so it is
         // installed only when handle.tls is Present at wiring time (after driveHandshake set it). This converges the inline NIO path with the
@@ -292,7 +296,9 @@ final private[kyo] class NioTransport private (
                         given Frame = frame
                         upgradeToTls(connection, tls, channelCapacity)
                     }
-                    connection.certHashFn = Present(() => NioTransport.serverCertificateHash(handle))
+                    // Cache the cert hash once here (pre-start, engine quiescent); a live read would race the Selector's engine ops (see completeConnect).
+                    val cachedCertHash = NioTransport.serverCertificateHash(handle)
+                    connection.certHashFn = Present(() => if handle.channel.isOpen then cachedCertHash else Absent)
                     connection.start()
 
                     // Spawn the handler in its own carrier fiber. The connection lifecycle is managed by its pumps;
