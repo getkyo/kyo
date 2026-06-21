@@ -7,9 +7,9 @@ import kyo.*
 
 /** JVM implementation of the Unix-domain-socket backend.
   *
-  * Binds a `ServerSocketChannel` on `sockPath`, registers a `Scope.ensure` cleanup that closes the
-  * channel and removes the socket file, and wraps the connection as a [[kyo.JsonRpcTransport]] via
-  * [[UdsWireTransport]] + [[kyo.JsonRpcTransport.fromWire]].
+  * Binds a `ServerSocketChannel` on `sockPath`, registers a `Scope.ensure` cleanup that closes the accepted
+  * connection and the server channel and removes the socket file, and wraps the connection as a
+  * [[kyo.JsonRpcTransport]] via [[UdsWireTransport]] + [[kyo.JsonRpcTransport.fromWire]].
   */
 private[kyo] object UdsBackend:
 
@@ -22,11 +22,13 @@ private[kyo] object UdsBackend:
             val addr    = UnixDomainSocketAddress.of(sockPath.toString)
             val channel = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
             channel.bind(addr)
-            Scope.ensure(
-                Sync.defer(channel.close()).andThen(Abort.run[FileFsException](sockPath.remove).unit)
-            ).andThen {
-                // Unsafe: build the UDS transport, initializing its accept/read state under AllowUnsafe
-                Sync.Unsafe.defer(UdsWireTransport.init(channel)).map { wire =>
+            // Unsafe: build the UDS transport, initializing its accept/read state under AllowUnsafe
+            Sync.Unsafe.defer(UdsWireTransport.init(channel)).map { wire =>
+                // Close the whole wire on scope exit: wire.close closes the accepted connection in addition to the
+                // server channel, so the accepted socket is not left open until GC finalizes it. Then remove the file.
+                Scope.ensure(
+                    wire.close.andThen(Abort.run[FileFsException](sockPath.remove).unit)
+                ).andThen {
                     JsonRpcTransport.fromWire(wire, framer, codec)
                 }
             }
