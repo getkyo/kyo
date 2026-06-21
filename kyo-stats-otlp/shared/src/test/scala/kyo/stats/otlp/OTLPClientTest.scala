@@ -5,6 +5,11 @@ import kyo.stats.*
 
 class OTLPClientTest extends kyo.test.Test[Any]:
 
+    // Socket-only opt-out: this suite runs an HttpServer/HttpClient on the NIO transport, whose closed-channel fd
+    // close is deferred to the idle selector's next select() (an opaque socket:[inode] no allowlist matches), the
+    // same transport-deferred reason as BaseHttpTest. Thread, fiber, and file-descriptor detection stay on.
+    override def config = super.config.leakCheckSockets(false)
+
     def testConfig(port: Int) = OTLPConfig(
         endpoint = s"http://localhost:$port",
         tracesEndpoint = s"http://localhost:$port/v1/traces",

@@ -17,6 +17,11 @@ import kyo.*
   */
 class SlackWebApiLiveTest extends kyo.test.Test[Any]:
 
+    // Socket-only opt-out: this suite runs an HttpServer/HttpClient on the NIO transport, whose closed-channel fd
+    // close is deferred to the idle selector's next select() (an opaque socket:[inode] no allowlist matches), the
+    // same transport-deferred reason as BaseHttpTest. Thread, fiber, and file-descriptor detection stay on.
+    override def config = super.config.leakCheckSockets(false)
+
     private val bot = SlackToken.Bot("xoxb-test")
 
     // A minimal JSON ok body for the response_url server reply (the real Slack

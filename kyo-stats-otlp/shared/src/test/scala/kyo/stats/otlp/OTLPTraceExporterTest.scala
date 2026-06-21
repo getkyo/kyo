@@ -9,6 +9,11 @@ import kyo.stats.internal.UnsafeTraceSpan
 
 class OTLPTraceExporterTest extends kyo.test.Test[Any]:
 
+    // Socket-only opt-out: this suite runs an HttpServer/HttpClient on the NIO transport, whose closed-channel fd
+    // close is deferred to the idle selector's next select() (an opaque socket:[inode] no allowlist matches), the
+    // same transport-deferred reason as BaseHttpTest. Thread, fiber, and file-descriptor detection stay on.
+    override def config = super.config.leakCheckSockets(false)
+
     import AllowUnsafe.embrace.danger
 
     private def now() = java.time.Instant.now()
