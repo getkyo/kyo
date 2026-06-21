@@ -447,7 +447,7 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-    "Constructor failure: the recovered SuiteReport carries the run's leak config, not the defaults (CR-001 regression)" in {
+    "Constructor failure: the recovered SuiteReport carries the run's effective leak config, not the field defaults" in {
         // A suite whose constructor throws is recovered into a <constructor>-failure SuiteReport. That report must
         // reflect the run's effective leak settings: otherwise a thrown constructor in a forked JVM reports the
         // SuiteReport field defaults, and the OR-aggregated socket-leak check flips ON for the whole fork. Both arms

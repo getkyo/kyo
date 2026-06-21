@@ -205,7 +205,8 @@ object HttpServer:
                 connections.removeIf(c => !c.isOpen)
                 discard(connections.add(conn))
                 if closing.get() then
-                    // Shutdown raced this accept; close the connection rather than serve a request the server will not finish.
+                    // Shutdown raced this accept; close the connection rather than serve a request the server will not
+                    // finish. Contain any throw: a failing close here must not surface on the accept path.
                     try conn.close()
                     catch case _: Throwable => ()
                 else
@@ -249,6 +250,7 @@ object HttpServer:
 
             def forceCloseAndComplete(): Unit =
                 connections.forEach { conn =>
+                    // Contain any throw: one connection's close failure must not abort closing the rest.
                     try conn.close()
                     catch case _: Throwable => ()
                 }
@@ -257,8 +259,9 @@ object HttpServer:
             end forceCloseAndComplete
 
             if gracePeriod <= Duration.Zero then
-                // closeNow: force-close every accepted connection at once. This is the leak fix and the path the Scope
-                // finalizer (`_.closeNow`) takes.
+                // closeNow: force-close every accepted connection at once, the path the Scope finalizer (`_.closeNow`)
+                // takes. Accepted keep-alive connections otherwise outlive the listening socket, held open until the
+                // 60s idle timer fires.
                 forceCloseAndComplete()
             else
                 // Graceful: let in-flight connections run for the grace period, then force-close whatever remains.

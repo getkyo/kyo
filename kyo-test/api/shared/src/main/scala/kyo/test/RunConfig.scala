@@ -46,12 +46,12 @@ import kyo.minutes
   *   while keeping the rest. Override per suite with `def config = super.config.leakCheck(false)` (all categories) or a single category toggle
   *   for a suite whose design legitimately holds one kind of resource for the whole run.
   * @param leakCheckSockets
-  *   when `true`, socket descriptors are included in the file-descriptor probe. Defaults to `false` for now: the shared kyo-http NIO transport
-  *   can leave a closed socket's fd open past the run, because closing a selector-registered channel only cancels its key and the real fd close
-  *   is deferred until the idle driver selector runs another `select()` that nothing wakes (see kyo-net HANDOFF-listener-fd-leak.md). That makes
-  *   socket-leak detection produce flaky failures across every suite that drives the transport (kyo-http, kyo-caliban, kyo-pod, kyo-ui, ...), and
-  *   the fix belongs to the kyo-net transport rewrite, not here. File-descriptor, thread, and fiber detection stay on. Flip this default back to
-  *   `true` once kyo-net releases the channel fd promptly on close.
+  *   when `true`, socket descriptors are included in the file-descriptor probe. Defaults to `false`: the shared kyo-http NIO transport can
+  *   leave a closed socket's fd open past the run, because closing a selector-registered channel only cancels its key and the real fd close
+  *   is deferred until the idle driver selector runs another `select()` that nothing wakes. Including sockets would therefore produce flaky
+  *   failures across every suite that drives the transport (kyo-http, kyo-caliban, kyo-pod, kyo-ui, ...); releasing the channel fd promptly on
+  *   close is the transport's responsibility, not a test suite's. File-descriptor, thread, and fiber detection stay on. Set this to `true`
+  *   once the transport releases the channel fd promptly on close.
   * @param leakCheckFileDescriptors
   *   when `true` (the default), non-socket descriptors (files, directories, pipes) are included in the file-descriptor probe.
   * @param leakCheckThreads

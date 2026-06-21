@@ -27,11 +27,11 @@ private[runner] object LeakCheck:
     /** Built-in allowlist patterns applied by [[detect]] in addition to each suite's `RunConfig.leakCheckAllowlist`, for process-lifetime infra
       * that legitimately outlives every test in the fork.
       *
-      * TODO(kyo-net): remove `NioIoDriver`. kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`) is a lazy singleton whose
-      * `NioIoDriver` runs a selector event loop on a scheduler fiber for the JVM's lifetime, and nothing ever closes the shared transport, so
-      * the fiber is parked in `select()` at every http-using module's end-of-run check. It is intentional infra, not a leak; this excuses it in
-      * one place instead of every http-touching test module, until the new network stack gives the driver a proper lifecycle (or moves its loop
-      * off the scheduler).
+      * `NioIoDriver` is allowlisted pending the network stack rewrite. kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`)
+      * is a lazy singleton whose `NioIoDriver` runs a selector event loop on a scheduler fiber for the JVM's lifetime, and nothing ever closes
+      * the shared transport, so the fiber is parked in `select()` at every http-using module's end-of-run check. It is intentional infra, not a
+      * leak; excusing it here covers every http-touching test module in one place. The entry is removed once the network stack gives the driver
+      * a proper lifecycle (or moves its loop off the scheduler).
       */
     val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver")
 
