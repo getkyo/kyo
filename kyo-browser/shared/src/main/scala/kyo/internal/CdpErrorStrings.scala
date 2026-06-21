@@ -14,8 +14,14 @@ private[kyo] object CdpErrorStrings:
     val StaleNodeErrorMessage: String = "Could not find node"
 
     /** Emitted by `Runtime.evaluate` when the supplied `executionContextId` no longer exists (the frame navigated or detached). Triggers
-      * the context-destroyed translation in [[BrowserEval]].
+      * the context-destroyed translation in [[CdpBackend.runtimeEvaluate]] (to [[BrowserIFrameInvalidException]]).
       */
     val ContextDestroyedErrorMessage: String = "Cannot find context with specified id"
+
+    /** Emitted by `Runtime.evaluate` when `returnByValue=true` is set but the result is a non-serialisable value (e.g. a JS Symbol or
+      * a circular object). Triggers the unreturnable-value recovery path in [[CdpBackend.runtimeEvaluate]]: the error is recovered to an
+      * `undefined` [[EvalResult]], which projects to an empty-string value instead of raising a typed abort.
+      */
+    val UnreturnableValueErrorMessage: String = "Object couldn't be returned by value"
 
 end CdpErrorStrings

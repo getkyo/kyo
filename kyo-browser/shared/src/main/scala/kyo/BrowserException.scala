@@ -133,12 +133,16 @@ end BrowserSetupFailedException
 
 /** A CDP method returned a protocol-level error or an undecodable result.
   *
+  * `code` carries the numeric JSON-RPC/CDP error code when the failure was a coded protocol error (the server signalled an `error` object
+  * with a `code` field); it is `Absent` for failures with no coded source, such as a decode/shape failure on an otherwise-successful reply
+  * (see [[BrowserProtocolErrorException.decodeFailure]] and [[BrowserProtocolErrorException.unexpectedReply]]).
+  *
   * @see
   *   [[BrowserConnectionException]] for the topical marker.
   * @see
   *   [[BrowserProtocolErrorException.decodeFailure]] and [[BrowserProtocolErrorException.unexpectedReply]] for the typical constructors.
   */
-final case class BrowserProtocolErrorException(method: String, error: String)(using Frame)
+final case class BrowserProtocolErrorException(method: String, error: String, code: Maybe[Int] = Absent)(using Frame)
     extends BrowserException(s"$method: $error")
     with BrowserConnectionException with BrowserReadException derives CanEqual
 

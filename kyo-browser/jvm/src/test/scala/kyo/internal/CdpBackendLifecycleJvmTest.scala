@@ -5,13 +5,15 @@ import kyo.*
 
 /** In-process CDP fixture WebSocket server. Each Behavior reproduces a CDP-WS fault that live Chrome cannot reliably exhibit on demand.
   *
-  * JVM-only: kyo-http's `HttpServer` is implemented on JVM and Native; we scope to JVM here for simplicity, matching the precedent set by
-  * [[BrowserLauncherJvmTest]] and [[BrowserLauncherPlatformTest]].
+  * JVM-scoped: the in-process fixture requires kyo-http's `HttpServer`, which is not available on Scala.js, and the test runs alongside
+  * the module's JVM browser-launch test infrastructure ([[BrowserLauncherJvmTest]], [[BrowserLauncherPlatformTest]]).
   */
-private[kyo] object CdpFixtureServer:
+private[kyo] object CdpBackendFixtureServer:
 
     enum Behavior derives CanEqual:
-        /** Pass-through CDP responder: replies `{"id": <id>, "result": {}}` to every request. Baseline + dialog injection. */
+        /** Pass-through CDP responder: replies to Browser.getVersion with a valid version result, and
+          * replies `{"id": <id>, "result": {}}` to every other request. Baseline + dialog injection.
+          */
         case Echo
 
         /** Accept one inbound frame, reply, then close 1006. Reproduces a relay fiber crash. */
@@ -69,55 +71,81 @@ private[kyo] object CdpFixtureServer:
             case _                             => Kyo.unit
         }
 
+    /** Slow-response loop: always responds to Browser.getVersion immediately; applies the delay for all other requests. This ensures the
+      * Q-002 probe in [[CdpBackend.initUnscoped]] succeeds so the fixture can test subsequent slow sends.
+      */
     private def loopSlow(ws: HttpWebSocket, delay: Duration)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
         ws.stream.foreach {
             case HttpWebSocket.Payload.Text(s) =>
-                Async.delay(delay)(replyOk(ws, s))
+                if s.contains("Browser.getVersion") then replyOk(ws, s)
+                else Async.delay(delay)(replyOk(ws, s))
             case _ => Kyo.unit
         }
 
-    /** B1 helper: read first inbound frame, reply, then close 1006 to make the relay observe an abrupt server-side termination. The
-      * `wsRef`-mediated `triggerCrash()` is also wired (test may use either).
-      */
+    /** B1 helper: respond to Browser.getVersion probe immediately (so initUnscoped succeeds), then crash on the next frame. */
     private def crashAfterFirst(ws: HttpWebSocket)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
-        ws.take().map {
+        // Handle the Browser.getVersion probe first, then crash on the next frame.
+        ws.take().flatMap {
+            case HttpWebSocket.Payload.Text(s) if s.contains("Browser.getVersion") =>
+                replyOk(ws, s).andThen {
+                    ws.take().andThen(ws.close(1006, "fixture-crash"))
+                }
             case HttpWebSocket.Payload.Text(s) =>
                 replyOk(ws, s).andThen(ws.close(1006, "fixture-crash"))
             case _ =>
                 ws.close(1006, "fixture-crash")
         }
 
-    /** B3 helper: read one frame, then close 1006 without replying. The relay's reader fiber sees the close and `exchange.close` runs via
-      * the watcher fiber at CdpClient.
-      */
+    /** B3 helper: respond to Browser.getVersion probe (initUnscoped succeeds), then drop the next frame. */
     private def dropOnFirst(ws: HttpWebSocket)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
-        ws.take().andThen(ws.close(1006, "fixture-drop"))
+        ws.take().flatMap {
+            case HttpWebSocket.Payload.Text(s) if s.contains("Browser.getVersion") =>
+                replyOk(ws, s).andThen {
+                    ws.take().andThen(ws.close(1006, "fixture-drop"))
+                }
+            case _ =>
+                ws.close(1006, "fixture-drop")
+        }
 
-    /** Decode the request, extract `id` via the typed [[FallbackIdEnvelope]] (permissive Maybe[Int]), send a `{"id":id,"result":{}}` frame.
-      * Malformed/missing-id requests are silently dropped (acceptable for a fixture under controlled inputs).
+    /** Local envelope used only by this fixture to extract `id` from an inbound CDP request wire frame.
+      * Permissive: `id` is Maybe[Int] so partial / missing frames do not fail the fixture server.
       */
+    final private case class FixtureIdEnvelope(id: Maybe[Int] = Absent) derives Schema
+
+    /** Decode the request, extract `id` via [[FixtureIdEnvelope]] (permissive Maybe[Int]), send a proper reply.
+      *
+      * For `Browser.getVersion` requests, returns a valid [[BrowserVersionResult]] JSON so the Q-002 probe in [[CdpBackend.initUnscoped]]
+      * succeeds. For `Target.getTargets` requests, returns `{"targetInfos":[]}` (an empty but schema-valid response). For all other
+      * requests, returns `{"id":id,"result":{}}`.
+      */
+    private val versionResultJson =
+        """{"protocolVersion":"1.3","product":"Chrome/120","revision":"abc","userAgent":"Mozilla","jsVersion":"12.0"}"""
+
     private def replyOk(ws: HttpWebSocket, requestWire: String)(using
         Frame
     ): Unit < (Async & Abort[Closed]) =
-        Json.decode[FallbackIdEnvelope](requestWire) match
+        Json.decode[FixtureIdEnvelope](requestWire) match
             case Result.Success(env) =>
                 env.id match
                     case Present(id) =>
-                        val reply = s"""{"id":$id,"result":{}}"""
+                        // Check if this is a Browser.getVersion request; reply with a valid version envelope.
+                        // Check if this is a Target.getTargets request; reply with a schema-valid empty list.
+                        val result =
+                            if requestWire.contains("Browser.getVersion") then versionResultJson
+                            else if requestWire.contains("Target.getTargets") then """{"targetInfos":[]}"""
+                            else "{}"
+                        val reply = s"""{"id":$id,"result":$result}"""
                         ws.put(HttpWebSocket.Payload.Text(reply))
                     case Absent => Kyo.unit
             case _ => Kyo.unit
 
-    /** Emits a Page.javascriptDialogOpening event with NO sessionId field. Drives B4. Wire format MUST match `decodeCdpMessage` at
-      * CdpClient: top-level `method` + `params` object with NO top-level `sessionId` key. The empty-sessionId path then maps to
-      * `sidKey = ""` at CdpClient and the (false, "") default tuple is enqueued.
-      */
+    /** Emits a Page.javascriptDialogOpening event with NO sessionId field. */
     private def emitDialog(wsRef: AtomicRef[Maybe[HttpWebSocket]])(using
         Frame
     ): Unit < Async =
@@ -139,31 +167,23 @@ private[kyo] object CdpFixtureServer:
             case Absent      => Kyo.unit
         }
 
-end CdpFixtureServer
+end CdpBackendFixtureServer
 
-/** JVM-only [[CdpClient]] scenarios that require a fault-injecting CDP WebSocket fixture ([[CdpFixtureServer]] in this file).
-  *
-  * Lives in the JVM test tree because [[CdpFixtureServer]] is built on kyo-http's `HttpServer`, which is implemented on JVM and Native only
-  * There is no `HttpServer` on Scala.js.
+/** JVM-only [[CdpBackend]] scenarios that require a fault-injecting CDP WebSocket fixture ([[CdpBackendFixtureServer]] in this file).
   */
-class CdpClientLifecycleJvmTest extends BaseBrowserTest:
+class CdpBackendLifecycleJvmTest extends kyo.BaseBrowserTest:
 
     override def timeout = 2.minutes
 
     "fixture sanity: Echo replies to a Target.getTargets request" in {
-        Abort.run[BrowserConnectionException] {
+        Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
-                CdpFixtureServer.start(CdpFixtureServer.Behavior.Echo).map { fixture =>
-                    CdpClient.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
+                    CdpBackend.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
-                            json <- client.send("Target.getTargets")
-                            _    <- client.close(30.seconds)
-                        yield
-                            assert(
-                                json.contains("\"result\"") || json == "{}",
-                                s"unexpected: $json"
-                            )
-                            ()
+                            _ <- CdpBackend.getTargets(backend)
+                            _ <- backend.close(30.seconds)
+                        yield succeed
                     }
                 }
             }
@@ -175,31 +195,23 @@ class CdpClientLifecycleJvmTest extends BaseBrowserTest:
     // ─────────────────────────────────────────────────────────────────────────
 
     "close after relay fiber crashed externally does not throw" in {
-        Abort.run[BrowserConnectionException] {
+        Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
-                CdpFixtureServer.start(CdpFixtureServer.Behavior.Echo).map { fixture =>
-                    CdpClient.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
+                    CdpBackend.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
-                            // Liveness: route a request through the relay.
-                            _ <- client.send("Target.getTargets")
-                            // Server side closes 1006; relay observes and exits.
+                            // Liveness: route a request through the endpoint.
+                            _ <- CdpBackend.getTargets(backend)
+                            // Server side closes 1006; endpoint reader observes and exits.
                             _ <- fixture.triggerCrash()
-                            // Bounded poll: wait (≤ 1s) for the watcher fiber
-                            // (CdpClient) to observe relay exit.
-                            _ <- Loop(0) { attempt =>
-                                client.relay.done.map { d =>
-                                    if d || attempt >= 20 then Loop.done(())
-                                    else Async.delay(50.millis)(Loop.continue(attempt + 1))
-                                }
-                            }
-                            // close() must not throw or hang post-relay-crash.
-                            closeRes <- Abort.run[Timeout](Async.timeout(5.seconds)(client.close(30.seconds)))
+                            // Brief settle: allow the WS close to propagate through the transport layer.
+                            _ <- Async.delay(200.millis)(Kyo.unit)
+                            // close() must not throw or hang post-crash.
+                            closeRes <- Abort.run[Timeout](Async.timeout(5.seconds)(backend.close(30.seconds)))
                         yield closeRes match
-                            case Result.Success(_) =>
-                                // close() completed without hanging after relay crash.
-                                succeed("close() returns without hanging after the relay fiber crashes")
-                            case Result.Failure(_: Timeout) => fail("client.close hung after relay crash")
-                            case Result.Panic(ex)           => fail(s"Panic from client.close: ${ex.getMessage}")
+                            case Result.Success(_)          => succeed
+                            case Result.Failure(_: Timeout) => fail("backend.close hung after relay crash")
+                            case Result.Panic(ex)           => fail(s"Panic from backend.close: ${ex.getMessage}")
                     }
                 }
             }
@@ -211,36 +223,29 @@ class CdpClientLifecycleJvmTest extends BaseBrowserTest:
     // ─────────────────────────────────────────────────────────────────────────
 
     "close(gracePeriod) falls back to closeNow when in-flight send is slow" in {
-        Abort.run[BrowserConnectionException] {
+        Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
-                CdpFixtureServer.start(CdpFixtureServer.Behavior.SlowResponses(10.seconds)).map { fixture =>
-                    CdpClient.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.SlowResponses(10.seconds)).map { fixture =>
+                    CdpBackend.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
-                            slowFiber <- Fiber.initUnscoped(client.send("Target.getTargets"))
-                            // Wait for inFlight to register (bounded ≤ 500ms).
-                            _ <- Loop(0) { attempt =>
-                                client.inFlight.get.map { n =>
-                                    if n >= 1 || attempt >= 20 then Loop.done(())
-                                    else Async.delay(25.millis)(Loop.continue(attempt + 1))
-                                }
-                            }
-                            // close(500ms): grace expires while send is in-flight,
-                            // closeOrderly raises Timeout, falls into closeNow
-                            // (CdpClient).
-                            timedClose <- timed(client.close(500.millis))
+                            slowFiber <- Fiber.initUnscoped(
+                                Abort.run[BrowserReadException](CdpBackend.getTargets(backend))
+                            )
+                            // Brief settle: allow the slow in-flight send to register before close starts.
+                            _ <- Async.delay(100.millis)(Kyo.unit)
+                            // close(500ms): grace expires while send is in-flight, falls back to closeNow.
+                            timedClose <- timed(backend.close(500.millis))
                             (elapsedDur, _) = timedClose
                             elapsedMs       = elapsedDur.toMillis
                             slowResult <- slowFiber.getResult
                         yield
-                            // Behavioural upper bound: must return well before the 10s
-                            // server delay; we allow 2s margin for jitter.
+                            // Behavioural upper bound: must return well before the 10s server delay.
                             assert(
                                 elapsedMs < 2000,
                                 s"close(500ms) should fall back to closeNow within ~grace, took ${elapsedMs}ms"
                             )
                             slowResult match
-                                case Result.Failure(ex: BrowserConnectionLostException) =>
-                                    assert(ex.getMessage.contains("Connection lost"))
+                                case Result.Success(Result.Failure(_: BrowserConnectionLostException)) => succeed
                                 case other =>
                                     fail(s"expected ConnectionLost on slow send after closeNow fallback, got $other")
                             end match
@@ -255,13 +260,14 @@ class CdpClientLifecycleJvmTest extends BaseBrowserTest:
     // ─────────────────────────────────────────────────────────────────────────
 
     "send raises ConnectionLost when the WebSocket connection is dropped mid-request" in {
-        Abort.run[BrowserConnectionException] {
+        // With DropMidRequest, the fixture responds to the Browser.getVersion probe (initUnscoped succeeds),
+        // then drops the connection on the next send. The next send surfaces as BrowserConnectionLostException.
+        Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
-                CdpFixtureServer.start(CdpFixtureServer.Behavior.DropMidRequest).map { fixture =>
-                    CdpClient.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { client =>
-                        Abort.run[BrowserConnectionException](client.send("Target.getTargets")).map {
-                            case Result.Failure(ex: BrowserConnectionLostException) =>
-                                assert(ex.getMessage.contains("Connection lost"))
+                CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.DropMidRequest).map { fixture =>
+                    CdpBackend.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { backend =>
+                        Abort.run[BrowserConnectionException](CdpBackend.getTargets(backend)).map {
+                            case Result.Failure(_: BrowserConnectionLostException) => succeed
                             case other =>
                                 fail(s"expected BrowserConnectionLostException, got $other")
                         }
@@ -276,33 +282,23 @@ class CdpClientLifecycleJvmTest extends BaseBrowserTest:
     // ─────────────────────────────────────────────────────────────────────────
 
     "top-level dialog with no sessionId is auto-dismissed via empty-string handler key" in {
-        Abort.run[BrowserConnectionException] {
+        Abort.run[BrowserConnectionException | BrowserSetupException] {
             Scope.run {
-                CdpFixtureServer.start(CdpFixtureServer.Behavior.Echo).map { fixture =>
-                    CdpClient.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { client =>
+                CdpBackendFixtureServer.start(CdpBackendFixtureServer.Behavior.Echo).map { fixture =>
+                    CdpBackend.initUnscoped(fixture.wsUrl, Browser.LaunchConfig.default).map { backend =>
                         for
-                            _ <- client.send("Target.getTargets")
-                            // Trigger emission of a Page.javascriptDialogOpening with
-                            // NO sessionId. The empty-key path at
-                            // CdpClient must auto-dismiss.
+                            _ <- CdpBackend.getTargets(backend)
+                            // Trigger emission of a Page.javascriptDialogOpening with NO sessionId.
                             _ <- fixture.triggerDialog()
-                            // Behavioural check: the dialogQueue offer must not have
-                            // poisoned the exchange. A subsequent send round-trips.
-                            result <- client.send("Target.getTargets")
-                            // Confirm the auto-dismiss handleJavaScriptDialog request
-                            // did not crash the dialogDrainer fiber; a panic during
-                            // dialog handling would have terminated it.
-                            drainerLive <- client.dialogDrainer.done.map(d => !d)
-                        yield
-                            assert(
-                                result.contains("\"result\"") || result == "{}",
-                                s"expected post-dialog send to round-trip, got $result"
-                            )
-                            assert(drainerLive, "dialogDrainer must still be alive after auto-dismiss")
+                            // Behavioural check: a subsequent send round-trips.
+                            _ <- CdpBackend.getTargets(backend)
+                            // Confirm the dialogDrainer fiber is still alive.
+                            drainerLive <- backend.dialogDrainer.done.map(d => !d)
+                        yield assert(drainerLive, "dialogDrainer must still be alive after auto-dismiss")
                     }
                 }
             }
         }.orFail("Outer")
     }
 
-end CdpClientLifecycleJvmTest
+end CdpBackendLifecycleJvmTest

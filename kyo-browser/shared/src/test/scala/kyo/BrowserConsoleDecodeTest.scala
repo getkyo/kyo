@@ -1,11 +1,10 @@
 package kyo
 
-import kyo.internal.CdpClient
 import kyo.internal.CdpEvent
 import kyo.internal.ConsoleApiCalledWire
 
 /** Pure decoder tests for the console reshape: the CDP `Runtime.consoleAPICalled` type map (`decodeConsoleApiCalled`), the drain-path level
-  * map (`decodeConsoleMessage`), and the wire-level `CdpClient.parseConsoleEvent` Absent paths.
+  * map (`decodeConsoleMessage`), and the wire-level `Browser.parseConsoleEvent` Absent paths.
   *
   * These need no Chrome: they construct the wire records directly and call the `private[kyo]` decoders. The CDP `'warning'` spelling and the
   * drain `'warn'` spelling live in separate decoders and never collide.
@@ -121,16 +120,13 @@ class BrowserConsoleDecodeTest extends BrowserTest:
         }
     }
 
-    // ---- N2: CdpClient.parseConsoleEvent Absent paths (mirrors the screencast decoder tests) ----
+    // ---- N2: Browser.parseConsoleEvent Absent path (mirrors the screencast decoder test) ----
 
-    "parseConsoleEvent returns Absent on a wrong-method event and on malformed payloads" in {
-        val wrongMethod      = CdpEvent.Generic(method = "Page.loadEventFired", paramsJson = "{}", sessionId = Absent)
-        val malformedConsole = CdpEvent.Generic(method = "Runtime.consoleAPICalled", paramsJson = "not-valid-json", sessionId = Absent)
-        val malformedException =
-            CdpEvent.Generic(method = "Runtime.exceptionThrown", paramsJson = "not-valid-json", sessionId = Absent)
-        assert(CdpClient.parseConsoleEvent(wrongMethod) == Absent, "wrong-method event should decode to Absent")
-        assert(CdpClient.parseConsoleEvent(malformedConsole) == Absent, "malformed consoleAPICalled should decode to Absent")
-        assert(CdpClient.parseConsoleEvent(malformedException) == Absent, "malformed exceptionThrown should decode to Absent")
+    "parseConsoleEvent returns Absent on a non-console params type" in {
+        // The dispatcher now carries the decoded typed Wire; a params value that is neither a
+        // ConsoleApiCalledWire nor an ExceptionThrownWire projects to Absent.
+        val nonConsole = CdpEvent.Generic(method = "Page.loadEventFired", params = ConsoleMessageWire("log", "x", 0L), sessionId = Absent)
+        assert(Browser.parseConsoleEvent(nonConsole).isEmpty, "non-console params type should decode to Absent")
     }
 
 end BrowserConsoleDecodeTest

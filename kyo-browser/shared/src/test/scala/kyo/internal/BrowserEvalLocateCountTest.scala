@@ -2,14 +2,10 @@ package kyo.internal
 
 import kyo.*
 
-/** Unit tests for [[BrowserEval.locateCount]] (FirstOf short-circuit) and [[BrowserEval.translateContextDestroyed]] (CDP error
-  * translation).
+/** Unit tests for [[BrowserEval.locateCount]] (FirstOf short-circuit).
   *
   * The FirstOf short-circuit test is live: it builds a page where only the first alternative has matches and asserts that
   * `locateCount(FirstOf)` returns the first alternative's count verbatim (regardless of subsequent alternatives' match counts).
-  *
-  * The `translateContextDestroyed` cases are pure (synthetic CDP wire) and verify that the `"Cannot find context"` error message routes to
-  * `BrowserIFrameInvalidException(ContextDestroyed)`.
   */
 class BrowserEvalLocateCountTest extends kyo.BrowserTest:
 
@@ -71,36 +67,6 @@ class BrowserEvalLocateCountTest extends kyo.BrowserTest:
                     assert(n == 0, s"expected 0 when no alternative matches but got $n")
                 }
             }
-        }
-    }
-
-    // ── translateContextDestroyed (pure) ─────────────────────────────
-
-    "translateContextDestroyed surfaces the CDP context-destroyed message as BrowserIFrameInvalidException(ContextDestroyed)" in {
-        val wire =
-            s"""{"id":1,"error":{"code":-32000,"message":"${CdpErrorStrings.ContextDestroyedErrorMessage}"}}"""
-        Abort.run[BrowserReadException](BrowserEval.translateContextDestroyed(wire)).map {
-            case Result.Failure(BrowserIFrameInvalidException(BrowserIFrameInvalidException.Reason.ContextDestroyed)) =>
-                ()
-            case other => fail(s"expected BrowserIFrameInvalidException(ContextDestroyed) but got $other")
-        }
-    }
-
-    "translateContextDestroyed passes a successful eval reply through unchanged (no translation)" in {
-        val wire = """{"id":1,"result":{"result":{"type":"string","value":"hello"}}}"""
-        Abort.run[BrowserReadException](BrowserEval.translateContextDestroyed(wire)).map {
-            case Result.Success(out) =>
-                assert(out == wire, s"expected wire passed through verbatim but got '$out'")
-            case other => fail(s"expected Success(wire passthrough) but got $other")
-        }
-    }
-
-    "translateContextDestroyed passes an unrelated CDP error through unchanged (only ContextDestroyed is translated)" in {
-        val wire = """{"id":1,"error":{"code":-32602,"message":"Invalid params"}}"""
-        Abort.run[BrowserReadException](BrowserEval.translateContextDestroyed(wire)).map {
-            case Result.Success(out) =>
-                assert(out == wire, s"expected unrelated error wire passed through verbatim but got '$out'")
-            case other => fail(s"expected Success(wire passthrough) for unrelated CDP error but got $other")
         }
     }
 

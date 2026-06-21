@@ -405,11 +405,18 @@ object Fiber:
           *
           * WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe.
           */
-        def init[A](v: => A)(using AllowUnsafe, Frame): Fiber.Unsafe[A, Any] =
+        def init[E, A](v: => A < (Async & Abort[E]))(using
+            allow: AllowUnsafe,
+            frame: Frame,
+            reduce: Reducible[Abort[E]]
+        ): Fiber.Unsafe[A, reduce.SReduced] =
             // Unsafe: spawns a fire-and-forget carrier without re-entering the effect system; replaces
-            // the evalOrThrow + initUnscoped idiom at every kyo-net spawn site.
+            // the evalOrThrow + initUnscoped idiom at every kyo-net spawn site. The body may be
+            // effectful (`A < (Async & Abort[E])`): Sync.defer deconstructs it so IOTask drives the
+            // Async and Abort effects to completion inside the carrier, rather than leaving the
+            // computation as an un-run suspension (a plain value infers `E = Nothing`, unchanged).
             IOTask(Sync.defer(v), Trace.saved(), Context.empty)
-                .asInstanceOf[Fiber.Unsafe[A, Any]]
+                .asInstanceOf[Fiber.Unsafe[A, reduce.SReduced]]
         end init
 
         extension [A, S](self: Unsafe[A, S])

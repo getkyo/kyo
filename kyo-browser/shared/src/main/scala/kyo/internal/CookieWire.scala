@@ -146,17 +146,15 @@ private[kyo] object CookieBanner:
             })()"""
             Browser.use[Maybe[Selector], Async & Abort[BrowserReadException]] { tab =>
                 CdpBackend.runtimeEvaluate(tab.session, EvalParams(js, returnByValue = true, awaitPromise = true))
-                    .map { resultJson =>
-                        CdpEvalEnvelope.decodeEvalEnvelope(resultJson, "tryAcceptCookies") { env =>
-                            CdpEvalDecoder.extractEvalValue(env).map { raw =>
-                                Json.decode[CookieBannerReply](raw) match
-                                    case Result.Success(CookieBannerReply("none", _)) => Maybe.empty[Selector]
-                                    case Result.Success(CookieBannerReply("accepted", Present(sel))) =>
-                                        Present(Selector.css(sel))
-                                    case Result.Success(CookieBannerReply("timeout", _)) =>
-                                        Abort.fail(BrowserAssertionTimedOutException("banner removed", "banner still present"))
-                                    case _ => Abort.fail(BrowserProtocolErrorException.unexpectedReply("tryAcceptCookies", raw))
-                            }
+                    .map { env =>
+                        CdpEvalDecoder.extractEvalValue(env).map { raw =>
+                            Json.decode[CookieBannerReply](raw) match
+                                case Result.Success(CookieBannerReply("none", _)) => Maybe.empty[Selector]
+                                case Result.Success(CookieBannerReply("accepted", Present(sel))) =>
+                                    Present(Selector.css(sel))
+                                case Result.Success(CookieBannerReply("timeout", _)) =>
+                                    Abort.fail(BrowserAssertionTimedOutException("banner removed", "banner still present"))
+                                case _ => Abort.fail(BrowserProtocolErrorException.unexpectedReply("tryAcceptCookies", raw))
                         }
                     }
             }
