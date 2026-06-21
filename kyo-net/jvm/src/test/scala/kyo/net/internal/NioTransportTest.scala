@@ -302,15 +302,19 @@ class NioTransportTest extends Test:
     "connect with TLS: serverCertificateHash is Present after handshake" in {
         given Frame   = Frame.internal
         val transport = mkTransport()
-        transport.listen("127.0.0.1", 0, 50, serverTlsConfig) { conn =>
-            conn.close()
+        // The server handler keeps the connection open (does not close): closing it immediately sends a FIN that, under load, the client's read
+        // pump observes as EOF and tears the connection down (setting the connection's closed flag) before the client reads the cert hash, making
+        // serverCertificateHash Absent by the "Absent after close" contract. The shared TransportTlsIntrospectionTest uses the same open-handler
+        // shape for this reason; listener.close() / transport.close() below tear the server side down.
+        transport.listen("127.0.0.1", 0, 50, serverTlsConfig) { _ =>
+            ()
         }.safe.get.map { listener =>
             val port      = listener.port
             val clientTls = NetTlsConfig(trustAll = true)
             Abort.run[Closed](transport.connect("127.0.0.1", port, clientTls).safe.get).map { result =>
                 result match
                     case Result.Success(conn) =>
-                        // Read the cert hash while the connection is still open (channel must be open for getPeerCertificates).
+                        // Read the cert hash on the still-open connection (the server handler above does not close it).
                         val hash = conn.serverCertificateHash
                         conn.close()
                         listener.close()
