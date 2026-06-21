@@ -1,11 +1,10 @@
 package kyo.ffi.internal
 
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kyo.*
+import kyo.AllowUnsafe.embrace.danger
 import kyo.ffi.Test
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
@@ -26,12 +25,12 @@ class NativeLoaderForkStressTest extends Test:
 
     // Resolve the JVM test classpath and a java binary so we can ProcessBuilder a child JVM that loads NativeLoaderForkMain.
     private val javaHome: Path =
-        Paths.get(java.lang.System.getProperty("java.home").nn).nn
+        Path(java.lang.System.getProperty("java.home").nn)
 
     private val javaBin: Path =
-        val candidate = javaHome.resolve("bin").nn.resolve("java").nn
-        if Files.exists(candidate) then candidate
-        else javaHome.resolve("bin").nn.resolve("java.exe").nn // Windows fallback; test will also cover Windows hosts.
+        val candidate = javaHome / "bin" / "java"
+        if candidate.unsafe.exists() then candidate
+        else javaHome / "bin" / "java.exe" // Windows fallback; test will also cover Windows hosts.
     end javaBin
 
     // The test runs in-VM; java.class.path contains the test runtime classpath (prod classes + test classes + scalatest + deps).
@@ -50,7 +49,7 @@ class NativeLoaderForkStressTest extends Test:
     "fork N JVMs extract the same payload concurrently" in {
         val forkN   = sys.props.getOrElse("kyo.ffi.testForkN", "4").toInt
         val payload = ("F11-fork-stress-payload-" + java.util.UUID.randomUUID()).getBytes()
-        val dir     = Files.createTempDirectory("kyo-ffi-fork-").nn
+        val dir     = Sync.Unsafe.evalOrThrow(Path.tempDir("kyo-ffi-fork-"))
         val libId   = s"forkstress_${java.lang.System.currentTimeMillis()}"
         val hex     = hexEncode(payload)
 
@@ -87,19 +86,11 @@ class NativeLoaderForkStressTest extends Test:
             assert(reportedPaths.size == 1)
 
             // The final extracted file exists, matches the payload byte-for-byte (atomic rename guarantee: no partial writes).
-            val finalPath = Paths.get(reportedPaths.head).nn
-            assert(Files.exists(finalPath) == true)
-            assert(Files.readAllBytes(finalPath).nn.toSeq == payload.toSeq)
-            // No `.tmp-<uuid>` residue from any child, atomic rename cleaned up every interim write.
-            val tmpLeftovers = Files.list(dir).nn.iterator().nn
-            val residue =
-                val buf = scala.collection.mutable.Buffer.empty[String]
-                while tmpLeftovers.hasNext do
-                    val n = tmpLeftovers.next().nn.getFileName.nn.toString
-                    if n.contains(".tmp-") then buf += n
-                end while
-                buf.toList
-            end residue
+            val finalPath = Path(reportedPaths.head)
+            assert(finalPath.unsafe.exists() == true)
+            assert(finalPath.unsafe.read().getOrThrow == new String(payload))
+            // No `.tmp-<uuid>` residue from any child; Path.Unsafe.list closes the dir stream as it collects (no leaked fd).
+            val residue = dir.unsafe.list().getOrThrow.map(_.name.getOrElse("")).filter(_.contains(".tmp-")).toList
             assert(residue == Nil)
         finally
             pool.shutdownNow(): Unit

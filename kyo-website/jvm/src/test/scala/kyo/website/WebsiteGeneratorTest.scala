@@ -1,7 +1,5 @@
 package kyo.website
 
-import java.nio.file.Files
-import java.nio.file.Paths
 import kyo.*
 
 /** Tests for `WebsiteGenerator.emit`.
@@ -45,28 +43,27 @@ class WebsiteGeneratorTest extends WebsiteTest:
 
     // ---- Helpers ----
 
-    private def tmpDir(using Frame): Path < Sync =
-        Sync.defer(Path(Files.createTempDirectory("kyo-gen-test").toString))
+    private def tmpDir(using Frame): Path < (Sync & Abort[FileFsException]) =
+        Path.tempDir("kyo-gen-test")
 
-    private def stubBundleDir(using Frame): Path < Sync =
-        Sync.defer {
-            val d = Files.createTempDirectory("kyo-bundle-stub")
-            java.nio.file.Files.writeString(d.resolve("main.js"), "// stub")
-            java.nio.file.Files.writeString(d.resolve("main.js.map"), "{}")
-            Path(d.toString)
+    private def stubBundleDir(using Frame): Path < (Sync & Abort[FileFsException | FileWriteException]) =
+        Path.tempDir("kyo-bundle-stub").map { d =>
+            (d / "main.js").write("// stub")
+                .andThen((d / "main.js.map").write("{}"))
+                .andThen(d)
         }
 
     private def repoRoot(using Frame): Path =
-        Path(findRepoRoot().toString)
-
-    private def findRepoRoot(): java.nio.file.Path =
-        val start = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
-        Iterator
-            .iterate(start)(_.getParent)
-            .takeWhile(_ != null)
-            .find(dir => Files.exists(dir.resolve("build.sbt")))
-            .getOrElse(throw new RuntimeException("repo root not found"))
-    end findRepoRoot
+        import AllowUnsafe.embrace.danger
+        @scala.annotation.tailrec
+        def loop(dir: Path): Path =
+            if (dir / "build.sbt").unsafe.exists() then dir
+            else
+                dir.parent match
+                    case Maybe.Present(parent) => loop(parent)
+                    case Maybe.Absent          => throw new RuntimeException("repo root not found")
+        loop(Path(java.lang.System.getProperty("user.dir").nn))
+    end repoRoot
 
     private def emit(
         content: Chunk[WebsiteContent],
@@ -218,11 +215,9 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "write failure aborts with WebsiteEmitException" in {
         for
             bundleDir <- stubBundleDir
-            tmp <- Sync.defer {
-                val d = Files.createTempDirectory("kyo-gen-fail-test")
+            tmp <- Path.tempDir("kyo-gen-fail-test").map { d =>
                 // Create a directory at index.html so writing a file there will fail
-                Files.createDirectory(Paths.get(d.toString, "index.html"))
-                Path(d.toString)
+                (d / "index.html").mkDir.andThen(d)
             }
             result <- Abort.run[WebsiteException](emit(oneVersion, tmp, bundleDir))
         yield
@@ -248,8 +243,8 @@ class WebsiteGeneratorTest extends WebsiteTest:
     "idempotent re-emit produces byte-identical files" in {
         for
             bundleDir <- stubBundleDir
-            out1      <- Sync.defer(Path(Files.createTempDirectory("kyo-gen-idem-a").toString))
-            out2      <- Sync.defer(Path(Files.createTempDirectory("kyo-gen-idem-b").toString))
+            out1      <- Path.tempDir("kyo-gen-idem-a")
+            out2      <- Path.tempDir("kyo-gen-idem-b")
             _         <- emit(oneVersion, out1, bundleDir)
             _         <- emit(oneVersion, out2, bundleDir)
             html1     <- readFile(out1 / "index.html")
@@ -844,12 +839,15 @@ class WebsiteGeneratorTest extends WebsiteTest:
             sitemap   <- readFile(out / "sitemap.xml")
             // Cross-check the <loc> count against the actual emitted latest/<slug>/ pages + 2 (the root
             // and the /latest/ overview).
-            latestSlugPages <- Sync.defer {
-                val latestDir = java.nio.file.Paths.get(out.toString, "latest")
-                if Files.exists(latestDir) then
-                    Files.list(latestDir).filter(Files.isDirectory(_)).count().toInt
-                else 0
-            }
+            latestSlugPages <-
+                val latestDir = out / "latest"
+                latestDir.exists.map {
+                    case false => 0
+                    case true =>
+                        latestDir.list.map { entries =>
+                            Kyo.foreach(entries)(_.isDirectory).map(_.count(identity))
+                        }
+                }
         yield
             assert(sitemap.startsWith("<?xml"), s"sitemap must be valid XML: $sitemap")
             assert(sitemap.contains("<urlset"), s"sitemap must contain a <urlset>: $sitemap")
@@ -1584,7 +1582,7 @@ class WebsiteGeneratorTest extends WebsiteTest:
         for
             out         <- tmpDir
             bundleDir   <- stubBundleDir
-            noManifesto <- Sync.defer(Path(Files.createTempDirectory("kyo-no-manifesto").toString))
+            noManifesto <- Path.tempDir("kyo-no-manifesto")
             result <- Abort.run[WebsiteException](
                 WebsiteGenerator.emit(Chunk(vWithModules), out, WebsiteGenerator.Config(noManifesto, bundleDir))
             )
