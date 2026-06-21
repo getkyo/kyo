@@ -1,7 +1,6 @@
 package kyo.internal.client
 
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
 import kyo.*
 import kyo.internal.codec.*
 import kyo.internal.http1.*
@@ -30,7 +29,7 @@ final private[kyo] class HttpClientBackend[Handle] private (
     transportConfig: HttpTransportConfig,
     defaultTlsConfig: HttpTlsConfig,
     private val pool: ConnectionPool[HttpConnection[Handle]],
-    private val allConnections: ConcurrentHashMap[HttpConnection[Handle], Unit],
+    private val registry: kyo.internal.ConnectionRegistry[HttpConnection[Handle]],
     val maxConnectionsPerHost: Int,
     val clientFrame: Frame
 ):
@@ -845,14 +844,14 @@ final private[kyo] class HttpClientBackend[Handle] private (
 
     // -- Pool management and orchestration layer --
 
-    @volatile private var clientClosed                 = false
     @volatile private var closingGracePeriod: Duration = Duration.Zero
 
-    /** Track a newly created connection. If the client has already been closed, close it immediately. */
+    /** Track a newly created connection. If the client is already closing, register closes it immediately and the
+      * in-flight request then fails on the closed connection, the same outcome as an explicit close-after-add but
+      * without the race where a concurrent closeAll could drop a connection it had not closed.
+      */
     private def trackConn(conn: HttpConnection[Handle])(using AllowUnsafe, Frame): Unit =
-        discard(allConnections.put(conn, ()))
-        if clientClosed then
-            closeUnsafe(conn, closingGracePeriod)
+        discard(registry.register(conn)(c => closeUnsafe(c, closingGracePeriod)))
     end trackConn
 
     /** Release a connection back to the pool or discard it on error. Does NOT touch allConnections — removal happens only in discardConn
@@ -1051,18 +1050,15 @@ final private[kyo] class HttpClientBackend[Handle] private (
             sendBuffered(conn, route, request)
 
     def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Mark closed FIRST so any new connection gets closed immediately by trackConn.
+        // Mark closing FIRST so any new connection gets closed immediately by trackConn.
         closingGracePeriod = gracePeriod
-        clientClosed = true
-        // Close pool to stop reuse, then close all tracked connections.
-        // allConnections has every connection from creation to close (discardConn removes them).
-        // Pool idle connections are a subset — closing from allConnections covers everything.
+        registry.markClosing()
+        // Close the pool to stop reuse, then close every tracked connection. The registry holds every connection from
+        // creation to close (the pool's discard removes them), and idle pooled connections are a subset, so closing from
+        // the registry covers everything.
         discard(pool.close())
         val closePromise = Promise.Unsafe.init[Unit, Any]()
-        allConnections.forEach { (conn, _) =>
-            closeUnsafe(conn, gracePeriod)
-        }
-        allConnections.clear()
+        registry.closeAll(conn => closeUnsafe(conn, gracePeriod))
         closePromise.completeDiscard(Result.succeed(()))
         closePromise
     end closeFiber
@@ -1078,13 +1074,13 @@ private[kyo] object HttpClientBackend:
         idleConnectionTimeout: Duration,
         defaultTlsConfig: HttpTlsConfig = HttpTlsConfig.default
     )(using AllowUnsafe, Frame): HttpClientBackend[H] =
-        val conns = new ConcurrentHashMap[HttpConnection[H], Unit]()
+        val registry = new kyo.internal.ConnectionRegistry[HttpConnection[H]]
         val pool = ConnectionPool.init[HttpConnection[H]](
             maxConnsPerHost,
             idleConnectionTimeout,
             conn => conn.transport.isOpen,
             conn =>
-                discard(conns.remove(conn))
+                registry.remove(conn)
                 conn.http1.close()
                 conn.transport.close()
         )
@@ -1093,7 +1089,7 @@ private[kyo] object HttpClientBackend:
             HttpTransportConfig.default,
             defaultTlsConfig,
             pool,
-            conns,
+            registry,
             maxConnsPerHost,
             summon[Frame]
         )
