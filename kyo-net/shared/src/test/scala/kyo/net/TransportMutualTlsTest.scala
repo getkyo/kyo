@@ -70,8 +70,12 @@ class TransportMutualTlsTest extends Test:
             val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
             echoListener(transport, serverMtls(serverTls)).map { listener =>
                 val message = "kyo-mutual-tls".getBytes("UTF-8")
+                // A mutual-TLS round-trip is CPU-heavy (both ends verify a certificate chain); under a cold JVM with every backend cell running
+                // concurrently on a constrained runner it can take several seconds, so this inner bound is generous. It is only a hang-guard: a
+                // true deadlock still fails well within the suite's 60s leaf budget. Mirrors kyo.net.Test's generous-ceiling rationale; 5s was too
+                // tight for the cold/loaded gate and produced spurious timeouts on every cell at once.
                 Abort.run[Closed | Timeout](
-                    Async.timeout(5.seconds)(
+                    Async.timeout(30.seconds)(
                         transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                         }
