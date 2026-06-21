@@ -57,6 +57,16 @@ final private[runner] class SbtRunner(
     private val results =
         new java.util.concurrent.ConcurrentLinkedQueue[TestReport]()
 
+    // End-of-run leak detection runs once per forked test JVM, the one place the probe is both sound (the fork holds only this
+    // run's resources) and safe to fail by exit. Enablement and the allowlist are per-suite RunConfig (default on), carried on
+    // each SuiteReport and aggregated at done(); the fork check is resolved once here (cheap: `sun.java.command` is set at JVM
+    // launch). The baseline is captured now, in the constructor, before any suite runs, so the diff at done() excludes the JVM's
+    // own startup descriptors and threads (including the sbt.ForkMain socket). In the main sbt JVM `forked` is false: no
+    // baseline, no carrier tracking, no check (the diff would be polluted by sbt's own resources and a throw would fail sbt).
+    private val forked       = LeakCheck.isForked
+    private val leakBaseline = if forked then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
+    private val leakCheckRan = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     // Populated on first tasks() invocation. SuiteDiscovery scans the META-INF/services file
     // and surfaces classloader / non-TestBase failures so they end up in Summary's warning line.
     private[runner] val discoveryErrors: AtomicReference[Chunk[String]] =
@@ -66,17 +76,55 @@ final private[runner] class SbtRunner(
         parsedArgs match
             case Args.Result.Ok(_) =>
                 discoveryErrors.set(SuiteDiscovery.discoverDetailed(testClassLoader).errors)
-                taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results))
+                taskDefs.map(td => new SbtTask(td, baseConfig, testClassLoader, results, forked))
             case _ =>
                 Array.empty
 
     def done(): String =
+        runLeakCheck()
         parsedArgs match
             case Args.Result.Error(msg) => msg
             case Args.Result.Help       => ""
             case Args.Result.Ok(_) =>
                 import scala.jdk.CollectionConverters.*
                 Summary.render(results.asScala, discoveryErrors.get(), positionalArgs)
+        end match
     end done
+
+    /** Runs the end-of-run leak probes once, only inside a forked test JVM, and throws [[LeakCheck.Detected]] on a leak so sbt fails the test
+      * task. The leak settings are aggregated from the suites that ran in this fork (each [[TestReport]] carries its suite's effective
+      * `leakCheck` and `leakCheckAllowlist`): the check runs if any suite enabled it, against the union of their allowlists. sbt calls `done()`
+      * more than once per forked runner (once after execution, once from a shutdown hook), so the compare-and-set guard fires the probes and
+      * any failure exactly once. Outside a fork (the main sbt JVM) `forked` is false, so this is a no-op.
+      */
+    private def runLeakCheck(): Unit =
+        if forked && leakCheckRan.compareAndSet(false, true) then
+            import scala.jdk.CollectionConverters.*
+            val suites    = results.asScala.flatMap(_.suiteReports)
+            val allowlist = Chunk.from(suites.flatMap(_.leakCheckAllowlist)).distinct
+            // Each category runs if any suite in the fork enabled it (master on AND that category on); a suite exempts a category by
+            // turning just that one off, so the fork keeps detecting the rest. To exempt a category fork-wide, every suite must opt out,
+            // which is why the per-category toggles live on the shared suite base (e.g. BaseHttpTest disables only sockets).
+            val checkFibers          = suites.exists(s => s.leakCheck && s.leakCheckFibers)
+            val checkThreads         = suites.exists(s => s.leakCheck && s.leakCheckThreads)
+            val checkFileDescriptors = suites.exists(s => s.leakCheck && s.leakCheckFileDescriptors)
+            val checkSockets         = suites.exists(s => s.leakCheck && s.leakCheckSockets)
+            if checkFibers || checkThreads || checkFileDescriptors || checkSockets then
+                LeakCheck.detect(
+                    leakBaseline,
+                    allowlist = allowlist,
+                    checkFibers = checkFibers,
+                    checkThreads = checkThreads,
+                    checkFileDescriptors = checkFileDescriptors,
+                    checkSockets = checkSockets,
+                    idleBudgetNanos = 2_000_000_000L,
+                    settleNanos = 200_000_000L,
+                    pollNanos = 10_000_000L
+                ) match
+                    case kyo.Maybe.Present(report) => throw new LeakCheck.Detected(report)
+                    case kyo.Maybe.Absent          => ()
+                end match
+            end if
+    end runLeakCheck
 
 end SbtRunner

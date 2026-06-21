@@ -116,6 +116,19 @@ end TestReport
   *   all leaf results for this suite, in execution order
   * @param duration
   *   wall-clock time from suite start to suite complete
+  * @param leakCheck
+  *   the suite's effective `RunConfig.leakCheck` master setting, carried here so the run-level end-of-run leak check (performed once per forked
+  *   JVM after all suites finish) can honor each suite's override
+  * @param leakCheckSockets
+  *   the suite's effective `RunConfig.leakCheckSockets` setting, aggregated across the fork's suites to gate the socket-descriptor probe
+  * @param leakCheckFileDescriptors
+  *   the suite's effective `RunConfig.leakCheckFileDescriptors` setting, aggregated to gate the non-socket descriptor probe
+  * @param leakCheckThreads
+  *   the suite's effective `RunConfig.leakCheckThreads` setting, aggregated to gate the thread probe
+  * @param leakCheckFibers
+  *   the suite's effective `RunConfig.leakCheckFibers` setting, aggregated to gate the fiber probe
+  * @param leakCheckAllowlist
+  *   the suite's effective `RunConfig.leakCheckAllowlist`, unioned across the fork's suites by the leak check
   * @see
   *   [[kyo.test.TestReport]] which collects multiple SuiteReports into the run-level aggregate
   * @see
@@ -128,7 +141,13 @@ end TestReport
 final case class SuiteReport(
     name: String,
     leafResults: Chunk[(Chunk[String], TestResult)],
-    duration: Duration
+    duration: Duration,
+    leakCheck: Boolean = true,
+    leakCheckSockets: Boolean = true,
+    leakCheckFileDescriptors: Boolean = true,
+    leakCheckThreads: Boolean = true,
+    leakCheckFibers: Boolean = true,
+    leakCheckAllowlist: Chunk[String] = Chunk.empty
 ) derives CanEqual
 
 /** Static description of a leaf test, passed to reporters before and after execution.

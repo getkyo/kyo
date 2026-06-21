@@ -22,7 +22,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "init stores IoDriverPool" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
         try
             assert(transport.pool ne null)
@@ -32,7 +31,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     }
 
     "init stores IoDriver in pool" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
         try
             val driver = transport.pool.next()
@@ -47,7 +45,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "connect to loopback server returns open connection" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
 
         // Use a latch so the server-side socket stays open until after we check isOpen
@@ -82,7 +79,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     }
 
     "connect returns Closed failure for unreachable port" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
         // Port 1 — connection refused on loopback
         Abort.run[Closed](transport.connect("127.0.0.1", 1).safe.get).map { result =>
@@ -97,7 +93,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "listen binds and returns Listener with valid port" in {
-        given Frame     = Frame.internal
         val transport   = mkTransport()
         val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
         listenFiber.safe.get.map { listener =>
@@ -111,7 +106,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     }
 
     "listen binds to the given host" in {
-        given Frame     = Frame.internal
         val transport   = mkTransport()
         val listenFiber = transport.listen("127.0.0.1", 0, 50)(_ => ())
         listenFiber.safe.get.map { listener =>
@@ -124,7 +118,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     }
 
     "listen returns Closed failure for already-bound port" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
 
         transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener1 =>
@@ -142,7 +135,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "listen accepts connecting clients" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
 
         val accepted = new java.util.concurrent.atomic.AtomicBoolean(false)
@@ -173,7 +165,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "connect + listen — both sides are open connections" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
 
         // Use a latch to hold the server-side connection open until client checks isOpen
@@ -207,7 +198,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "connect with TLS to loopback TLS server completes handshake" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
 
         val tlsConfig = TlsTestHelper.serverTlsConfig
@@ -238,7 +228,6 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "listener.close marks listener as closed" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
 
         transport.listen("127.0.0.1", 0, 50)(_ => ()).safe.get.map { listener =>
@@ -281,13 +270,50 @@ class NioTransportTest extends kyo.BaseHttpTest:
     // -----------------------------------------------------------------------
 
     "connectUnix returns Closed for non-existent socket path" in {
-        given Frame   = Frame.internal
         val transport = mkTransport()
         val badPath   = "/tmp/kyo-nio-test-does-not-exist-" + java.util.UUID.randomUUID() + ".sock"
         Abort.run[Closed](transport.connectUnix(badPath).safe.get).map { result =>
             transport.close()
             assert(result.isFailure)
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Accepted-connection cleanup on server close (socket leak regression)
+    // -----------------------------------------------------------------------
+
+    // Guards the accepted-connection cleanup that the kyo-caliban socket leak needs: each iteration scopes an ephemeral
+    // server and makes one request through the process-global default HttpClient (whose pooled connection stays alive,
+    // not closed per leaf, exactly like caliban's static HttpClient.getText/postText usage). A server that closed only
+    // its listening socket on shutdown would leave every accepted connection open, so the accepted socket plus its
+    // still-pooled client peer would accumulate across iterations (closed only by a 60s idle timer). Closing the
+    // accepted connections on server close sends a FIN that also clears the client's stale pooled connection, so the
+    // open-fd count stays stable across iterations. JVM-only: the open-descriptor count comes from the Unix OS MXBean.
+    "closing a server releases its accepted connections (no socket accumulation)" in {
+        java.lang.management.ManagementFactory.getOperatingSystemMXBean match
+            case osBean: com.sun.management.UnixOperatingSystemMXBean =>
+                val route   = HttpRoute.getRaw("hello").response(_.bodyText)
+                val handler = route.handler(_ => HttpResponse.ok("world"))
+                def cycle: Unit < (Async & Abort[Any]) =
+                    Scope.run {
+                        HttpServer.init(0, "localhost")(handler).map { server =>
+                            HttpClient.getText(s"http://localhost:${server.port}/hello").unit
+                        }
+                    }
+                for
+                    _      <- cycle                   // warm up lazy infra (default client, transport, classloading)
+                    before <- Sync.defer { java.lang.System.gc(); osBean.getOpenFileDescriptorCount }
+                    _      <- Kyo.foreachDiscard(1 to 20)(_ => cycle)
+                    _      <- Async.sleep(500.millis) // let any async connection closes settle
+                    after  <- Sync.defer { java.lang.System.gc(); osBean.getOpenFileDescriptorCount }
+                yield assert(
+                    after - before <= 8,
+                    s"sockets accumulated across 20 server+client cycles: before=$before after=$after delta=${after - before}"
+                )
+                end for
+            case _ =>
+                cancel("UnixOperatingSystemMXBean unavailable on this JVM")
+        end match
     }
 
 end NioTransportTest

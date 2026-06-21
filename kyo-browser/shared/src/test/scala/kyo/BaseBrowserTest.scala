@@ -13,7 +13,15 @@ abstract class BaseBrowserTest extends kyo.test.Test[Any]:
     // through Browser.assert* domain helpers and expected-exception fail-paths (Abort.run(...) { case Failure(_: X)
     // => () ; case _ => fail(...) }) that do not flow through the kyo.test assert macros, so the per-leaf
     // evaluation counter sees zero even though the leaf does verify behavior. The check is a false positive here.
-    override def config = super.config.sequential.failOnNoAssertion(false)
+    //
+    // The two opaque-inode descriptor categories are disabled (socket + non-socket fd), not the whole check. SharedChrome
+    // deliberately holds the headless Chrome process, its CDP connection socket, and the process's stdio pipes open for the
+    // WHOLE run (torn down at scheduler shutdown, see SharedChrome.ensureStarted). A CDP `socket:[inode]` and a stdio
+    // `pipe:[inode]` are opaque with no stable identifier an allowlist could match, so the socket and file-descriptor
+    // categories are the resources that cannot be expressed any finer. The other long-lived resource, the kyo-http
+    // NioIoDriver event-loop fiber, is already covered by the built-in allowlist, so fiber and thread detection stay on.
+    override def config =
+        super.config.sequential.failOnNoAssertion(false).leakCheckSockets(false).leakCheckFileDescriptors(false)
 
     // Pre-flight: check whether the current (OS, arch) tuple has a chrome-headless-shell artifact
     // (mac-arm64 / mac-x64 / linux64 / win64 / win32). Linux/Aarch64 and Windows/ARM have no published

@@ -2,6 +2,13 @@ package kyo
 
 class JsonRpcHttpTransportTest extends kyo.test.Test[Any]:
 
+    // Only the socket category is disabled. These tests run an HttpServer and HttpClient over the NIO transport, which
+    // defers a closed channel's real fd close to its idle selector's next select(), which nothing wakes, so the
+    // listener/connection fd outlives the run. That fix belongs to the transport (frozen for the kyo-net rewrite); the
+    // socket is an opaque socket:[inode] no allowlist can match. File-descriptor, thread, and fiber detection stay on.
+    // Same opt-out and reason as BaseHttpTest.
+    override def config = super.config.leakCheckSockets(false)
+
     // Linux Native CI HTTP server bring-up + per-request latency can exceed the production 5-second HttpClient
     // default. Wrap every leaf so test requests get a 60s client request timeout (mirrors BaseHttpTest).
     override def aroundLeaf[A](body: A < (Async & Abort[Any] & Scope))(using Frame): A < (Async & Abort[Any] & Scope) =
