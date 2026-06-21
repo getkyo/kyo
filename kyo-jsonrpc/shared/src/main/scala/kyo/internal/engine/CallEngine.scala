@@ -56,11 +56,21 @@ private[kyo] object CallEngine:
         Async.raceFirst[JsonRpcError | Closed, Out, Any](
             abortSignal.get.map(e => Abort.fail[JsonRpcError](e)),
             exchange(req).map { sv =>
-                Structure.decode[Out](sv) match
-                    case Result.Success(v) => v
-                    case Result.Failure(e) =>
-                        Abort.fail(JsonRpcInternalError(JsonRpcInternalError.Operation.DecodeResult, e))
-                    case Result.Panic(t) => Abort.panic(t)
+                // A cancelled or timed-out call must observe its abort deterministically: if abortSignal was
+                // already completed (cancel/timeout), fail even when this reply arrives after the abort and wins
+                // the race. Without this the raceFirst winner is scheduler-timing dependent and a stale reply can
+                // leak past a cancel under load.
+                // Unsafe: non-blocking poll of abortSignal from the exchange-result continuation
+                Sync.Unsafe.defer(abortSignal.unsafe.poll()(using AllowUnsafe.embrace.danger)).map {
+                    case Maybe.Present(Result.Success(e)) =>
+                        Abort.fail[JsonRpcError](e.eval)
+                    case _ =>
+                        Structure.decode[Out](sv) match
+                            case Result.Success(v) => v
+                            case Result.Failure(e) =>
+                                Abort.fail(JsonRpcInternalError(JsonRpcInternalError.Operation.DecodeResult, e))
+                            case Result.Panic(t) => Abort.panic(t)
+                }
             }
         )
 
