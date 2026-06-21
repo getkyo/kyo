@@ -196,14 +196,15 @@ class HandshakeEngineFreeTest extends Test:
                                 finally stat.close()
                             })
                     }.andThen {
-                        // Track the exact detached plaintext fd each iteration creates, then assert every one is eventually closed. This is a
-                        // direct per-fd check (the same fstat<0 technique the single upgrade above uses), immune to the cross-suite fd-table
-                        // contamination a process-wide fd probe suffers under `parallelism 4`: a leaked detached fd stays fstat-able and fails it.
-                        val createdFds = new java.util.concurrent.ConcurrentLinkedQueue[Int]()
+                        // Drive k failing upgrades; each iteration asserts the upgrade fails AND that its exact detached plaintext fd is released
+                        // (fstat < 0) before the next iteration begins. This repeats the single-upgrade closure check above k times, so the pre-fix
+                        // bug (one detached fd leaked per failed upgrade) is caught on the first leaking iteration. Verifying each fd in the brief
+                        // window right after its own teardown, rather than every created fd once at the end, is immune to descriptor-number
+                        // recycling: a closed number the kernel later hands to another live socket under `parallelism 4` cannot masquerade as this
+                        // fd, because each fd is checked before any later iteration (or sibling suite) can reuse its number.
                         soak(k) { _ =>
                             loopbackPair().map { case (cFd, pFd) =>
                                 closeRaw(shim, pFd)
-                                discard(createdFds.add(cFd))
                                 val h  = PosixHandle.socket(cFd, PosixHandle.DefaultReadBufferSize, Absent)
                                 val pc = transport.openWith(h, transportDriver(transport))
                                 pc.start()
@@ -213,23 +214,14 @@ class HandshakeEngineFreeTest extends Test:
                                     transportConfig.channelCapacity
                                 ).safe.get).map {
                                     o => assert(o.isFailure, s"expected the upgrade to fail on EOF, got $o")
+                                }.andThen {
+                                    assertEventually(Sync.defer {
+                                        val stat = Buffer.alloc[Byte](PosixConstants.statSize)
+                                        try sockets.fstat(cFd, stat).value < 0
+                                        finally stat.close()
+                                    })
                                 }
                             }
-                        }.andThen {
-                            // Every detached plaintext fd the soak created must be closed (fstat < 0). A genuine per-iteration leak leaves one open
-                            // and this never settles, surfacing as the per-test timeout. The fd numbers are this test's own, so a foreign reuse of a
-                            // closed number cannot make a leaked fd look closed: the assertion is on the SET of fds we opened, not a process-wide count.
-                            assertEventually(Sync.defer {
-                                val stat = Buffer.alloc[Byte](PosixConstants.statSize)
-                                try
-                                    var allClosed = true
-                                    val it        = createdFds.iterator()
-                                    while it.hasNext do
-                                        if sockets.fstat(it.next(), stat).value >= 0 then allClosed = false
-                                    allClosed
-                                finally stat.close()
-                                end try
-                            })
                         }
                     }
                 }
