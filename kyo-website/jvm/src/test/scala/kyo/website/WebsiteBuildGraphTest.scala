@@ -1,40 +1,45 @@
 package kyo.website
 
-import java.nio.file.Files
-import java.nio.file.Paths
+import kyo.*
+import kyo.AllowUnsafe.embrace.danger
 
 class WebsiteBuildGraphTest extends WebsiteTest:
 
     // Locate the repo root by walking up from user.dir until we find build.sbt.
-    private def repoRoot(): java.nio.file.Path =
-        val start = Paths.get(java.lang.System.getProperty("user.dir")).toAbsolutePath
-        Iterator
-            .iterate(start)(_.getParent)
-            .takeWhile(_ != null)
-            .find(dir => Files.exists(dir.resolve("build.sbt")))
-            .getOrElse(throw new RuntimeException("repo root with build.sbt not found"))
+    private def repoRoot(): Path =
+        @scala.annotation.tailrec
+        def loop(dir: Path): Path =
+            if (dir / "build.sbt").unsafe.exists() then dir
+            else
+                dir.parent match
+                    case Maybe.Present(parent) => loop(parent)
+                    case Maybe.Absent          => throw new RuntimeException("repo root with build.sbt not found")
+        loop(Path(java.lang.System.getProperty("user.dir").nn))
     end repoRoot
 
     // build.sbt is at the repo root.
     private def buildSbtLines(): List[String] =
-        val p = repoRoot().resolve("build.sbt")
-        new String(Files.readAllBytes(p)).linesIterator.toList
+        (repoRoot() / "build.sbt").unsafe.read().getOrThrow.linesIterator.toList
 
     // kyo-website/shared, kyo-website/js, and kyo-website-bundle source trees should have no flexmark import.
     private def sourceLines(subdir: String): List[String] =
-        val root = repoRoot().resolve(subdir)
-        if Files.exists(root) then
-            import scala.jdk.CollectionConverters.*
-            Files.walk(root)
-                .iterator()
-                .asScala
+        val root = repoRoot() / subdir
+        if root.unsafe.exists() then
+            filesUnder(root)
                 .filter(p => p.toString.endsWith(".scala") || p.toString.endsWith(".sbt"))
-                .flatMap(p => new String(Files.readAllBytes(p)).linesIterator)
-                .toList
+                .flatMap(p => p.unsafe.read().getOrThrow.linesIterator.toList)
         else
             Nil
         end if
     end sourceLines
+
+    // Path.Unsafe.list collects each directory's entries and closes the stream before returning (no leaked fd);
+    // recurse to cover the full tree without following symlinks.
+    private def filesUnder(dir: Path): List[Path] =
+        dir.unsafe.list().getOrThrow.toList.flatMap { entry =>
+            if entry.unsafe.isDirectory() && !entry.unsafe.isSymbolicLink() then filesUnder(entry)
+            else List(entry)
+        }
 
     "flexmark JVM-only import grep" - {
         "zero flexmark matches in kyo-website/shared" in {
@@ -156,14 +161,12 @@ class WebsiteBuildGraphTest extends WebsiteTest:
     // any scala_meta symbol references and assert zero occurrences. The file is only present
     // after `sbt kyo-website-bundleJS/fullLinkJS`; when absent the test is cancelled (not failed).
     "zero scala_meta in bundle-opt main.js (skip when absent)" in {
-        val ver = scala.util.Properties.versionNumberString
-        val jsPath = repoRoot().resolve(
-            s"kyo-website-bundle/js/target/scala-$ver/kyo-website-bundle-opt/main.js"
-        )
-        if !Files.exists(jsPath) then
+        val ver    = scala.util.Properties.versionNumberString
+        val jsPath = repoRoot() / s"kyo-website-bundle/js/target/scala-$ver/kyo-website-bundle-opt/main.js"
+        if !jsPath.unsafe.exists() then
             cancel("Bundle-opt check skipped: bundle-opt main.js not present (run fullLinkJS first)")
         else
-            val text              = new String(Files.readAllBytes(jsPath))
+            val text              = jsPath.unsafe.read().getOrThrow
             val scalaMetaCount    = text.sliding("scala_meta".length).count(_ == "scala_meta")
             val docsMarkdownCount = text.sliding("DocsMarkdown".length).count(_ == "DocsMarkdown")
             assert(

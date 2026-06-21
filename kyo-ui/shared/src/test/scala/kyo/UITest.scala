@@ -11,7 +11,13 @@ abstract class UITest extends kyo.test.Test[Any]:
     //
     // failOnNoAssertion is disabled because kyo-ui suites assert through Browser.assert* (domain helpers that do not
     // flow through the kyo.test assert macros), so the no-assertion counter sees zero.
-    override def config = super.config.sequential.failOnNoAssertion(false)
+    //
+    // The shared Chrome (Browser.runShared) is held for the whole run, so its CDP `socket:[inode]` and stdio
+    // `pipe:[inode]` are opaque-inode descriptors no allowlist can match. Disable only those two descriptor categories,
+    // keeping thread and fiber detection on (the kyo-http NioIoDriver fiber is built-in allowlisted). Same rationale as
+    // kyo-browser's BaseBrowserTest.
+    override def config =
+        super.config.sequential.failOnNoAssertion(false).leakCheckSockets(false).leakCheckFileDescriptors(false)
 
     /** Retry budget for transient Chrome-infrastructure failures: 2 retries (3 attempts total) with exponential backoff. Per-test fresh
       * Chrome occasionally drops its CDP connection or fails to launch under sustained full-suite load; a fresh attempt rides that out.

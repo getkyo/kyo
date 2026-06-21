@@ -20,24 +20,48 @@ on:
         description: 'GitHub-hosted runner label for `runs-on` (e.g. ubuntu-latest).'
         type: string
         required: true
-      test-command:
-        description: 'sbt task to run via testKyo (e.g. test, testDiff).'
+      targets:
+        description: 'Space-separated platform subset the matrix runs (subset of JVM JS Native Wasm).'
         type: string
-        required: true
+        required: false
+        default: 'JVM JS Native Wasm'
+      mode:
+        description: 'Run-shape selector: full -> test, diff -> testDiff, custom -> the command escape hatch.'
+        type: string
+        required: false
+        default: full
+      ref:
+        description: 'Git ref (branch or sha) to check out. Empty string checks out the dispatch ref.'
+        type: string
+        required: false
+        default: ''
 
 jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.parse.outputs.targets }}
+    steps:
+      - id: parse
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          arr=$(jq -cn --arg s "$TARGETS" '$s | split(" ") | map(select(length > 0))')
+          echo "targets=$arr" >> "$GITHUB_OUTPUT"
+
   build:
-    # The kyo-test PR forces a FULL run on every commit (it changes project/build.sbt &
-    # plugins.sbt vs main, so the testKyo harness runs all modules), and the browser/UI/caliban
-    # suites now run their leaves sequentially (shared Chrome can't take concurrent CDP). That
-    # full run is ~95-100 min on the JVM target, which overran the previous 90. Post-merge, runs
-    # go incremental again and finish well under this. Raised to give the forced full run headroom.
+    needs: prep
+    # JVM full runs peak at ~95-100 min (browser/UI/caliban suites serialize under a shared Chrome
+    # instance that cannot take concurrent CDP connections). 180 min gives headroom above that peak.
     timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        target: [JVM, JS, Native, Wasm]
+        # prep parses inputs.targets (space-separated) into a JSON array via jq.
+        # An empty or all-blank targets value produces an empty array, so the matrix
+        # spawns zero jobs rather than one invalid job.
+        target: ${{ fromJSON(needs.prep.outputs.targets) }}
     runs-on: ${{ inputs.runner-image }}
     env:
       # Serialize the whole CI build: one sbt task at a time. Compile and Scala.js/Wasm link run
@@ -51,178 +75,27 @@ jobs:
       # run in the driver heap). There is deliberately no -Xms floor: tests run in forked JVMs (sized via
       # build.sbt Test/javaOptions), and SBT_TASK_LIMIT=1 keeps compile and test from overlapping, so a low
       # floor lets G1 release the driver's compile heap back to the box during the test phase, leaving room
-      # for the forks. macos-arm64 is a 14GB box that needs a lower ceiling; it is not in the active matrix,
-      # so re-add a per-os override here if that target is re-enabled.
+      # for the forks. Re-add a per-os ceiling override here if a memory-constrained arch is re-enabled.
       JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
       JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
 
     steps:
       - uses: actions/checkout@v6.0.3
         with:
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
-      # The WASM target requires Node 24+: it defaults to V8's Turboshaft Wasm pipeline (Node 22/23
-      # miscompile the generated WasmGC code and no longer accept --turboshaft-wasm). JS runs on the
-      # same version to keep a single Node across the matrix.
-      - uses: actions/setup-node@v6.4.0
-        if: matrix.target == 'JS' || matrix.target == 'Wasm'
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
-
-      - uses: actions/cache@v5
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-        with:
-          path: |
-            ~/.cache/coursier
-            ~/Library/Caches/Coursier
-            ~/AppData/Local/Coursier/Cache
-            ~/.sbt
-            ~/.ivy2/cache
-          key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
-          restore-keys: deps-${{ inputs.os }}-
+          os: ${{ inputs.os }}
+          target: ${{ matrix.target }}
 
       # kyo-browser auto-downloads `chrome-headless-shell` (~120 MB) on first launch and caches it under the
-      # platform's user cache dir. Without this step every job re-fetches the same binary. The cache key includes
-      # Browser.scala (carries the pinned fallbackVersion) and ChromeDownloader.scala (carries the URL template and
-      # extracted layout) so a version bump or a downloader change invalidates the cache cleanly. linux-arm64 and
-      # windows-arm64 jobs cancel kyo-browser tests at runtime (no chrome-headless-shell build for those platforms),
-      # so the cache stays empty there — harmless.
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/kyo-browser
-            ~/Library/Caches/kyo-browser
-            ~/AppData/Local/kyo-browser
-          key: kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
-          restore-keys: kyo-browser-${{ inputs.os }}-
+      # platform's user cache dir; the setup action restores it. The action also installs Node, the native
+      # libraries, and podman conditionally on the target and os, and provisions corretto:24 + sbt.
 
-      # apt/brew package-mirror reachability is a recurring transient CI failure
-      # (e.g. ports.ubuntu.com Network unreachable). Retry only the dependency-install
-      # network operations — never compile/test steps.
-      - name: Install Dependencies (Linux)
-        if: contains(inputs.os, 'linux') && matrix.target == 'Native'
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 3
-          timeout_minutes: 5
-          retry_wait_seconds: 15
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
-
-      - name: Install Dependencies (macOS)
-        if: contains(inputs.os, 'macos') && matrix.target == 'Native'
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 3
-          timeout_minutes: 5
-          retry_wait_seconds: 15
-          command: brew install h2o libidn2
-
-      # Split from the podman start logic so only the apt install is retried — the
-      # Start step below is not idempotent (background service launch, GITHUB_ENV
-      # export) and must not be re-run.
-      - name: Install podman (Linux)
-        if: contains(inputs.os, 'linux')
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 3
-          timeout_minutes: 5
-          retry_wait_seconds: 15
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y -o Acquire::Retries=3 podman uidmap
-
-      - name: Start podman (Linux)
-        if: contains(inputs.os, 'linux')
-        run: |
-          # Enable systemd lingering so podman uses the systemd cgroup manager
-          # instead of falling back to cgroupfs. Without this:
-          #   - podman emits cgroupv2 warnings to stderr on every command
-          #   - pause/unpause fail (cgroupfs in cgroup v2 has no unprivileged freezer)
-          #   - container lifecycle reporting becomes unreliable
-          uid="$(id -u)"
-          sudo loginctl enable-linger "$uid"
-          # Wait for the per-user systemd runtime dir to come up.
-          for _ in $(seq 1 20); do
-            [ -d "/run/user/$uid" ] && break
-            sleep 1
-          done
-          export XDG_RUNTIME_DIR="/run/user/$uid"
-          mkdir -p "$XDG_RUNTIME_DIR/podman"
-          # Start the rootless API socket — kyo-pod's HTTP backend probes
-          # $XDG_RUNTIME_DIR/podman/podman.sock first.
-          nohup podman system service --time=0 \
-            "unix://$XDG_RUNTIME_DIR/podman/podman.sock" \
-            > /tmp/podman.log 2>&1 &
-          for _ in $(seq 1 10); do
-            [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
-            sleep 1
-          done
-          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
-          # Diagnostic: print cgroup-related fields so CI logs show which manager
-          # podman picked. Tolerate failures — the field names vary across versions.
-          podman info | grep -iE 'cgroup|rootless' || true
-          podman version
-          docker version
-
-      - uses: coursier/setup-action@v3.0.0
-        if: inputs.os != 'windows-arm64'
-        with:
-          jvm: corretto:24
-          apps: sbt
-
-      # Windows ARM64: coursier/setup-action doesn't support this platform yet.
-      # JDK 25 and sbt are pre-installed on the runner image.
-      - name: Setup JDK (Windows ARM64)
-        if: inputs.os == 'windows-arm64'
-        shell: bash
-        run: echo "JAVA_HOME=$JAVA_HOME_25_AARCH64" >> "$GITHUB_ENV"
-
-      # The Scala.js link runs in the sbt driver heap, and the full JS test-class compile OOM'd at the
-      # shared 12G ceiling. Raise it to 14G for the JS target only: each target runs on its own runner,
-      # so this leaves JVM/Native/Wasm at 12G (they are green there, and Native's forked LLVM/podman
-      # alongside a larger heap would overcommit a 16G box -> exit 143).
-      - name: Raise driver heap for JS link
-        if: matrix.target == 'JS'
+      - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
-          opts='-Xmx14G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-          echo "JAVA_OPTS=$opts" >> "$GITHUB_ENV"
-          echo "JVM_OPTS=$opts" >> "$GITHUB_ENV"
-
-      - name: Test ${{ matrix.target }} (${{ inputs.os }})
-        shell: bash
-        run: |
-          target="${{ matrix.target }}"
-          mode="${{ inputs.test-command == 'test' && '--all' || '' }}"
-
-          # Native goes through the crash-retry wrapper (libunwind tolerance); it also links the native
-          # test binaries in its own process. Other targets run sbt directly.
-          run_tests() {
-            if [ "$target" = "Native" ]; then
-              ./scripts/native-test.sh "$1"
-            else
-              sbt "$1"
-            fi
-          }
-
-          if [ "${{ inputs.test-command }}" = "test" ] && [ "$target" != "Native" ]; then
-            # Full run on JVM/JS/Wasm: split compile from test into separate sbt processes so no single
-            # session holds the whole codebase's compile heap while the test phase runs (forking JVMs, or
-            # linking JS/Wasm). That single-session pattern over-commits the 16GB runner (exit 143). Each
-            # phase exits before the next, the compile phases have no forks, and the run phase finds
-            # everything compiled so it does not rebuild compiler state. The shell is fail-fast (bash -e).
-            #
-            # Native is intentionally excluded: it does not over-commit (it compiles, links, and runs the
-            # native binaries within memory), and splitting its compile from its nativeLink across separate
-            # processes leaves Scala Native's reachability analysis inconsistent ("Unreachable symbols").
-            # Native keeps the single-process native-test.sh flow below, which links upfront itself.
-            sbt "testKyo --phase compile-main --all $target"
-            sbt "testKyo --phase compile-test --all $target"
-            sbt "testKyo --all $target"
-          else
-            # Native full run, and all diff-mode (PR) runs: single pass.
-            run_tests "testKyo $mode $target"
-          fi
+          action="${{ inputs.mode == 'diff' && 'testDiff' || 'test' }}"
+          ./scripts/ci-test.sh "${{ matrix.target }}" "$action"
