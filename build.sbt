@@ -1844,6 +1844,7 @@ lazy val `kyo-examples` =
         .dependsOn(`kyo-schema`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-actor`)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
