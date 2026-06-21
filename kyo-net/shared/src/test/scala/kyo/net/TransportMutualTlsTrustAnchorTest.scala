@@ -52,8 +52,10 @@ class TransportMutualTlsTrustAnchorTest extends Test:
             val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
             echoListener(transport, serverMtls).map { listener =>
                 val message = "kyo-truststore".getBytes("UTF-8")
+                // Generous hang-guard: a mutual-TLS round-trip verifies a cert chain on both ends and is slow on a cold/loaded runner, so 5s timed
+                // out on every cell at once. A true deadlock still fails within the suite's 60s leaf budget (see kyo.net.Test); mirrors TransportMutualTlsTest.
                 Abort.run[Closed | Timeout](
-                    Async.timeout(5.seconds)(
+                    Async.timeout(30.seconds)(
                         transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                             client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                         }
@@ -116,8 +118,9 @@ class TransportMutualTlsTrustAnchorTest extends Test:
                 val clientWithCert = clientTls.copy(certChainPath = serverTls.certChainPath, privateKeyPath = serverTls.privateKeyPath)
                 echoListener(transport, serverMtls).map { listener =>
                     val message = "kyo-precedence".getBytes("UTF-8")
+                    // Generous hang-guard (see the trustStorePath leaf above): a cold/loaded mutual-TLS round-trip exceeds a 5s bound.
                     Abort.run[Closed | Timeout](
-                        Async.timeout(5.seconds)(
+                        Async.timeout(30.seconds)(
                             transport.connect("127.0.0.1", listener.port, clientWithCert).safe.get.map { client =>
                                 client.outbound.safe.put(Span.fromUnsafe(message)).andThen(collect(client, message.length)).map(client -> _)
                             }
