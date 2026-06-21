@@ -98,7 +98,7 @@ class BrowserSessionTest extends BrowserTest:
         SharedChrome.init.map { wsUrl =>
             Browser.run(wsUrl) {
                 Browser.use { parent =>
-                    val client = parent.client
+                    val client = parent.backend
                     CdpBackend.getTargets(client).map { before =>
                         val beforeIds = before.targetInfos.map(_.targetId).toSet
                         AtomicRef.init(Set.empty[String]).map { innerIdsRef =>

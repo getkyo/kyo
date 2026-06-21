@@ -573,8 +573,8 @@ private[kyo] object NavigationWatcher:
         Frame
     ): Unit < (Async & Abort[BrowserReadException]) =
         Retry[BrowserReadException](schedule) {
-            CdpBackend.runtimeEvaluate(tab.client.withSession(tab.sessionId), EvalParams("document.readyState")).map { result =>
-                CdpEvalDecoder.parseAndExtractEvalValue(result).map { value =>
+            CdpBackend.runtimeEvaluate(tab.session, EvalParams("document.readyState")).map { result =>
+                CdpEvalDecoder.extractValueOrFail(result).map { value =>
                     if value == "complete" then ()
                     else
                         Abort.fail(

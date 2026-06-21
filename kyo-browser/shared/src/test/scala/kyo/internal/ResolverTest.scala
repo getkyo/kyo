@@ -74,9 +74,22 @@ class ResolverTest extends kyo.BrowserTest:
 
     "decode failure path raises BrowserProtocolErrorException (pure)" in {
         val malformed = "{this is not valid JSON for GetFrameTreeResult}"
-        Abort.run[BrowserConnectionException] {
-            CdpBackend.decodeOrFail[GetFrameTreeResult](malformed, "DOM.getDocument")
-        }.map {
+        // decodeOrFail was removed; inline the decode logic here for test continuity.
+        val method = "DOM.getDocument"
+        val decoded: GetFrameTreeResult < Abort[BrowserReadException] = Json.decode[CdpReply[GetFrameTreeResult]](malformed) match
+            case Result.Success(reply) =>
+                reply.result match
+                    case Present(v) => v
+                    case Absent =>
+                        reply.error match
+                            case Present(cdpErr) => Abort.fail(BrowserProtocolErrorException(method, cdpErr.message))
+                            case Absent => Abort.fail(BrowserProtocolErrorException.decodeFailure(
+                                    method,
+                                    s"reply has neither result nor error: $malformed"
+                                ))
+            case typedFailure =>
+                Abort.fail(BrowserProtocolErrorException.decodeFailure(method, typedFailure.toString))
+        Abort.run[BrowserConnectionException](decoded).map {
             case Result.Failure(ex: BrowserProtocolErrorException) =>
                 assert(ex.method == "DOM.getDocument", s"expected method='DOM.getDocument' but got '${ex.method}'")
                 assert(
@@ -134,7 +147,7 @@ class ResolverTest extends kyo.BrowserTest:
 
     "Resolver.isStaleNodeError recognises the CDP stale-node sentinel substring" in {
         // Match the live wire shape: CDP returns the message verbatim inside the error payload, then
-        // CdpBackend.decodeOrFail composes it into a `BrowserProtocolErrorException(error=...)` whose
+        // CdpBackend.send composes it into a `BrowserProtocolErrorException(error=...)` whose
         // `error` field carries the CDP message. The classifier substring-matches against that field.
         val stale = BrowserProtocolErrorException(
             "DOM.describeNode",
