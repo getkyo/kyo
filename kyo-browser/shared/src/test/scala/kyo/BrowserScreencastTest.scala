@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.BrowserTab
 import kyo.internal.CdpBackend
-import kyo.internal.CdpClient
 import kyo.internal.CdpEvent
 import kyo.internal.CdpTypes.*
 import kyo.internal.ScreencastFrameAckParams
@@ -12,7 +11,7 @@ import kyo.internal.StartScreencastParams
 
 /** Behavioral tests for screencast and console event routing.
   *
-  * Tests 1, 3, 4, 5, and 6 are pure unit tests (no Chrome required). Test 2 is Chrome-backed and verifies the full ack loop.
+  * Tests 1, 3, 4, and 6 are pure unit tests (no Chrome required). Test 2 is Chrome-backed and verifies the full ack loop.
   */
 class BrowserScreencastTest extends BrowserTest:
 
@@ -21,16 +20,6 @@ class BrowserScreencastTest extends BrowserTest:
     // CanEqual for Exchange.Message pattern matches in tests 3 and 6.
     given CanEqual[Exchange.Message[Int, String, CdpEvent], Exchange.Message[Int, String, CdpEvent]] =
         CanEqual.derived
-
-    // -------------------------------------------------------------------------
-    // Test 1: whitelist membership (pure, no Chrome)
-    // -------------------------------------------------------------------------
-
-    "eventWhitelist contains Page.screencastFrame, Runtime.consoleAPICalled, Runtime.exceptionThrown" in {
-        assert(CdpClient.eventWhitelist.contains("Page.screencastFrame"))
-        assert(CdpClient.eventWhitelist.contains("Runtime.consoleAPICalled"))
-        assert(CdpClient.eventWhitelist.contains("Runtime.exceptionThrown"))
-    }
 
     // -------------------------------------------------------------------------
     // Test 2: registered dispatcher receives frames and the cast does not stall
@@ -47,7 +36,7 @@ class BrowserScreencastTest extends BrowserTest:
             val sidKey  = tab.sessionId.value
             Channel.initUnscoped[ScreencastFrameWire](16).map { frameChannel =>
                 val handler: CdpEvent.Generic => Unit < Sync = ev =>
-                    CdpClient.parseScreencastFrame(ev) match
+                    Browser.parseScreencastFrame(ev) match
                         case Present((frame, sessionId)) =>
                             // Ack via a detached fiber so the reader fiber stays < Sync.
                             // The ack fiber runs concurrently; Chrome sees it promptly and
@@ -100,54 +89,14 @@ class BrowserScreencastTest extends BrowserTest:
     }
 
     // -------------------------------------------------------------------------
-    // Test 3: no dispatcher registered, whitelisted event is pushed not dropped
+    // Test 4: parseScreencastFrame returns Absent on a non-screencast params type (pure)
     // -------------------------------------------------------------------------
 
-    "with no dispatcher a whitelisted screencast event is pushed not dropped" in {
-        val wire =
-            """{"method":"Page.screencastFrame","params":{"data":"AAAA","metadata":{"scrollOffsetX":0,"scrollOffsetY":0},"sessionId":1}}"""
-        for
-            handlers              <- AtomicRef.init[Dict[String, (Boolean, String)]](Dict.empty)
-            queue                 <- Channel.initUnscoped[(Boolean, String, Maybe[SessionId])](16)
-            frameDispatchers      <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
-            downloadDispatchers   <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
-            screencastDispatchers <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
-            consoleDispatchers    <- AtomicRef.init[Dict[String, CdpEvent.Generic => Unit < Sync]](Dict.empty)
-            recorders             <- AtomicRef.init[Dict[String, AtomicRef[Chunk[Browser.DialogEvent]]]](Dict.empty)
-            result <- CdpClient.decodeCdpMessage(
-                wire,
-                handlers,
-                queue,
-                frameDispatchers,
-                downloadDispatchers,
-                screencastDispatchers,
-                consoleDispatchers,
-                recorders
-            )
-        yield result match
-            case Exchange.Message.Push(ev: CdpEvent.Generic) =>
-                assert(ev.method == "Page.screencastFrame", s"method mismatch: ${ev.method}")
-            case other =>
-                fail(s"Expected Push for unregistered dispatcher but got: $other")
-        end for
-    }
-
-    // -------------------------------------------------------------------------
-    // Test 4: parseScreencastFrame returns Absent on wrong-method event (pure)
-    // -------------------------------------------------------------------------
-
-    "parseScreencastFrame returns Absent on a wrong-method event" in {
-        val ev = CdpEvent.Generic(method = "Page.loadEventFired", paramsJson = "{}", sessionId = Absent)
-        assert(CdpClient.parseScreencastFrame(ev) == Absent)
-    }
-
-    // -------------------------------------------------------------------------
-    // Test 5: parseScreencastFrame returns Absent on malformed params (pure)
-    // -------------------------------------------------------------------------
-
-    "parseScreencastFrame returns Absent on malformed params JSON" in {
-        val ev = CdpEvent.Generic(method = "Page.screencastFrame", paramsJson = "not-valid-json", sessionId = Absent)
-        assert(CdpClient.parseScreencastFrame(ev) == Absent)
+    "parseScreencastFrame returns Absent on a non-screencast params type" in {
+        // The dispatcher now carries the decoded typed Wire; a params value that is not a ScreencastFrameWire
+        // (e.g. a different event's wire) projects to Absent.
+        val ev = CdpEvent.Generic(method = "Page.loadEventFired", params = ScreencastFrameMetadata(0.0, 0.0), sessionId = Absent)
+        assert(Browser.parseScreencastFrame(ev) == Absent)
     }
 
     // -------------------------------------------------------------------------
@@ -155,7 +104,7 @@ class BrowserScreencastTest extends BrowserTest:
     // -------------------------------------------------------------------------
 
     "dispatcher handler swallows Abort[Closed] and never blocks the reader" in {
-        val ev = CdpEvent.Generic("Page.screencastFrame", "{}", Absent)
+        val ev = CdpEvent.Generic("Page.screencastFrame", ScreencastFrameWire("AAAA", ScreencastFrameMetadata(0.0, 0.0), 1), Absent)
         // Create a channel and immediately close it so any offer inside the handler raises Abort[Closed].
         Channel.initUnscoped[ScreencastFrameWire](1).map { closedChannel =>
             closedChannel.close.andThen {
@@ -361,7 +310,7 @@ class BrowserScreencastTest extends BrowserTest:
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Promise.init[BrowserTab, Any].map { tabRef =>
                 Promise.init[Unit, Any].map { readyLatch =>
-                    val cast: Unit < (Async & Abort[BrowserReadException]) =
+                    val cast: Unit < (Async & Abort[BrowserReadException | BrowserSetupException]) =
                         Browser.run(wsUrl) {
                             Browser.goto(page(animOnlyPage)).andThen {
                                 Browser.use { tab =>
@@ -388,7 +337,7 @@ class BrowserScreencastTest extends BrowserTest:
                                         val sidKey = tab.sessionId.value
                                         // Poll the dispatcher map until the recorder's Scope.ensure(restore) removed the entry.
                                         Retry[BrowserReadException](Schedule.fixed(20.millis).take(150)) {
-                                            tab.client.screencastEventDispatchers.get.map { map =>
+                                            tab.backend.screencastEventDispatchers.get.map { map =>
                                                 if map.get(sidKey) == Absent then ()
                                                 else
                                                     Abort.fail(
@@ -401,7 +350,7 @@ class BrowserScreencastTest extends BrowserTest:
                                             }
                                         }.andThen {
                                             // The recorder's Scope.ensure(restore) removed the dispatcher entry on interruption.
-                                            tab.client.screencastEventDispatchers.get.map { map =>
+                                            tab.backend.screencastEventDispatchers.get.map { map =>
                                                 assert(
                                                     map.get(sidKey) == Absent,
                                                     s"expected the screencast dispatcher for $sidKey to be removed on interruption but it is still present"

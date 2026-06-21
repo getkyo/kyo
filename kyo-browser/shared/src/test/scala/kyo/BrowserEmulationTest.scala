@@ -93,7 +93,7 @@ class BrowserEmulationTest extends BrowserTest:
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Promise.init[BrowserTab, Any].map { tabRef =>
                 Promise.init[Unit, Any].map { readyLatch =>
-                    val body: Unit < (Async & Abort[BrowserReadException]) =
+                    val body: Unit < (Async & Abort[BrowserReadException | BrowserSetupException]) =
                         Browser.run(wsUrl) {
                             Browser.goto(p).andThen {
                                 Browser.use { tab =>

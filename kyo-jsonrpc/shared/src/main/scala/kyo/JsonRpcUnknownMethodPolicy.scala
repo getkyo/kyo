@@ -1,0 +1,62 @@
+package kyo
+
+/** Controls how the endpoint responds to incoming requests and notifications for methods
+  * that have no registered handler.
+  *
+  * Two preset values cover the most common cases:
+  *  - [[JsonRpcUnknownMethodPolicy.minimal]]: reply `MethodNotFound` on requests, silently drop notifications.
+  *  - [[JsonRpcUnknownMethodPolicy.strict]]: reply `MethodNotFound` on requests, reject unknown notifications.
+  *
+  * For custom silent-ignore predicates supply a value for [[ignoreUnknownNotification]]:
+  * {{{
+  * JsonRpcUnknownMethodPolicy.minimal.copy(
+  *   ignoreUnknownNotification = _.startsWith("internal/")
+  * )
+  * }}}
+  *
+  * Set via [[JsonRpcHandler.Config.unknownMethod]].
+  *
+  * @param onUnknownRequest
+  *   action when an incoming request has no registered handler.
+  * @param onUnknownNotification
+  *   action when an incoming notification has no registered handler, unless overridden by
+  *   [[ignoreUnknownNotification]].
+  * @param ignoreUnknownNotification
+  *   predicate called with the notification method name. When it returns `true` the notification is
+  *   silently discarded regardless of [[onUnknownNotification]]. Default: `_ => false` (never silently
+  *   ignore).
+  * @see [[JsonRpcHandler.Config]]
+  */
+// Users select .minimal / .strict or copy with a custom predicate
+final case class JsonRpcUnknownMethodPolicy(
+    onUnknownRequest: JsonRpcUnknownMethodPolicy.UnknownAction,
+    onUnknownNotification: JsonRpcUnknownMethodPolicy.UnknownAction,
+    ignoreUnknownNotification: String => Boolean
+) derives CanEqual
+
+object JsonRpcUnknownMethodPolicy:
+    /** What the engine does when an inbound method name matches no registered route.
+      *
+      *  - [[ReplyMethodNotFound]]: reply with a JSON-RPC `-32601` "method not found" error. A
+      *    notification has no id to reply to, so for notifications the message is dropped instead.
+      *  - [[Drop]]: silently discard the message with no reply.
+      *  - [[Reject]]: treat the unknown method as a protocol violation and close the connection.
+      */
+    enum UnknownAction derives CanEqual:
+        case ReplyMethodNotFound
+        case Drop
+        case Reject
+    end UnknownAction
+
+    val minimal: JsonRpcUnknownMethodPolicy = JsonRpcUnknownMethodPolicy(
+        onUnknownRequest = UnknownAction.ReplyMethodNotFound,
+        onUnknownNotification = UnknownAction.Drop,
+        ignoreUnknownNotification = _ => false
+    )
+
+    val strict: JsonRpcUnknownMethodPolicy = JsonRpcUnknownMethodPolicy(
+        onUnknownRequest = UnknownAction.ReplyMethodNotFound,
+        onUnknownNotification = UnknownAction.Reject,
+        ignoreUnknownNotification = _ => false
+    )
+end JsonRpcUnknownMethodPolicy

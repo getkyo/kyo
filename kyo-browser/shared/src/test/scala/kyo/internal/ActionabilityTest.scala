@@ -3,6 +3,7 @@ package kyo.internal
 import CdpTypes.*
 import kyo.*
 import kyo.BrowserElementNotActionableException.Reason
+import kyo.JsonRpcIdStrategy
 
 class ActionabilityTest extends kyo.BaseBrowserTest:
 
@@ -13,10 +14,11 @@ class ActionabilityTest extends kyo.BaseBrowserTest:
     private def reasonOnly(reason: String): ActionabilityValue =
         ActionabilityValue(actionable = false, reason = Present(reason))
 
-    // `Actionability.parseResult` consumes the WHOLE CDP wire frame, not the inner `EvalResult` substring.
-    // Tests express the typed `EvalResult` payload they care about; this helper wraps it in the surrounding
-    // CdpReply envelope so the typed decoder sees the live dispatcher's shape.
-    private def replyOk(evalResult: String): String = s"""{"id":1,"result":$evalResult}"""
+    // `Actionability.parseResult` consumes the typed `ActionabilityResponse` the engine decodes from the CDP
+    // reply. This helper wraps an inline `ActionabilityValue` in the response shape (result.value) the JS probe
+    // produces with `returnByValue = true`.
+    private def respOk(value: ActionabilityValue): ActionabilityResponse =
+        ActionabilityResponse(result = Present(ActionabilityRemoteObject(value = Present(value))))
 
     "decodeReason" - {
 
@@ -109,46 +111,112 @@ class ActionabilityTest extends kyo.BaseBrowserTest:
     "parseResult" - {
 
         "exceptionDetails Present returns failure" in {
-            val raw = replyOk(
-                """{"exceptionDetails":{"text":"error"},"result":{"type":"object","value":{"actionable":true,"navigatesOnClick":false,"rect":{"x":10,"y":20,"width":100,"height":50}}}}"""
+            val resp = ActionabilityResponse(
+                result = Present(ActionabilityRemoteObject(value =
+                    Present(
+                        ActionabilityValue(
+                            actionable = true,
+                            navigatesOnClick = false,
+                            rect = Present(ActionabilityRect(x = 10, y = 20, width = 100, height = 50))
+                        )
+                    )
+                )),
+                exceptionDetails = Present(ExceptionDetails(text = Present("error")))
             )
-            Actionability.parseResult(raw, dummyRef).map { result =>
+            Actionability.parseResult(resp, dummyRef).map { result =>
                 assert(result == Result.Failure(Reason.NotAttached))
             }
         }
 
-        // Malformed wire-shape surfaces typed `Abort[BrowserProtocolErrorException]`, NOT silent
-        // retry-until-exhaustion. A structurally broken Actionability JSON envelope short-circuits the retry
-        // loop instead of looping until `BrowserAssertionTimedOutException`.
-        "malformed wire surfaces BrowserProtocolErrorException via Abort" in {
-            val raw = "this is not json {{{"
-            Abort.run[BrowserProtocolErrorException] {
-                Actionability.parseResult(raw, dummyRef)
-            }.map {
-                case Result.Failure(ex: BrowserProtocolErrorException) => assert(ex.method == "Actionability")
-                case other => fail(s"Expected typed Abort[BrowserProtocolErrorException] but got $other")
-            }
-        }
-
-        "NotVisible wire shape decoded from JSON" in {
-            val raw = replyOk(
-                """{"result":{"value":{"actionable":false,"reason":"NotVisible","notVisibleCause":"DisplayNone"}}}"""
+        "NotVisible response returns NotVisible(DisplayNone)" in {
+            val resp = respOk(
+                ActionabilityValue(actionable = false, reason = Present("NotVisible"), notVisibleCause = Present("DisplayNone"))
             )
-            Actionability.parseResult(raw, dummyRef).map {
+            Actionability.parseResult(resp, dummyRef).map {
                 case Result.Failure(Reason.NotVisible(Reason.NotVisibleCause.DisplayNone)) =>
                     ()
                 case other => fail(s"expected NotVisible(DisplayNone) but got $other")
             }
         }
 
-        "Disabled wire shape with AriaDisabled decoded from JSON" in {
-            val raw = replyOk(
-                """{"result":{"value":{"actionable":false,"reason":"Disabled","disabledKind":"AriaDisabled"}}}"""
+        "Disabled response with AriaDisabled returns Disabled(AriaDisabled)" in {
+            val resp = respOk(
+                ActionabilityValue(actionable = false, reason = Present("Disabled"), disabledKind = Present("AriaDisabled"))
             )
-            Actionability.parseResult(raw, dummyRef).map {
+            Actionability.parseResult(resp, dummyRef).map {
                 case Result.Failure(Reason.Disabled(Reason.DisabledKind.AriaDisabled)) =>
                     ()
                 case other => fail(s"expected Disabled(AriaDisabled) but got $other")
+            }
+        }
+    }
+
+    "malformed wire" - {
+
+        // C1: the pre-redesign Actionability.parseResult(rawJson) decoded the JSON itself and on failure raised
+        // BrowserProtocolErrorException tagged method == "Actionability". The decode now happens at the engine typed-decode
+        // edge via tab.session.send[EvalParams, ActionabilityResponse] (Actionability.scala), so a malformed actionability
+        // reply surfaces a decode failure tagged with the CDP method the path uses (Runtime.evaluate), not "Actionability".
+        // This test feeds an undecodable ActionabilityResponse through that exact path and pins the typed failure.
+
+        // Wrong-type shape for ActionabilityResponse: `result` is an Int instead of the expected record, so kyo-schema
+        // rejects it rather than defaulting it away.
+        case class BadActionabilityResponse(result: Int = 42) derives Schema
+
+        val testLaunchCfg = Browser.LaunchConfig.default.copy(
+            requestTimeout = 5.seconds,
+            closeGrace = 500.millis
+        )
+
+        val testVersionResult = BrowserVersionResult(
+            protocolVersion = "0",
+            product = "Headless/0",
+            revision = "0",
+            userAgent = "Mozilla/5.0 (Headless)",
+            jsVersion = "0.0"
+        )
+
+        def mkBackendWithServer(
+            extraServerMethods: Seq[JsonRpcRoute[?, ?, ?]]
+        )(using Frame): CdpBackend < (Async & Scope & Abort[BrowserReadException | BrowserSetupException]) =
+            JsonRpcTransport.inMemory.map { (client, server) =>
+                val versionMethod = JsonRpcRoute.request[BrowserGetVersionParams, BrowserVersionResult](
+                    "Browser.getVersion"
+                ) { (_, _) => testVersionResult }
+                val config = JsonRpcHandler.Config(
+                    codec = JsonRpcEnvelope.lenientSchema,
+                    maxInFlight = Present(8),
+                    idStrategy = JsonRpcIdStrategy.SequentialInt
+                )
+                JsonRpcHandler.init(server, versionMethod +: extraServerMethods, config).andThen {
+                    CdpBackend.initUnscoped(client, testLaunchCfg)
+                }
+            }
+
+        "an undecodable actionability reply surfaces BrowserProtocolErrorException at Runtime.evaluate" in {
+            Scope.run {
+                val evalMethod = JsonRpcRoute.request[EvalParams, BadActionabilityResponse](
+                    CdpBackend.RuntimeEvaluateMethod
+                ) { (_, _) => BadActionabilityResponse() }
+                mkBackendWithServer(Seq(evalMethod)).map { backend =>
+                    Abort.run[BrowserReadException](
+                        backend.send[EvalParams, ActionabilityResponse](
+                            CdpBackend.RuntimeEvaluateMethod,
+                            EvalParams("(async () => ({}))()", returnByValue = true, awaitPromise = true)
+                        )
+                    ).map {
+                        case Result.Failure(e: BrowserProtocolErrorException) =>
+                            // The owning method is the CDP method the actionability path sends on, not "Actionability".
+                            assert(
+                                e.method == CdpBackend.RuntimeEvaluateMethod,
+                                s"expected method 'Runtime.evaluate' but got '${e.method}'"
+                            )
+                            // Decode-failure discriminator: distinguishes a malformed-reply decode failure from a
+                            // server-signalled coded error (which would carry a different message and a numeric code).
+                            assert(e.error.contains("result decode"), s"expected decode-failure marker but got: ${e.error}")
+                        case other => fail(s"Expected BrowserProtocolErrorException for an undecodable actionability reply but got $other")
+                    }
+                }
             }
         }
     }
@@ -168,10 +236,14 @@ class ActionabilityTest extends kyo.BaseBrowserTest:
     "navigatesOnClick" - {
 
         "true value is propagated into ActionableRef" in {
-            val raw = replyOk(
-                """{"result":{"value":{"actionable":true,"navigatesOnClick":true,"rect":{"x":10,"y":20,"width":100,"height":50}}}}"""
+            val resp = respOk(
+                ActionabilityValue(
+                    actionable = true,
+                    navigatesOnClick = true,
+                    rect = Present(ActionabilityRect(x = 10, y = 20, width = 100, height = 50))
+                )
             )
-            Actionability.parseResult(raw, dummyRef).map {
+            Actionability.parseResult(resp, dummyRef).map {
                 case Result.Success(ref) =>
                     assert(ref.navigatesOnClick, "expected navigatesOnClick=true")
                     assert(ref.x == 10)
@@ -181,10 +253,14 @@ class ActionabilityTest extends kyo.BaseBrowserTest:
         }
 
         "false value is propagated into ActionableRef" in {
-            val raw = replyOk(
-                """{"result":{"value":{"actionable":true,"navigatesOnClick":false,"rect":{"x":5,"y":6,"width":80,"height":30}}}}"""
+            val resp = respOk(
+                ActionabilityValue(
+                    actionable = true,
+                    navigatesOnClick = false,
+                    rect = Present(ActionabilityRect(x = 5, y = 6, width = 80, height = 30))
+                )
             )
-            Actionability.parseResult(raw, dummyRef).map {
+            Actionability.parseResult(resp, dummyRef).map {
                 case Result.Success(ref) =>
                     assert(!ref.navigatesOnClick, "expected navigatesOnClick=false")
                 case other => fail(s"expected Success, got $other")

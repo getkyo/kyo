@@ -1,7 +1,7 @@
 package kyo.internal.cdp
 
 import kyo.*
-import kyo.internal.CdpClient
+import kyo.internal.CdpBackend
 
 /** Typed wrapper around CDP `Page.setDownloadBehavior`.
   *
@@ -36,7 +36,8 @@ private[kyo] object PageDownload:
                     case "allow"   => Allow
                     case "deny"    => Deny
                     case "default" => Default
-                    case other     => throw UnknownVariantException(Seq("Behavior"), other)(using r.frame)
+                    case other     => throw UnknownVariantException(Seq("Behavior"), other)(using r.frame),
+            structure = Structure.Type.Open(Tag[Behavior].asInstanceOf[Tag[Any]])
         )
     end Behavior
 
@@ -55,7 +56,7 @@ private[kyo] object PageDownload:
       * events. The caller is responsible for subscribing to those events to observe completion.
       */
     def setDownloadBehavior(
-        client: CdpClient,
+        client: CdpBackend,
         behavior: Behavior,
         downloadPath: Maybe[String]
     )(using Frame): Unit < (Async & Abort[BrowserReadException]) =
@@ -64,11 +65,11 @@ private[kyo] object PageDownload:
             downloadPath = downloadPath,
             eventsEnabled = Present(true)
         )
-        client.sendUnit("Page.setDownloadBehavior", params)
+        client.sendUnit[SetDownloadBehaviorParams]("Page.setDownloadBehavior", params)
     end setDownloadBehavior
 
-    /** CDP wire shape for `Page.downloadWillBegin`. Used by `Browser.parseDownloadEvent` to decode the event's `paramsJson` into a typed
-      * `Browser.DownloadEvent.WillBegin`.
+    /** CDP wire shape for `Page.downloadWillBegin`. Decoded once by the notification handler and carried as the event's typed `params`;
+      * `Browser.parseDownloadEvent` projects it into a typed `Browser.DownloadEvent.WillBegin`.
       */
     final private[kyo] case class DownloadWillBeginWire(
         guid: String,
@@ -76,8 +77,8 @@ private[kyo] object PageDownload:
         suggestedFilename: String
     ) derives Schema
 
-    /** CDP wire shape for `Page.downloadProgress`. Used by `Browser.parseDownloadEvent` to decode the event's `paramsJson` into a typed
-      * `Browser.DownloadEvent.Progress`.
+    /** CDP wire shape for `Page.downloadProgress`. Decoded once by the notification handler and carried as the event's typed `params`;
+      * `Browser.parseDownloadEvent` projects it into a typed `Browser.DownloadEvent.Progress`.
       */
     final private[kyo] case class DownloadProgressWire(
         guid: String,

@@ -1,8 +1,7 @@
 package kyo.internal.cdp
 
 import kyo.*
-import kyo.internal.CdpClient
-import kyo.internal.CdpEvent
+import kyo.internal.CdpBackend
 import kyo.internal.SharedChrome
 import kyo.internal.cdp.PageDownload
 
@@ -23,103 +22,70 @@ class PageDownloadTest extends kyo.BrowserTest:
         assert(PageDownload.Behavior.Default.wire == "default")
     }
 
-    // `PageDownload.setDownloadBehavior(client, Allow, Present(tempDir))` causes CDP to emit
-    // `Page.downloadWillBegin` when a download is triggered.
+    // Rewired from session.exchange.events (removed with the old CdpClient)
+    // to Browser.onDownload (the production subscription API using CdpBackend.downloadEventDispatchers).
+
     "setDownloadBehavior(Allow) causes CDP to emit Page.downloadWillBegin on a download" in {
         withBrowser {
-            Browser.use { tab =>
-                val session = tab.client.withSession(tab.sessionId)
-                val dataUrl = s"data:text/plain,hello"
-                for
-                    tempPath <- Path.tempDir("kyo-cdp-test-")
-                    tempDir = tempPath.toString
-                    now <- Clock.nowMonotonic
-                    unique = s"kyo-dl-${now.toNanos}.txt"
-                    html   = page(s"""<a id='dl' href='$dataUrl' download='$unique'>dl</a>""")
-                    _ <- session.sendUnit("Page.enable")
-                    _ <- PageDownload.setDownloadBehavior(session, PageDownload.Behavior.Allow, Present(tempDir))
-                    _ <- Browser.goto(html)
-                    // Fork the event waiter BEFORE triggering the click, so the stream subscribes ahead
-                    // of Chrome emitting `Page.downloadWillBegin`.
-                    eventPromise <- Promise.init[CdpEvent, Any]
-                    collector <- Fiber.init {
-                        session.exchange.events.foreach { (e: CdpEvent) =>
-                            e match
-                                case g @ CdpEvent.Generic("Page.downloadWillBegin", p, _) if p.contains(unique) =>
-                                    eventPromise.complete(Result.succeed(g)).unit
-                                case _ => Kyo.unit
-                        }
-                    }
-                    _         <- Browser.click(Browser.Selector.id("dl"))
-                    willBegin <- eventPromise.get
-                    _         <- collector.interrupt
-                yield willBegin match
-                    case CdpEvent.Generic(method, paramsJson, _) =>
-                        assert(method == "Page.downloadWillBegin", s"expected method=Page.downloadWillBegin but got $method")
-                        assert(paramsJson.contains(unique), s"expected params to mention $unique but got $paramsJson")
-                end for
-            }
+            for
+                tempPath <- Path.tempDir("kyo-cdp-test-will-begin-")
+                tempDir = tempPath.toString
+                now <- Clock.nowMonotonic
+                unique  = s"kyo-dl-${now.toNanos}.txt"
+                dataUrl = s"data:text/plain,hello"
+                html    = page(s"""<a id='dl' href='$dataUrl' download='$unique'>dl</a>""")
+                _      <- Browser.allowDownloads(tempDir)
+                done   <- Promise.init[Unit, Any]
+                events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
+                // Subscribe to download events using the production API; rewired from deleted session.exchange.events.
+                _ <- Browser.onDownload(captureEvents(events, done, unique)) {
+                    Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
+                }
+                captured <- events.get
+            yield assert(
+                captured.exists {
+                    case Browser.DownloadEvent.WillBegin(_, _, fn) => fn.contains(unique)
+                    case _                                         => false
+                },
+                s"expected a WillBegin event mentioning $unique but got: $captured"
+            )
         }
     }
 
-    // downloadWillBegin carries a `guid`; a subsequent downloadProgress event with the same `guid`
-    // and `state = "completed"` eventually arrives.
     "downloadWillBegin and downloadProgress share the same guid and reach state=completed" in {
         withBrowser {
-            Browser.use { tab =>
-                val session = tab.client.withSession(tab.sessionId)
-                val dataUrl = s"data:text/plain,hello-world-content"
-                for
-                    tempPath <- Path.tempDir("kyo-cdp-test-")
-                    tempDir = tempPath.toString
-                    now <- Clock.nowMonotonic
-                    unique = s"kyo-dl-${now.toNanos}.txt"
-                    html   = page(s"""<a id='dl' href='$dataUrl' download='$unique'>dl</a>""")
-                    _ <- session.sendUnit("Page.enable")
-                    _ <- PageDownload.setDownloadBehavior(session, PageDownload.Behavior.Allow, Present(tempDir))
-                    _ <- Browser.goto(html)
-                    // Fork a collector that accumulates relevant events into an atomic list, completing
-                    // a promise when a `downloadProgress` with `state=completed` arrives. A single stream
-                    // subscriber avoids racing consumers on the shared event channel.
-                    capture     <- AtomicRef.init(Chunk.empty[CdpEvent])
-                    donePromise <- Promise.init[Unit, Any]
-                    collector <- Fiber.init {
-                        session.exchange.events.foreach { (e: CdpEvent) =>
-                            e match
-                                case g @ CdpEvent.Generic("Page.downloadWillBegin", p, _) if p.contains(unique) =>
-                                    capture.updateAndGet(_ :+ g).unit
-                                case g @ CdpEvent.Generic("Page.downloadProgress", p, _) =>
-                                    capture.updateAndGet(_ :+ g).andThen {
-                                        if extractJsonString(p, "state").contains("completed") then
-                                            donePromise.complete(Result.succeed(())).unit
-                                        else Kyo.unit
-                                    }
-                                case _ => Kyo.unit
-                        }
-                    }
-                    _        <- Browser.click(Browser.Selector.id("dl"))
-                    _        <- donePromise.get
-                    captured <- capture.get
-                    _        <- collector.interrupt
-                yield
-                    val willBegin = captured.collectFirst {
-                        case g @ CdpEvent.Generic("Page.downloadWillBegin", p, _) if p.contains(unique) => g
-                    }
-                    assert(willBegin.isDefined, s"expected a downloadWillBegin event referencing $unique but got $captured")
-                    val beginGuid = extractJsonString(willBegin.get.paramsJson, "guid")
-                    assert(beginGuid.isDefined, s"expected guid in downloadWillBegin but got ${willBegin.get.paramsJson}")
-                    val guid = beginGuid.get
-                    val progressMatching = captured.collect {
-                        case CdpEvent.Generic("Page.downloadProgress", p, _) if p.contains(guid) => p
-                    }
-                    assert(progressMatching.nonEmpty, s"expected downloadProgress with guid=$guid but got $captured")
-                    val states = progressMatching.flatMap(p => extractJsonString(p, "state"))
-                    assert(
-                        states.exists(_ == "completed"),
-                        s"expected a downloadProgress with state=completed for guid=$guid but got states=$states"
-                    )
-                end for
-            }
+            for
+                tempPath <- Path.tempDir("kyo-cdp-test-guid-")
+                tempDir = tempPath.toString
+                now <- Clock.nowMonotonic
+                unique  = s"kyo-dl-${now.toNanos}.txt"
+                dataUrl = s"data:text/plain,hello-world-content"
+                html    = page(s"""<a id='dl' href='$dataUrl' download='$unique'>dl</a>""")
+                _      <- Browser.allowDownloads(tempDir)
+                done   <- Promise.init[Unit, Any]
+                events <- AtomicRef.init(Chunk.empty[Browser.DownloadEvent])
+                _ <- Browser.onDownload(captureEvents(events, done, unique)) {
+                    Browser.goto(html).andThen(Browser.click(Browser.Selector.id("dl"))).andThen(done.get)
+                }
+                captured <- events.get
+            yield
+                val willBeginOpt = captured.collectFirst { case wb: Browser.DownloadEvent.WillBegin => wb }
+                val completedOpt = captured.collectFirst {
+                    case Browser.DownloadEvent.Progress(guid, _, _, "completed") => guid
+                }
+                willBeginOpt match
+                    case Some(wb) =>
+                        completedOpt match
+                            case Some(completedGuid) =>
+                                assert(
+                                    wb.guid == completedGuid,
+                                    s"WillBegin guid ${wb.guid} must match completed Progress guid $completedGuid"
+                                )
+                            case None =>
+                                fail(s"No completed Progress event found; captured: $captured")
+                    case None =>
+                        fail(s"No WillBegin event found; captured: $captured")
+                end match
         }
     }
 
@@ -128,7 +94,7 @@ class PageDownloadTest extends kyo.BrowserTest:
     "setDownloadBehavior propagates BrowserConnectionException via typed Abort on a closed client" in {
         SharedChrome.init.map { wsUrl =>
             for
-                client <- CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default)
+                client <- CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default)
                 _      <- client.close(30.seconds)
                 result <- Abort.run[BrowserConnectionException](
                     PageDownload.setDownloadBehavior(client, PageDownload.Behavior.Default, Absent)
@@ -143,21 +109,24 @@ class PageDownloadTest extends kyo.BrowserTest:
 
     // --- helpers ---
 
-    /** Minimal typed wire shape for the `state` / `guid` fields the test cares about in `Page.downloadProgress` and
-      * `Page.downloadWillBegin` events. The full wire (the whole CDP frame) is decoded as [[kyo.internal.CdpEventParams]]
-      * wrapping this shape; missing fields collapse to defaults.
+    /** Captures download events into `events`; completes `done` when a terminal condition is met.
+      *
+      * For `WillBegin` events matching `uniqueFilename`: marks done. For `Progress` with state=completed: marks done.
+      * Used by both `WillBegin` and `guid-match` tests so the same handler drives `onDownload`.
       */
-    private case class DownloadProgressParams(guid: String = "", state: String = "") derives Schema
-
-    /** Extracts the `state` field of a `Page.downloadProgress` event from the dispatcher-carried wire string. */
-    private def extractJsonString(wire: String, field: String)(using Frame): Maybe[String] =
-        Json.decode[kyo.internal.CdpEventParams[DownloadProgressParams]](wire) match
-            case Result.Success(env) =>
-                val v = field match
-                    case "state" => env.params.state
-                    case "guid"  => env.params.guid
-                    case _       => ""
-                if v.isEmpty then Absent else Present(v)
-            case _ => Absent
+    private def captureEvents(
+        events: AtomicRef[Chunk[Browser.DownloadEvent]],
+        done: Promise[Unit, Any],
+        uniqueFilename: String
+    )(using Frame): Browser.DownloadEvent => Unit < Sync =
+        ev =>
+            events.updateAndGet(_ :+ ev).andThen {
+                ev match
+                    case Browser.DownloadEvent.WillBegin(_, _, fn) if fn.contains(uniqueFilename) =>
+                        done.complete(Result.succeed(())).unit
+                    case Browser.DownloadEvent.Progress(_, _, _, "completed") =>
+                        done.complete(Result.succeed(())).unit
+                    case _ => Kyo.unit
+            }
 
 end PageDownloadTest
