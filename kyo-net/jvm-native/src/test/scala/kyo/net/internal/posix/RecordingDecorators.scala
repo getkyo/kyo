@@ -338,16 +338,38 @@ class RecordingIoUringBindings(real: IoUringBindings, realRing: Buffer[Byte]) ex
         real.kyo_uring_cqe_res(cqe)
 
     def kyo_uring_cqe_seen(ring: Buffer[Byte], cqe: Long)(using AllowUnsafe): Unit =
+        // The wake eventfd's multishot POLL_ADD CQE is reap-loop infrastructure (it just returns the parked wait), NOT a connection-op
+        // completion. Read its key before cqe_seen (which may invalidate the pointer) and skip the reap observability for it, so the reap
+        // latches/counters fire only on real op reaps (recv/send/accept/connect) the tests synchronize on. Without this skip a wake CQE that
+        // precedes a connection CQE in the same drain batch would fire awaitReap early and confound the deferred-close ordering tests.
+        val isWake = real.kyo_uring_cqe_get_data64(cqe) == IoUringDriver.WakeKey
         // Delegate first: the driver has already run complete() (op completion + buffer release + deferred close) before drainReady calls
         // cqe_seen, so by the time these latches fire the post-completion work is done. Fire AFTER the real call so the spy never reorders.
         real.kyo_uring_cqe_seen(realRing, cqe)
-        discard(cqeSeenCount.getAndIncrement())
-        cqeSeen.completeDiscard(Result.succeed(()))
-        Maybe(reapWaiters.poll()).foreach(_.completeDiscard(Result.succeed(())))
+        if !isWake then
+            discard(cqeSeenCount.getAndIncrement())
+            cqeSeen.completeDiscard(Result.succeed(()))
+            Maybe(reapWaiters.poll()).foreach(_.completeDiscard(Result.succeed(())))
+        end if
     end kyo_uring_cqe_seen
 
     def kyo_uring_probe_available(depth: Int)(using AllowUnsafe): Boolean =
         real.kyo_uring_probe_available(depth)
+
+    def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit =
+        real.kyo_uring_prep_poll_multishot(sqe, fd, pollMask)
+
+    def kyo_uring_eventfd_create(initval: Int, flags: Int)(using AllowUnsafe): Int =
+        real.kyo_uring_eventfd_create(initval, flags)
+
+    def kyo_uring_eventfd_write(fd: Int)(using AllowUnsafe): Int =
+        real.kyo_uring_eventfd_write(fd)
+
+    def kyo_uring_eventfd_read(fd: Int)(using AllowUnsafe): Int =
+        real.kyo_uring_eventfd_read(fd)
+
+    def kyo_uring_eventfd_close(fd: Int)(using AllowUnsafe): Int =
+        real.kyo_uring_eventfd_close(fd)
 
 end RecordingIoUringBindings
 

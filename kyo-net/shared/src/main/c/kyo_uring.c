@@ -26,8 +26,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 
 /* ---- ring sizing ---- */
 
@@ -120,12 +122,26 @@ int kyo_uring_recv_multishot_flag(void) {
  */
 int kyo_uring_submit_and_wait_timeout(struct io_uring* ring, void* cqePtr, long timeoutNs) {
     struct __kernel_timespec ts;
-    ts.tv_sec  = (long long)(timeoutNs / 1000000000L);
-    ts.tv_nsec = (long long)(timeoutNs % 1000000000L);
+    struct __kernel_timespec* tsp = NULL;
+    /* timeoutNs < 0 => NULL timespec => wait indefinitely for at least one CQE (woken by a real completion or by the
+     * driver's wake eventfd POLL_ADD). A non-negative timeoutNs keeps the bounded-park behavior. */
+    if (timeoutNs >= 0) {
+        ts.tv_sec  = (long long)(timeoutNs / 1000000000L);
+        ts.tv_nsec = (long long)(timeoutNs % 1000000000L);
+        tsp = &ts;
+    }
     struct io_uring_cqe* cqe = NULL;
-    int ret = io_uring_submit_and_wait_timeout(ring, &cqe, 1, &ts, NULL);
+    int ret = io_uring_submit_and_wait_timeout(ring, &cqe, 1, tsp, NULL);
     *((struct io_uring_cqe**)cqePtr) = cqe;
     return ret >= 0 ? 0 : ret;
+}
+
+/* Multishot poll: IORING_OP_POLL_ADD with IORING_POLL_ADD_MULTI. One submission re-fires a CQE every time `fd`
+ * becomes readable for `poll_mask` (e.g. POLLIN), staying armed across completions (each carries IORING_CQE_F_MORE).
+ * Used to arm a persistent watch on the driver's wake eventfd: a cross-carrier eventfd_write makes the eventfd
+ * readable, the armed poll fires a CQE, and the parked submit_and_wait returns so the reap loop drains its queue. */
+void kyo_uring_prep_poll_multishot(struct io_uring_sqe* sqe, int fd, int poll_mask) {
+    io_uring_prep_poll_multishot(sqe, fd, (unsigned)poll_mask);
 }
 
 void kyo_uring_prep_connect(struct io_uring_sqe* sqe, int fd, void* addr, int addrlen) {
@@ -180,6 +196,36 @@ int kyo_uring_cqe_res(long cqe) {
 /* io_uring_cqe_seen: advance the completion queue past cqe. */
 void kyo_uring_cqe_seen(struct io_uring* ring, long cqe) {
     io_uring_cqe_seen(ring, (struct io_uring_cqe*)cqe);
+}
+
+/* ---- reap-loop wakeup eventfd ---- */
+
+/*
+ * eventfd(2) counter used to wake the reap loop. The reap carrier owns the ring and is the only producer of SQEs, so a
+ * cross-carrier submission (an app fiber arming a recv, a write, a close) cannot enter the SQ itself; it enqueues the op
+ * and writes this eventfd. A persistent multishot POLL_ADD (kyo_uring_prep_poll_multishot) armed on the eventfd then
+ * fires a CQE, returning the parked submit_and_wait so the reap loop drains its queue. eventfd_write is atomic and safe
+ * from any carrier without touching the SQ. Created EFD_NONBLOCK | EFD_CLOEXEC by the caller.
+ */
+int kyo_uring_eventfd_create(int initval, int flags) {
+    return eventfd((unsigned int)initval, flags);
+}
+
+/* Add 1 to the counter (thread-safe), making the eventfd readable so the armed multishot poll fires. Returns 0 or -1/errno. */
+int kyo_uring_eventfd_write(int fd) {
+    return eventfd_write(fd, (eventfd_t)1);
+}
+
+/* Drain the counter back to 0 after a wake so the level-readable eventfd does not immediately re-fire the poll. With
+ * EFD_NONBLOCK a single read returns the whole accumulated count, or -1/EAGAIN when already drained. Returns 0 or -1. */
+int kyo_uring_eventfd_read(int fd) {
+    eventfd_t v;
+    return eventfd_read(fd, &v);
+}
+
+/* close(2) the wake eventfd at ring teardown. Synchronous; returns 0 or -1/errno. */
+int kyo_uring_eventfd_close(int fd) {
+    return close(fd);
 }
 
 /* ---- availability probe ---- */

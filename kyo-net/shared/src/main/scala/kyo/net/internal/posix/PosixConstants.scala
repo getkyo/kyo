@@ -114,6 +114,10 @@ private[net] object PosixConstants:
     val EFD_CLOEXEC: Int  = 0x80000
     val EFD_NONBLOCK: Int = 0x800
 
+    // `poll(2)` event mask for the io_uring reap-loop wakeup: a multishot IORING_OP_POLL_ADD on the wake eventfd watches it for POLLIN, so a
+    // cross-carrier eventfd write returns the parked reap wait. On Linux POLLIN equals EPOLLIN (0x001); kept distinct for the poll(2) call site.
+    val POLLIN: Int = 0x001
+
     // --- kqueue (macOS/BSD) filters and flags ---
     val EVFILT_READ: Short  = -1
     val EVFILT_WRITE: Short = -2

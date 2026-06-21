@@ -88,6 +88,12 @@ private[net] trait IoUringBindings extends Ffi:
     /** `io_uring_prep_connect(sqe, fd, addr, addrlen)`. */
     def kyo_uring_prep_connect(sqe: Ffi.Handle[IoUringSqe], fd: Int, addr: Buffer[Byte], addrlen: Int)(using AllowUnsafe): Unit
 
+    /** Multishot poll: `IORING_OP_POLL_ADD | IORING_POLL_ADD_MULTI`. One submission re-fires a CQE every time `fd` becomes ready for
+      * `pollMask` (e.g. `POLLIN`), staying armed across completions (each carries `IORING_CQE_F_MORE`). Armed on the driver's wake eventfd so a
+      * cross-carrier `kyo_uring_eventfd_write` returns the parked reap wait promptly instead of waiting out a bounded park.
+      */
+    def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit
+
     /** `io_uring_sqe_set_data64(sqe, data)`. Stores the per-op key the completion is matched against. */
     def kyo_uring_sqe_set_data64(sqe: Ffi.Handle[IoUringSqe], data: Long)(using AllowUnsafe): Unit
 
@@ -145,6 +151,26 @@ private[net] trait IoUringBindings extends Ffi:
 
     /** `io_uring_cqe_seen(ring, cqe)`. Advances the completion queue past `cqe`. */
     def kyo_uring_cqe_seen(ring: Buffer[Byte], cqe: Long)(using AllowUnsafe): Unit
+
+    /** `eventfd(initval, flags)` (via the shim). Creates the reap-loop wakeup counter; the driver passes `EFD_NONBLOCK | EFD_CLOEXEC`.
+      * Returns the fd, or `-1` on failure.
+      */
+    def kyo_uring_eventfd_create(initval: Int, flags: Int)(using AllowUnsafe): Int
+
+    /** `eventfd_write(fd, 1)` (via the shim). Adds 1 to the counter, making the eventfd readable so the armed multishot poll fires and the
+      * parked reap wait returns. Atomic and safe from any carrier without touching the SQ. Returns 0, or `-1` on failure.
+      */
+    def kyo_uring_eventfd_write(fd: Int)(using AllowUnsafe): Int
+
+    /** `eventfd_read(fd, &v)` (via the shim). Drains the counter to 0 after a wake so the level-readable eventfd does not immediately re-fire
+      * the poll. Returns 0, or `-1`/`EAGAIN` when already drained.
+      */
+    def kyo_uring_eventfd_read(fd: Int)(using AllowUnsafe): Int
+
+    /** `close(fd)` (via the shim). Closes the wake eventfd at ring teardown, guarded against any in-flight `kyo_uring_eventfd_write`. Returns 0
+      * or `-1`/`errno`.
+      */
+    def kyo_uring_eventfd_close(fd: Int)(using AllowUnsafe): Int
 
     /** One-shot availability probe: `io_uring_queue_init(depth, ...)` then `io_uring_queue_exit`. The io_uring backend's `isAvailable` calls this
       * with the production depth (`max(256, ioPoolSize * 64)`), so the probe exercises the same queue size the driver actually builds: a sandbox

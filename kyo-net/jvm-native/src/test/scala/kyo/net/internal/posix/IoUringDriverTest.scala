@@ -331,28 +331,37 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "the reap wait uses a bounded ~100ms timeout, never indefinite" in {
+        "the reap wait blocks indefinitely when the wake is armed, not on a polling timeout" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
-                // Synchronize on the actual reap-wait cycle (firstWait fires inside the spy's wait), then inspect the timeout it passed to the
-                // real kyo_uring_wait_cqe_timeout. The driver always uses its bounded ReapTimeoutNs, so the recorded value is exact.
+                // The driver creates a real wake eventfd and arms a multishot IORING_OP_POLL_ADD on it, so the reap wait blocks INDEFINITELY for
+                // the next CQE (returned by real I/O or by the wake eventfd, like NIO's selector.select() + wakeup()) instead of polling a bounded
+                // timeout to discover cross-carrier submissions, which head-of-line-blocked them behind the wait under load. firstWait fires inside
+                // the spy once the first reap wait is entered; inspect the timeout it passed to the real submit_and_wait: negative == indefinite.
                 recording.firstWait.safe.get.map { _ =>
                     val t = recording.lastWaitTimeoutNs
-                    assert(t == 100_000_000L, s"reap timeout was $t ns, expected a bounded 100_000_000")
-                    assert(t > 0L, "reap timeout must be > 0, never an unbounded wait")
+                    assert(t < 0L, s"reap wait must be indefinite (negative timeout) when the wake is armed, got $t ns")
                 }
             }.map(_ => succeed)
         }
 
-        "a timeout turn with no CQE keeps the loop running (not an error)" in {
+        "a cross-carrier submitEngineOp wakes the indefinitely-parked reap loop, which keeps running across wakes" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
-                // No SQE is ever submitted, so every real bounded wait times out with no CQE. secondWait completes once the loop has run at
-                // least two such empty timeout turns, proving it kept iterating rather than failing/terminating after the first.
-                recording.secondWait.safe.get.map { _ =>
-                    assert(recording.waitCount.get() >= 2, s"expected multiple reap turns, saw ${recording.waitCount.get()}")
+                // With an indefinite reap wait there is no timeout turn: the ONLY thing that returns the parked wait is a CQE. A cross-carrier
+                // submitEngineOp writes the wake eventfd, whose armed multishot poll fires a CQE that returns the wait so the loop drains and runs
+                // the op. Each op completing therefore proves the wake delivered end to end (real eventfd, real ring, no mock); running a SECOND op
+                // after the first proves the loop re-parked and kept running across wakes (the resilience the old empty-timeout-turn test covered).
+                recording.firstWait.safe.get.flatMap { _ =>
+                    val ran1 = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    drv.submitEngineOp(() => ran1.completeDiscard(Result.succeed(())))
+                    ran1.safe.get.flatMap { _ =>
+                        val ran2 = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                        drv.submitEngineOp(() => ran2.completeDiscard(Result.succeed(())))
+                        ran2.safe.get.map(_ => succeed)
+                    }
                 }
-            }.map(_ => succeed)
+            }
         }
 
         "a per-write Buffer is closed only after its send CQE is reaped" in {
@@ -362,38 +371,50 @@ class IoUringDriverTest extends Test:
                     val clientH = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
                     val payload = Span.fromUnsafe(Array.tabulate[Byte](8)(i => i.toByte))
                     val reaped  = recording.awaitReap()
-                    val w       = drv.write(clientH, payload, 0)
-                    assert(w == WriteResult.Done, s"write result=$w")
-                    // The send SQE is prepped on the reap carrier (the write's flush engine op) and on loopback its CQE can reap within the
-                    // SAME turn, so a barrier-then-peek races the reap (the buffer may already be released). Pin the carrier with a latch
-                    // (released by the test, not a sleep) ENQUEUED BEHIND the flush op: the flush preps the SQE and records the per-write
-                    // buffer, then the carrier parks before flushSubmits, so the buffer is observably still open while the SQE is in flight.
-                    val gate  = new java.util.concurrent.CountDownLatch(1)
-                    val pinIn = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    // Observe the per-write buffer OPEN while its send SQE is prepped-but-unsubmitted, deterministically and without any
+                    // dependency on reap-loop latency. The reap wait now blocks indefinitely and is woken promptly by a submission, so a flush
+                    // op queued ahead of a single pin would be prepped AND its send SQE submitted + reaped before the test could observe the
+                    // in-flight window. Two pins close that race: pin1 blocks the carrier FIRST, so the write's flush op (and pin2) queue behind
+                    // a blocked carrier; releasing gate1 then runs the flush (prep the send SQE + record the per-write buffer) and parks at pin2
+                    // within the SAME drainEngineOps pass, BEFORE submit_and_wait submits the SQE, so the buffer is provably open at pin2.
+                    val gate1  = new java.util.concurrent.CountDownLatch(1)
+                    val gate2  = new java.util.concurrent.CountDownLatch(1)
+                    val pin1In = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    val pin2In = Promise.Unsafe.init[Unit, Abort[Closed]]()
                     drv.submitEngineOp { () =>
-                        pinIn.completeDiscard(Result.succeed(()))
-                        gate.await()
+                        pin1In.completeDiscard(Result.succeed(()))
+                        gate1.await()
                     }
-                    pinIn.safe.get.flatMap { _ =>
-                        // Snapshot the in-flight state, then release the gate BEFORE asserting: a failed assertion must never leave the reap
-                        // carrier parked (it would wedge every later test on this scheduler).
-                        val before          = Maybe(recording.sendBufs.peek())
-                        val openWhilePinned = before.map(b => !b.isClosed)
-                        gate.countDown()
-                        assert(before.nonEmpty, "no send buffer recorded")
-                        assert(
-                            openWhilePinned == Present(true),
-                            "per-write buffer must stay open while the send SQE is in flight"
-                        )
-                        // The driver closes the per-write buffer in complete() (releaseBuffer) BEFORE cqe_seen, so awaiting the reap latch is the
-                        // deterministic "send CQE reaped, buffer lifecycle ran" signal. The buffer must be closed by then, not before.
-                        reaped.safe.get.map { _ =>
-                            drv.closeHandle(clientH)
-                            discard(sock.close(accepted))
+                    pin1In.safe.get.flatMap { _ =>
+                        // Carrier pinned at pin1. Queue the write (flush op) and pin2 behind it; neither runs until gate1 releases.
+                        val w = drv.write(clientH, payload, 0)
+                        assert(w == WriteResult.Done, s"write result=$w")
+                        drv.submitEngineOp { () =>
+                            pin2In.completeDiscard(Result.succeed(()))
+                            gate2.await()
+                        }
+                        gate1.countDown() // release pin1: the same drain pass now runs the flush (prep + record), then parks at pin2 before submit
+                        pin2In.safe.get.flatMap { _ =>
+                            // Snapshot the in-flight state, then release gate2 BEFORE asserting: a failed assertion must never leave the reap
+                            // carrier parked (it would wedge every later test on this scheduler).
+                            val before          = Maybe(recording.sendBufs.peek())
+                            val openWhilePinned = before.map(b => !b.isClosed)
+                            gate2.countDown()
+                            assert(before.nonEmpty, "no send buffer recorded")
                             assert(
-                                before.exists(_.isClosed),
-                                "per-write buffer must be closed once its send CQE is reaped"
+                                openWhilePinned == Present(true),
+                                "per-write buffer must stay open while the send SQE is prepped but unsubmitted"
                             )
+                            // The driver closes the per-write buffer in complete() (releaseBuffer) BEFORE cqe_seen, so awaiting the reap latch is
+                            // the deterministic "send CQE reaped, buffer lifecycle ran" signal. The buffer must be closed by then, not before.
+                            reaped.safe.get.map { _ =>
+                                drv.closeHandle(clientH)
+                                discard(sock.close(accepted))
+                                assert(
+                                    before.exists(_.isClosed),
+                                    "per-write buffer must be closed once its send CQE is reaped"
+                                )
+                            }
                         }
                     }
                 }
