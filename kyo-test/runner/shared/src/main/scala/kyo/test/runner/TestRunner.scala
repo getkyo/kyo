@@ -225,10 +225,10 @@ object TestRunner:
         // failed Kyo value. A Panic is logged (never swallowed) and recorded as a failure.
         Abort.run[Throwable](pipeline).map {
             case Result.Success(report) => report
-            case Result.Failure(t)      => constructorFailureReport(suiteInfo, reporter, t)
+            case Result.Failure(t)      => constructorFailureReport(suiteInfo, reporter, effectiveConfig, t)
             case panic: Result.Panic =>
                 java.lang.System.err.println(s"[kyo-test] unexpected panic during run: ${panic.exception}")
-                constructorFailureReport(suiteInfo, reporter, panic.exception)
+                constructorFailureReport(suiteInfo, reporter, effectiveConfig, panic.exception)
         }
     end runReport
 
@@ -532,11 +532,17 @@ object TestRunner:
 
     // ── Constructor failure ─────────────────────────────────────────────────────────────────────
 
-    private def constructorFailureReport(suiteInfo: SuiteInfo, reporter: TestReporter, t: Throwable): TestReport =
+    private def constructorFailureReport(suiteInfo: SuiteInfo, reporter: TestReporter, config: RunConfig, t: Throwable): TestReport =
         val sr = SuiteReport(
             suiteInfo.name,
             Chunk((Chunk("<constructor>"), TestResult.Failed(t.toString, Maybe(t), Duration.Zero))),
-            Duration.Zero
+            Duration.Zero,
+            leakCheck = config.leakCheck,
+            leakCheckSockets = config.leakCheckSockets,
+            leakCheckFileDescriptors = config.leakCheckFileDescriptors,
+            leakCheckThreads = config.leakCheckThreads,
+            leakCheckFibers = config.leakCheckFibers,
+            leakCheckAllowlist = config.leakCheckAllowlist
         )
         reporter.onSuiteComplete(suiteInfo, sr)
         val report = TestReport(Chunk(sr))

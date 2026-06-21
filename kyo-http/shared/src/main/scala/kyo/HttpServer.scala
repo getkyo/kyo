@@ -195,12 +195,22 @@ object HttpServer:
             // the transport stays unaware of connection ownership.
             val connections =
                 java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[Connection[H], java.lang.Boolean]())
+            // Set once shutdown begins (see closeFiber). A connection accepted in the same instant the listener closes can
+            // reach `tracked` after closeFiber has already swept `connections`; the flag makes that late arrival close itself
+            // here instead of being served and orphaned until the 60s idle timer fires.
+            val closing = new java.util.concurrent.atomic.AtomicBoolean(false)
             def tracked(conn: Connection[H]): Unit < Async =
                 // Drop already-closed connections, then record this one. Pruning on accept keeps the set bounded to live
                 // connections without a per-connection close hook, so the transport's Connection needs no new surface.
                 connections.removeIf(c => !c.isOpen)
                 discard(connections.add(conn))
-                UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
+                if closing.get() then
+                    // Shutdown raced this accept; close the connection rather than serve a request the server will not finish.
+                    try conn.close()
+                    catch case _: Throwable => ()
+                else
+                    UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
+                end if
             end tracked
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
@@ -209,7 +219,7 @@ object HttpServer:
                     transport.listen(config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, connections))
+            listenFiber.map(listener => new ListenerUnsafe(listener, connections, closing))
         end init
     end Unsafe
 
@@ -218,7 +228,8 @@ object HttpServer:
     /** Unsafe implementation wrapping a Listener from Transport, plus the set of accepted connections it owns. */
     final private class ListenerUnsafe[H](
         listener: kyo.internal.transport.Listener,
-        connections: java.util.Set[Connection[H]]
+        connections: java.util.Set[Connection[H]],
+        closing: java.util.concurrent.atomic.AtomicBoolean
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise = Promise.Unsafe.init[Unit, Any]()
 
@@ -233,7 +244,8 @@ object HttpServer:
         def address: HttpAddress = listener.address
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-            listener.close() // stop accepting new connections first
+            listener.close()  // stop accepting new connections first
+            closing.set(true) // any accept racing the close now closes itself in `tracked` instead of being orphaned
 
             def forceCloseAndComplete(): Unit =
                 connections.forEach { conn =>
