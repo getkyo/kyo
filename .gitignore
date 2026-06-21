@@ -17,4 +17,3 @@ jmh-result.json
 *.gpg
 test-output
 .DS_Store
-.jvmopts
