@@ -418,9 +418,10 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                 Abort.run[Timeout](Async.timeout(5.seconds)(backend.deregisteredFd(acceptedFd).safe.get)).map { _ =>
                     driver.close()
                     PosixTestSockets.closePeerForEof(spy, clientFd)
-                    // Close acceptedFd via the real OS close so the fd number becomes available for reuse.
-                    // (closeHandle already ran the driver teardown; the OS fd must still be closed.)
-                    PosixTestSockets.closePeerForEof(spy, acceptedFd)
+                    // acceptedFd is ALREADY closed: closeHandle above ran closeNow, which closes the OS fd (readFd == writeFd) through the
+                    // claimFdClose guard. A second close here is a double-close: under concurrent load the freed fd number is recycled to another
+                    // connection between the two closes, and the stale second close lands on that new owner (EBADF / spurious teardown). The
+                    // stale-event witness below only needs the number to be free, which closeHandle already guarantees.
                     val log = backend.callLog
                     // The close path must produce deregister(..., fdClosing=true).
                     assert(
