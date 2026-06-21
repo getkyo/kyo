@@ -180,6 +180,18 @@ jobs:
         shell: bash
         run: echo "JAVA_HOME=$JAVA_HOME_25_AARCH64" >> "$GITHUB_ENV"
 
+      # The Scala.js link runs in the sbt driver heap, and the full JS test-class compile OOM'd at the
+      # shared 12G ceiling. Raise it to 14G for the JS target only: each target runs on its own runner,
+      # so this leaves JVM/Native/Wasm at 12G (they are green there, and Native's forked LLVM/podman
+      # alongside a larger heap would overcommit a 16G box -> exit 143).
+      - name: Raise driver heap for JS link
+        if: matrix.target == 'JS'
+        shell: bash
+        run: |
+          opts='-Xmx14G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+          echo "JAVA_OPTS=$opts" >> "$GITHUB_ENV"
+          echo "JVM_OPTS=$opts" >> "$GITHUB_ENV"
+
       - name: Test ${{ matrix.target }} (${{ inputs.os }})
         shell: bash
         run: |
