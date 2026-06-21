@@ -110,15 +110,24 @@ class TopicTest extends kyo.test.Test[Any]:
                 "fan-out to multiple subscribers" in {
                     val messages = Seq(Message(1), Message(2), Message(3))
 
+                    // A subscriber fiber starting does not mean its Aeron image is connected to the publication,
+                    // and Aeron is a best-effort transport with no redelivery: a publish issued before a
+                    // subscriber's image has connected is silently lost to it. So the publisher republishes the
+                    // whole stream in a loop until every subscriber has connected and received. `Stream.init`
+                    // emits a single chunk and each `.take(n)` completes on the first chunk it receives, so a
+                    // republish that arrives after a subscriber is done cannot duplicate or reorder its result;
+                    // each consumer's `.take(n)` completing is the readiness witness. The `Async.delay` only
+                    // paces the retries (a best-effort-transport retry backoff), it is not a readiness sleep.
                     Topic.run {
                         for
-                            started <- Latch.init(2)
-                            fiber1  <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
-                            fiber2  <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(messages.size).run))
-                            _       <- started.await
-                            _       <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
+                            fiber1 <- Fiber.initUnscoped(Topic.stream[Message](uri).take(messages.size).run)
+                            fiber2 <- Fiber.initUnscoped(Topic.stream[Message](uri).take(messages.size).run)
+                            publisher <- Fiber.initUnscoped(Loop.forever(
+                                Abort.run(Topic.publish(uri)(Stream.init(messages))).andThen(Async.delay(5.millis)(()))
+                            ))
                             result1 <- fiber1.get
                             result2 <- fiber2.get
+                            _       <- publisher.interrupt
                         yield
                             assert(result1 == messages)
                             assert(result2 == messages)
@@ -128,26 +137,31 @@ class TopicTest extends kyo.test.Test[Any]:
                 "subscribers with different consumption rates" in {
                     val messages = Seq(Message(1), Message(2))
 
+                    // See "fan-out to multiple subscribers": the publisher republishes in a loop until every
+                    // subscriber has connected and received, paced by a best-effort-transport retry backoff.
+                    // The `Async.delay(1.millis)` inside `slowFiber` is the test's own slow-consumer model and is
+                    // separate from that retry backoff.
                     Topic.run {
                         for
-                            started <- Latch.init(2)
                             slowFiber <-
-                                Fiber.initUnscoped(started.release.andThen(
+                                Fiber.initUnscoped(
                                     Topic.stream[Message](uri)
                                         .map(r => Async.delay(1.millis)(r))
                                         .take(messages.size)
                                         .run
-                                ))
+                                )
                             fastFiber <-
-                                Fiber.initUnscoped(started.release.andThen(
+                                Fiber.initUnscoped(
                                     Topic.stream[Message](uri)
                                         .take(messages.size)
                                         .run
-                                ))
-                            _    <- started.await
-                            _    <- Fiber.initUnscoped(Topic.publish(uri)(Stream.init(messages)))
+                                )
+                            publisher <- Fiber.initUnscoped(Loop.forever(
+                                Abort.run(Topic.publish(uri)(Stream.init(messages))).andThen(Async.delay(5.millis)(()))
+                            ))
                             slow <- slowFiber.get
                             fast <- fastFiber.get
+                            _    <- publisher.interrupt
                         yield
                             assert(slow == messages)
                             assert(fast == messages)
@@ -260,28 +274,32 @@ class TopicTest extends kyo.test.Test[Any]:
                 val messageCount = 10
                 val messages     = (0 until messageCount).map(Message(_))
 
+                // See "fan-out to multiple subscribers": a subscriber fiber starting does not mean its Aeron
+                // image is connected, and Aeron is best-effort with no redelivery, so the publisher republishes
+                // the whole stream in a loop until both subscribers have connected and received. The failing
+                // subscriber aborts on its first received message and the normal one completes on the first
+                // chunk, so a later republish cannot change either result; resolution of both fibers is the
+                // readiness witness. The `Async.delay` only paces the retries (a best-effort-transport retry
+                // backoff), it is not a readiness sleep.
                 Topic.run {
                     for
-                        started <- Latch.init(2)
                         failingFiber <- Fiber.initUnscoped(
-                            started.release.andThen(
-                                Topic.stream[Message](uri)
-                                    .map(_ => Abort.fail("Planned failure"): Message < Abort[String])
-                                    .take(messageCount)
-                                    .run
-                            )
+                            Topic.stream[Message](uri)
+                                .map(_ => Abort.fail("Planned failure"): Message < Abort[String])
+                                .take(messageCount)
+                                .run
                         )
                         normalFiber <- Fiber.initUnscoped(
-                            started.release.andThen(
-                                Topic.stream[Message](uri)
-                                    .take(messageCount)
-                                    .run
-                            )
+                            Topic.stream[Message](uri)
+                                .take(messageCount)
+                                .run
                         )
-                        _             <- started.await
-                        _             <- Topic.publish(uri)(Stream.init(messages))
+                        publisher <- Fiber.initUnscoped(Loop.forever(
+                            Abort.run(Topic.publish(uri)(Stream.init(messages))).andThen(Async.delay(5.millis)(()))
+                        ))
                         failingResult <- failingFiber.getResult
                         normalResult  <- normalFiber.get
+                        _             <- publisher.interrupt
                     yield
                         assert(failingResult.isFailure)
                         assert(normalResult == messages)
