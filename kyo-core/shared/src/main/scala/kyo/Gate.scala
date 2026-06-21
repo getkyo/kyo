@@ -210,14 +210,20 @@ object Gate:
             loop()
         end arrive
 
-        // Fast path: if phase already past target, no CAS or promise read needed.
-        // Otherwise chains via flatMap through intermediate passes.
+        // Read promise before state (promise-before-CAS ordering, matching pass()):
+        // if a pass advances the phase between the two reads, the promise read here
+        // is the one that advance completes, so the chain wakes and re-checks rather
+        // than subscribing to the swapped-in promise of a pass that may never happen.
+        // Reading state first would let the boundary pass swap in a fresh promise
+        // between the two reads, losing the wakeup.
         def passAt(target: Int)(using AllowUnsafe): Fiber.Unsafe[Unit, Abort[Closed]] =
+            val p = currentPass.get()
             val s = state.get()
             if s.phase > target then
+                // Fast path: phase already past target, no registration needed.
                 Fiber.unit.unsafe
             else
-                currentPass.get().flatMap(_ => passAt(target))
+                p.flatMap(_ => passAt(target))
             end if
         end passAt
 
