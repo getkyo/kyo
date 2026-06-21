@@ -143,7 +143,7 @@ final case class SuiteReport(
     leafResults: Chunk[(Chunk[String], TestResult)],
     duration: Duration,
     leakCheck: Boolean = true,
-    leakCheckSockets: Boolean = false,
+    leakCheckSockets: Boolean = true,
     leakCheckFileDescriptors: Boolean = true,
     leakCheckThreads: Boolean = true,
     leakCheckFibers: Boolean = true,

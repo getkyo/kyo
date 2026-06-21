@@ -449,18 +449,18 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "Constructor failure: the recovered SuiteReport carries the run's effective leak config, not the field defaults" in {
         // A suite whose constructor throws is recovered into a <constructor>-failure SuiteReport. That report must
-        // reflect the run's effective leak settings: otherwise a thrown constructor in a forked JVM reports the
-        // SuiteReport field defaults, and the OR-aggregated socket-leak check flips ON for the whole fork. Both arms
-        // are asserted: the default (sockets OFF) survives, and an explicit leakCheckSockets(true) is carried through.
+        // reflect the run's effective leak settings, threaded through constructorFailureReport, rather than the
+        // SuiteReport field defaults. Both arms are asserted: the default (sockets on) carries through, and an
+        // explicit leakCheckSockets(false) is preserved (proving the field is threaded, not forced to the default).
         for
-            defaultReport   <- TestRunner.runToFuture(classOf[RTConstructorFailSuite], RunConfig.default)
-            socketsOnReport <- TestRunner.runToFuture(classOf[RTConstructorFailSuite], RunConfig.default.leakCheckSockets(true))
+            defaultReport    <- TestRunner.runToFuture(classOf[RTConstructorFailSuite], RunConfig.default)
+            socketsOffReport <- TestRunner.runToFuture(classOf[RTConstructorFailSuite], RunConfig.default.leakCheckSockets(false))
         yield
-            val defaultSr   = defaultReport.suiteReports.head
-            val socketsOnSr = socketsOnReport.suiteReports.head
+            val defaultSr    = defaultReport.suiteReports.head
+            val socketsOffSr = socketsOffReport.suiteReports.head
             assert(defaultSr.leafResults.exists(_._1 == Chunk("<constructor>")), "expected a <constructor> failure leaf")
-            assert(!defaultSr.leakCheckSockets, "default config: socket-leak detection must stay OFF on constructor failure")
-            assert(socketsOnSr.leakCheckSockets, "leakCheckSockets(true) must be carried into the constructor-failure report")
+            assert(defaultSr.leakCheckSockets, "default config: socket-leak detection is on and must carry through a constructor failure")
+            assert(!socketsOffSr.leakCheckSockets, "leakCheckSockets(false) must be carried into the constructor-failure report")
     }
 
 end RunnerTest
