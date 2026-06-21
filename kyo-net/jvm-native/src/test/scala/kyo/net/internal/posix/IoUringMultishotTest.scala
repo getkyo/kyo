@@ -91,7 +91,9 @@ class IoUringMultishotTest extends Test:
                         fds.foreach { fd =>
                             if fd >= 0 then discard(sock.close(fd))
                         }
-                        discard(sock.close(serverFd))
+                        // serverFd is already closed: closeHandle(serverH) -> closeNow closes the OS fd (readFd == writeFd) via claimFdClose. A
+                        // raw sock.close(serverFd) here is a double-close: under concurrent cold load the freed number is recycled to another
+                        // test's fresh fd and the stale second close lands on it (EBADF). closeHandle already releases the number.
                         assert(fds.forall(_ >= 0), s"all accepted fds must be >= 0: $fds")
                         assert(fds.distinct.size == C, s"all $C accepted fds must be distinct: $fds")
                     }
