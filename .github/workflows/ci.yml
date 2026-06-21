@@ -48,8 +48,12 @@ on:
         required: false
         default: ''
 
+# A pull request keys its group on the PR number, so a new commit supersedes the in-flight run.
+# A push (to main) keys on the commit sha, so every commit gets its own group and is validated on
+# its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
+# main run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.arches }}-${{ inputs.command }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.arches }}-${{ inputs.command }}
   cancel-in-progress: true
 
 jobs:
