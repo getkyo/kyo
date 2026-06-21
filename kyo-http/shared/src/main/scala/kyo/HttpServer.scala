@@ -188,23 +188,16 @@ object HttpServer:
             handlers: Seq[HttpHandler[?, ?, ?]]
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
             val router = HttpRouter(handlers, config.cors)
-            // Track every accepted connection so the server can close them on shutdown. The transport listener owns only the
-            // listening socket; without this, an accepted keep-alive connection stays open until a 60s idle timer fires, which
-            // leaks the socket whenever the peer keeps its side pooled (the process-global default HttpClient) instead of
-            // sending an EOF. This is the server-side mirror of HttpClientBackend.allConnections, kept at the kyo-http layer so
-            // the transport stays unaware of connection ownership.
-            val connections =
-                java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap[Connection[H], java.lang.Boolean]())
-            // Set once shutdown begins (see closeFiber). A connection accepted in the same instant the listener closes can
-            // reach `tracked` after closeFiber has already swept `connections`; the flag makes that late arrival close itself
-            // here instead of being served and orphaned until the 60s idle timer fires.
-            val closing = new java.util.concurrent.atomic.AtomicBoolean(false)
+            // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
+            // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
+            // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
+            // the same mechanism HttpClientBackend uses for the connections it creates.
+            val registry = new kyo.internal.ConnectionRegistry[Connection[H]]
             def tracked(conn: Connection[H]): Unit < Async =
-                // Drop already-closed connections, then record this one. Pruning on accept keeps the set bounded to live
-                // connections without a per-connection close hook, so the transport's Connection needs no new surface.
-                connections.removeIf(c => !c.isOpen)
-                discard(connections.add(conn))
-                if closing.get() then
+                // Prune closed entries on accept (no per-connection close hook), then record this one.
+                registry.pruneClosed(_.isOpen)
+                registry.add(conn)
+                if registry.closing then
                     // Shutdown raced this accept; close the connection rather than serve a request the server will not
                     // finish. Contain any throw: a failing close here must not surface on the accept path.
                     try conn.close()
@@ -220,17 +213,16 @@ object HttpServer:
                     transport.listen(config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, connections, closing))
+            listenFiber.map(listener => new ListenerUnsafe(listener, registry))
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the set of accepted connections it owns. */
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. */
     final private class ListenerUnsafe[H](
         listener: kyo.internal.transport.Listener,
-        connections: java.util.Set[Connection[H]],
-        closing: java.util.concurrent.atomic.AtomicBoolean
+        registry: kyo.internal.ConnectionRegistry[Connection[H]]
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise = Promise.Unsafe.init[Unit, Any]()
 
@@ -245,16 +237,11 @@ object HttpServer:
         def address: HttpAddress = listener.address
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-            listener.close()  // stop accepting new connections first
-            closing.set(true) // any accept racing the close now closes itself in `tracked` instead of being orphaned
+            listener.close()       // stop accepting new connections first
+            registry.markClosing() // any accept racing the close now closes itself in `tracked` instead of being orphaned
 
             def forceCloseAndComplete(): Unit =
-                connections.forEach { conn =>
-                    // Contain any throw: one connection's close failure must not abort closing the rest.
-                    try conn.close()
-                    catch case _: Throwable => ()
-                }
-                connections.clear()
+                registry.closeAll(_.close())
                 discard(closedPromise.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 
