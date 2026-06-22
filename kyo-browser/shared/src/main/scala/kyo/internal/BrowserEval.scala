@@ -7,7 +7,6 @@ import kyo.*
   *
   * `evalJs` / `evalJsAwaiting` / `evalJsChecked` are the three eval flavours used by every kyo-browser script round-trip. They share the
   * same iframe-context routing (read `Browser.activeIFrameLocal` on entry, pass the snapshotted `executionContextId` to CDP).
-  * `translateContextDestroyed` is the cross-flavour error translator.
   *
   * `locateCount` / `readTextCore` / `readAttributeCore` are the read-side single-evaluate fast paths built on top of those wrappers, used
   * by `Browser.count` / `Browser.text` / `Browser.attribute` and by the retry-and-assert helpers in `BrowserAssertion`.
@@ -24,8 +23,7 @@ private[kyo] object BrowserEval:
         Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
             Browser.use { tab =>
                 CdpBackend.runtimeEvaluate(tab.session, EvalParams(expr, contextId = ctx.map(c => c.value)))
-                    .map(translateContextDestroyed)
-                    .map(CdpEvalDecoder.parseAndExtractEvalValue)
+                    .map(CdpEvalDecoder.extractValueOrFail)
             }
         }
 
@@ -39,8 +37,7 @@ private[kyo] object BrowserEval:
                     tab.session,
                     EvalParams(expr, returnByValue = true, awaitPromise = true, contextId = ctx.map(c => c.value))
                 )
-                    .map(translateContextDestroyed)
-                    .map(CdpEvalDecoder.parseAndExtractEvalValue)
+                    .map(CdpEvalDecoder.extractValueOrFail)
             }
         }
 
@@ -50,39 +47,13 @@ private[kyo] object BrowserEval:
         Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
             Browser.use { tab =>
                 CdpBackend.runtimeEvaluate(tab.session, EvalParams(expr, contextId = ctx.map(c => c.value)))
-                    .map(translateContextDestroyed)
-                    .map { result =>
-                        if CdpEvalDecoder.isUnreturnableValueError(result) then ""
-                        else
-                            CdpEvalEnvelope.decodeEvalEnvelope(result, "evalJsChecked") { env =>
-                                env.exceptionDetails match
-                                    case Present(ex) =>
-                                        Abort.fail(
-                                            BrowserScriptErrorException(ExceptionDetailsFormat.format(ex))
-                                        )
-                                    case Absent => CdpEvalDecoder.extractEvalValue(env)
-                            }
-                        end if
+                    .map { env =>
+                        env.exceptionDetails match
+                            case Present(ex) => Abort.fail(BrowserScriptErrorException(ExceptionDetailsFormat.format(ex)))
+                            case Absent      => CdpEvalDecoder.extractEvalValue(env)
                     }
             }
         }
-
-    /** Inspects a `Runtime.evaluate` raw response JSON: when CDP returned the error `"Cannot find context with specified id"` (a
-      * snapshotted `executionContextId` was destroyed mid-scope), translates it to [[BrowserIFrameInvalidException]]; otherwise passes the
-      * response through unchanged. The wire shape of an error response is the encoded [[kyo.internal.CdpError]] (`{"code":-32000,
-      * "message":...}`); see `decodeCdpMessage` at `CdpClient.decodeCdpMessage` which re-encodes the `"error"` payload back to JSON before
-      * resolving the promise.
-      */
-    private[kyo] def translateContextDestroyed(rawJson: String)(using Frame): String < Abort[BrowserReadException] =
-        // The dispatcher passes the whole CDP wire; the CDP error (if any) is at `wire.error`,
-        // not at the top level. Decode the [[CdpReply]] envelope and look at the `error` field.
-        Json.decode[CdpReply[EvalResult]](rawJson) match
-            case Result.Success(reply) =>
-                reply.error match
-                    case Present(err) if err.message.contains(CdpErrorStrings.ContextDestroyedErrorMessage) =>
-                        Abort.fail(BrowserIFrameInvalidException(BrowserIFrameInvalidException.Reason.ContextDestroyed))
-                    case _ => rawJson
-            case _ => rawJson
 
     // ---- Read cores ----
 

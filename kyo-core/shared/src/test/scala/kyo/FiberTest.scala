@@ -202,6 +202,13 @@ class FiberTest extends kyo.test.Test[Any]:
                 yield assert(result == 1)
             }
             "interrupt with Defer prefix still cascades to awaited promise" in {
+                // In the Defer-prefix race the fiber can be interrupted before it processes the Async.Join
+                // and links the cascade; the link is then registered post-hoc in IOTask.ensureInterrupt
+                // when the interrupted fiber is re-run, so promise.onInterrupt fires after a scheduler
+                // round-trip, not synchronously with fiber.interrupt. assertEventually waits for that
+                // guaranteed-eventual step (a fixed sleep is racy under CI load) and still fails on a true
+                // stall, matching the "interrupts losers" check above. The loop keeps stressing the
+                // interrupt-before-Async.Join path many times.
                 val attempts = 200
                 Loop.indexed { i =>
                     if i >= attempts then Loop.done(succeed("all attempts confirmed interrupt fired"))
@@ -215,11 +222,8 @@ class FiberTest extends kyo.test.Test[Any]:
                             _         <- started.await
                             _         <- Async.sleep(50.millis)
                             _         <- fiber.interrupt
-                            _         <- Async.sleep(5.millis)
-                            done      <- triggered.get
-                        yield
-                            if !done then Loop.done(fail(s"iter $i: promise.onInterrupt did not fire"))
-                            else Loop.continue
+                            _         <- assertEventually(triggered.get)
+                        yield Loop.continue
                 }
             }
         }

@@ -40,6 +40,15 @@ private[emitters] object EmitterBase:
     def safeName(n: String): String =
         if ReservedNames.contains(n) then s"`$n`" else n
 
+    /** Turn a Scala access expression (e.g. `contact.address.city`, or `contact.` `type` `) into a legal local
+      * identifier prefix by stripping the backticks `safeName` adds and replacing the member-selection dots with
+      * underscores. Used when an access path is reused as the name of a generated temporary `val`: nested struct
+      * marshalling recurses with the dotted access as the base, so `${access}_cs` would otherwise emit an identifier
+      * like `contact.address_city_cs`, which the parser reads as a member selection on `contact` rather than a local.
+      */
+    def localIdent(access: String): String =
+        access.replace("`", "").replace('.', '_')
+
     val ReservedNames: Set[String] = Set(
         "type",
         "val",
@@ -288,6 +297,7 @@ private[emitters] object EmitterBase:
         protected def scalaTypeOf(t: TypeRef): String                         = EmitterBase.scalaTypeOf(t)
         protected def returnType(r: ReturnShape): String                      = EmitterBase.returnType(r)
         protected def safeName(n: String): String                             = EmitterBase.safeName(n)
+        protected def localIdent(access: String): String                      = EmitterBase.localIdent(access)
         protected def structsByName(spec: TraitSpec): Map[String, StructSpec] = EmitterBase.structsByName(spec)
 
         protected def sizeAndAlign(t: TypeRef, structsByName: Map[String, StructSpec], packed: Boolean): (Long, Long) =

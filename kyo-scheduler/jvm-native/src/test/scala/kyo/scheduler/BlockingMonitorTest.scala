@@ -479,35 +479,41 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "blocked flag resets when thread resumes" in {
-            val baseline = blockedWorkerCount()
-            val started  = new CountDownLatch(1)
-            val release  = new CountDownLatch(1)
-            val resumed  = new CountDownLatch(1)
+            // Track the one worker running this task (via Worker.current) instead of a global
+            // blocked count. That worker's flag is monotonic within each phase (set while
+            // parked, cleared once it resumes CPU work), so each transition is observed
+            // reliably; the global count is a noisy aggregate that unrelated workers' transient
+            // false positives under load can push past any fixed snapshot.
+            val started   = new CountDownLatch(1)
+            val release   = new CountDownLatch(1)
+            val resumed   = new CountDownLatch(1)
+            val stop      = new AtomicBoolean(false)
+            val theWorker = new AtomicReference[Worker](null)
             val task = TestTask(_run = () => {
+                theWorker.set(Worker.current())
                 started.countDown()
-                release.await() // block
-                // Now do busy work to advance CPU time
-                var sum = 0L
-                val end = System.nanoTime() + 50000000L // 50ms
-                while (System.nanoTime() < end) sum += 1
+                release.await() // block: flat CPU time -> worker flagged blocked
                 resumed.countDown()
-                Task.Preempted // keep the task alive
+                while (!stop.get()) {} // sustained CPU work -> worker flag clears
+                Task.Done
             })
             scheduler.schedule(task)
             assert(started.await(5, TimeUnit.SECONDS))
+            val worker = theWorker.get()
 
             eventually(timeout(scaled(org.scalatest.time.Span(5, org.scalatest.time.Seconds)))) {
-                assert(blockedWorkerCount() > baseline, "should detect as blocked")
+                assert(worker.status().isBlocked, "parked worker should be detected as blocked")
             }
-            val peakBlocked = blockedWorkerCount()
 
             release.countDown()
             assert(resumed.await(5, TimeUnit.SECONDS))
 
-            // After resuming with CPU work, blocked count should drop from peak
             eventually(timeout(scaled(org.scalatest.time.Span(5, org.scalatest.time.Seconds)))) {
-                assert(blockedWorkerCount() < peakBlocked, "should drop after resume")
+                assert(!worker.status().isBlocked, "worker's blocked flag should clear after resume")
             }
+
+            stop.set(true)
+            eventually(assert(task.executions == 1))
         }
     }
 
@@ -959,10 +965,10 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
             }
         }
 
-        "wake backpressure and blocked flag reset" in {
-            // Part A: wake() backpressure — a burst of wake() calls collapses into a few
-            // monitor scans via LockSupport's permit model, rather than one scan per call.
-            // Counting scans (not wall-clock time) makes this immune to CI scheduling jitter.
+        "wake backpressure" in {
+            // A burst of wake() calls collapses into a few monitor scans via LockSupport's
+            // permit model, rather than one scan per call. Counting scans (not wall-clock
+            // time) makes this immune to CI scheduling jitter.
             val wakeStarted = new CountDownLatch(1)
             val wakeDone    = new CountDownLatch(1)
             val wakeTask = TestTask(_run = () => {
@@ -988,37 +994,6 @@ class BlockingMonitorTest extends AnyFreeSpec with NonImplicitAssertions {
 
             wakeDone.countDown()
             eventually(assert(wakeTask.executions == 1))
-
-            // Part C: blocked flag resets when thread resumes computation
-            val baseline = blockedWorkerCount()
-            val started  = new CountDownLatch(1)
-            val release  = new CountDownLatch(1)
-            val resumed  = new CountDownLatch(1)
-
-            val resetTask = TestTask(_run = () => {
-                started.countDown()
-                release.await()
-                var sum = 0L
-                val end = System.nanoTime() + 50000000L // 50ms
-                while (System.nanoTime() < end) sum += 1
-                resumed.countDown()
-                Task.Preempted
-            })
-
-            scheduler.schedule(resetTask)
-            assert(started.await(60, TimeUnit.SECONDS))
-
-            eventually(timeout(scaled(Span(5, Seconds)))) {
-                assert(blockedWorkerCount() > baseline, "should detect new blocked worker")
-            }
-            val peakBlocked = blockedWorkerCount()
-
-            release.countDown()
-            assert(resumed.await(5, TimeUnit.SECONDS))
-
-            eventually(timeout(scaled(Span(5, Seconds)))) {
-                assert(blockedWorkerCount() < peakBlocked, "blocked count should drop after resume")
-            }
         }
     }
 

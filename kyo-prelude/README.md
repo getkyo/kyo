@@ -285,7 +285,7 @@ assert(both.eval == (5, 5))
 
 ### Isolation strategies
 
-`Var[V]` is per-handler-scope state, not shared mutable state across fibers. When you split a computation into branches that each maintain state (for example through `Async.parallel` in `kyo-core`), each branch sees its own copy and an isolation strategy decides how to reconcile them at the end. `Var.isolate.update`, `Var.isolate.merge`, and `Var.isolate.discard` are the three reconciliation modes; downstream effect runners pick one up by their `Isolate` parameter.
+`Var[V]` is per-handler-scope state, not shared mutable state across fibers. When you split a computation into branches that each maintain state (for example through `Async.foreach` in `kyo-core`), each branch sees its own copy and an isolation strategy decides how to reconcile them at the end. `Var.isolate.update`, `Var.isolate.merge`, and `Var.isolate.discard` are the three reconciliation modes; downstream effect runners pick one up by their `Isolate` parameter.
 
 ```scala
 import kyo.*
@@ -300,7 +300,7 @@ val merging: Isolate[Var[Int], Any, Var[Int]] = Var.isolate.merge[Int](_ + _)
 val discarding: Isolate[Var[Int], Any, Any] = Var.isolate.discard[Int]
 ```
 
-When two parallel branches both update the same `Var[Int]`, `update` keeps only the second branch's last value, `merge(_ + _)` adds the deltas, and `discard` leaves the outer state untouched. Pick deliberately: the default for `Async.parallel` semantics depends on which `Isolate` instance is in scope.
+When two parallel branches both update the same `Var[Int]`, `update` keeps only the second branch's last value, `merge(_ + _)` adds the deltas, and `discard` leaves the outer state untouched. Pick deliberately: the default for `Async.foreach` semantics depends on which `Isolate` instance is in scope.
 
 ## Branching computations
 
@@ -489,8 +489,6 @@ val totalAndCount: ((BigDecimal, Int)) < Any =
 assert(totalAndCount.eval == (BigDecimal(35), 3))
 ```
 
-> **Unlike** ZIO's `ZSink#zip`, kyo's `Sink#zip` runs both sinks **in tandem on the same stream** (single pass, producing `(A, B)`), not sequentially over a re-played stream. The same applies to the `Sink.zip(a, b, ..., j)` arity-2-through-10 companion methods.
-
 You change a sink's input element type with `contramap`, its output type with `map`, and run it on a stream with `sink.drain(stream)` or `stream.into(sink)`.
 
 ### Low-level: Emit and Poll
@@ -563,7 +561,7 @@ end program
 assert(Memo.run(program).eval == 50)
 ```
 
-> **Note:** `Memo` is for global value initialization or infrequent expensive computations, not hot paths. The implementation is a `Var[Cache]` (a functional map), so look-ups cost a map operation per call. For performance-sensitive memoization, reach for `Async.memoize` in kyo-core or the `kyo-cache` module.
+> **Note:** `Memo` is for global value initialization or infrequent expensive computations, not hot paths. The implementation is a `Var[Cache]` (a functional map), so look-ups cost a map operation per call. For performance-sensitive memoization, reach for `Async.memoize` and `Cache` in kyo-core.
 
 `Memo.isolate` (a given) is the cache's isolation strategy: when isolated computations end, their entries merge into the outer cache (later writes win on key conflicts). This is also why `Layer.run` returns a value with `Memo` in its pending row: the layer engine uses `Memo` internally, and `Env.runLayer` discharges it automatically.
 
@@ -712,7 +710,7 @@ Key methods:
 - `Kyo.lift(v)` is the explicit zero-cost lift: it coerces a plain value into any `A < S` without allocation (the pending row `S` is phantom).
 - `Kyo.unit` is a stable `Unit < Any` value useful for discarding results.
 
-Use `Kyo.*` for sequential execution. For parallel execution over `Async`, see `Async.parallel` / `Async.foreach` in [kyo-core's Structured concurrency section](../kyo-core/README.md#structured-concurrency).
+Use `Kyo.*` for sequential execution. For parallel execution over `Async`, see `Async.foreach` / `Async.foreach` in [kyo-core's Structured concurrency section](../kyo-core/README.md#structured-concurrency).
 
 ```scala
 import kyo.*

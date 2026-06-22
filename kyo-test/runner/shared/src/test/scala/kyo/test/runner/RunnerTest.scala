@@ -108,6 +108,13 @@ class RTAbortAnySuite extends TestBase[Any]:
     "ok" in assert(1 == 1)
 end RTAbortAnySuite
 
+/** Its constructor throws before any leaf registers, exercising TestRunner.constructorFailureReport: the recovered
+  * SuiteReport must carry the run's effective leak config, not the SuiteReport field defaults.
+  */
+class RTConstructorFailSuite extends TestBase[Any]:
+    throw new RuntimeException("constructor boom")
+end RTConstructorFailSuite
+
 // ── AssertScope leak-capture fixtures (runner-side capture) ─────────────────────────────────────
 
 /** A detached fiber asserts false DURING the leaf body while the body's main computation would otherwise pass.
@@ -368,8 +375,7 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
         // SuiteReport and appends one synthetic failed leaf per leak. This collector is process-global, so clear it at the
         // start so a prior test cannot pollute it, and leave it empty at the end.
         val _      = kyo.test.AssertScope.drainLeakedAfterClose()
-        val frame  = summon[Frame]
-        val origin = new kyo.test.AssertionFailed("ORIGINAL-DIAGRAM-TEXT", frame, Maybe.empty[String], Maybe.empty[Throwable])
+        val origin = new kyo.test.AssertionFailed("ORIGINAL-DIAGRAM-TEXT", Frame.internal, Maybe.empty[String], Maybe.empty[Throwable])
         kyo.test.AssertScope.leakedAfterClose.add((Chunk("some", "leaf"), origin)): Unit
         TestRunner.runToFuture(classOf[RTNoLeakSuite], RunConfig.default).map { report =>
             // The real passing leaf survives unchanged, plus exactly one synthetic leaf for the enqueued leak.
@@ -438,6 +444,22 @@ class RunnerTest extends AsyncFreeSpec with NonImplicitAssertions:
             assert(countResults(report) == 3)
             assert(rec.recorded.isEmpty, s"a fast leaf must not trigger any heartbeat, got ${rec.recorded}")
         }
+    }
+
+    "Constructor failure: the recovered SuiteReport carries the run's effective leak config, not the field defaults" in {
+        // A suite whose constructor throws is recovered into a <constructor>-failure SuiteReport. That report must
+        // reflect the run's effective leak settings, threaded through constructorFailureReport, rather than the
+        // SuiteReport field defaults. Both arms are asserted: the default (sockets on) carries through, and an
+        // explicit leakCheckSockets(false) is preserved (proving the field is threaded, not forced to the default).
+        for
+            defaultReport    <- TestRunner.runToFuture(classOf[RTConstructorFailSuite], RunConfig.default)
+            socketsOffReport <- TestRunner.runToFuture(classOf[RTConstructorFailSuite], RunConfig.default.leakCheckSockets(false))
+        yield
+            val defaultSr    = defaultReport.suiteReports.head
+            val socketsOffSr = socketsOffReport.suiteReports.head
+            assert(defaultSr.leafResults.exists(_._1 == Chunk("<constructor>")), "expected a <constructor> failure leaf")
+            assert(defaultSr.leakCheckSockets, "default config: socket-leak detection is on and must carry through a constructor failure")
+            assert(!socketsOffSr.leakCheckSockets, "leakCheckSockets(false) must be carried into the constructor-failure report")
     }
 
 end RunnerTest

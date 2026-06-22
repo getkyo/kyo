@@ -8,7 +8,9 @@ class OTLPMetricsExporterTest extends kyo.test.Test[Any]:
     // The periodic-export leaves read the PROCESS-GLOBAL stats registry (it also holds the scheduler's own metrics) and
     // register WeakReference-held counters/histograms that a concurrent leaf's GC pressure can collect before the export
     // interval fires. Run this suite sequentially (shared global registry); ScalaTest ran it sequentially too.
-    override def config = super.config.sequential
+    // Socket-only opt-out (see BaseHttpTest): the HttpServer/HttpClient this suite runs leaves a
+    // transport-deferred socket:[inode] no allowlist can match; thread, fiber, and file detection stay on.
+    override def config = super.config.sequential.leakCheckSockets(false)
 
     import AllowUnsafe.embrace.danger
 

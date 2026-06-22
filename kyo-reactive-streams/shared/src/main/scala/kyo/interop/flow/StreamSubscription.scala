@@ -29,18 +29,25 @@ final private[kyo] class StreamSubscription[V, S](
     private[interop] def subscribe(using Frame): Unit < Sync = Sync.defer(subscriber.onSubscribe(this))
 
     private[interop] def poll(using Tag[Poll[Chunk[V]]], Frame): StreamComplete < (Async & Poll[Chunk[V]] & Abort[StreamCanceled]) =
-        def loopPoll(requesting: Long): (Chunk[V] | StreamComplete) < (Sync & Poll[Chunk[V]]) =
-            Loop[Long, Chunk[V] | StreamComplete, Sync & Poll[Chunk[V]]](requesting): requesting =>
-                Poll.andMap:
-                    case Present(values) =>
-                        if values.size <= requesting then
-                            Sync.defer(values.foreach(subscriber.onNext(_)))
-                                .andThen(Loop.continue(requesting - values.size))
-                        else
-                            Sync.defer(values.take(requesting.intValue).foreach(subscriber.onNext(_)))
-                                .andThen(Loop.done(values.drop(requesting.intValue)))
-                    case Absent =>
-                        Sync.defer(Loop.done(StreamComplete))
+        def loopPoll(requesting: Long): (Chunk[V] | StreamComplete) < (Sync & Poll[Chunk[V]] & Abort[StreamCanceled]) =
+            Loop[Long, Chunk[V] | StreamComplete, Sync & Poll[Chunk[V]] & Abort[StreamCanceled]](requesting): requesting =>
+                // Stop draining the stream as soon as the subscription is cancelled. cancel() closes requestChannel; the outer
+                // take-loop already observes that, but a single loopPoll call holding a large outstanding demand would otherwise
+                // keep pulling and emitting the whole stream (calling onNext past cancellation) and leave this fiber running long
+                // after the subscriber is gone (a leaked, effectively-uninterruptible consumer). Signal StreamCanceled (not
+                // StreamComplete) so cancellation does not deliver a terminal onComplete, matching the outer take-loop's path.
+                if requestChannel.closed() then Abort.fail(StreamCanceled)
+                else
+                    Poll.andMap:
+                        case Present(values) =>
+                            if values.size <= requesting then
+                                Sync.defer(values.foreach(subscriber.onNext(_)))
+                                    .andThen(Loop.continue(requesting - values.size))
+                            else
+                                Sync.defer(values.take(requesting.intValue).foreach(subscriber.onNext(_)))
+                                    .andThen(Loop.done(values.drop(requesting.intValue)))
+                        case Absent =>
+                            Sync.defer(Loop.done(StreamComplete))
 
         Loop[Chunk[V], StreamComplete, Async & Poll[Chunk[V]] & Abort[StreamCanceled]](Chunk.empty[V]): leftOver =>
             Abort.run[Closed](requestChannel.safe.take).map:

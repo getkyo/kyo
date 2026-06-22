@@ -105,7 +105,7 @@ import kyo.kernel.Isolate
   * #### Concurrent forks: Browser.isolate
   *
   * `Browser <: Env[BrowserTab] & Async`, but the opaque type hides the `Env` so two fibers cannot accidentally share a tab. Concurrent
-  * combinators like [[kyo.Async.zip]] / [[kyo.Async.parallel]] / [[kyo.Loop.foreach]] require an `Isolate[Browser, ...]` to fork the
+  * combinators like [[kyo.Async.zip]] / [[kyo.Async.foreach]] / [[kyo.Loop.foreach]] require an `Isolate[Browser, ...]` to fork the
   * `Browser` effect across fibers; the compiler refuses to derive one automatically because there is no safe default split for a single CDP
   * session. `Browser.isolate` provides the two safe ones and you pick the right semantics explicitly.
   *
@@ -255,7 +255,7 @@ object Browser:
         val body =
             for
                 wsUrl  <- BrowserLauncher.launch(launch)
-                client <- CdpClient.init(wsUrl, launch)
+                client <- CdpBackend.init(wsUrl, launch)
                 tab    <- BrowserTabSetup.attachAndSetupTab(client)
                 a      <- runOn(tab)(v)
             yield a
@@ -269,8 +269,10 @@ object Browser:
     /** Connects to an existing browser via WebSocket URL and runs the computation. Closes the client when the body completes (success,
       * failure, or interruption). Resource lifetime is bound to this call via an internal `Scope.run`.
       */
-    def run[A, S](wsUrl: String)(v: A < (Browser & S))(using Frame): A < (Async & Abort[BrowserReadException] & S) =
-        Scope.run(CdpClient.init(wsUrl, Browser.LaunchConfig.default).map(client =>
+    def run[A, S](wsUrl: String)(v: A < (Browser & S))(using
+        Frame
+    ): A < (Async & Abort[BrowserReadException | BrowserSetupException] & S) =
+        Scope.run(CdpBackend.init(wsUrl, Browser.LaunchConfig.default).map(client =>
             BrowserTabSetup.attachAndSetupTab(client).map(tab => runOn(tab)(v))
         ))
 
@@ -2646,7 +2648,7 @@ object Browser:
       *   - [[withDialogs.dismiss]]: dismiss the dialog; `confirm()` returns false, `prompt()` returns null.
       *   - [[withDialogs.prompt]]: accept the dialog and supply a specific value for `prompt()`.
       *
-      * Internally, each entry point registers a per-session dialog handler on the underlying `CdpClient`. When Chrome fires
+      * Internally, each entry point registers a per-session dialog handler on the underlying `CdpBackend`. When Chrome fires
       * `Page.javascriptDialogOpening`, the CDP reader fiber looks up the handler for the event's session ID and enqueues
       * `(accept, promptText)` for `Page.handleJavaScriptDialog`.
       *
@@ -2688,7 +2690,7 @@ object Browser:
 
         private def install[A, S](accept: Boolean, promptText: String)(v: A < S)(using Frame): A < (Browser & S) =
             Env.use[BrowserTab] { tab =>
-                val client = tab.client
+                val client = tab.session
                 // Key the handler map by CDP session ID so concurrent tabs don't clobber each other's entries.
                 val sidKey = tab.sessionId.value
                 client.dialogHandlers.getAndUpdate(m => m.update(sidKey, (accept, promptText))).map { previousMap =>
@@ -2724,7 +2726,7 @@ object Browser:
             Isolate[S, Sync, S]
         ): (Chunk[Browser.DialogEvent], A) < (Browser & Async & Abort[BrowserReadException] & S) =
             Env.use[BrowserTab] { tab =>
-                val client = tab.client
+                val client = tab.session
                 val sidKey = tab.sessionId.value
                 AtomicRef.init(Chunk.empty[Browser.DialogEvent]).map { recorder =>
                     client.dialogRecorders.getAndUpdate(_.update(sidKey, recorder)).map { previousMap =>
@@ -3051,7 +3053,7 @@ object Browser:
         Isolate[S, Sync, S]
     ): A < (Browser & Async & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val client = tab.client
+            val client = tab.session
             val sidKey = tab.sessionId.value
             // Bounded unscoped channel; closed explicitly via `Scope.ensure` inside the inner `Scope.run`. Keeping the channel unscoped
             // lets `onDownload`'s effect row stay free of `Scope` while still binding teardown to the body's lifetime.
@@ -3111,28 +3113,36 @@ object Browser:
         }
     end recordDownloads
 
-    /** Decode a [[CdpEvent.Generic]] download event's wire JSON into a typed [[Browser.DownloadEvent]]. Returns `Absent` when the event is
-      * not one of the two download methods or when the JSON cannot be parsed.
-      *
-      * Decoding is wire-shape tolerant: extra fields are ignored. Missing optional fields fall back to defaults that keep `f` callable
-      * (`""` for strings, `0L` for numerics).
+    /** Projects a [[CdpEvent.Generic]] download event's already-decoded typed Wire into a typed [[Browser.DownloadEvent]]. Returns `Absent`
+      * when the carried `params` is not one of the two download Wire types.
       */
     private def parseDownloadEvent(ev: CdpEvent.Generic)(using Frame): Maybe[Browser.DownloadEvent] =
-        ev.method match
-            case "Page.downloadWillBegin" =>
-                Json.decode[CdpEventParams[PageDownload.DownloadWillBeginWire]](ev.paramsJson) match
-                    case Result.Success(env) =>
-                        val w = env.params
-                        Present(Browser.DownloadEvent.WillBegin(w.guid, w.url, w.suggestedFilename))
-                    case _ => Absent
-            case "Page.downloadProgress" =>
-                Json.decode[CdpEventParams[PageDownload.DownloadProgressWire]](ev.paramsJson) match
-                    case Result.Success(env) =>
-                        val w = env.params
-                        Present(Browser.DownloadEvent.Progress(w.guid, w.totalBytes, w.receivedBytes, w.state))
-                    case _ => Absent
+        ev.params match
+            case w: PageDownload.DownloadWillBeginWire =>
+                Present(Browser.DownloadEvent.WillBegin(w.guid, w.url, w.suggestedFilename))
+            case w: PageDownload.DownloadProgressWire =>
+                Present(Browser.DownloadEvent.Progress(w.guid, w.totalBytes, w.receivedBytes, w.state))
             case _ => Absent
     end parseDownloadEvent
+
+    /** Projects a `Page.screencastFrame` event's already-decoded typed Wire into a `(ScreencastFrameWire, sessionId)` pair. Returns `Absent`
+      * for any other carried Wire (never aborts). This routing-layer decoder yields the raw wire record; the screencast consumer
+      * ([[parseScreencastFrame]] with a `t0` argument) materialises the public `ScreenshotFrame` from it.
+      */
+    private[kyo] def parseScreencastFrame(ev: CdpEvent.Generic)(using Frame): Maybe[(ScreencastFrameWire, Int)] =
+        ev.params match
+            case w: ScreencastFrameWire => Present((w, w.sessionId))
+            case _                      => Absent
+
+    /** Projects a console event's already-decoded typed Wire into either a `ConsoleApiCalledWire`
+      * (`Runtime.consoleAPICalled`) or an `ExceptionThrownWire` (`Runtime.exceptionThrown`). Returns `Absent` for any other
+      * carried Wire (never aborts). [[consoleEventToMessage]] consumes the union and maps each arm to a typed `ConsoleMessage`.
+      */
+    private[kyo] def parseConsoleEvent(ev: CdpEvent.Generic)(using Frame): Maybe[ConsoleApiCalledWire | ExceptionThrownWire] =
+        ev.params match
+            case w: ConsoleApiCalledWire => Present(w)
+            case w: ExceptionThrownWire  => Present(w)
+            case _                       => Absent
 
     // --- Console recording ---
 
@@ -3161,7 +3171,7 @@ object Browser:
         Isolate[S, Sync, S]
     ): A < (Browser & Async & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val client = tab.client
+            val client = tab.session
             val sidKey = tab.sessionId.value
             Clock.now.map { t0 =>
                 val t0Ms = t0.toJava.toEpochMilli
@@ -3216,21 +3226,21 @@ object Browser:
     end recordConsole
 
     /** Decodes a [[CdpEvent.Generic]] console event into a typed [[Browser.ConsoleMessage]] for the recorder handler. Reuses the wire-level
-      * [[kyo.internal.CdpClient.parseConsoleEvent]] decoder: a `Left` is a `Runtime.consoleAPICalled` mapped through
-      * [[decodeConsoleApiCalled]] (a structural-type abort recovers to `Absent` so the handler drops it), a `Right` is a
+      * [[parseConsoleEvent]] decoder: a `ConsoleApiCalledWire` is a `Runtime.consoleAPICalled` mapped through
+      * [[decodeConsoleApiCalled]] (a structural-type abort recovers to `Absent` so the handler drops it), an `ExceptionThrownWire` is a
       * `Runtime.exceptionThrown` surfaced as a `ConsoleLevel.Error` message at its `url:line`. Returns `Absent` for any non-console event or
       * decode failure; never aborts.
       */
     private def consoleEventToMessage(ev: CdpEvent.Generic, t0Ms: Long)(using
         Frame
     ): Maybe[Browser.ConsoleMessage] < Sync =
-        CdpClient.parseConsoleEvent(ev) match
-            case Present(Left(consoleWire)) =>
+        parseConsoleEvent(ev) match
+            case Present(consoleWire: ConsoleApiCalledWire) =>
                 Abort.run(decodeConsoleApiCalled(consoleWire, t0Ms)).map {
                     case Result.Success(msg) => Present(msg)
                     case _                   => Absent
                 }
-            case Present(Right(exWire)) =>
+            case Present(exWire: ExceptionThrownWire) =>
                 val d = exWire.exceptionDetails
                 // CDP reports `text` as the bare "Uncaught" prefix and carries the real error message in
                 // `exception.description`; join them so the message is meaningful.
@@ -3246,7 +3256,7 @@ object Browser:
                     location,
                     computeOffsetMs(exWire.timestamp, t0Ms)
                 ))
-            case Absent => Absent
+            case _ => Absent
     end consoleEventToMessage
 
     // --- Screencast ---
@@ -3284,7 +3294,6 @@ object Browser:
         Isolate[S, Sync, S]
     ): (Chunk[Browser.ScreenshotFrame], A) < (Browser & Async & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { tab =>
-            val client  = tab.client
             val session = tab.session
             val sidKey  = tab.sessionId.value
             val wireFormat = format match
@@ -3323,8 +3332,8 @@ object Browser:
                                     }
                                 case Absent => Kyo.unit
                             }
-                        client.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
-                            val restore = client.screencastEventDispatchers.getAndUpdate { m =>
+                        session.screencastEventDispatchers.getAndUpdate(_.update(sidKey, handler)).map { previousMap =>
+                            val restore = session.screencastEventDispatchers.getAndUpdate { m =>
                                 previousMap.get(sidKey) match
                                     case Present(prev) => m.update(sidKey, prev)
                                     case Absent        => m.remove(sidKey)
@@ -3375,40 +3384,36 @@ object Browser:
 
     /** Decodes a `Page.screencastFrame` event into a `(ScreenshotFrame, sessionId)` pair. Returns `Absent` on a wrong-method event or any
       * decode failure (never aborts). `offsetMs` is `round(timestamp * 1000) - t0` when the metadata carries a `timestamp`, else the
-      * wall-clock fallback `now - t0`. Distinct from the routing-layer `CdpClient.parseScreencastFrame`, which decodes only the wire
+      * wall-clock fallback `now - t0`. Distinct from the routing-layer `parseScreencastFrame`, which decodes only the wire
       * record; this variant materialises the `Image` and the public `ScreenshotFrame`.
       */
     private def parseScreencastFrame(ev: CdpEvent.Generic, t0: Instant)(using
         Frame
     )
         : Maybe[(Browser.ScreenshotFrame, Int)] < Sync =
-        ev.method match
-            case "Page.screencastFrame" =>
-                Json.decode[CdpEventParams[ScreencastFrameWire]](ev.paramsJson) match
-                    case Result.Success(env) =>
-                        val w = env.params
-                        Abort.run(CdpBase64Decode.decodeScreenshotImage("Page.screencastFrame", w.data)).map {
-                            case Result.Success(img) =>
-                                val t0Ms = t0.toJava.toEpochMilli
-                                Clock.now.map { now =>
-                                    val offsetMs = w.metadata.timestamp match
-                                        case Present(ts) => math.round(ts * 1000) - t0Ms
-                                        case Absent      => now.toJava.toEpochMilli - t0Ms
-                                    Present((
-                                        Browser.ScreenshotFrame(
-                                            img,
-                                            offsetMs,
-                                            Browser.ScrollPosition(
-                                                math.round(w.metadata.scrollOffsetX).toInt,
-                                                math.round(w.metadata.scrollOffsetY).toInt
-                                            )
-                                        ),
-                                        w.sessionId
-                                    ))
-                                }
-                            case _ => (Absent: Maybe[(Browser.ScreenshotFrame, Int)])
+        ev.params match
+            case w: ScreencastFrameWire =>
+                Abort.run(CdpBase64Decode.decodeScreenshotImage("Page.screencastFrame", w.data)).map {
+                    case Result.Success(img) =>
+                        val t0Ms = t0.toJava.toEpochMilli
+                        Clock.now.map { now =>
+                            val offsetMs = w.metadata.timestamp match
+                                case Present(ts) => math.round(ts * 1000) - t0Ms
+                                case Absent      => now.toJava.toEpochMilli - t0Ms
+                            Present((
+                                Browser.ScreenshotFrame(
+                                    img,
+                                    offsetMs,
+                                    Browser.ScrollPosition(
+                                        math.round(w.metadata.scrollOffsetX).toInt,
+                                        math.round(w.metadata.scrollOffsetY).toInt
+                                    )
+                                ),
+                                w.sessionId
+                            ))
                         }
-                    case _ => Absent
+                    case _ => (Absent: Maybe[(Browser.ScreenshotFrame, Int)])
+                }
             case _ => Absent
     end parseScreencastFrame
 
@@ -3491,7 +3496,7 @@ object Browser:
             CdpBackend.runtimeEvaluate(
                 tab.session,
                 EvalParams("window.location.href")
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue).map { currentUrl =>
+            ).map(CdpEvalDecoder.extractValueOrFail).map { currentUrl =>
                 CdpBackend.deleteCookies(
                     tab.session,
                     NetworkDeleteCookiesParams(name, url = Present(currentUrl))
@@ -3549,14 +3554,14 @@ object Browser:
     ): A < (Browser & Abort[BrowserReadException] & S) =
         Env.use[BrowserTab] { parent =>
             Scope.run {
-                CdpBackend.getTargets(parent.client).map { before =>
+                CdpBackend.getTargets(parent.session).map { before =>
                     val beforeIds = before.targetInfos.map(_.targetId).toSet
                     Env.run(parent)(trigger).andThen {
                         // Poll for new target
                         configLocal.use { cfg =>
                             val effectiveSchedule = schedule.getOrElse(cfg.retrySchedule)
                             Retry[BrowserReadException](effectiveSchedule) {
-                                CdpBackend.getTargets(parent.client).map { after =>
+                                CdpBackend.getTargets(parent.session).map { after =>
                                     val newTargets = after.targetInfos.filter(t =>
                                         !beforeIds.contains(t.targetId) && t.`type` == "page"
                                     )
@@ -3569,15 +3574,15 @@ object Browser:
                                 }
                             }.map { newTarget =>
                                 Scope.ensure(
-                                    CdpBackend.closeTarget(parent.client, CloseTargetParams(newTarget.targetId))
+                                    CdpBackend.closeTarget(parent.session, CloseTargetParams(newTarget.targetId))
                                 ).andThen {
                                     // Attach to the new target
-                                    CdpBackend.attachToTarget(parent.client, AttachParams(newTarget.targetId, flatten = true)).map {
+                                    CdpBackend.attachToTarget(parent.session, AttachParams(newTarget.targetId, flatten = true)).map {
                                         attached =>
                                             BrowserTabSetup.mkBrowserTab(
                                                 TargetId(newTarget.targetId),
                                                 SessionId(attached.sessionId),
-                                                parent.client,
+                                                parent.session,
                                                 parent.browserContextId
                                             ).map { tab =>
                                                 BrowserTabSetup.installFrameContextTracker(tab).andThen {
@@ -3629,15 +3634,15 @@ object Browser:
             val parentCtx = parent.browserContextId
             Scope.run {
                 for
-                    created <- CdpBackend.createTarget(parent.client, CreateTargetParams("about:blank", parentCtx))
+                    created <- CdpBackend.createTarget(parent.session, CreateTargetParams("about:blank", parentCtx))
                     _ <- Scope.ensure(
-                        CdpBackend.closeTarget(parent.client, CloseTargetParams(created.targetId))
+                        CdpBackend.closeTarget(parent.session, CloseTargetParams(created.targetId))
                     )
-                    attached <- CdpBackend.attachToTarget(parent.client, AttachParams(created.targetId, flatten = true))
+                    attached <- CdpBackend.attachToTarget(parent.session, AttachParams(created.targetId, flatten = true))
                     tab <- BrowserTabSetup.mkBrowserTab(
                         TargetId(created.targetId),
                         SessionId(attached.sessionId),
-                        parent.client,
+                        parent.session,
                         parent.browserContextId
                     )
                     _ <- BrowserTabSetup.installFrameContextTracker(tab)

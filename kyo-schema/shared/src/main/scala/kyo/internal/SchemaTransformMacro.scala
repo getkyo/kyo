@@ -378,7 +378,7 @@ object SchemaTransformMacro:
                 )
             }
 
-            // Renamed fields (runtime — erased types)
+            // Renamed fields (runtime: erased types)
             // Resolve rename chains: name->userName, userName->displayName => name->displayName
             val forwardMap = theMeta.renamedFields.toMap
             def resolveTarget(name: String): String =
@@ -399,7 +399,7 @@ object SchemaTransformMacro:
                 end if
             }
 
-            // Computed fields (runtime — erased types)
+            // Computed fields (runtime: erased types)
             theMeta.computedFields.foreach { case (name, compute) =>
                 val computedField = Field[String, Any](name, Tag[Any], Nil, Maybe.empty)
                 acc = theF[String, Any](acc, computedField, compute($value))
@@ -435,7 +435,7 @@ object SchemaTransformMacro:
 
         def findFieldName(term: Tree): Option[String] =
             term match
-                // Inlined with a selectDynamic call source — this is the key pattern
+                // Inlined with a selectDynamic call source: this is the key pattern
                 case Inlined(Some(call), _, body) =>
                     extractFromCall(call).orElse(findFieldName(body))
 
@@ -478,7 +478,7 @@ object SchemaTransformMacro:
         end match
     end extractFocusFieldName
 
-    /** Implements Schema[A].drop(_.field) — lambda overload.
+    /** Implements Schema[A].drop(_.field): lambda overload.
       *
       * Extracts the field name from the Focus lambda at compile time, then delegates to the same logic as dropImpl.
       */
@@ -491,7 +491,7 @@ object SchemaTransformMacro:
         dropImpl[A, F](meta, Expr(nameStr))
     end dropFocusImpl
 
-    /** Implements Schema[A].rename(_.field, "to") — lambda overload.
+    /** Implements Schema[A].rename(_.field, "to"): lambda overload.
       *
       * Extracts the field name from the Focus lambda at compile time, then delegates to renameImpl.
       */
@@ -505,7 +505,7 @@ object SchemaTransformMacro:
         renameImpl[A, F](meta, Expr(nameStr), to)
     end renameFocusImpl
 
-    /** Implements Schema[A].select(_.a, _.b, ...) — lambda overload.
+    /** Implements Schema[A].select(_.a, _.b, ...): lambda overload.
       *
       * Extracts field names from each Focus lambda at compile time, then delegates to selectImpl.
       */

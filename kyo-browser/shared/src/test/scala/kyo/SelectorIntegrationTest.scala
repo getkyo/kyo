@@ -839,7 +839,7 @@ class SelectorIntegrationTest extends BrowserTest:
 
     // ── Malformed selectors must fail loudly, not silently no-op ────────────────────────────────
     //
-    // Before the `parseAndExtractEvalValue` fix, any JS thrown inside a Runtime.evaluate call was silently swallowed and returned "".
+    // Before the eval-decode fix, any JS thrown inside a Runtime.evaluate call was silently swallowed and returned "".
     // That is exactly what made the single-quote escaping bug invisible; malformed selectors quietly no-op'd every downstream call. These
     // tests assert that a malformed selector now fails loudly as a typed BrowserProtocolErrorException whose message mentions the offending
     // selector substring; never as a quiet Success with a default value (0 / empty / "").

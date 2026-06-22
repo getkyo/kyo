@@ -317,7 +317,7 @@ object Changeset:
                         }
                         Structure.Value.Record(updated)
                     else
-                        // Field not present — add it
+                        // Field not present: add it
                         Structure.Value.Record(fields :+ (key, setAtPath(Structure.Value.Null, rest, newVal)))
                     end if
                 case other =>

@@ -5,10 +5,10 @@
   * Algorithm reference: Daniel Lemire, "Number Parsing at a Gigabyte per Second", Software: Practice and Experience, 2021
   * ([[https://arxiv.org/abs/2101.11408 arXiv:2101.11408]]).
   *
-  * Covers: algorithm edge cases near MaxValue/MinValue, subnormal boundaries, truncation triggers (19–21 significant digits), round-to-even
+  * Covers: algorithm edge cases near MaxValue/MinValue, subnormal boundaries, truncation triggers (19 through 21 significant digits), round-to-even
   * ties, overflow/underflow, historical bug reproducers (Java hang, PHP hang, issue #36657, issue #15364), and parse-error cases.
   *
-  * Go-API-specific tests (ParseFloat signature, bitsize, locale, hex floats, underscore separators) are skipped — they do not apply to the
+  * Go-API-specific tests (ParseFloat signature, bitsize, locale, hex floats, underscore separators) are skipped: they do not apply to the
   * JSON number subset.
   */
 package kyo.internal
@@ -23,13 +23,13 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
 
     // For valid-JSON inputs: fast path must either return the correct IEEE 754 bits
     // (bit-identical to java.lang.Double.parseDouble) or bail out (DoubleBailOut).
-    // A bail-out is legal — the caller falls back to the JDK; what is illegal is a
+    // A bail-out is legal: the caller falls back to the JDK; what is illegal is a
     // wrong-but-non-sentinel value.
     private def assertParsesTo(s: String, expected: Double)(using kyo.test.AssertScope): Unit =
         val b    = bytes(s)
         val bits = FastFloat.parseDouble(b, 0, b.length)
         if bits == DoubleBailOut then
-            // bail-out is fine — verify that DoubleBailOut is indeed the sentinel
+            // bail-out is fine: verify that DoubleBailOut is indeed the sentinel
             assert(bits == DoubleBailOut)
         else
             val expectBits = java.lang.Double.doubleToRawLongBits(expected)
@@ -40,7 +40,7 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
         end if
     end assertParsesTo
 
-    // Convenience overload — expected value computed by Double.parseDouble.
+    // Convenience overload: expected value computed by Double.parseDouble.
     private def assertParsesTo(s: String)(using kyo.test.AssertScope): Unit =
         assertParsesTo(s, java.lang.Double.parseDouble(s))
 
@@ -87,65 +87,65 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     end assertUnderflows
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // N — Largest representable double (MaxValue) and borderline cases
+    // N: Largest representable double (MaxValue) and borderline cases
     //     Ported from Go's "largest float64" and "borderline" blocks.
     // ────────────────────────────────────────────────────────────────────────────────
-    "N — MaxValue and over-MaxValue" - {
+    "N: MaxValue and over-MaxValue" - {
         "1.7976931348623157e308 (Double.MaxValue, exact)" in {
             assertParsesTo("1.7976931348623157e308")
         }
         "-1.7976931348623157e308 (negative MaxValue)" in {
             assertParsesTo("-1.7976931348623157e308")
         }
-        "1.7976931348623158e308 (borderline — rounds to MaxValue)" in {
+        "1.7976931348623158e308 (borderline: rounds to MaxValue)" in {
             // Go says this rounds DOWN to MaxValue (not overflow).
             assertParsesTo("1.7976931348623158e308")
         }
-        "-1.7976931348623158e308 (borderline negative — rounds to -MaxValue)" in {
+        "-1.7976931348623158e308 (borderline negative: rounds to -MaxValue)" in {
             assertParsesTo("-1.7976931348623158e308")
         }
-        "1.7976931348623159e308 (just over MaxValue — overflow to +Inf)" in {
+        "1.7976931348623159e308 (just over MaxValue: overflow to +Inf)" in {
             assertOverflows("1.7976931348623159e308")
         }
         "-1.7976931348623159e308 (overflow to -Inf)" in {
             assertOverflowsNeg("-1.7976931348623159e308")
         }
-        "1.797693134862315808e308 (further over borderline — overflow to +Inf)" in {
+        "1.797693134862315808e308 (further over borderline: overflow to +Inf)" in {
             assertOverflows("1.797693134862315808e308")
         }
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // O — Overflow: too large / way too large
+    // O: Overflow: too large or way too large
     //     Go's "a little too large" and "way too large" blocks.
     // ────────────────────────────────────────────────────────────────────────────────
-    "O — Overflow" - {
-        "2e308 (a little too large → +Inf)" in {
+    "O: Overflow" - {
+        "2e308 (a little too large: +Inf)" in {
             assertOverflows("2e308")
         }
-        "1e309 (too large → +Inf)" in {
+        "1e309 (too large: +Inf)" in {
             assertOverflows("1e309")
         }
-        "1e310 (way too large → +Inf)" in {
+        "1e310 (way too large: +Inf)" in {
             assertOverflows("1e310")
         }
-        "-1e310 (way too large negative → -Inf)" in {
+        "-1e310 (way too large negative: -Inf)" in {
             assertOverflowsNeg("-1e310")
         }
-        "1e400 (extreme overflow → +Inf)" in {
+        "1e400 (extreme overflow: +Inf)" in {
             assertOverflows("1e400")
         }
-        "-1e400 (extreme negative overflow → -Inf)" in {
+        "-1e400 (extreme negative overflow: -Inf)" in {
             assertOverflowsNeg("-1e400")
         }
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // P — Underflow: too small / way too small
+    // P: Underflow: too small or way too small
     //     Go's "too small" and "way too small" blocks.
     // ────────────────────────────────────────────────────────────────────────────────
-    "P — Underflow" - {
-        "2e-324 (too small — underflows to 0)" in {
+    "P: Underflow" - {
+        "2e-324 (too small: underflows to 0)" in {
             assertUnderflows("2e-324")
         }
         "1e-350 (way too small → 0)" in {
@@ -157,29 +157,29 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // Q — Exponent overflow: try to overflow the exponent field itself
+    // Q: Exponent overflow: try to overflow the exponent field itself
     //     Go: "try to overflow exponent" block (decimal, not hex).
     // ────────────────────────────────────────────────────────────────────────────────
-    "Q — Exponent overflow (u32/u64 overflow)" - {
-        "1e-4294967296 (underflows — u32 exponent wrap)" in {
+    "Q: Exponent overflow (u32/u64 overflow)" - {
+        "1e-4294967296 (underflows: u32 exponent wrap)" in {
             assertUnderflows("1e-4294967296")
         }
-        "1e+4294967296 (overflows — u32 exponent wrap → +Inf)" in {
+        "1e+4294967296 (overflows: u32 exponent wrap to +Inf)" in {
             assertOverflows("1e+4294967296")
         }
-        "1e-18446744073709551616 (underflows — u64 exponent wrap)" in {
+        "1e-18446744073709551616 (underflows: u64 exponent wrap)" in {
             assertUnderflows("1e-18446744073709551616")
         }
-        "1e+18446744073709551616 (overflows — u64 exponent wrap → +Inf)" in {
+        "1e+18446744073709551616 (overflows: u64 exponent wrap to +Inf)" in {
             assertOverflows("1e+18446744073709551616")
         }
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // R — Denormals / subnormals (decimal range)
+    // R: Denormals / subnormals (decimal range)
     //     Go's "denormalized" block.
     // ────────────────────────────────────────────────────────────────────────────────
-    "R — Denormals (decimal)" - {
+    "R: Denormals (decimal)" - {
         "1e-305" in { assertParsesTo("1e-305") }
         "1e-306" in { assertParsesTo("1e-306") }
         "1e-307" in { assertParsesTo("1e-307") }
@@ -197,10 +197,10 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // S — Zero with large exponents (issue #15364 reproducers)
-    //     Go's "zeros" block — the non-hex, non-+/-prefix cases.
+    // S: Zero with large exponents (issue #15364 reproducers)
+    //     Go's "zeros" block: the non-hex, non-+/-prefix cases.
     // ────────────────────────────────────────────────────────────────────────────────
-    "S — Zero with giant exponents (issue 15364)" - {
+    "S: Zero with giant exponents (issue 15364)" - {
         "0e291 (issue 15364)" in { assertParsesTo("0e291", 0.0) }
         "0e292 (issue 15364)" in { assertParsesTo("0e292", 0.0) }
         "0e347 (issue 15364)" in { assertParsesTo("0e347", 0.0) }
@@ -232,10 +232,10 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // T — Truncation / many significant digits
+    // T: Truncation / many significant digits
     //     Go: "a different kind of very large number" + issue 36657.
     // ────────────────────────────────────────────────────────────────────────────────
-    "T — Truncation and many significant digits" - {
+    "T: Truncation and many significant digits" - {
         "22.222222222222222 (17 significant digits, truncated)" in {
             assertParsesTo("22.222222222222222")
         }
@@ -251,7 +251,7 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
         "100000000000000016777216 (24 digits, rounds to 1.0000000000000003e+23)" in {
             assertParsesTo("100000000000000016777216")
         }
-        // Issue 36657: halfway between two floats — round to even.
+        // Issue 36657: halfway between two floats: round to even.
         "1090544144181609348671888949248 (round-to-even, issue 36657)" in {
             assertParsesTo("1090544144181609348671888949248")
         }
@@ -261,10 +261,10 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // U — Round-to-even tie-break (exact decimal midpoints)
+    // U: Round-to-even tie-break (exact decimal midpoints)
     //     Go's "exactly halfway between 1 and math.Nextafter(1, 2)" block.
     // ────────────────────────────────────────────────────────────────────────────────
-    "U — Round-to-even exact-decimal ties" - {
+    "U: Round-to-even exact-decimal ties" - {
         "1.00000000000000011102230246251565404236316680908203125 (exact midpoint, round down)" in {
             assertParsesTo("1.00000000000000011102230246251565404236316680908203125")
         }
@@ -281,12 +281,12 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // V — Historical bug reproducers
+    // V: Historical bug reproducers
     //     Java hang: 2.2250738585072012e-308
-    //     PHP hang:  2.2250738585072011e-308
+    //     PHP hang: 2.2250738585072011e-308
     //     Large number initially mishandled by fast algorithm: 4.630813248087435e+307
     // ────────────────────────────────────────────────────────────────────────────────
-    "V — Historical bug reproducers" - {
+    "V: Historical bug reproducers" - {
         // https://www.exploringbinary.com/java-hangs-when-converting-2-2250738585072012e-308/
         "2.2250738585072012e-308 (Java hang reproducer)" in {
             assertParsesTo("2.2250738585072012e-308")
@@ -302,12 +302,12 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // W — General valid decimal values (basic smoke)
+    // W: General valid decimal values (basic smoke)
     //     From Go's opening entries, filtered to valid-JSON decimal inputs.
     // ────────────────────────────────────────────────────────────────────────────────
-    "W — General valid decimal inputs" - {
+    "W: General valid decimal inputs" - {
         "1" in { assertParsesTo("1") }
-        "1x is invalid (ErrSyntax in Go) — bail-out or wrong parse guarded" in {
+        "1x is invalid (ErrSyntax in Go): bail-out or wrong parse guarded" in {
             // Our parseDouble is only called on pre-validated JSON tokens, so we document
             // whatever the fast path does without asserting a specific outcome.
             val b    = bytes("1x")
@@ -333,13 +333,13 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
     }
 
     // ────────────────────────────────────────────────────────────────────────────────
-    // X — Parse-error / rejection cases
+    // X: Parse-error / rejection cases
     //     Inputs that are invalid as JSON numbers; our parser should bail out or parse
     //     the numeric prefix, but must NOT return a wrong normal value.
     //     The key Go ones that apply to decimal/JSON are: "1e", "1e-", ".e-1".
     // ────────────────────────────────────────────────────────────────────────────────
-    "X — Invalid / parse-error inputs (Go ErrSyntax)" - {
-        "1e (empty exponent) — must bail-out or produce 0 bits (not a legal double)" in {
+    "X: Invalid / parse-error inputs (Go ErrSyntax)" - {
+        "1e (empty exponent): must bail-out or produce 0 bits (not a legal double)" in {
             val b    = bytes("1e")
             val bits = FastFloat.parseDouble(b, 0, b.length)
             // Acceptable: bail-out sentinel. Also acceptable: DoubleBailOut (same thing).
@@ -349,7 +349,7 @@ class FastFloatGoTest extends kyo.test.Test[Any]:
                 s"unexpected bits 0x${bits.toHexString} for input '1e'"
             )
         }
-        "1e- (truncated negative exponent) — must bail-out" in {
+        "1e- (truncated negative exponent): must bail-out" in {
             val b    = bytes("1e-")
             val bits = FastFloat.parseDouble(b, 0, b.length)
             assert(

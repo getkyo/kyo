@@ -2,7 +2,7 @@ package kyo
 
 import scala.language.implicitConversions
 
-// Test data types for Convert tests — at package level for typeCheckFailure references
+// Test data types for Convert tests: at package level for typeCheckFailure references
 case class BMUserFull(id: Int, name: String, email: String, password: String) derives CanEqual
 case class BMUserDTO(name: String, email: String) derives CanEqual
 case class BMPoint2D(x: Int, y: Int) derives CanEqual
@@ -64,7 +64,7 @@ class ConvertTest extends kyo.test.Test[Any]:
         assert(convert(user) == BMUserDTO("Charlie", "charlie@test.com"))
     }
 
-    // 8. Implicit conversion via scala.Conversion — given Convert[A, B] enables A where B expected
+    // 8. Implicit conversion via scala.Conversion: given Convert[A, B] enables A where B expected
     "implicit conversion via Conversion" in {
         val p: BMPoint2D                   = BMPoint2D(3, 4)
         given Convert[BMPoint2D, BMCoords] = Convert[BMPoint2D, BMCoords](pt => BMCoords(pt.x, pt.y))

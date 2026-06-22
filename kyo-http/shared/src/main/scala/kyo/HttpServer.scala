@@ -199,34 +199,46 @@ object HttpServer:
             ownsTransport: Boolean = false
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
             val router = HttpRouter(handlers, config.cors)
+            // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
+            // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
+            // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
+            // the same mechanism HttpClientBackend uses for the connections it creates.
+            val registry = new kyo.internal.ConnectionRegistry[kyo.net.Connection]
+            def tracked(conn: kyo.net.Connection): Unit =
+                // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
+                // the connection itself and returns false when a shutdown races this accept, so the connection is
+                // neither served nor left open, and a failing close is contained inside the registry rather than
+                // surfacing on the accept path.
+                registry.pruneClosed(_.isOpen)
+                if registry.register(conn)(_.close()) then
+                    UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
+                else
+                    (
+                )
+                end if
+            end tracked
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
-                    transport.listenUnix(path, config.backlog) { conn =>
-                        UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
-                    }
+                    transport.listenUnix(path, config.backlog)(tracked)
                 case (Absent, Present(tls)) =>
-                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls) { conn =>
-                        UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
-                    }
+                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
-                    transport.listen(config.host, config.port, config.backlog) { conn =>
-                        UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
-                    }
-            listenFiber.map { listener =>
-                new ListenerUnsafe(listener, transport, ownsTransport)
-            }
+                    transport.listen(config.host, config.port, config.backlog)(tracked)
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, ownsTransport, registry))
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport. When `ownsTransport` is true (the server built a per-config transport
-      * rather than reusing the shared global one), closing the server also closes that transport so its driver/pool is released.
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. When `ownsTransport`
+      * is true (the server built a per-config transport rather than reusing the shared global one), closing the server also closes that
+      * transport so its driver/pool is released.
       */
     final private class ListenerUnsafe(
         listener: kyo.net.Listener,
         transport: kyo.net.Transport,
-        ownsTransport: Boolean
+        ownsTransport: Boolean,
+        registry: kyo.internal.ConnectionRegistry[kyo.net.Connection]
     )(using allow: AllowUnsafe) extends Unsafe:
         private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
         private val httpAddress: HttpAddress = NetConfigTranslation.toHttpAddress(listener.address)
@@ -242,9 +254,26 @@ object HttpServer:
         def address: HttpAddress = httpAddress
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-            listener.close()
-            if ownsTransport then transport.close()
-            discard(closedPromise.completeDiscard(Result.succeed(())))
+            listener.close()       // stop accepting new connections first
+            registry.markClosing() // any accept racing the close now closes itself in `tracked` instead of being orphaned
+
+            def forceCloseAndComplete(): Unit =
+                registry.closeAll(_.close())
+                // When the server built a per-config transport (not the shared global one), release it after the accepted
+                // connections are closed so its driver/pool is freed.
+                if ownsTransport then transport.close()
+                discard(closedPromise.completeDiscard(Result.succeed(())))
+            end forceCloseAndComplete
+
+            if gracePeriod <= Duration.Zero then
+                // closeNow: force-close every accepted connection at once, the path the Scope finalizer (`_.closeNow`)
+                // takes. Accepted keep-alive connections otherwise outlive the listening socket, held open until the
+                // 60s idle timer fires.
+                forceCloseAndComplete()
+            else
+                // Graceful: let in-flight connections run for the grace period, then force-close whatever remains.
+                discard(Clock.live.unsafe.sleep(gracePeriod).onComplete(_ => forceCloseAndComplete()))
+            end if
             closedPromise
         end closeFiber
 

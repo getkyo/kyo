@@ -438,7 +438,7 @@ end for
 
 ### Concurrent forks via `Browser.isolate`
 
-`Browser` is single-tab by construction, so two fibers cannot accidentally share one tab. Concurrent combinators like `Async.zip`, `Async.parallel`, and `Loop.foreach` therefore demand an `Isolate[Browser, …]` value before they will fork the `Browser` effect across fibers. The compiler refuses to derive one automatically because there is no safe default split for a single CDP session, so `Browser.isolate` offers the two safe choices and forces the call site to pick:
+`Browser` is single-tab by construction, so two fibers cannot accidentally share one tab. Concurrent combinators like `Async.zip`, `Async.foreach`, and `Loop.foreach` therefore demand an `Isolate[Browser, …]` value before they will fork the `Browser` effect across fibers. The compiler refuses to derive one automatically because there is no safe default split for a single CDP session, so `Browser.isolate` offers the two safe choices and forces the call site to pick:
 
 - `Browser.isolate.fresh` gives each fork its own blank tab in a fresh browser context. Cookies, localStorage, and sessionStorage all start empty per fork. Use it for "N independent searches", per-page scraping, parallel smoke tests against unrelated URLs.
 - `Browser.isolate.clone` snapshots the parent tab (URL, cookies, storage, form values, scroll, focus) and gives each fork a fresh browser context restored from that snapshot. Use it when the per-fork work depends on the parent's logged-in state, current route, or in-flight form.

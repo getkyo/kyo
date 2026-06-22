@@ -302,6 +302,50 @@ class NativeEmitterTest extends kyo.test.Test[Any]:
         assert(src.contains("ext.sleep_ts(tsPtr)"))
     }
 
+    "doubly-nested struct param emits legal local pointer identifiers (not dotted member selections)" in {
+        // Regression for #1683 (Native side): nested-struct recursion carries the dotted access path as the
+        // base, so the child-pointer temp name was built as `${o.mid}_inner_ptr` → `o.mid_inner_ptr`, which the
+        // parser reads as a member selection on `o` rather than a local val. Needs two levels of struct nesting:
+        // the first level's child ptr is built from the bare param name, the second from the dotted access.
+        val inner = StructSpec(
+            "kyo.example.Inner",
+            "Inner",
+            List(StructField("v", TypeRef.IntT)),
+            packed = false
+        )
+        val mid = StructSpec(
+            "kyo.example.Mid",
+            "Mid",
+            List(StructField("inner", TypeRef.StructT(inner.fqcn))),
+            packed = false
+        )
+        val outer = StructSpec(
+            "kyo.example.Outer",
+            "Outer",
+            List(StructField("mid", TypeRef.StructT(mid.fqcn))),
+            packed = false
+        )
+        val spec = mkTrait(
+            "Nest",
+            "kyo_nest",
+            List(mkMethod(
+                "take",
+                "take_nest",
+                List(ParamSpec("o", TypeRef.StructT(outer.fqcn))),
+                ReturnShape.Primitive(TypeRef.IntT)
+            )),
+            structs = List(inner, mid, outer)
+        )
+        val src = NativeEmitter.emit(spec)
+        // Both nesting levels produce underscore-joined local identifiers.
+        assert(src.contains("val o_mid_ptr = "))
+        assert(src.contains("val o_mid_inner_ptr = "))
+        // The deepest primitive is still written from the real dotted access expression.
+        assert(src.contains("= o.mid.inner.v"))
+        // The broken dotted local names must not appear.
+        assert(!src.contains("val o.mid_inner_ptr"))
+    }
+
     "Unit-return method calls ext and then `()`, no retVal" in {
         val spec = mkTrait(
             "Simple",

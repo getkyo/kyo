@@ -8,6 +8,8 @@ class CopyOnWriteArraySet[E]:
     given [A, B]: CanEqual[A, B] = CanEqual.derived
     private var elements         = mutable.ArrayBuffer[E]()
 
+    def size: Int = synchronized(elements.size)
+
     def add(e: E): Boolean =
         synchronized {
             if !elements.contains(e) then

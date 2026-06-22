@@ -1,0 +1,141 @@
+name: ci
+# Unified trigger workflow. One entry point for every build/test path:
+#   push to main      -> mode=full  across both arches
+#   pull_request      -> mode=diff  across both arches
+#   workflow_dispatch -> flexible: pick targets, mode (full/diff/custom), and arches
+#
+# prep derives mode + arches + targets from the trigger, then build fans out one
+# build.yml call per arch (each call matrixes JVM/JS/Native/Wasm internally). custom is
+# the single-runner eval escape hatch, fired only on a workflow_dispatch with mode=custom.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Space-separated platform subset to dispatch (subset of JVM JS Native Wasm).'
+        type: string
+        required: false
+        default: 'JVM JS Native Wasm'
+      mode:
+        description: 'Run-shape: full (test), diff (testDiff), or custom (the command escape hatch).'
+        type: choice
+        options:
+          - full
+          - diff
+          - custom
+        default: full
+      arches:
+        description: 'Which arches to run (space-separated subset of x64 arm64).'
+        type: choice
+        options:
+          - 'x64 arm64'
+          - 'x64'
+          - 'arm64'
+        default: 'x64 arm64'
+      command:
+        description: 'Used only when mode=custom: the recommended form is ./scripts/ci-test.sh <platform> <action>.'
+        type: string
+        required: false
+        default: './scripts/ci-test.sh JVM test'
+      ref:
+        description: 'Git ref (branch or sha) to check out and test. Defaults to the ref the workflow is dispatched on.'
+        type: string
+        required: false
+        default: ''
+
+# A pull request keys its group on the PR number, so a new commit supersedes the in-flight run.
+# A push (to main) keys on the commit sha, so every commit gets its own group and is validated on
+# its own; cancel-in-progress only acts within a group, so a later push never cancels an earlier
+# main run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}-${{ inputs.mode }}-${{ inputs.targets }}-${{ inputs.arches }}-${{ inputs.command }}
+  cancel-in-progress: true
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.derive.outputs.mode }}
+      arches: ${{ steps.derive.outputs.arches }}
+      targets: ${{ steps.derive.outputs.targets }}
+    steps:
+      - id: derive
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_ARCHES: ${{ inputs.arches }}
+          INPUT_TARGETS: ${{ inputs.targets }}
+        run: |
+          case "$EVENT_NAME" in
+            workflow_dispatch) mode="$INPUT_MODE" ;;
+            pull_request)      mode="diff" ;;
+            *)                 mode="full" ;;
+          esac
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            arches=$(jq -cn --arg s "$INPUT_ARCHES" '
+              $s
+              | split(" ")
+              | map(select(length > 0))
+              | map(
+                  if . == "x64" then {os: "linux-x64", image: "ubuntu-latest"}
+                  elif . == "arm64" then {os: "linux-arm64", image: "ubuntu-24.04-arm"}
+                  else empty end
+                )')
+            targets="$INPUT_TARGETS"
+          else
+            arches='[{"os":"linux-x64","image":"ubuntu-latest"},{"os":"linux-arm64","image":"ubuntu-24.04-arm"}]'
+            targets='JVM JS Native Wasm'
+          fi
+
+          {
+            echo "mode=$mode"
+            echo "arches=$arches"
+            echo "targets=$targets"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prep
+    if: ${{ needs.prep.outputs.mode != 'custom' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.prep.outputs.arches) }}
+    uses: ./.github/workflows/build.yml
+    with:
+      os: ${{ matrix.arch.os }}
+      runner-image: ${{ matrix.arch.image }}
+      targets: ${{ needs.prep.outputs.targets }}
+      mode: ${{ needs.prep.outputs.mode }}
+      ref: ${{ inputs.ref }}
+
+  custom:
+    needs: prep
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'custom' }}
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    env:
+      SBT_TASK_LIMIT: 1
+      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          os: linux-x64
+          target: JVM
+      - name: Run command
+        shell: bash
+        env:
+          RUN_COMMAND: ${{ inputs.command }}
+        run: |
+          echo "+ $RUN_COMMAND"
+          eval "$RUN_COMMAND"

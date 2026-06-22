@@ -17,19 +17,17 @@ private[kyo] object SchemaSerializer:
       * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeWrite` body (the sentinel lambda
       * installed by `Schema.create`/`createFrom`/`createWithFocused`). No outer Maybe match is needed.
       */
-    def writeTo[A](schema: Schema[A], value: A, writer: Writer)(using frame: Frame): Unit =
-        if schema.hasTransforms then writeWithTransforms(schema, value, writer)
-        else schema.serializeWrite(value, writer)
-    end writeTo
+    def writeTo[A](schema: Schema[A], value: A, writer: Writer): Unit =
+        schema.serializeWrite(value, writer)
 
     /** Transform-aware serialization path.
       *
       * Serializes the original value to Structure.Value, applies transforms (drop/rename/add), then writes the transformed tree to the
       * target Writer.
       */
-    def writeWithTransforms[A](schema: Schema[A], value: A, writer: Writer)(using Frame): Unit =
+    def writeWithTransforms[A](schema: Schema[A], value: A, writer: Writer): Unit =
         val structWriter = StructureValueWriter()
-        schema.serializeWrite(value, structWriter)
+        schema.rawSerializeWrite(value, structWriter)
         val original = structWriter.getResult
 
         val transformed = original match
@@ -114,21 +112,15 @@ private[kyo] object SchemaSerializer:
       * A non-serializable Schema throws `SchemaNotSerializableException` from inside its own `serializeRead` body (the sentinel lambda
       * installed by `Schema.create`/`createFrom`/`createWithFocused`).
       */
-    def readFrom[A](schema: Schema[A], reader: Reader)(using frame: Frame): A =
-        if schema.discriminatorField.nonEmpty then
-            readWithDiscriminator(schema, reader)
-        else if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
-            readWithTransforms(schema, reader)
-        else
-            schema.serializeRead(reader)
-    end readFrom
+    def readFrom[A](schema: Schema[A], reader: Reader): A =
+        schema.serializeRead(reader)
 
     /** Transform-aware deserialization path.
       *
       * Handles renames (by reversing the rename mapping so the external field name is translated back to the original) and dropped fields
       * (by pre-populating their slots with zero values so required-field checks pass).
       */
-    def readWithTransforms[A](schema: Schema[A], reader: Reader)(using Frame): A =
+    def readWithTransforms[A](schema: Schema[A], reader: Reader): A =
         // Build reverse rename map: external name (in JSON) -> original field name
         val forwardMap = schema.renamedFields.toMap
 
@@ -164,7 +156,7 @@ private[kyo] object SchemaSerializer:
             if reverseMap.isEmpty && renamedSources.isEmpty && droppedIndices.isEmpty then reader
             else new TransformAwareReader(reader, reverseMap, renamedSources, droppedIndices)
 
-        schema.serializeRead(transformReader)
+        schema.rawSerializeRead(transformReader)
     end readWithTransforms
 
     /** Converts an arbitrary Scala value to Structure.Value for transform-aware serialization. */
@@ -209,14 +201,41 @@ private[kyo] object SchemaSerializer:
                 elements.foreach(e => writeStructureValue(writer, e))
                 writer.arrayEnd()
             case Structure.Value.MapEntries(entries) =>
-                writer.mapStart(entries.size)
-                entries.foreach { (k, v) =>
-                    writeStructureValue(writer, k)
-                    writeStructureValue(writer, v)
+                // Shape-aware MapEntries:
+                //   * all-String keys -> JSON object with each key as a field; round-trips through the universal Record shape.
+                //   * mixed/non-String keys -> array-of-pairs; non-String keys are inexpressible as JSON field names.
+                val allStringKeys = entries.forall {
+                    case (Structure.Value.Str(_), _) => true
+                    case _                           => false
                 }
-                writer.mapEnd()
+                if allStringKeys then
+                    writer.mapStart(entries.size)
+                    entries.foreach { (k, v) =>
+                        k match
+                            case Structure.Value.Str(s) =>
+                                writer.fieldBytes(s.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
+                            case _ => () // unreachable; allStringKeys is true
+                        end match
+                        writeStructureValue(writer, v)
+                    }
+                    writer.mapEnd()
+                else
+                    writer.arrayStart(entries.size)
+                    entries.foreach { (k, v) =>
+                        writer.arrayStart(2)
+                        writeStructureValue(writer, k)
+                        writeStructureValue(writer, v)
+                        writer.arrayEnd()
+                    }
+                    writer.arrayEnd()
+                end if
             case Structure.Value.VariantCase(name, v) =>
+                // Shape-aware VariantCase: single-field object whose key is the variant name. Symmetric with reading a
+                // single-field object as a Record(name, value); the universal Structure.Value tree treats VariantCase
+                // and Record(<single field>) as the same wire shape; round-trips through the shape-aware identity
+                // Schema therefore canonicalize to Record on read.
                 writer.objectStart(name, 1)
+                writer.fieldBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8), 0)
                 writeStructureValue(writer, v)
                 writer.objectEnd()
             case Structure.Value.Str(s) => writer.string(s)
@@ -231,7 +250,7 @@ private[kyo] object SchemaSerializer:
     /** Returns a zero/default value for a dropped field so required-field null checks pass during decode.
       *
       * Uses the field's declared default if available. Otherwise derives a type-appropriate zero value from the field's tag. For reference
-      * types without a known zero, returns null — this is intentional because the macro-generated decoder uses `Array[AnyRef]` with JVM
+      * types without a known zero, returns null: this is intentional because the macro-generated decoder uses `Array[AnyRef]` with JVM
       * null checks (`values(idx) == null`) to detect missing required fields.
       */
     def zeroForField(field: Field[?, ?]): AnyRef =
@@ -248,7 +267,7 @@ private[kyo] object SchemaSerializer:
             else if show == "scala.Char" then java.lang.Character.valueOf('\u0000')
             else if field.tag <:< Tag[Option[Any]] then None.asInstanceOf[AnyRef]
             else if field.tag <:< Tag[Maybe[Any]] then Maybe.empty.asInstanceOf[AnyRef]
-            else null // JVM null for unknown reference types — required by macro null-check protocol
+            else null // JVM null for unknown reference types: required by macro null-check protocol
             end if
         end zeroFromTag
         field.default.fold(zeroFromTag)(_.asInstanceOf[AnyRef])
@@ -265,14 +284,14 @@ private[kyo] object SchemaSerializer:
       *      `objectStart(1), field(variantName), objectStart(n), field(f1), value1, ..., objectEnd, objectEnd`
       *   3. For each field value read, delegate entirely to the captured sub-reader
       */
-    def readWithDiscriminator[A](schema: Schema[A], reader: Reader)(using frame: Frame): A =
+    def readWithDiscriminator[A](schema: Schema[A], reader: Reader): A =
         val discField  = schema.discriminatorField.get
-        val discReader = new DiscriminatorReader(reader, discField, frame)
+        val discReader = new DiscriminatorReader(reader, discField, reader.frame)
         // The macro-generated sealedReadBody expects wrapper format, which DiscriminatorReader provides
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, discReader)
         else
-            schema.serializeRead(discReader)
+            schema.rawSerializeRead(discReader)
         end if
     end readWithDiscriminator
 

@@ -19,8 +19,8 @@ import scala.annotation.tailrec
   * plain `http` or `https`, `host` defaults to `"localhost"`, and the decoded socket path is stored in `unixSocket`. The transport layer
   * checks `unixSocket` to decide between TCP and Unix domain socket connections.
   *
-  * Note: `scheme` is `Absent` for path-only URLs produced by `fromUri`. The `ssl` property returns true when the scheme is `"https"` or the
-  * port is 443.
+  * Note: `scheme` is `Absent` for path-only URLs produced by `fromUri`. The `ssl` property returns true for the TLS-bearing schemes
+  * (`"https"` and the secure WebSocket scheme `"wss"`), or for a path-only URL whose port is 443.
   *
   * @see
   *   [[kyo.HttpRequest]] Carries the parsed URL for each request
@@ -60,7 +60,7 @@ final case class HttpUrl(
                             case Absent     =>
                         sb.toString
                     case Absent =>
-                        val defaultPort = if s == "https" || s == "wss" then HttpUrl.DefaultHttpsPort else HttpUrl.DefaultHttpPort
+                        val defaultPort = HttpUrl.schemeDefaultPort(s)
                         val sb          = new StringBuilder(s.length + 3 + host.length + 8 + path.length + rawQuery.fold(0)(_.length + 1))
                         discard(sb.append(s).append("://").append(host))
                         if port != defaultPort then discard(sb.append(':').append(port))
@@ -77,7 +77,7 @@ final case class HttpUrl(
             case Absent     => path
 
     def ssl: Boolean = scheme match
-        case Present(s) => s.equalsIgnoreCase("https") || s.equalsIgnoreCase("wss")
+        case Present(s) => HttpUrl.isTlsScheme(s)
         case Absent     => port == HttpUrl.DefaultHttpsPort
 
     /** Returns the first value for the given query parameter name. */
@@ -112,7 +112,7 @@ final case class HttpUrl(
                         discard(sb.append(path))
                         sb.toString
                     case Absent =>
-                        val defaultPort = if s == "https" || s == "wss" then HttpUrl.DefaultHttpsPort else HttpUrl.DefaultHttpPort
+                        val defaultPort = HttpUrl.schemeDefaultPort(s)
                         val sb          = new StringBuilder(s.length + 3 + host.length + 8 + path.length)
                         discard(sb.append(s).append("://").append(host))
                         if port != defaultPort then discard(sb.append(':').append(port))
@@ -131,6 +131,14 @@ object HttpUrl:
 
     private val DefaultHttpPort  = 80
     private val DefaultHttpsPort = 443
+
+    /** True for the schemes that ride TLS: `https` and the secure WebSocket scheme `wss`. */
+    private[kyo] def isTlsScheme(scheme: String): Boolean =
+        scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("wss")
+
+    /** The default port for a scheme: 443 for the TLS schemes (`https`, `wss`), 80 otherwise (`http`, `ws`). */
+    private def schemeDefaultPort(scheme: String): Int =
+        if isTlsScheme(scheme) then DefaultHttpsPort else DefaultHttpPort
 
     /** Parse a full URL string into an HttpUrl. */
     def parse(url: String)(using Frame): Result[HttpException, HttpUrl] =
@@ -264,9 +272,7 @@ object HttpUrl:
     end splitPathQuery
 
     private inline def parseAuthority[A](authority: String, scheme: String)(inline f: (String, Int) => A): A =
-        val defaultPort =
-            if scheme == "https" || scheme == "wss" then DefaultHttpsPort
-            else DefaultHttpPort
+        val defaultPort = schemeDefaultPort(scheme)
         val hostPort =
             if authority.startsWith("[") then authority
             else

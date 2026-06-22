@@ -110,7 +110,7 @@ object Check:
       * When the isolation ends, accumulates any check failures that occurred during the isolated computation with failures from the outer
       * context. This allows building up a complete set of failed checks.
       *
-      * Important: Note that `Check.runAbort(Async.parallel(computation1, computation2))` will only short circuit once both computations
+      * Important: Note that `Check.runAbort(Async.foreach(computation1, computation2))` will only short circuit once both computations
       * finish and the isolate re-emits values to restore its state.
       */
     given isolate: Isolate[Check, Any, Check] with

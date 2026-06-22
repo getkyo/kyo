@@ -1,0 +1,140 @@
+name: setup
+description: >-
+  Provision a kyo build job: JDK + sbt (coursier), the coursier and kyo-browser
+  caches under one key namespace, and conditional Node, native libraries, and
+  rootless podman. Each conditional step is derived from os and target alone;
+  the caller passes no provisioning flags. Checkout is the caller's responsibility.
+inputs:
+  os:
+    description: 'Target os/arch identifier (e.g. linux-x64, linux-arm64).'
+    required: true
+  target:
+    description: 'Platform target: JVM, JS, Native, or Wasm.'
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6.4.0
+      if: ${{ inputs.target == 'JS' || inputs.target == 'Wasm' }}
+      with:
+        node-version: '24'
+
+    - uses: actions/cache@v5
+      env:
+        FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      with:
+        path: |
+          ~/.cache/coursier
+          ~/Library/Caches/Coursier
+          ~/AppData/Local/Coursier/Cache
+          ~/.sbt
+          ~/.ivy2/cache
+        key: deps-${{ inputs.os }}-${{ hashFiles('build.sbt', 'project/build.properties', 'project/plugins.sbt', 'project/*.scala') }}
+        restore-keys: deps-${{ inputs.os }}-
+
+    - uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cache/kyo-browser
+          ~/Library/Caches/kyo-browser
+          ~/AppData/Local/kyo-browser
+        key: kyo-browser-${{ inputs.os }}-${{ hashFiles('kyo-browser/shared/src/main/scala/kyo/Browser.scala', 'kyo-browser/shared/src/main/scala/kyo/internal/ChromeDownloader.scala') }}
+        restore-keys: kyo-browser-${{ inputs.os }}-
+
+    - name: Install native dependencies (Linux)
+      if: ${{ inputs.target == 'Native' && contains(inputs.os, 'linux') }}
+      uses: nick-fields/retry@v4
+      with:
+        max_attempts: 3
+        timeout_minutes: 5
+        retry_wait_seconds: 15
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3
+
+    # liburing is a build-time-only dependency of the kyo-net io_uring shim (kyo_uring.c), statically
+    # linked so the shipped artifact has no runtime liburing dependency. The JVM target compiles the shim
+    # via the kyo-ffi plugin's cc; the Native target links it through the Scala Native linker.
+    - name: Install liburing (Linux)
+      if: ${{ contains(inputs.os, 'linux') && (inputs.target == 'JVM' || inputs.target == 'Native') }}
+      uses: nick-fields/retry@v4
+      with:
+        max_attempts: 3
+        timeout_minutes: 5
+        retry_wait_seconds: 15
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 liburing-dev
+
+    - name: Install podman (Linux)
+      if: ${{ contains(inputs.os, 'linux') }}
+      uses: nick-fields/retry@v4
+      with:
+        max_attempts: 3
+        timeout_minutes: 5
+        retry_wait_seconds: 15
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y -o Acquire::Retries=3 podman uidmap
+
+    - name: Start podman (Linux)
+      if: ${{ contains(inputs.os, 'linux') }}
+      shell: bash
+      run: |
+        uid="$(id -u)"
+        sudo loginctl enable-linger "$uid"
+        for _ in $(seq 1 20); do
+          [ -d "/run/user/$uid" ] && break
+          sleep 1
+        done
+        if [ ! -d "/run/user/$uid" ]; then
+          echo "user runtime dir /run/user/$uid did not come up within 20s" >&2
+          exit 1
+        fi
+        export XDG_RUNTIME_DIR="/run/user/$uid"
+        mkdir -p "$XDG_RUNTIME_DIR/podman"
+        nohup podman system service --time=0 \
+          "unix://$XDG_RUNTIME_DIR/podman/podman.sock" \
+          > /tmp/podman.log 2>&1 &
+        for _ in $(seq 1 10); do
+          [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
+          sleep 1
+        done
+        if [ ! -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; then
+          echo "podman API socket did not come up within 10s" >&2
+          cat /tmp/podman.log >&2
+          exit 1
+        fi
+        echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+        podman info | grep -iE 'cgroup|rootless' || true
+        podman version
+        docker version
+
+    - uses: coursier/setup-action@v3.0.0
+      with:
+        jvm: corretto:24
+        apps: sbt
+
+    # Build and stage the vendored BoringSSL static archives (libssl.a, libcrypto.a) for the runner's
+    # os-arch, used by the kyo-net TLS data plane. build-boringssl.sh clones BoringSSL at the pinned commit
+    # and builds via CMake plus Go (pre-installed on GitHub-hosted runners; installed defensively if
+    # absent). The staged tree is gitignored, so it is produced on every JVM/Native runner; without it the
+    # kyonet_boringssl shim links a stub and the BoringSSL TLS tests cancel.
+    - name: Prepare BoringSSL
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' }}
+      shell: bash
+      run: |
+        case "${{ inputs.os }}" in
+          linux-x64)   OS_ARCH=linux-x86_64 ;;
+          linux-arm64) OS_ARCH=linux-aarch64 ;;
+          macos-arm64) OS_ARCH=darwin-aarch64 ;;
+          *) echo "BoringSSL not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+        esac
+        if [[ "${{ inputs.os }}" == linux-* ]]; then
+          command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+          command -v go >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 golang-go; }
+        else
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+          command -v go >/dev/null 2>&1 || brew install go
+        fi
+        bash kyo-net/build/boringssl/build-boringssl.sh "$OS_ARCH"

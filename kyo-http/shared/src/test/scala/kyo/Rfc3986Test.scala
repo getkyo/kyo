@@ -77,6 +77,31 @@ class Rfc3986Test extends BaseHttpTest:
         assert(url.port == 8080, s"Port should be 8080, got: ${url.port}")
     }
 
+    // ==================== WebSocket schemes (RFC 6455 §3): ws / wss ====================
+
+    "RFC 6455 - ws default port is 80 and not TLS" in {
+        val url = HttpUrl.parse("ws://host/path").getOrThrow
+        assert(url.port == 80, s"ws default port should be 80, got: ${url.port}")
+        assert(!url.ssl, "ssl should be false for ws")
+    }
+
+    "RFC 6455 - wss default port is 443 over TLS" in {
+        val url = HttpUrl.parse("wss://host/path").getOrThrow
+        assert(url.port == 443, s"wss default port should be 443, got: ${url.port}")
+        assert(url.ssl, "ssl should be true for wss")
+    }
+
+    "RFC 6455 - wss explicit non-default port preserved and still TLS" in {
+        val url = HttpUrl.parse("wss://host:8443/path").getOrThrow
+        assert(url.port == 8443, s"explicit port should be preserved, got: ${url.port}")
+        assert(url.ssl, "ssl should be true for wss regardless of port")
+    }
+
+    "RFC 6455 - wss default port round-trips without an explicit port" in {
+        val url = HttpUrl.parse("wss://host/path").getOrThrow
+        assert(url.full == "wss://host/path", s"full should omit the default 443, got: ${url.full}")
+    }
+
     // ==================== Section 3.2.2: IPv6 ====================
 
     "Section 3.2.2 - IPv6 loopback address" in {

@@ -134,7 +134,7 @@ object StreamCoreExtensions:
                     for
                         _ <- Fiber.initUnscoped(Abort.run {
                             Async.foreachDiscard(streams)(
-                                _.foreachChunk(c => Abort.run[Closed](channel.put(Present(c))))
+                                _.foreachChunk(c => channel.put(Present(c)))
                             )
                         }.andThen(Abort.run(channel.put(Absent)).unit))
                         _ <- emitMaybeChunksFromChannel(channel)
@@ -251,7 +251,7 @@ object StreamCoreExtensions:
                         _ <- Fiber.initUnscoped(Abort.run(
                             Async
                                 .foreachDiscard(streams)(
-                                    _.foreachChunk(c => Abort.run(channel.put(Present(c))))
+                                    _.foreachChunk(c => channel.put(Present(c)))
                                         .andThen(Abort.run(channel.put(Absent)))
                                 )
                         ))

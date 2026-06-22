@@ -239,9 +239,8 @@ private[kyo] object MutationSettlement:
                     tab.session,
                     EvalParams(js, returnByValue = true, awaitPromise = true, contextId = ctxOpt)
                 )
-                    .map(BrowserEval.translateContextDestroyed)
-                    .map { resultJson =>
-                        CdpEvalDecoder.parseAndExtractEvalValue(resultJson).map { value =>
+                    .map { env =>
+                        CdpEvalDecoder.extractValueOrFail(env).map { value =>
                             parseSettlementValue(value) match
                                 case SettlementResult.Done => ()
                                 case SettlementResult.Timeout(count, delta) =>
