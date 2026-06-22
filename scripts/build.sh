@@ -38,7 +38,7 @@ fi
 # runners are 4 vCPU / 16 GB on both linux-x64 and linux-arm64. One place.
 CI_MEMORY="16g"
 CI_CPUS="4"
-CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
+CI_DRIVER_OPTS="-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8"
 CONTAINER_IMAGE="${KYO_BUILD_IMAGE:-ubuntu:noble}"
 
 ENV_KIND="direct"
@@ -185,7 +185,7 @@ if ! command -v cs >/dev/null 2>&1; then
     curl -fsSL "https://github.com/coursier/coursier/releases/latest/download/cs-\$cs_arch.gz" \
         | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
 fi
-eval "\$(cs java --jvm corretto:24 --env)"
+eval "\$(cs java --jvm corretto:25 --env)"
 command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
 export PATH="/root/.local/share/coursier/bin:\$PATH"
 PROVISION
