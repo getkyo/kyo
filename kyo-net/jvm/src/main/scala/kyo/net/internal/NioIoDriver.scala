@@ -109,11 +109,22 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         // Unsafe: Fiber.Unsafe.init spawns the NIO event-loop carrier without re-entering the effect system.
         // The @tailrec poll loop is plain Scala (closedFlag.get() and pollOnce() are both synchronous);
         // no < Async computation is inside the thunk, so Fiber.Unsafe.init is correct here.
-        val fiber = Fiber.Unsafe.init {
-            @tailrec def loop(): Unit =
-                if !closedFlag.get() && pollOnce() then loop()
-            loop()
-        }
+        // When this driver belongs to the process-shared default transport, run the carrier through a named loop the kyo-test leak check
+        // allowlists (the singleton is never closed by design, so its idle carrier is expected infra); an owned transport keeps the plain
+        // loop so a leaked owned transport still trips the check. See kyo.net.internal.ProcessSharedTransport.
+        val fiber =
+            if ProcessSharedTransport.isBuilding then
+                Fiber.Unsafe.init {
+                    @tailrec def processSharedTransportNioLoop(): Unit =
+                        if !closedFlag.get() && pollOnce() then processSharedTransportNioLoop()
+                    processSharedTransportNioLoop()
+                }
+            else
+                Fiber.Unsafe.init {
+                    @tailrec def loop(): Unit =
+                        if !closedFlag.get() && pollOnce() then loop()
+                    loop()
+                }
 
         fiber.onComplete { result =>
             result match

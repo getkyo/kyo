@@ -27,13 +27,14 @@ private[runner] object LeakCheck:
     /** Built-in allowlist patterns applied by [[detect]] in addition to each suite's `RunConfig.leakCheckAllowlist`, for process-lifetime infra
       * that legitimately outlives every test in the fork.
       *
-      * `NioIoDriver` is allowlisted pending the network stack rewrite. kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`)
-      * is a lazy singleton whose `NioIoDriver` runs a selector event loop on a scheduler fiber for the JVM's lifetime, and nothing ever closes
-      * the shared transport, so the fiber is parked in `select()` at every http-using module's end-of-run check. It is intentional infra, not a
-      * leak; excusing it here covers every http-touching test module in one place. The entry is removed once the network stack gives the driver
-      * a proper lifecycle (or moves its loop off the scheduler).
+      * `processSharedTransport` matches the I/O carrier of kyo-net's process-shared default transport (`kyo.net.NetPlatform.transport`): a lazy
+      * singleton shared across every client and server in the process and never closed by design. Its carrier blocks head-of-line in the OS poll
+      * call for the JVM's lifetime, so it is a busy scheduler fiber at every net/http-using module's end-of-run check, intentional infra, not a
+      * leak. The kyo-net drivers route ONLY this singleton's carrier through a `processSharedTransport*` frame (see
+      * `kyo.net.internal.ProcessSharedTransport`); an owned, per-config transport keeps its plain `pollLoop`/`reapLoop` frame, so a genuinely
+      * leaked owned transport is still reported rather than masked by a broad driver-name match.
       */
-    val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver")
+    val defaultAllowlist: Chunk[String] = Chunk("processSharedTransport")
 
     /** The set of open file descriptors, each as its `/proc/self/fd` symlink target (`socket:[inode]`, `pipe:[inode]`, a file path, a `.jar`,
       * ...). `Absent` on a platform without `/proc/self/fd` (macOS, Windows), where the descriptor probe is a no-op. The descriptor that the

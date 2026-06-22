@@ -980,8 +980,16 @@ final private[net] class IoUringDriver private[posix] (
         // Mark BEFORE spawning the carrier: a close() racing start observes started=true and defers teardown to the reap loop, which (once
         // spawned) sees closedFlag set, runs zero iterations, and tears the ring down itself. started.set happens-before the spawn.
         started.set(true)
-        Fiber.Unsafe.init { reapLoop() }
+        // When this driver belongs to the process-shared default transport, spawn the carrier through a named wrapper the kyo-test leak check
+        // allowlists (the singleton is never closed by design); an owned transport keeps the plain reapLoop frame so a real leak still trips.
+        if kyo.net.internal.ProcessSharedTransport.isBuilding then Fiber.Unsafe.init { processSharedTransportReapLoop() }
+        else Fiber.Unsafe.init { reapLoop() }
     end start
+
+    /** Carrier wrapper used only when this driver belongs to the process-shared default transport ([[kyo.net.NetPlatform.transport]]), so the
+      * leak check can allowlist exactly that by-design process-lifetime carrier. Owned transports spawn [[reapLoop]] directly.
+      */
+    private def processSharedTransportReapLoop()(using AllowUnsafe, Frame): Unit = reapLoop()
 
     private val ReapTimeoutNs =
         100_000_000L // 100ms bounded fallback (only used when the wake eventfd is unavailable); otherwise the wait is indefinite

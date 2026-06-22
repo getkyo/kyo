@@ -232,8 +232,18 @@ final private[net] class PollerIoDriver private[posix] (
         // out the bounded park. Best-effort: if it fails to arm, the driver still drains every cycle via the bounded park, only losing the
         // prompt-wake latency improvement. Armed before the loop starts so the very first submitted change can wake it.
         wakeArmed.set(backend.registerWake(pollerFd, pollScratch))
-        Fiber.Unsafe.init { pollLoop() }
+        // When this driver belongs to the process-shared default transport, spawn the carrier through a named wrapper the kyo-test leak check
+        // allowlists: that singleton is never closed by design, so its idle head-of-line-blocked carrier is expected infra, not a leak. An owned
+        // transport keeps the plain pollLoop frame, so a leaked owned transport still trips the check. The flag is read here on the construction
+        // thread, before the spawn; the body then runs on a worker carrying the chosen frame.
+        if kyo.net.internal.ProcessSharedTransport.isBuilding then Fiber.Unsafe.init { processSharedTransportPollLoop() }
+        else Fiber.Unsafe.init { pollLoop() }
     end start
+
+    /** Carrier wrapper used only when this driver belongs to the process-shared default transport ([[kyo.net.NetPlatform.transport]]), so the
+      * leak check can allowlist exactly that by-design process-lifetime carrier. Owned transports spawn [[pollLoop]] directly.
+      */
+    private def processSharedTransportPollLoop()(using AllowUnsafe, Frame): Unit = pollLoop()
 
     /** Free the per-driver poll scratch exactly once. Called by the poll loop carrier at its terminal exit (the loop ran and its last poll has
       * completed, so the buffer is provably not in use) and by close()'s never-started path (the loop never ran). The CAS makes it idempotent

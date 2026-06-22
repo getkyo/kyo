@@ -14,7 +14,9 @@ private[kyo] trait NetPlatformTransportBase:
         // Unsafe: module-level transport initialization runs outside any effect, so there is no AllowUnsafe in scope to thread through.
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        IoBackendPlatform.transport(TransportConfig.default)
+        // Mark this construction so each driver's carrier is spawned through the named, leak-check-allowlisted frame: this singleton is the
+        // process-lifetime default transport that is never closed by design (see ProcessSharedTransport).
+        ProcessSharedTransport.whileBuilding(IoBackendPlatform.transport(TransportConfig.default))
     end transport
 
     /** Build a fresh transport with a custom config (the platform-default backend, honoring `-Dkyo.net.backend`). Caller owns its lifecycle. */
