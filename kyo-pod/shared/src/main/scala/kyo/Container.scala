@@ -444,21 +444,27 @@ object Container:
     def init(config: Config)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         init(config, Retry.defaultSchedule)
 
-    /** As `init(config)`, but retries `imageEnsure` + `create` on the given schedule.
+    /** As `init(config)`, but retries the image-vanished race on the given schedule.
       *
       * @param retrySchedule
-      *   covers the image-vanished race noted on `init` (a concurrent operation removing the image
-      *   between `imageEnsure` and `create`, which the HTTP backend surfaces as a 404 / ImageMissing)
-      *   and transient daemon/registry hiccups during init.
+      *   covers the image-vanished race noted on `init`: a concurrent operation removing the image after
+      *   `imageEnsure` and before `create`, which the HTTP backend surfaces as a 404 /
+      *   `ContainerImageMissingException`. A permanently absent image fails fast (the up-front `imageEnsure`
+      *   is not retried), as do `create` conflicts and other errors.
       */
     def init(config: Config, retrySchedule: Schedule)(using Frame): Container < (Async & Abort[ContainerException] & Scope) =
         currentBackend.map { b =>
-            // imageEnsure leaves the image present, but under concurrent suites another operation can
-            // remove it in the window before `create` runs (the HTTP backend's create then returns 404 /
-            // ImageMissing, since unlike `docker run` it does not auto-pull). Retry ensure+create so the
-            // image is re-pulled, which also rides out transient daemon/registry hiccups during init.
-            Retry[ContainerException](retrySchedule) {
-                b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
+            // Ensure the image up front. A permanently absent image (or auth/registry error) fails here,
+            // fast: retrying a genuinely absent image never helps. Only the transient post-ensure race is
+            // retried below.
+            b.imageEnsure(config.image, Absent, Absent).andThen {
+                // The image was present, but under concurrent suites another operation can remove it before
+                // `create` runs (the HTTP backend's create then returns 404 / ImageMissing, since unlike
+                // `docker run` it does not auto-pull). Retry re-ensures (re-pulling the vanished image) then
+                // re-creates; scoped to ImageMissing so create conflicts and other errors propagate at once.
+                Retry[ContainerImageMissingException](retrySchedule) {
+                    b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
+                }
             }.map { cid =>
                 // Register cleanup IMMEDIATELY after create, before start
                 Scope.ensure {
@@ -543,15 +549,18 @@ object Container:
     def initUnscoped(config: Config)(using Frame): Container < (Async & Abort[ContainerException]) =
         initUnscoped(config, Retry.defaultSchedule)
 
-    /** As `initUnscoped(config)`, but retries `imageEnsure` + `create` on the given schedule (see `init`). */
+    /** As `initUnscoped(config)`, but retries the image-vanished race on the given schedule (see `init`). */
     def initUnscoped(config: Config, retrySchedule: Schedule)(using Frame): Container < (Async & Abort[ContainerException]) =
         currentBackend.map { b =>
             AtomicRef.init(ContainerHealthState(Absent)).map { healthRef =>
                 AtomicRef.init(Absent: Maybe[Fiber[ExitCode, Abort[ContainerException]]]).map { pendingRef =>
-                    // Same image-vanished race as `init`: retry ensure+create so a concurrently-removed
-                    // image is re-pulled.
-                    Retry[ContainerException](retrySchedule) {
-                        b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
+                    // Ensure the image up front so a permanently absent image fails fast (no retry). Then
+                    // retry the create-side image-vanished race (see `init`), re-pulling on each attempt;
+                    // scoped to ImageMissing so create conflicts and other errors propagate at once.
+                    b.imageEnsure(config.image, Absent, Absent).andThen {
+                        Retry[ContainerImageMissingException](retrySchedule) {
+                            b.imageEnsure(config.image, Absent, Absent).andThen(b.create(config))
+                        }
                     }.map { cid =>
                         val container = new Container(cid, config, b, healthRef, pendingRef)
                         Abort.run[ContainerException] {
