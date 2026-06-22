@@ -37,11 +37,18 @@ case class TypeMismatchException(path: Seq[String], expected: String, actual: St
     ) + s": expected $expected but got $actual. Check the input value matches the expected type.")
     with DecodeException with NavigationException derives CanEqual
 
-/** Thrown when a discriminator value names a variant that is not defined in the sealed type. */
+/** Thrown when a variant name is not defined in the sealed type.
+  *
+  * Raised at decode time when the discriminator value does not match any known variant, and at config time when a
+  * `variantNames` or `variantAlias` call references an unknown Scala variant name.
+  */
 case class UnknownVariantException(path: Seq[String], variantName: String)(using Frame)
-    extends SchemaException(s"Unknown variant '$variantName'" + SchemaException.pathSuffix(
-        path
-    ) + ". Check that the discriminator value matches one of the defined case class or object variants.")
+    extends SchemaException(
+        s"Unknown variant '$variantName'" + SchemaException.pathSuffix(path) + (
+            if path.isEmpty then ". Check that the Scala variant name is one of the defined case class or object variants."
+            else ". Check that the discriminator value matches one of the defined case class or object variants."
+        )
+    )
     with DecodeException derives CanEqual
 
 /** Thrown when raw input cannot be parsed into the target type.
@@ -98,6 +105,20 @@ case class ValidationFailedException(path: Seq[String], message: String)(using F
 /** Thrown when a schema transform operation (drop, rename, map) cannot complete. */
 case class TransformFailedException(detail: String)(using Frame)
     extends SchemaException(s"Transform failed: $detail")
+    with TransformException derives CanEqual
+
+/** Thrown when two variants (or a variant and an alias) map to the same wire discriminator value. */
+case class VariantNameCollisionException(wireName: String, variants: Chunk[String])(using Frame)
+    extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${variants.size} variants: ${variants.mkString(", ")}. Give each variant a distinct wire name."
+    )
+    with TransformException derives CanEqual
+
+/** Thrown when two fields (or a field and an alias) map to the same wire name. */
+case class FieldNameCollisionException(wireName: String, fields: Chunk[String])(using Frame)
+    extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${fields.size} fields: ${fields.mkString(", ")}. Give each field a distinct wire name."
+    )
     with TransformException derives CanEqual
 
 // --- Navigation ---

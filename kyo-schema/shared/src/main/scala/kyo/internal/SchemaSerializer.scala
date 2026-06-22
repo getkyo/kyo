@@ -65,7 +65,8 @@ private[kyo] object SchemaSerializer:
                 }
 
                 val allFields = transformedFields ++ renamedFieldValues ++ computedFieldValues
-                Structure.Value.Record(allFields)
+                given Frame   = Frame.internal
+                Structure.Value.Record(applyFieldConvention(schema, resolvedRenames.values.toSet, allFields))
 
             case other =>
                 other
@@ -73,7 +74,7 @@ private[kyo] object SchemaSerializer:
         // Apply discriminator flattening if configured
         val output = schema.discriminatorField match
             case Maybe.Present(discField) =>
-                flattenWithDiscriminator(transformed, discField)
+                flattenWithDiscriminator(transformed, discField, resolveVariantWire(schema))
             case _ =>
                 transformed
 
@@ -87,25 +88,81 @@ private[kyo] object SchemaSerializer:
       *
       * For case objects (variant value is an empty Record), produces: `Record([("type", Str("Active"))])`
       */
-    private def flattenWithDiscriminator(value: Structure.Value, discField: String): Structure.Value =
+    private def flattenWithDiscriminator(
+        value: Structure.Value,
+        discField: String,
+        resolveWire: String => String
+    ): Structure.Value =
         value match
             // Wrapper format: single-field Record where field name is variant name
             case Structure.Value.Record(fields) if fields.size == 1 =>
                 val (variantName, innerValue) = fields.head
+                val wireName                  = resolveWire(variantName)
                 innerValue match
                     case Structure.Value.Record(innerFields) =>
                         // Flatten: discriminator field + variant's fields at same level
-                        val discEntry = (discField, Structure.Value.Str(variantName))
+                        val discEntry = (discField, Structure.Value.Str(wireName))
                         Structure.Value.Record(Chunk(discEntry) ++ innerFields)
                     case _ =>
                         // Non-record variant (shouldn't happen normally, but handle gracefully)
-                        val discEntry = (discField, Structure.Value.Str(variantName))
+                        val discEntry = (discField, Structure.Value.Str(wireName))
                         Structure.Value.Record(Chunk(discEntry))
                 end match
             case other =>
                 // Not a wrapper format, pass through unchanged
                 other
     end flattenWithDiscriminator
+
+    /** Builds the variant forward resolver: explicit pair wins, then the renameAll
+      * convention, else the raw Scala name. Collision among convention-derived names is
+      * checked here, at the first serialize where the full derived name set is known.
+      */
+    private def resolveVariantWire[A](schema: Schema[A]): String => String =
+        given Frame       = Frame.internal
+        val naming        = schema.variantNaming
+        val explicitPairs = naming.variantPairs.toMap
+        val conventionFn  = naming.variantCase.map(nc => NameCaseConversion.convert(nc))
+        if conventionFn.nonEmpty then
+            val variantNames = Schema.variantScalaNames(schema.structure)
+            val derived      = variantNames.map(n => n -> explicitPairs.getOrElse(n, conventionFn.get(n)))
+            val byWire       = derived.groupBy(_._2)
+            byWire.foreach { (wire, group) =>
+                val sources = group.map(_._1).distinct
+                if sources.size > 1 then throw VariantNameCollisionException(wire, Chunk.from(sources.toSeq.sorted))
+            }
+        end if
+        (scalaName: String) =>
+            explicitPairs.get(scalaName)
+                .orElse(conventionFn.fold(None: Option[String])(fn => Some(fn(scalaName))))
+                .getOrElse(scalaName)
+    end resolveVariantWire
+
+    /** Rewrites field-name keys by the renameAll-fields convention. A field already moved
+      * by an explicit `rename` (its target name is in `renamedTargetNames`) keeps its
+      * renamed key; only un-renamed source fields are convention-mapped. Collision among
+      * convention-derived keys raises `FieldNameCollisionException` (first-serialize).
+      */
+    private def applyFieldConvention[A](
+        schema: Schema[A],
+        renamedTargetNames: Set[String],
+        fields: Chunk[(String, Structure.Value)]
+    )(using Frame): Chunk[(String, Structure.Value)] =
+        schema.variantNaming.fieldCase match
+            case Maybe.Present(nc) =>
+                val fn = NameCaseConversion.convert(nc)
+                val mapped = fields.map { (name, v) =>
+                    if renamedTargetNames.contains(name) then (name, name, v)
+                    else (fn(name), name, v)
+                }
+                val byWire = mapped.groupBy(_._1)
+                byWire.foreach { (wire, group) =>
+                    if group.size > 1 then
+                        throw FieldNameCollisionException(wire, Chunk.from(group.map(_._2).distinct.sorted))
+                }
+                mapped.map((wire, _, v) => (wire, v))
+            case _ =>
+                fields
+    end applyFieldConvention
 
     /** Reads a value from a Reader, dispatching to direct or transform-aware path.
       *
@@ -129,14 +186,20 @@ private[kyo] object SchemaSerializer:
                 case Some(next) => resolveTarget(next)
                 case None       => name
 
-        // reverseMap: final external name -> original source field name (for renamed fields only)
-        val reverseMap: Map[String, String] =
+        // renameReverse: final external name -> original source field name (for renamed fields only)
+        val renameReverse: Map[String, String] =
             if schema.renamedFields.isEmpty then Map.empty
             else
                 schema.sourceFields.flatMap { sf =>
                     if forwardMap.contains(sf.name) then Some(resolveTarget(sf.name) -> sf.name)
                     else None
                 }.toMap
+
+        // Merge field-convention + field-alias reverse entries from the SEPARATE naming
+        // slot, AFTER the rename-derived entries (rename wins). The convention maps each
+        // un-renamed source field's wire name back to the source; aliases map each alias
+        // back to the source whose effective wire name is the alias target.
+        val reverseMap: Map[String, String] = renameReverse ++ fieldNamingReverse(schema, renameReverse)
 
         // renamedSources: original field names that have been renamed away (no longer valid in JSON)
         val renamedSources: Set[String] =
@@ -158,6 +221,33 @@ private[kyo] object SchemaSerializer:
 
         schema.rawSerializeRead(transformReader)
     end readWithTransforms
+
+    /** Builds the field-naming reverse entries (convention + aliases) keyed wire -> source
+      * field name, from the SEPARATE variantNaming slot. A source field already covered by
+      * a rename (present as a value in `renameReverse`) is left to the rename mapping.
+      */
+    private def fieldNamingReverse[A](schema: Schema[A], renameReverse: Map[String, String]): Map[String, String] =
+        val naming         = schema.variantNaming
+        val renamedTargets = renameReverse.values.toSet
+        val conventionMap = naming.fieldCase match
+            case Maybe.Present(nc) =>
+                val fn = NameCaseConversion.convert(nc)
+                schema.sourceFields.iterator
+                    .map(_.name)
+                    .filterNot(renamedTargets.contains)
+                    .map(src => fn(src) -> src)
+                    .toMap
+            case _ => Map.empty
+        // alias target -> effective source: resolve each alias's primary wire to a source.
+        // renameReverse maps final wire name -> original source name for renamed fields; include
+        // those so an alias registered against a rename target (e.g. alias("given","g") after
+        // rename("firstName","given")) resolves on decode.
+        val wireToSource = conventionMap ++ renameReverse ++ schema.sourceFields.map(sf => sf.name -> sf.name)
+        val aliasMap = naming.fieldAliases.flatMap { (alias, primaryWire) =>
+            wireToSource.get(primaryWire).map(src => alias -> src)
+        }.toMap
+        aliasMap ++ conventionMap
+    end fieldNamingReverse
 
     /** Converts an arbitrary Scala value to Structure.Value for transform-aware serialization. */
     def anyToStructureValue(value: Any): Structure.Value =
@@ -286,7 +376,7 @@ private[kyo] object SchemaSerializer:
       */
     def readWithDiscriminator[A](schema: Schema[A], reader: Reader): A =
         val discField  = schema.discriminatorField.get
-        val discReader = new DiscriminatorReader(reader, discField, reader.frame)
+        val discReader = new DiscriminatorReader(reader, discField, reader.frame, variantReverse(schema))
         // The macro-generated sealedReadBody expects wrapper format, which DiscriminatorReader provides
         if schema.renamedFields.nonEmpty || schema.droppedFields.nonEmpty then
             readWithTransforms(schema, discReader)
@@ -294,6 +384,22 @@ private[kyo] object SchemaSerializer:
             schema.rawSerializeRead(discReader)
         end if
     end readWithDiscriminator
+
+    /** Builds the variant reverse-map (wire primary or alias -> Scala variant name). An
+      * unresolved wire string maps to itself, so it matches no variant and reaches
+      * `UnknownVariantException`.
+      */
+    private def variantReverse[A](schema: Schema[A]): String => String =
+        given Frame        = Frame.internal
+        val resolveWire    = resolveVariantWire(schema)
+        val variantNames   = Schema.variantScalaNames(schema.structure)
+        val wireToScala    = variantNames.map(n => resolveWire(n) -> n).toMap
+        val aliasToPrimary = schema.variantNaming.variantAliases.toMap
+        (wire: String) =>
+            wireToScala.get(wire)
+                .orElse(aliasToPrimary.get(wire).flatMap(wireToScala.get))
+                .getOrElse(wire)
+    end variantReverse
 
     /** A [[Reader]] wrapper that transforms flat discriminator format back to wrapper format for sealed trait deserialization.
       *
@@ -313,7 +419,8 @@ private[kyo] object SchemaSerializer:
     final class DiscriminatorReader(
         inner: Reader,
         discField: String,
-        _frame: Frame
+        _frame: Frame,
+        resolveVariant: String => String
     ) extends Reader:
 
         def frame: Frame = _frame
@@ -414,7 +521,7 @@ private[kyo] object SchemaSerializer:
                 phase match
                     case 1 =>
                         phase = 2
-                        variantName.get
+                        resolveVariant(variantName.get)
                     case 3 =>
                         val arr = bufferedFields.get
                         if fieldIdx < arr.length then

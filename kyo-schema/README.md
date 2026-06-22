@@ -145,6 +145,30 @@ Json.encode[Shape](Rectangle(3.0, 4.0))
 // {"type":"Rectangle","width":3.0,"height":4.0}
 ```
 
+To map the wire discriminator value to a custom name, chain `variantNames` (explicit pairs) or `renameAllVariants` (a case convention). To rename every field by convention, use `renameAllFields`. Decode-only aliases accept alternate wire names on decode:
+
+```scala
+sealed trait Node
+case class DList(headRef: String)  extends Node
+case class Paragraph(text: String) extends Node
+
+given Schema[Node] =
+    Schema[Node].discriminator("kind")
+        .renameAllVariants(Schema.NameCase.SnakeCase)
+        .renameAllFields(Schema.NameCase.SnakeCase)
+        .variantAlias("d_list", "dlist")
+
+Json.encode[Node](DList("h1"))
+// {"kind":"d_list","head_ref":"h1"}
+
+Json.decode[Node]("""{"kind":"dlist","head_ref":"h1"}""")
+// Result.Success(DList("h1"))
+```
+
+The case engine is acronym-aware: an uppercase run is one word. `DList` tokenizes as `D` + `List`, giving `d_list` under `SnakeCase`. The `Paragraph` variant needs no explicit mapping; `renameAllVariants(SnakeCase)` gives `paragraph`. The `variantAlias` call registers `dlist` as a decode-only alias for the variant whose primary wire name is `d_list`. A typo'd Scala variant name passed to `variantNames` raises `UnknownVariantException` at config time.
+
+Variant naming applies only under `.discriminator(...)`. Without a discriminator the configuration has no effect and the default wrapper-object format is used.
+
 Missing fields with default values are filled in automatically, which is useful for configuration types and backward-compatible evolution:
 
 ```scala
@@ -1277,7 +1301,9 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 |-----------|-------------|
 | `MissingFieldException` | a required field is absent on decode |
 | `TypeMismatchException` | a runtime value is the wrong shape for the schema |
-| `UnknownVariantException` | a sum-type discriminator names an undefined variant |
+| `UnknownVariantException` | a sum-type discriminator names an undefined variant, or a `variantNames`/`variantAlias` call references an unknown Scala variant name |
+| `VariantNameCollisionException` | two variants (or a variant and an alias) map to the same wire discriminator value |
+| `FieldNameCollisionException` | two fields (or a field and an alias) map to the same wire name |
 | `ParseException` | raw input cannot be parsed by the codec |
 | `TruncatedInputException` | the input stream ends before decoding completes |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
