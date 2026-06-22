@@ -102,46 +102,6 @@ private[kyo] object TestClasspaths:
     /** A broader combo that adds kyo-core to the standard set, enabling ContextFunctionN coverage. */
     lazy val standardWithKyoCore: Seq[String] = standard ++ kyoCore
 
-    // Coordinates the single, narrowed force of the process-wide `Tasty.global` singleton.
-    private val globalForceLock        = new AnyRef
-    @volatile private var globalForced = false
-
-    /** Force `Tasty.global` exactly once, under a `java.class.path` narrowed to the scala-library jar.
-      *
-      * `Tasty.global` is a lazy val that cold-loads the entire `java.class.path` on first access
-      * (`PlatformFallback.initFallback`). In the forked test JVM that property is the full transitive test
-      * classpath (every kyo module, scala3, zio, cats-effect, Spark, Play, ...); decoding all of it eagerly
-      * exhausts the test heap. The forcing leaf then OOMs, `initFallback` swallows the error and caches
-      * `Binding.empty`, and every later non-empty assertion against the JVM fallback reads 0 symbols (or the
-      * leaf goes STUCK and times out). Because the lazy val is forced at most once per process, the FIRST
-      * access fixes the binding for the whole run.
-      *
-      * Every JVM test that reads `Tasty.global`, directly or through the fallback path of `Tasty.classpath` /
-      * a `Tasty.*` query evaluated outside a `withClasspath` scope, MUST call this first so the one real force
-      * happens under the narrowed classpath. Idempotent and thread-safe.
-      */
-    def forceGlobalNarrowed(): Unit =
-        if !globalForced then
-            globalForceLock.synchronized {
-                if !globalForced then
-                    // Resolve the narrow root and pre-load every classpath fixture from the FULL property
-                    // before narrowing, so a concurrent suite computing a `TestClasspaths` root cannot observe
-                    // the narrowed value during the force window.
-                    val narrowed = scala3LibraryJar
-                    discard(all)
-                    discard(standardWithKyoCore)
-                    val saved = java.lang.System.getProperty("java.class.path")
-                    discard(java.lang.System.setProperty("java.class.path", narrowed))
-                    try discard(Tasty.global)
-                    finally
-                        if saved == null then discard(java.lang.System.clearProperty("java.class.path"))
-                        else discard(java.lang.System.setProperty("java.class.path", saved))
-                    end try
-                    globalForced = true
-                end if
-            }
-    end forceGlobalNarrowed
-
     /** Run `f` in a fresh classpath scope loaded from `roots` using `ErrorMode.SoftFail`.
       *
       * Delegates to `Tasty.withClasspath`, which handles `Scope.run` internally. Call inside a `run {. }` test

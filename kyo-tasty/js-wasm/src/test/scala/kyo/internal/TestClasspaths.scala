@@ -15,12 +15,6 @@ private[kyo] object TestClasspaths:
     /** On JS the `roots` parameter is ignored; embedded fixtures are always loaded. */
     val kyoTastyFixtures: Seq[String] = Seq.empty
 
-    /** No-op on JS/Wasm: `Tasty.global` is `Binding.empty` here (no classpath load), so forcing it is cheap and
-      * needs no narrowing. Present for source compatibility with the shared tests that call it; the JVM impl
-      * narrows `java.class.path` before the one real force. See the JVM `TestClasspaths.forceGlobalNarrowed`.
-      */
-    def forceGlobalNarrowed(): Unit = ()
-
     def withClasspath[A, S](roots: Seq[String] = Seq.empty)(f: => A < S)(using Frame): A < (Async & Abort[TastyError] & S) =
         Abort.recover[FileException] { e => Abort.fail(TastyError.SnapshotIoError(e.getMessage)) } {
             Path.tempDir("kyo-test-fixtures").map { dir =>
