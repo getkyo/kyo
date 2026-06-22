@@ -68,7 +68,15 @@ object ZIOs:
                         case Result.Failure(e) => cb(Exit.fail(e))
                         case Result.Panic(e)   => cb(Exit.die(e))
                     }
-                    Left(ZIO.succeed(fiber.unsafe.interrupt()))
+                    // Honor ZIO's interrupt-and-await contract: interrupt the kyo fiber and suspend until
+                    // it has actually completed, so the ZIO fiber is not reported interrupted before the
+                    // bridged kyo computation (and its finalizers) have stopped. A bare
+                    // `fiber.unsafe.interrupt()` only signals, which lets the kyo computation outlive the
+                    // interrupt and leak a busy worker.
+                    Left(ZIO.async[Any, Nothing, Unit] { k =>
+                        fiber.unsafe.onComplete(_ => k(ZIO.unit))
+                        discard(fiber.unsafe.interrupt())
+                    })
                 }
             }.handle(Sync.Unsafe.evalOrThrow)
         }

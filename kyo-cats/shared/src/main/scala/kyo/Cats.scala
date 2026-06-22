@@ -51,7 +51,15 @@ object Cats:
                 CatsIO.async[A] { cb =>
                     CatsIO {
                         fiber.unsafe.onComplete(r => cb(r.map(_.eval).toEither))
-                        Some(CatsIO(fiber.unsafe.interrupt()).void)
+                        // Honor cats-effect's cancel-and-await semantics: interrupt the kyo fiber and
+                        // suspend until it has actually completed, so cancellation does not return before
+                        // the bridged kyo computation (and its finalizers) have stopped. A bare
+                        // `fiber.unsafe.interrupt()` only signals, letting the kyo computation outlive the
+                        // cancel and leak a busy worker.
+                        Some(CatsIO.async_[Unit] { k =>
+                            fiber.unsafe.onComplete(_ => k(Right(())))
+                            discard(fiber.unsafe.interrupt())
+                        })
                     }
                 }
             }.handle(Sync.Unsafe.evalOrThrow)
