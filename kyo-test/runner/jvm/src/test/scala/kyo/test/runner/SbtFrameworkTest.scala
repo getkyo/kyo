@@ -212,6 +212,9 @@ class SbtFrameworkTest extends AnyFunSuite with NonImplicitAssertions:
                     val generation = callCount.getAndIncrement()
                     val content    = if generation == 0 then firstBogus + "\n" else secondBogus + "\n"
                     val bytes      = makeBytes(content)
+                    // The 5-arg URL constructor is deprecated, but it is the only way to attach a custom
+                    // URLStreamHandler (URI has no equivalent).
+                    @scala.annotation.nowarn("cat=deprecation")
                     val url = new URL(
                         "jar",
                         null,

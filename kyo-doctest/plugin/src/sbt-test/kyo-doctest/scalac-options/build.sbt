@@ -11,7 +11,7 @@ lazy val root = (project in file("."))
         name := "scalac-options-test",
         doctestSources := Seq(baseDirectory.value / "README.md"),
         // -Werror promotes warnings to errors; -Wunused:imports flags the unused import.
-        doctestScalacOptions := Seq("-release", "17", "-Werror", "-Wunused:imports")
+        doctestScalacOptions := Seq("-release", "25", "-Werror", "-Wunused:imports")
     )
 
 // Runner classpath injected by the plugin's scriptedDependencies (no ivy resolution).

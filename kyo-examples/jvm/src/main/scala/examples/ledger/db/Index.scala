@@ -34,6 +34,9 @@ object Index:
         Sync.defer(Live(file)).now
     }
 
+    // This example intentionally demonstrates sun.misc.Unsafe-backed off-heap access; those methods are
+    // deprecated for removal in recent JDKs. Kept as-is for the low-level illustration.
+    @scala.annotation.nowarn("cat=deprecation")
     final class Live(file: FileChannel) extends Index:
         private val descSize           = 10
         private val transactionSize    = 32

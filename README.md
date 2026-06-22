@@ -252,7 +252,7 @@ One source tree, one Scala 3 LTS compiler, four published targets:
 
 | Platform     | Runtime              | Coordinate |
 | ------------ | -------------------- | ---------- |
-| JVM          | JDK 21+              | `%%`       |
+| JVM          | JDK 25+              | `%%`       |
 | Scala.js     | Node.js, browsers    | `%%%`      |
 | Scala Native | Native binary (LLVM) | `%%`       |
 | WebAssembly  | Node.js 24+          | `%%%`      |

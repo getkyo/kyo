@@ -58,13 +58,13 @@ lazy val myLib = project
 
 The default first looks for `README.md` in the project base directory, then falls back one directory up (so a cross-project JVM sub-directory such as `kyo-data/jvm/` resolves to `kyo-data/README.md`). If neither exists and `doctestSources` is left unset, the run fails with `Doctest.Error.NoSourcesConfigured`. A configured-but-missing source path, by contrast, fails with `Doctest.Error.SourceNotFound`.
 
-`doctestScalacOptions` (`Seq[String]`, default: `Seq("-release", "17")`). Scalac options forwarded to the doctest compiler for every block. **This is NOT `scalacOptions.value`.** Warning flags, source-level upgrades (`-source:future`), custom compiler plugins, none of these are inherited from the project's main scalac options. If you want them in doctest, set them on this key too:
+`doctestScalacOptions` (`Seq[String]`, default: `Seq("-release", "25")`). Scalac options forwarded to the doctest compiler for every block. **This is NOT `scalacOptions.value`.** Warning flags, source-level upgrades (`-source:future`), custom compiler plugins, none of these are inherited from the project's main scalac options. If you want them in doctest, set them on this key too:
 
 ```text
 lazy val myLib = project
     .settings(
         doctestScalacOptions := Seq(
-            "-release", "17",
+            "-release", "25",
             "-source:future",
             "-Wunused:imports"
         )
@@ -292,7 +292,7 @@ import kyo.doctest.*
 val config = Doctest.Config(
     sources = Chunk(Path("docs/README.md"), Path("docs/guide.md")),
     classpath = Chunk(Path("target/scala-3.7.4/classes")),
-    scalaOpts = Chunk("-release", "17"),
+    scalaOpts = Chunk("-release", "25"),
     cache = Path(".doctest-cache"),
     parallel = 8,
     predef = Chunk("import myproject.*"),

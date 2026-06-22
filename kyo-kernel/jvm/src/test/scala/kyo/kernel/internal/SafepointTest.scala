@@ -708,7 +708,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         "init" - {
             "creates a state with the current thread id, zero depth, and zero frame index" in {
                 val state    = Safepoint.State.init()
-                val threadId = Thread.currentThread().getId()
+                val threadId = Thread.currentThread().threadId()
 
                 assert(state.threadId == threadId)
                 assert(state.depth == 0)
@@ -736,7 +736,7 @@ class SafepointTest extends kyo.test.Test[Any]:
         "threadId" - {
             "returns the correct thread id" in {
                 val state    = Safepoint.State.init()
-                val threadId = Thread.currentThread().getId()
+                val threadId = Thread.currentThread().threadId()
 
                 assert(state.threadId == threadId)
             }

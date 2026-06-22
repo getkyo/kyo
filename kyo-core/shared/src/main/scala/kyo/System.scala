@@ -280,6 +280,10 @@ object System:
         given Parser[URISyntaxException, java.net.URI] =
             Parser(v => Result.catching[URISyntaxException](new java.net.URI(v)))
 
+        // new java.net.URL(String) is deprecated in favor of URI.toURL, but that path throws
+        // URISyntaxException for malformed input, which would escape this Parser's MalformedURLException
+        // error type. Keep the URL constructor to preserve the typed-error contract.
+        @scala.annotation.nowarn("cat=deprecation")
         given Parser[MalformedURLException, java.net.URL] =
             Parser(v => Result.catching[MalformedURLException](new java.net.URL(v)))
 

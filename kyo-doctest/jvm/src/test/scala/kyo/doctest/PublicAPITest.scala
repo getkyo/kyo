@@ -9,7 +9,7 @@ class PublicAPITest extends kyo.test.Test[Any]:
     "Doctest.Config.apply accepts Chunk[Path] sources, Chunk[Path] classpath, Chunk[String] scalaOpts, Path cache, Int parallel" in {
         val src  = Chunk(Path("README.md"))
         val cp   = Chunk(Path("target/scala-3/classes"))
-        val opts = Chunk("-release", "17")
+        val opts = Chunk("-release", "25")
         val dir  = Path("target/doctest-cache")
         val cfg = Doctest.Config(
             sources = src,

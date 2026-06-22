@@ -54,7 +54,7 @@ object KyoDoctestPlugin extends AutoPlugin {
 
         /** Additional scalac options forwarded to the compiler for each block. */
         val doctestScalacOptions: SettingKey[Seq[String]] = settingKey[Seq[String]](
-            "Additional scalac options forwarded to the doctest compiler (default: [\"-release\", \"17\"])."
+            "Additional scalac options forwarded to the doctest compiler (default: [\"-release\", \"25\"])."
         )
 
         /** Directory used for the content-hash cache. Created if absent. */
@@ -201,7 +201,7 @@ object KyoDoctestPlugin extends AutoPlugin {
             else if (parent.exists()) Seq(parent)
             else Seq.empty
         },
-        doctestScalacOptions := Seq("-release", "17"),
+        doctestScalacOptions := Seq("-release", "25"),
         doctestCacheDir      := target.value / "doctest-cache",
         // Per-module fiber concurrency inside the doctest fork. Block compiles
         // are serialised on a single compiler-thread executor because dotty's

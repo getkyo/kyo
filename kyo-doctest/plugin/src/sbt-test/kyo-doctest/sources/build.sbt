@@ -11,7 +11,7 @@ lazy val root = (project in file("."))
         name := "sources-test",
         // Only validate GUIDE.md; ignore README.md which has a failing fence.
         doctestSources := Seq(baseDirectory.value / "GUIDE.md"),
-        doctestScalacOptions := Seq("-release", "17")
+        doctestScalacOptions := Seq("-release", "25")
     )
 
 // Runner classpath injected by the plugin's scriptedDependencies (no ivy resolution).

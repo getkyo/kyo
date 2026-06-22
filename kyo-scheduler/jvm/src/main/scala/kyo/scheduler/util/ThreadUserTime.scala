@@ -33,7 +33,7 @@ private[scheduler] object ThreadUserTime {
       * On JVM, this is the Java thread ID (Thread.getId). The Worker captures this during mount and stores it as mountId for cross-thread
       * queries by the BlockingMonitor.
       */
-    def currentThreadId(): Long = Thread.currentThread().getId
+    def currentThreadId(): Long = Thread.currentThread().threadId()
 
     /** Queries user CPU times for multiple threads in a single batch call.
       *
@@ -64,7 +64,7 @@ private[scheduler] object ThreadUserTime {
                 spinner.start()
                 try {
                     if (!started.await(5, java.util.concurrent.TimeUnit.SECONDS)) return default
-                    probeLoop(bean, spinner.getId, 100000L, default)
+                    probeLoop(bean, spinner.threadId(), 100000L, default)
                 } finally { stop.set(true); spinner.join(1000) }
         }
     }

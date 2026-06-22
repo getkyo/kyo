@@ -37,7 +37,7 @@ class DriverTest extends kyo.test.Test[Any]:
 
     "Driver.init with a bad classpath surfaces DriverInitFailed at init or compile time" in {
         val badClasspath = Chunk(kyo.Path("/this/path/does/not/exist/nowhere.jar"))
-        val scalacOpts   = Chunk("-release", "17")
+        val scalacOpts   = Chunk("-release", "25")
 
         Abort.run(
             Driver.init(badClasspath, scalacOpts, false).flatMap { driver =>
@@ -160,7 +160,7 @@ class DriverTest extends kyo.test.Test[Any]:
     }
 
     "Driver.compile respects -Werror scalac option: warning becomes error" in {
-        val opts = Chunk("-release", "17", "-Werror", "-Wunused:imports", "-deprecation")
+        val opts = Chunk("-release", "25", "-Werror", "-Wunused:imports", "-deprecation")
         testClasspath.flatMap { cp =>
             Abort.run(Driver.init(cp, opts, false)).flatMap {
                 case Result.Success(driver) =>

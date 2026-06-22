@@ -63,7 +63,7 @@ Thank you for considering contributing to this project! We welcome all contribut
 
 Before you begin, make sure you have the following installed:
 
-- **Java 21 (or later)**
+- **Java 25 LTS (or later)**
 - **Scala**
 - **Node** (Node 24+ to run the experimental WASM target: it defaults to V8's Turboshaft Wasm pipeline)
 - **sbt** (Scala Build Tool)

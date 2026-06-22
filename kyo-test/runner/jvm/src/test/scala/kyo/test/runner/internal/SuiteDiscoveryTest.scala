@@ -27,7 +27,9 @@ class SuiteDiscoveryTest extends kyo.test.Test[Any]:
 
         override def getResources(name: String): java.util.Enumeration[URL] =
             if name == ServiceFile then
-                // Provide a synthetic in-memory resource using a custom URL
+                // Provide a synthetic in-memory resource using a custom URL. The 5-arg URL constructor is
+                // deprecated, but it is the only way to attach a custom URLStreamHandler (URI has no equivalent).
+                @scala.annotation.nowarn("cat=deprecation")
                 val url = new URL(
                     "jar", // protocol placeholder (unused, just needs a scheme)
                     null,
@@ -179,7 +181,9 @@ class SuiteDiscoveryTest extends kyo.test.Test[Any]:
                 else -1
             override def close(): Unit = closeCount.incrementAndGet(): Unit
 
-        // Build a URL whose openStream() returns the stream above.
+        // Build a URL whose openStream() returns the stream above. The 5-arg URL constructor is deprecated,
+        // but it is the only way to attach a custom URLStreamHandler (URI has no equivalent).
+        @scala.annotation.nowarn("cat=deprecation")
         val url = new URL(
             "jar",
             null,

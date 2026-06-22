@@ -95,7 +95,7 @@ class WorkerConcurrentRunTest extends AnyFreeSpec with NonImplicitAssertions {
             val n = inFlight.incrementAndGet()
             if (n > 1) {
                 // record both threads currently executing this worker's tasks
-                val tid  = Thread.currentThread().getId()
+                val tid  = Thread.currentThread().threadId()
                 var prev = overlapThreads.get()
                 while (!overlapThreads.compareAndSet(prev, prev + tid)) prev = overlapThreads.get()
             }

@@ -11,7 +11,7 @@ lazy val root = (project in file("."))
         name := "classpath-test",
         libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test,
         doctestSources := Seq(baseDirectory.value / "README.md"),
-        doctestScalacOptions := Seq("-release", "17")
+        doctestScalacOptions := Seq("-release", "25")
     )
 
 // Runner classpath injected by the plugin's scriptedDependencies (no ivy resolution).

@@ -26,7 +26,11 @@ val compilerOptions = Set(
     ScalacOptions.warnValueDiscard,
     ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
-    ScalacOptions.release("17"),
+    // Bytecode target 25: Java 25 is the current LTS. Foundational modules (kyo-data, kyo-ffi,
+    // kyo-offheap, kyo-tasty) use the java.lang.foreign Foreign Function & Memory API, finalized in
+    // JDK 22, so the floor cannot be the prior LTS (21, where foreign is only preview); JDK 25 is the
+    // first LTS that carries it. CI builds on corretto:25 (see .github/actions/setup).
+    ScalacOptions.release("25"),
     ScalacOptions.advancedKindProjector
 )
 
@@ -155,9 +159,9 @@ Global / onLoad := {
 
     val javaVersion  = System.getProperty("java.version")
     val majorVersion = javaVersion.split("\\.")(0).toInt
-    if (majorVersion < 21) {
+    if (majorVersion < 25) {
         throw new IllegalStateException(
-            s"Java version $javaVersion is not supported. Please use Java 21 or higher."
+            s"Java version $javaVersion is not supported. Please use Java 25 (LTS) or higher."
         )
     }
 
@@ -659,7 +663,7 @@ lazy val `kyo-offheap` =
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .jvmConfigure(_.settings(
-            doctestScalacOptions := Seq("-release", "22")
+            doctestScalacOptions := Seq("-release", "25")
         ))
         .nativeSettings(
             `native-settings`,

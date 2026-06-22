@@ -9,7 +9,7 @@ lazy val root = (project in file("."))
     .settings(
         name := "parallel-test",
         doctestSources := Seq(baseDirectory.value / "README.md"),
-        doctestScalacOptions := Seq("-release", "17"),
+        doctestScalacOptions := Seq("-release", "25"),
         doctestParallel := 1
     )
 

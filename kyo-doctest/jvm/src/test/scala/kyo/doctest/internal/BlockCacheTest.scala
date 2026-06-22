@@ -174,7 +174,7 @@ class BlockCacheTest extends kyo.test.Test[Any]:
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val w = 0")
                 val ok    = Driver.Outcome.Ok(Chunk.empty)
-                val opts1 = Chunk("-release", "17")
+                val opts1 = Chunk("-release", "25")
                 val opts2 = Chunk("-release", "21") // changed
                 cache.record(block, Chunk.empty, "fp1", "3.8.3", opts1, ok).flatMap { _ =>
                     cache.lookup(block, Chunk.empty, "fp1", "3.8.3", opts2).map { result =>
@@ -190,8 +190,8 @@ class BlockCacheTest extends kyo.test.Test[Any]:
             BlockCache.init(dir).flatMap { cache =>
                 val block = makeBlock("val opts = 0")
                 val ok    = Driver.Outcome.Ok(Chunk.empty)
-                val opts1 = Chunk("-release", "17", "-Werror")
-                val opts2 = Chunk("-Werror", "-release", "17") // same opts, different order
+                val opts1 = Chunk("-release", "25", "-Werror")
+                val opts2 = Chunk("-Werror", "-release", "25") // same opts, different order
                 cache.record(block, Chunk.empty, "fp1", "3.8.3", opts1, ok).flatMap { _ =>
                     cache.lookup(block, Chunk.empty, "fp1", "3.8.3", opts2).map { result =>
                         result match

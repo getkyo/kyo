@@ -14,7 +14,6 @@ import java.io.PrintStream
 import java.io.PrintWriter
 import java.net.HttpURLConnection
 import java.net.ServerSocket
-import java.net.URL
 import scala.util.Success
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -42,7 +41,7 @@ object TestHttpServer:
 
     def waitForServer(url: String, port: Int): Boolean =
         def tryConnect(): Try[Boolean] = Try {
-            val connection = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
+            val connection = java.net.URI.create(url).toURL().openConnection().asInstanceOf[HttpURLConnection]
             connection.setRequestMethod("GET")
             connection.setConnectTimeout(1000)
             connection.setReadTimeout(1000)
