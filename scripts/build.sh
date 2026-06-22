@@ -13,7 +13,9 @@ set -uo pipefail
 # --arch native|x86|arm  container architecture (podman/podman-ci only); sets
 #        podman --platform. native = host arch, x86 = linux/amd64, arm =
 #        linux/arm64; qemu-emulated when it differs from the host arch.
-# <action>    one of test, testDiff, compile, link (default: test)
+# <action>    one of test, testDiff, compile, link (default: test), or
+#             `sbt <raw command>` to run one arbitrary sbt command in the env
+#             (e.g. build.sh --env direct sbt 'kyo-netJVM/test'); no platform arg
 # <platform>  one or more of JVM, JS, Native, Wasm, all (default: all)
 #
 # Every env delegates the WHAT to the same ci-test.sh, so a local run and a CI
@@ -21,6 +23,16 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Make the JVM heap deterministic. The runner defines the driver heap via the repo .jvmopts (direct)
+# or CI_DRIVER_OPTS (podman-ci). An ambient SBT_OPTS (e.g. a developer's "-Xms32G -Xmx32G" eager
+# reservation) otherwise overrides .jvmopts on every sbt launch and, stacked across the driver, forked
+# test JVMs, and phase processes a run spawns, oversubscribes the machine into OOM-kills and boot hangs.
+# Clear it so the runner's own heap always wins; the podman envs never inherit it.
+if [ -n "${SBT_OPTS:-}" ]; then
+    echo "build.sh: clearing inherited SBT_OPTS so the runner controls the JVM heap (was: $SBT_OPTS)" >&2
+    unset SBT_OPTS
+fi
 
 # CI-faithful resource caps for --env podman-ci. GitHub standard public-repo
 # runners are 4 vCPU / 16 GB on both linux-x64 and linux-arm64. One place.
@@ -61,22 +73,33 @@ case "$ENV_KIND" in direct|podman|podman-ci) ;; *) die_usage "unknown env '$ENV_
 case "$ARCH" in native|x86|arm) ;; *) die_usage "unknown arch '$ARCH'" ;; esac
 
 ACTION="${1:-test}"
-contains_word "$ACTION" "$ACTIONS" || die_usage "unknown action '$ACTION'"
 shift || true
 
-if [ $# -eq 0 ]; then
-    set -- all
-fi
+# The `sbt` action is a raw escape hatch: everything after it is one sbt command, run in the selected
+# env with no platform/diff machinery, for a module- or test-scoped local run (e.g.
+# `build.sh --env direct sbt 'kyo-netJVM/test'`). Every other action takes one or more platforms.
+RAW_MODE=no
+RAW_SBT=""
 PLAT_LIST=""
-for p in "$@"; do
-    if [ "$p" = "all" ]; then
-        PLAT_LIST="JVM JS Native Wasm"
-    elif contains_word "$p" "$PLATFORMS"; then
-        PLAT_LIST="$PLAT_LIST $p"
-    else
-        die_usage "unknown platform '$p'"
+if [ "$ACTION" = "sbt" ]; then
+    [ $# -gt 0 ] || die_usage "sbt mode needs a command, e.g. build.sh --env direct sbt 'kyo-netJVM/test'"
+    RAW_MODE=yes
+    RAW_SBT="$*"
+else
+    contains_word "$ACTION" "$ACTIONS" || die_usage "unknown action '$ACTION'"
+    if [ $# -eq 0 ]; then
+        set -- all
     fi
-done
+    for p in "$@"; do
+        if [ "$p" = "all" ]; then
+            PLAT_LIST="JVM JS Native Wasm"
+        elif contains_word "$p" "$PLATFORMS"; then
+            PLAT_LIST="$PLAT_LIST $p"
+        else
+            die_usage "unknown platform '$p'"
+        fi
+    done
+fi
 
 # -- arch resolution: a non-native arch is podman-only --
 host_arch() {
@@ -100,7 +123,11 @@ if [ "$ARCH" != "native" ] && [ "$ENV_KIND" = "direct" ]; then
 fi
 
 # -- pre-run echo (unconditional) --
-echo "build.sh: env=$ENV_KIND arch=$ARCH action=$ACTION platforms=$PLAT_LIST"
+if [ "$RAW_MODE" = yes ]; then
+    echo "build.sh: env=$ENV_KIND arch=$ARCH sbt: $RAW_SBT"
+else
+    echo "build.sh: env=$ENV_KIND arch=$ARCH action=$ACTION platforms=$PLAT_LIST"
+fi
 
 # -- emulation notice + binfmt precheck for a cross-arch container --
 if [ "$ARCH" != "native" ]; then
@@ -138,11 +165,12 @@ container_provision() {
     local platform="$1"
     local apt_pkgs="curl ca-certificates patch"
     local node_pkgs="" native_pkgs=""
+    # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
-        JS|Wasm) node_pkgs="nodejs npm" ;;
+        JS|Wasm|all) node_pkgs="nodejs npm" ;;
     esac
     case "$platform" in
-        Native) native_pkgs="libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
+        Native|all) native_pkgs="libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
     esac
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
@@ -181,19 +209,34 @@ run_in_container() {
                -e "JAVA_OPTS=$CI_DRIVER_OPTS"
                -e "JVM_OPTS=$CI_DRIVER_OPTS")
     fi
+    # Raw mode runs the arbitrary sbt command (passed via the environment to avoid host-side quoting);
+    # otherwise the inner command is the standard per-platform ci-test.sh runner.
+    local inner
+    if [ "$RAW_MODE" = yes ]; then
+        envs+=(-e "RAW_SBT=$RAW_SBT")
+        inner='sbt "$RAW_SBT"'
+    else
+        inner="./scripts/ci-test.sh '$platform' '$ACTION'"
+    fi
     local provision; provision=$(container_provision "$platform")
     podman "${args[@]}" "${envs[@]}" "$CONTAINER_IMAGE" \
         bash -c "set -e
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
-    && ./scripts/ci-test.sh '$platform' '$ACTION'"
+    && $inner"
     local rc=$?
     rm -rf "$snap"
     return $rc
 }
 
-# -- fail-fast across platforms --
+# -- raw sbt escape hatch (no platform loop), or fail-fast across platforms --
+if [ "$RAW_MODE" = yes ]; then
+    case "$ENV_KIND" in
+        direct)            ( cd "$PROJECT_DIR" && sbt "$RAW_SBT" ); exit $? ;;
+        podman|podman-ci)  run_in_container all; exit $? ;;
+    esac
+fi
 for platform in $PLAT_LIST; do
     run_one "$platform" || exit $?
 done

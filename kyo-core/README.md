@@ -984,7 +984,7 @@ For deterministic tests: `Random.withSeed(seed)(v)` runs `v` with a seeded RNG; 
 
 ### `Log`
 
-`Log` is the ambient logger. Default `Log.live` writes warn-and-above messages to stderr.
+`Log` is the ambient logger. `Log.live` is the default backend: a `ConsoleLogger` named `kyo.logs` at `warn` level. It writes `warn` and `error` to stderr (with stack traces to stderr) and `trace`, `debug`, and `info` to stdout. Each line is prefixed with a timestamp from the system clock. Log calls are async by default on JVM and Native: each call enqueues to a bounded background channel (capacity 4096) and returns without blocking; a daemon fiber drains the channel in FIFO order. `Log.flush: Unit < Async` suspends until the daemon has delivered every enqueued event. To force synchronous logging, set `-Dkyo.Log.asyncLogging=false`.
 
 ```scala
 import kyo.*

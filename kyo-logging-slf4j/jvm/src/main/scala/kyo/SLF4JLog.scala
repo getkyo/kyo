@@ -4,6 +4,27 @@ import kyo.Log.Level
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
+/** Integration between Kyo's `Log` effect and SLF4J.
+  *
+  * Wraps any `org.slf4j.Logger` as a `Log` instance, routing each log level through
+  * the corresponding SLF4J method. Level gating delegates to the underlying SLF4J
+  * implementation, so runtime reconfiguration (e.g., Logback's `setLevel`) is reflected
+  * immediately on each call without restarting the application.
+  *
+  * Obtain a logger by name or by supplying an existing SLF4J `Logger`:
+  * {{{
+  *   val log: Log = SLF4JLog("com.example.MyService")
+  *   val log2: Log = SLF4JLog(LoggerFactory.getLogger(classOf[MyService]))
+  * }}}
+  *
+  * Bind it for a computation scope with `Log.let`:
+  * {{{
+  *   Log.let(log)(myEffect)
+  * }}}
+  *
+  * Each dispatched message carries the source call-site position in brackets before the
+  * message text, formatted as `[file:line]`.
+  */
 object SLF4JLog:
 
     def apply(name: String): Log = Log(new Unsafe.SLF4J(LoggerFactory.getLogger(name)))
@@ -14,7 +35,10 @@ object SLF4JLog:
     object Unsafe:
 
         final class SLF4J(logger: Logger) extends Log.Unsafe:
-            val level =
+            def name: String                       = logger.getName
+            def withName(name: String): Log.Unsafe = new SLF4J(LoggerFactory.getLogger(name))
+
+            def level: Log.Level =
                 if logger.isTraceEnabled() then Level.trace
                 else if logger.isDebugEnabled() then Level.debug
                 else if logger.isInfoEnabled() then Level.info

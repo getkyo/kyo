@@ -10,10 +10,14 @@ import kyo.*
   *
   * The real log runs on every call; no logging is suppressed. infoCount increments before delegating.
   */
-final class RecordingLog(real: Log.Unsafe) extends Log.Unsafe:
+final class RecordingLog(real: Log.Unsafe, val infoCount: AtomicInteger = new AtomicInteger(0)) extends Log.Unsafe:
 
-    // Count of info() calls (both overloads combined).
-    val infoCount: AtomicInteger = new AtomicInteger(0)
+    // infoCount: number of info() calls (both overloads). A constructor param so a logger derived via
+    // withName shares the same counter, keeping the spy's count accurate across a rename.
+
+    def name: String = real.name
+
+    def withName(name: String): Log.Unsafe = new RecordingLog(real.withName(name), infoCount)
 
     def level: Log.Level = real.level
 

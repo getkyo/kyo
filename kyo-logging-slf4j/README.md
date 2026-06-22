@@ -2,7 +2,7 @@
 
 An SLF4J backend for Kyo's `Log` effect. Build a `Log` from an SLF4J logger name (or an existing `org.slf4j.Logger`) and install it for a scope via `Log.let`, so every `Log.info` / `Log.warn` / `Log.error` call inside that scope routes through SLF4J. Whatever appenders, encoders, and level configuration your SLF4J setup provides (Logback, Log4j 2, java.util.logging, ...) handles the output.
 
-Levels are read once from the underlying SLF4J logger when the backend is constructed (the most permissive enabled level wins: trace, debug, info, warn, error, silent). Every log message is automatically prefixed with the caller's source position captured from the implicit `Frame`.
+The level gate is read live on each call by querying `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled` on the underlying SLF4J logger (the most permissive enabled level wins: trace, debug, info, warn, error, silent). Runtime SLF4J reconfiguration is reflected immediately without rebuilding the backend. Every log message is automatically prefixed with the caller's source position captured from the implicit `Frame`.
 
 This module is JVM-only. SLF4J is a JVM API; there is no JS or Native artifact.
 
@@ -17,7 +17,7 @@ val program: Unit < Sync =
     }
 ```
 
-The opening already exercises everything this module ships: both `SLF4JLog.apply` paths (by name above), `Log.let` for scoped installation, the level snapshot read at construction, and the message-emitting calls that pick up the caller `Frame`. The rest of this document walks the same surfaces one cluster at a time.
+The opening already exercises everything this module ships: both `SLF4JLog.apply` paths (by name above), `Log.let` for scoped installation, the live level gate, and the message-emitting calls that pick up the caller `Frame`. The rest of this document walks the same surfaces one cluster at a time.
 
 ## Installing an SLF4J backend
 
@@ -93,7 +93,7 @@ Inside each `Log.let` block, every direct or transitive `Log.info` / `Log.warn` 
 
 ## Behavior notes
 
-Two implementation choices show up in real log output and routinely surprise readers expecting a thin SLF4J pass-through. Both are intentional, and both are visible in the appender output you have configured downstream.
+Three implementation choices show up in real log output and routinely surprise readers expecting a thin SLF4J pass-through. All three are intentional.
 
 ### Source-position prefix on every message
 
@@ -136,9 +136,9 @@ val program: Unit < Sync =
     }
 ```
 
-### Level snapshot at construction
+### Live level gate
 
-The `level` field on the returned `Log` is computed once from the underlying SLF4J logger, by checking `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled` in that order and recording the most permissive enabled level. Later runtime level changes on the SLF4J `Logger` are not reflected in `Log#level`.
+The `level` field on the returned `Log` is computed live on each access. The implementation checks `isTraceEnabled` / `isDebugEnabled` / `isInfoEnabled` / `isWarnEnabled` / `isErrorEnabled` on the underlying SLF4J `Logger` in that order and returns the most permissive enabled level. Runtime SLF4J reconfiguration (for example a Logback `setLevel` call or a JMX-triggered reload) is reflected by `log.level` immediately, without rebuilding the backend.
 
 ```scala
 import ch.qos.logback.classic.Level
@@ -146,18 +146,38 @@ import ch.qos.logback.classic.Logger as LBLogger
 import kyo.*
 import org.slf4j.LoggerFactory
 
-// SLF4J logger is configured to INFO at construction time
 LoggerFactory.getLogger("com.example.app").asInstanceOf[LBLogger].setLevel(Level.INFO)
 val log: Log = SLF4JLog("com.example.app")
 assert(log.level == Log.Level.info)
 
-// Later the SLF4J side is changed to DEBUG: log.level still reads INFO,
-// even though SLF4J would now actually accept DEBUG messages.
+// Runtime change to DEBUG is reflected immediately.
 LoggerFactory.getLogger("com.example.app").asInstanceOf[LBLogger].setLevel(Level.DEBUG)
-assert(log.level == Log.Level.info)
+assert(log.level == Log.Level.debug)
 ```
 
-> **Caution:** `log.level` is for Kyo-side gating decisions only. The SLF4J logger itself is consulted on every call (each `Log.info` ultimately invokes `logger.info(...)` on the wrapped SLF4J instance), so a runtime level change is honored by the appenders even when `log.level` is stale. Rebuild the `SLF4JLog` if your application code branches on `log.level` and you change SLF4J configuration at runtime.
+> **Note:** `log.level` reflects the live SLF4J state because each access re-queries the wrapped logger's enabled flags. There is no stale snapshot; no rebuild is needed after a runtime SLF4J reconfiguration.
+
+### Async dispatch
+
+On JVM and Native, `Log` calls are async by default. Each call enqueues the event to a bounded background channel (default capacity 4096) and returns without waiting for the SLF4J appender to write. A daemon fiber drains the channel and forwards events to the backend in FIFO order.
+
+> **When to rely on this with SLF4J:** for high-throughput logging, prefer the appender's own async mechanism (Logback's `AsyncAppender`, Log4j2's async loggers), which is tuned for the backend and batches I/O at the appender layer. Kyo's `Log.asyncLogging` is positioned primarily for the built-in `ConsoleLogger` and the JS/Native backends, which have no appender-level async to fall back on; with SLF4J it mainly keeps the enqueue off the calling fiber while the configured appender does the buffering.
+
+`Log.flush: Unit < Async` suspends until the daemon has dispatched every currently-enqueued event. Call it before asserting appender output in tests, or before shutdown.
+
+```scala
+import kyo.*
+
+val program: Unit < Async =
+    Log.let(SLF4JLog("com.example.app")) {
+        for
+            _ <- Log.info("processing complete")
+            _ <- Log.flush // await delivery before checking appender output
+        yield ()
+    }
+```
+
+Tests that capture output via thread-local stream redirection should set `-Dkyo.Log.asyncLogging=false` instead, since the daemon runs on a separate thread and does not inherit `DynamicVariable`-based redirections. On JS/Wasm, all writes are inline and `Log.flush` returns immediately.
 
 ## Low-level integration
 
@@ -181,4 +201,4 @@ val program: Unit < Sync =
 
 Calling methods on `Unsafe.SLF4J` directly (`unsafe.trace`, `unsafe.warn`, ...) requires an in-scope `AllowUnsafe` and bypasses the `Sync` effect that the public `Log` methods produce. Prefer wrapping the unsafe instance in a `Log` and using the safe surface unless you have a concrete reason to skip the `Sync` boundary.
 
-> **Note:** the `level` snapshot is computed inside `Unsafe.SLF4J`'s constructor, so building the unsafe instance directly behaves the same way as `SLF4JLog.apply` with respect to runtime level changes on the underlying SLF4J logger.
+> **Note:** `Unsafe.SLF4J` computes `level` live on each access, exactly as the safe `SLF4JLog.apply` path does. Building the unsafe instance directly carries the same live-gate behavior.
