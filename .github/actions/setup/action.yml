@@ -106,5 +106,5 @@ runs:
 
     - uses: coursier/setup-action@v3.0.0
       with:
-        jvm: corretto:24
+        jvm: corretto:25
         apps: sbt

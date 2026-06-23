@@ -13,8 +13,8 @@ jobs:
       # -Xmx14G (up from 12G): `sbt doctest` compiles every module's test sources in one driver session
       # and OOM'd at 12G. Dropped the -Xms8G floor and pinned G1 so the heap grows on demand and is
       # released between phases, leaving the box room (ubuntu-latest is 16G).
-      JAVA_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JAVA_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xmx14G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -22,6 +22,6 @@ jobs:
       - uses: coursier/cache-action@v8.1.1
       - uses: coursier/setup-action@v3.0.0
         with:
-          jvm: corretto:24
+          jvm: corretto:25
           apps: sbt
       - run: sbt doctest
