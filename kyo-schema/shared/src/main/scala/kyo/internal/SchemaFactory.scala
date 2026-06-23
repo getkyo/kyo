@@ -59,11 +59,11 @@ private[kyo] object SchemaFactory:
                 renamePathKey(ids, rename._1, rename._2)
             }
         end updatedFieldIds
-        Schema.initFocused[A, F2](
+        Schema.createWithFocused[A, F2](
             writeFn = (a: A, w: Writer) => source.rawSerializeWrite(a, w),
             readFn = (r: Reader) => source.rawSerializeRead(r),
-            getterFn = (a: A) => source.getter(a).asInstanceOf[Maybe[F2]],
-            setterFn = (a: A, v: F2) => source.setter(a, v),
+            getterFn = (a: A) => source.getter(a),
+            setterFn = (a: A, v: Any) => source.setter(a, v),
             structure = source.structure,
             segments = source.segments,
             sourceFields = source.sourceFields,
@@ -75,9 +75,10 @@ private[kyo] object SchemaFactory:
             renamedFields = renamedFields,
             computedFields = computedFields,
             checks = checks,
-            documentation = source.documentation,
-            fieldIdOverrides = updatedFieldIds,
-            discriminatorField = source.discriminatorField
+            doc = source.documentation,
+            fieldIds = updatedFieldIds,
+            discriminatorField = source.discriminatorField,
+            variantNaming = source.variantNaming
         )
     end createFrom
 
