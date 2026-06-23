@@ -14,6 +14,7 @@ Thank you for considering contributing to this project! We welcome all contribut
 - [API Design](#api-design)
   - [Naming](#naming)
   - [Types](#types)
+  - [Failure Tracking](#failure-tracking)
   - [Method Signatures](#method-signatures)
 - [Code Conventions](#code-conventions)
   - [Pending Type (A < S)](#pending-type-a--s)
@@ -315,6 +316,36 @@ def foreach[CC[+X] <: Iterable[X] & IterableOps[X, CC, CC[X]], A, B, S](
 )(f: Safepoint ?=> A => B < S)(using Frame, Safepoint): CC[B] < S =
     Kyo.foreach(Chunk.from(source))(f).map(source.iterableFactory.from(_))
 ```
+
+### Failure Tracking
+
+A typed `Abort[E]` row is a precise contract: it names exactly which failures an operation can produce, so a caller handles one and the compiler narrows the row to prove what remains. A blanket error-base on a row, or a raw non-module exception leaking onto it, discards that; the row degrades to "something might fail" and the leaf hierarchy becomes decorative.
+
+**Each public operation's row names its precise failure set.** Declare the narrowest type that covers exactly what the operation produces; do not smear a module-wide error base onto a row when the operation raises a small subset of it.
+
+**One sealed module-exception hierarchy, a sealed trait per operation, leaves that mix in.** This is how kyo-jsonrpc's `JsonRpcError` and kyo-http's `HttpException` are organized:
+
+```scala
+sealed abstract class FooException(code: Int, message: String, ...)(using Frame) extends KyoException(message, ...)
+
+sealed trait FooCallFailure extends FooException   // one trait per operation; this is the row type
+sealed trait FooReadFailure extends FooException
+
+case class FooUnknownException(name: String)(using Frame)
+    extends FooException(...) with FooCallFailure                      // leaf in one operation
+case class FooConnectionClosedException()(using Frame)
+    extends FooException(...) with FooCallFailure with FooReadFailure  // shared leaf, several operations
+```
+
+A trait can extend the parameter-carrying base because the concrete leaf supplies the constructor arguments, so a leaf mixes in every operation-trait it belongs to. The operation's row is then the operation-trait (`def call(...): A < Abort[FooCallFailure]`): one lean type in the signature that is *exactly* that operation's sealed failure set, matched exhaustively.
+
+**No raw non-module exception on a public row.** A kyo `Closed` / `Timeout`, a wire-protocol error, or a raw `Throwable` reaching a public row is untyped tracking-loss: it carries no module-level message and cannot be matched as part of the model. Map it to a typed leaf at the boundary (the `Abort.recover` site); a closed transport becomes a typed `*ConnectionClosedException` leaf, a remote wire error becomes a typed remote-error leaf.
+
+**Handler-body rows carry the user's error, not a framework blanket.** When a module accepts a user-supplied handler, the body's row is `Abort[E | <control signal>]` where `E` is the user's declared or inferred error; never a fixed module-exception blanket. A body that raises no module failure has an empty `E`; one that calls a framework accessor infers that accessor's leaves into `E`.
+
+**Every leaf carries its own message, built from typed fields.** The leaf's fields are typed (`name: String`, `uri: Uri`, `requested: Version`) and its `message` is constructed from them in the case-class body; no free-form `detail: String` parameter stands in for structure. See [KyoException Convention](#kyoexception-convention) for the base-class mechanics.
+
+**Construction-time validation panics; it does not appear on a tracked `Abort` row.** A bad configuration (an empty required set, a non-positive timeout, a handler claiming a framework-reserved code) is a construction-time programmer error, so `require` throws rather than threading an `Abort[ConfigError]` through every `init` signature, exactly as the sibling `JsonRpcHandler.Config.require` does. Prefer a typed leaf for the thrown payload (`McpConfigurationError`) over a raw `IllegalArgumentException` so the message stays structured, but that leaf carries no operation-trait and never reaches a row. Impossible states and misuse (an accessor used outside its dynamic extent, a partition invariant) are likewise bugs, not tracked failures: they panic and stay off every row.
 
 ### Method Signatures
 

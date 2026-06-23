@@ -1,0 +1,62 @@
+package kyo.integration
+
+import kyo.*
+
+/** Tests for _meta pass-through on ToolOutcome (§3.7). */
+class McpMetaPassThroughTest extends Test:
+
+    case class AddIn(a: Int, b: Int) derives Schema, CanEqual
+
+    "ToolOutcome meta field round-trips through the wire" in {
+        val metaVal = Structure.encode(Map("echo" -> "bar"))
+        val toolRoute = McpHandler.toolRaw[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
+                content = Chunk(McpContent.text(s"${in.a + in.b}")),
+                isError = false,
+                structuredContent = Absent,
+                meta = Present(metaVal)
+            )
+        }
+        JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
+            Async.zip[McpException, McpServer, McpClient, Any](
+                McpServer.initUnscoped(ts, toolRoute),
+                McpClient.initUnscoped(tc, McpInfo("meta-test"), McpCapabilities.Client())
+            ).flatMap { (srv, client) =>
+                client.callToolRaw[AddIn]("add", AddIn(2, 3)).flatMap { result =>
+                    for
+                        _ <- srv.closeNow
+                        _ <- client.closeNow
+                    yield assert(result.meta.isDefined, s"expected meta to be Present, got ${result.meta}")
+                    end for
+                }
+            }
+        }
+    }
+
+    "ToolOutcome meta defaults to Absent when not set" in {
+        val toolRoute = McpHandler.toolRaw[AddIn]("add") { in =>
+            McpHandler.ToolOutcome(
+                content = Chunk(McpContent.text(s"${in.a + in.b}")),
+                isError = false,
+                structuredContent = Absent
+            )
+        }
+        JsonRpcTransport.inMemory.flatMap { (ts, tc) =>
+            Async.zip[McpException, McpServer, McpClient, Any](
+                McpServer.initUnscoped(ts, toolRoute),
+                McpClient.initUnscoped(tc, McpInfo("meta-test"), McpCapabilities.Client())
+            ).flatMap { (srv, client) =>
+                client.callToolRaw[AddIn]("add", AddIn(2, 3)).flatMap { result =>
+                    for
+                        _ <- srv.closeNow
+                        _ <- client.closeNow
+                    yield
+                        // meta defaults to Absent when not provided
+                        assert(result.meta == Absent)
+                    end for
+                }
+            }
+        }
+    }
+
+end McpMetaPassThroughTest
