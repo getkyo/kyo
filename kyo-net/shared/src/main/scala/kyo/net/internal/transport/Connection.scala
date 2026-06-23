@@ -153,7 +153,8 @@ private[kyo] object Connection:
     def init[Handle](
         handle: Handle,
         driver: IoDriver[Handle],
-        channelCapacity: Int
+        channelCapacity: Int,
+        onClose: () => Unit = () => ()
     )(using AllowUnsafe, Frame): Connection[Handle] =
         val inbound    = Channel.Unsafe.init[Span[Byte]](channelCapacity)
         val outbound   = Channel.Unsafe.init[Span[Byte]](channelCapacity)
@@ -171,6 +172,10 @@ private[kyo] object Connection:
             if tornDown.compareAndSet(false, true) then
                 driver.cancel(handle)
                 driver.closeHandle(handle)
+                // Notify the owning transport that this connection's handle is gone, so it drops the connection from its open-connection
+                // registry. A connection that is never torn down (its peer FIN never arrives, its handler never closes it) stays registered, so
+                // the transport's close() can close it explicitly instead of leaking its fd past the pool teardown.
+                onClose()
 
         val closeFn: () => Unit = () =>
             if closedFlag.compareAndSet(false, true) then
@@ -189,7 +194,13 @@ private[kyo] object Connection:
                 // the channel queue is empty (the tail was TAKEN by the WritePump) which is before the tail is WRITTEN to the socket, so
                 // closing the fd there would race the in-flight write and drop the tail. The WritePump re-entry below is the real
                 // "outbound fully flushed" signal.
-                discard(outbound.closeAwaitEmpty())
+                val outboundDrained = outbound.closeAwaitEmpty()
+                // Tear the handle down synchronously when the outbound channel is already empty (the common idle case): nothing is queued to
+                // flush, so do not wait for the WritePump's async take-Closed re-entry. This makes close() reach driver.closeHandle within its
+                // own call, so the transport's close() (which closes every still-registered connection just before the pool teardown) reclaims
+                // the fd while the driver's reap loop is still alive, instead of leaving the teardown to race an async re-entry. When the
+                // outbound has queued writes, the drain fiber is still pending, so the WritePump re-entry below flushes the tail first.
+                if outboundDrained.done() then teardownHandle()
             else if closeInitiated.get() then
                 // Re-entrant close after closeFn itself initiated the close. The WritePump reached this by taking Closed from the closing
                 // outbound channel after it had nothing left to write (the half-close flush completed), or by its write/writable wait failing
