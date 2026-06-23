@@ -6,6 +6,9 @@ import kyo.Span
 
 final class IonWriter private (private val out: StringBuilder) extends Writer:
 
+    override def canWriteTopLevelNonObject: Boolean = true
+    override def codecName: String                  = "Ion"
+
     private enum Context:
         case Obj(first: Boolean)
         case Arr(first: Boolean)

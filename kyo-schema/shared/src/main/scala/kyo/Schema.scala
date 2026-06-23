@@ -66,7 +66,9 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     private[kyo] val documentation: Maybe[String] = Maybe.empty,
     private[kyo] val fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
     private[kyo] val discriminatorField: Maybe[String] = Maybe.empty,
-    @publicInBinary private[kyo] val variantNaming: Schema.VariantNaming = Schema.VariantNaming()
+    @publicInBinary private[kyo] val variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+    @publicInBinary private[kyo] val representation: Schema.SumRepresentation = Schema.SumRepresentation.External,
+    @publicInBinary private[kyo] val variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty
 ):
 
     /** The structural representation type. Set by factory/transforms. */
@@ -99,8 +101,19 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     @publicInBinary private[kyo] def transformedWrite(value: A, writer: Writer): Unit =
         internal.SchemaSerializer.writeWithTransforms(this, value, writer)
     @publicInBinary private[kyo] def transformedRead(reader: Reader): A =
-        if discriminatorField.nonEmpty then internal.SchemaSerializer.readWithDiscriminator(this, reader)
-        else internal.SchemaSerializer.readWithTransforms(this, reader)
+        representation match
+            case Schema.SumRepresentation.External =>
+                internal.SchemaSerializer.readWithTransforms(this, reader)
+            case Schema.SumRepresentation.Internal(_) =>
+                internal.SchemaSerializer.readWithDiscriminator(this, reader)
+            case Schema.SumRepresentation.Adjacent(tagKey, contentKey) =>
+                internal.SchemaSerializer.readAdjacent(this, reader, tagKey, contentKey)
+            case Schema.SumRepresentation.Tuple =>
+                internal.SchemaSerializer.readTuple(this, reader)
+            case Schema.SumRepresentation.TupleFlat =>
+                internal.SchemaSerializer.readTupleFlat(this, reader)
+            case Schema.SumRepresentation.Untagged =>
+                internal.SchemaSerializer.readUntagged(this, reader)
 
     /** Get the focused value out of a root A. */
     @publicInBinary private[kyo] def getter(value: A): Maybe[Any]
@@ -113,14 +126,16 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     @publicInBinary private[kyo] val hasTransforms: Boolean =
         droppedFields.nonEmpty || renamedFields.nonEmpty ||
-            computedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty
+            computedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty ||
+            representation.nonDefault
 
     /** Read-side transform flag: discriminator / rename / drop (computed fields are write-only). Marked
       * `@publicInBinary` so `Schema.init`'s inline `serializeRead` can branch on it from a user
       * `derives Schema` site without an inaccessible `private[kyo]` reference.
       */
     @publicInBinary private[kyo] val hasReadTransforms: Boolean =
-        droppedFields.nonEmpty || renamedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty
+        droppedFields.nonEmpty || renamedFields.nonEmpty || discriminatorField.isDefined ||
+            variantNaming.nonEmpty || representation.nonDefault
 
     /** Pre-built root navigator for focus lambda resolution.
       *
@@ -305,9 +320,94 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     def discriminator(fieldName: String): Schema[A] { type Focused = Schema.this.Focused } =
         Schema.copyWith(this)(
-            discriminatorField = Maybe(fieldName)
+            discriminatorField = Maybe(fieldName),
+            representation = Schema.SumRepresentation.Internal(fieldName)
         )
     end discriminator
+
+    /** Selects the adjacently-tagged wire representation for a sum type.
+      *
+      * Encodes each variant as a two-field object: `tagKey` holds the resolved variant wire name
+      * and `contentKey` holds the variant payload. Unlike the flat discriminator, the payload is
+      * carried whole in the content position, so a non-object payload (a bare scalar, an array,
+      * null) survives the round-trip. Decode reads the tag, resolves the variant (accepting any
+      * configured alias), and reconstructs from the content. The tag resolves through the variant
+      * naming layer. A decode whose input lacks `tagKey` fails with `MissingTagKeyException`.
+      *
+      * {{{
+      * val s = Schema[Shape].adjacent("type", "content")
+      * // Json.encode(Circle(10.0)) == """{"type":"Circle","content":{"radius":10.0}}"""
+      * }}}
+      */
+    def adjacent(tagKey: String, contentKey: String): Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.SumRepresentation.Adjacent(tagKey, contentKey)
+        )
+    end adjacent
+
+    /** Selects the nested positional-array (tuple) wire representation for a sum type.
+      *
+      * Encodes each variant as a two-element array: element 0 the resolved variant wire name,
+      * element 1 the variant payload. A non-object payload rides through as the second element.
+      * Decode reads element 0 as the tag (accepting any configured alias) and reconstructs from
+      * element 1. The tag resolves through the variant naming layer. On a codec that cannot express
+      * a top-level array (Protobuf), encode fails with `RepresentationUnsupportedException`.
+      *
+      * {{{
+      * val s = Schema[Shape].tupleTagged
+      * // Json.encode(Circle(10.0)) == """["Circle",{"radius":10.0}]"""
+      * }}}
+      */
+    def tupleTagged: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.SumRepresentation.Tuple
+        )
+    end tupleTagged
+
+    /** Selects the positional-flattened (tuple-flat) wire representation for a sum type.
+      *
+      * Encodes each variant as an array whose element 0 is the resolved variant wire name and whose
+      * remaining elements are the variant's payload field values spread positionally in declaration
+      * order; field names are dropped. A field that is itself a record is one nested array element,
+      * not deep-flattened. Decode reverse-resolves element 0 to the variant (accepting any configured
+      * alias) and pairs the remaining elements with the variant's declaration-ordered fields; an
+      * element count that does not match the variant's field count fails with a typed decode error.
+      * The tag resolves through the variant naming layer. On a codec that cannot express a top-level
+      * array (Protobuf), encode fails with `RepresentationUnsupportedException`. Unlike
+      * `tupleTagged`, which nests the whole payload as the second element, this form spreads the
+      * payload fields as separate elements.
+      *
+      * {{{
+      * val s = Schema[Shape].tupleFlat
+      * // Json.encode(Triangle(10.0, 10.0, 10.0)) == """["Triangle",10.0,10.0,10.0]"""
+      * }}}
+      */
+    def tupleFlat: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.SumRepresentation.TupleFlat
+        )
+    end tupleFlat
+
+    /** Selects the untagged wire representation for a sum type.
+      *
+      * Encodes each variant as its bare payload with no tag or wrapper. Decode attempts each
+      * variant's decoder in declaration order over a non-destructively captured copy of the input
+      * and returns the first variant that decodes without error; if no variant matches, decode fails
+      * with `NoVariantMatchException` listing the attempted variants. No tag is emitted or read, so
+      * variant naming and aliases do not apply to a tag; field-level naming still applies to the
+      * payload. Untagged decode requires a self-describing codec (Json, Yaml, Ion, MsgPack); on a
+      * non-self-describing codec (Protobuf) decode fails with a typed self-describing-reader error.
+      *
+      * {{{
+      * val s = Schema[Shape].untagged
+      * // Json.encode(Circle(10.0)) == """{"radius":10.0}"""
+      * }}}
+      */
+    def untagged: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.SumRepresentation.Untagged
+        )
+    end untagged
 
     /** Maps Scala sealed-trait variant names to wire discriminator values.
       *
@@ -1164,6 +1264,8 @@ object Schema:
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
         variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+        representation: Schema.SumRepresentation = Schema.SumRepresentation.External,
+        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
@@ -1184,7 +1286,9 @@ object Schema:
             documentation,
             fieldIdOverrides,
             discriminatorField,
-            variantNaming
+            variantNaming,
+            representation,
+            variantDecoders
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
@@ -1225,6 +1329,8 @@ object Schema:
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
         variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+        representation: Schema.SumRepresentation = Schema.SumRepresentation.External,
+        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
@@ -1250,6 +1356,8 @@ object Schema:
             fieldIdOverrides = fieldIdOverrides,
             discriminatorField = discriminatorField,
             variantNaming = variantNaming,
+            representation = representation,
+            variantDecoders = variantDecoders,
             structure = structure
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
@@ -1297,6 +1405,32 @@ object Schema:
         final case class UniqueItems(segments: Seq[String])                            extends Constraint
 
     end Constraint
+
+    /** The wire representation a sum type (sealed trait / enum) uses for serialization.
+      *
+      * Each case selects one wire shape. `External` (the default) is the single-field wrapper object
+      * `{"Circle":{...}}`. `Internal(tagKey)` is the flat discriminator `{"type":"Circle",...}`,
+      * selected by `discriminator`. `Adjacent(tagKey, contentKey)` is the two-field object
+      * `{"type":"Circle","content":{...}}`. `Tuple` is the nested positional array
+      * `["Circle",{...}]`. `TupleFlat` is the flattened positional array `["Triangle",10,10,10]`,
+      * coexisting with `Tuple`. `Untagged` is the bare payload `{"radius":10.0}`. The carrier is the
+      * internal `representation` slot, set by the matching builder.
+      */
+    enum SumRepresentation derives CanEqual:
+        case External
+        case Internal(tagKey: String)
+        case Adjacent(tagKey: String, contentKey: String)
+        case Tuple
+        case TupleFlat
+        case Untagged
+
+        /** True for every representation other than the inert `External` default. ORed into the
+          * transform flags so a configured sum takes the transform-aware engine path.
+          */
+        private[kyo] def nonDefault: Boolean = this match
+            case External => false
+            case _        => true
+    end SumRepresentation
 
     /** Case conventions for `renameAllVariants` / `renameAllFields`.
       *
@@ -2344,6 +2478,8 @@ object Schema:
         fieldIds: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
         variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+        representation: Schema.SumRepresentation = Schema.SumRepresentation.External,
+        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
         lazy val _structure = structure
@@ -2361,7 +2497,9 @@ object Schema:
             doc,
             fieldIds,
             discriminatorField,
-            variantNaming
+            variantNaming,
+            representation,
+            variantDecoders
         ):
             type Focused = E
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
@@ -2400,6 +2538,8 @@ object Schema:
         fieldIds: Map[Seq[String], Int] = self.fieldIdOverrides,
         discriminatorField: Maybe[String] = self.discriminatorField,
         variantNaming: Schema.VariantNaming = self.variantNaming,
+        representation: Schema.SumRepresentation = self.representation,
+        variantDecoders: Chunk[Codec.Reader => Any] = self.variantDecoders,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
         createWithFocused[A, self.Focused](
@@ -2421,6 +2561,8 @@ object Schema:
             fieldIds = fieldIds,
             discriminatorField = discriminatorField,
             variantNaming = variantNaming,
+            representation = representation,
+            variantDecoders = variantDecoders,
             structure = structure
         )
 

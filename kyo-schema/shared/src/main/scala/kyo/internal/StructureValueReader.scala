@@ -162,11 +162,15 @@ final class StructureValueReader(root: Structure.Value)(using _frame: Frame) ext
     def short(): Short =
         currentValue match
             case Structure.Value.Integer(l) => l.toShort
+            case Structure.Value.Decimal(d) => d.toShort
+            case Structure.Value.BigNum(bd) => bd.toShort
             case other                      => throw TypeMismatchException(Seq.empty, "Short", other.toString)
 
     def byte(): Byte =
         currentValue match
             case Structure.Value.Integer(l) => l.toByte
+            case Structure.Value.Decimal(d) => d.toByte
+            case Structure.Value.BigNum(bd) => bd.toByte
             case other                      => throw TypeMismatchException(Seq.empty, "Byte", other.toString)
 
     def char(): Char =
