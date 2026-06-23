@@ -379,7 +379,7 @@ final private[net] class PosixTransport private[posix] (
                     awaitConnectThen(handle, addr, driver, target, host, port, tls, promise, checkSoError = true)
                 else
                     addr.close()
-                    closeHandleFd(handle)
+                    closeUnwiredHandle(handle, driver)
                     promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(result.errorCode))))
                 end if
             case Absent =>
@@ -410,17 +410,17 @@ final private[net] class PosixTransport private[posix] (
                     val err = if checkSoError then soError(handle.writeFd) else 0
                     if err != 0 then
                         addr.close()
-                        closeHandleFd(handle)
+                        closeUnwiredHandle(handle, driver)
                         promise.completeDiscard(Result.fail(connectFail(host, port, new NetErrno(err))))
                     else completeOrTls(handle, addr, driver, target, port, tls, promise)
                     end if
                 case Result.Failure(closed) =>
                     addr.close()
-                    closeHandleFd(handle)
+                    closeUnwiredHandle(handle, driver)
                     promise.completeDiscard(Result.fail(connectFail(host, port, closed)))
                 case Result.Panic(e) =>
                     addr.close()
-                    closeHandleFd(handle)
+                    closeUnwiredHandle(handle, driver)
                     promise.completeDiscard(Result.panic(e))
             end match
         }
@@ -463,8 +463,7 @@ final private[net] class PosixTransport private[posix] (
                     try buildEngine(cfg, host, isServer = false)
                     catch
                         case closed: Closed =>
-                            closeHandleFd(handle)
-                            PosixHandle.close(handle)
+                            closeUnwiredHandle(handle, driver)
                             promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
                             return
                 driveHandshake(
@@ -475,18 +474,16 @@ final private[net] class PosixTransport private[posix] (
                         completeConnect(handle, driver, promise)
                     ,
                     onFailed = closed =>
-                        // The handshake never reached onFinished, so the engine was not attached to handle.tls and PosixHandle.close (which
-                        // only frees an attached engine) cannot free it. Free it directly here: the handshake is over and no pump started, so
-                        // nothing else touches the engine. It is mutually exclusive with onFinished, so there is no double-free.
+                        closeUnwiredHandle(handle, driver)
+                        // The handshake never reached onFinished, so the engine was not attached to handle.tls and the closeUnwiredHandle teardown
+                        // above (whose PosixHandle.close frees only an attached engine) cannot free it. Free it directly here: the handshake is over
+                        // and no pump started, so nothing else touches the engine. It is mutually exclusive with onFinished, so there is no double-free.
                         engine.free()
-                        closeHandleFd(handle)
-                        PosixHandle.close(handle)
                         promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
                     ,
                     onPanic = e =>
+                        closeUnwiredHandle(handle, driver)
                         engine.free()
-                        closeHandleFd(handle)
-                        PosixHandle.close(handle)
                         promise.completeDiscard(Result.panic(e))
                 )
         end match
@@ -1081,6 +1078,22 @@ final private[net] class PosixTransport private[posix] (
     private def closeHandleFd(handle: PosixHandle)(using AllowUnsafe): Unit =
         if handle.claimFdClose() then closeRawFd(handle.writeFd)
     end closeHandleFd
+
+    /** Tear down a client-side handle whose connect or TLS handshake failed before any [[Connection]] was wired, mirroring the server-accept
+      * teardown. Routing through `driver.closeHandle` (rather than the bare [[closeHandleFd]]) is what keeps the poller state consistent: it
+      * deregisters the handle's fds (removing the activeFds / pendingReads / pendingWritables entries and, on epoll, the `epollDesired` mask) so a
+      * recycled fd number starts from a clean slate and a fresh arm re-publishes the owner-id cookie, and it frees the handle's `readBuffer` via
+      * `PosixHandle.close` (the bare close path leaked it on the connect-failure paths). The fd close is backend-coordinated through the shared
+      * `claimFdClose`: the poller's `closeHandle` already closed it (this skips), io_uring's defers it (this `shutdown` + `closeRawFd` runs it; the
+      * `shutdown` forces a still-kernel-owned recv to complete so io_uring's deferred resource free can run). Any unattached handshake engine is
+      * freed by the caller AFTER this (it is not on `handle.tls`, so `PosixHandle.close` does not free it).
+      */
+    private def closeUnwiredHandle(handle: PosixHandle, driver: IoDriver[PosixHandle])(using AllowUnsafe, Frame): Unit =
+        driver.closeHandle(handle)
+        if handle.claimFdClose() then
+            discard(sockets.shutdown(handle.writeFd, PosixConstants.SHUT_RDWR))
+            closeRawFd(handle.writeFd)
+    end closeUnwiredHandle
 
     /** The non-blocking fcntl shim (loaded once), used to set client / accepted sockets non-blocking on every architecture (RI: variadic
       * fcntl is ABI-unsafe on arm64).
