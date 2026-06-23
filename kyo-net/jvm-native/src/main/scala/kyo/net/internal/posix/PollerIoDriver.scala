@@ -997,11 +997,14 @@ final private[net] class PollerIoDriver private[posix] (
                 // consume the signal so it does not immediately re-fire, then fall through to the cycle's drainFifos, which applies the change(s)
                 // that prompted the wake. Not dispatched as a socket readiness (it is the eventfd / EVFILT_USER wake key, never a socket fd).
                 backend.drainWake(pollScratch)
-            else if ids(i) != PollScratch.IdNoCheck && activeFds.getOrElse(fd, -1L) != ids(i) then
-                // Stale event for a closed-and-recycled fd (kqueue only; epoll fills ids with IdNoCheck so this never fires there). The event's
-                // udata names the registration that produced it (the owning handle id at register time); activeFds names the fd's CURRENT owner. A
-                // mismatch means this fd was closed and its number recycled into a new connection AND a new owner re-armed it (or the event is a
-                // residual knote from the prior owner): the kernel still queued an event tagged with the OLD id. This branch never runs the normal
+            else if ids(i) != PollScratch.IdNoCheck && (activeFds.getOrElse(fd, -1L) & 0xffffffffL) != (ids(i) & 0xffffffffL) then
+                // Stale event for a closed-and-recycled fd, on BOTH backends. The per-event owner id (kqueue knote `udata`, epoll the high 32 bits of
+                // epoll_event.data) names the registration that produced it (the owning handle id at register time); activeFds names the fd's CURRENT
+                // owner. The compare is low-32 because epoll shares its one 64-bit data word between the fd and the id, so it carries id-low-32; that is
+                // collision-free within any recycle window (the prior and new owner have near-adjacent monotonic ids, never 2^32 apart). A mismatch
+                // means this fd was closed and its number recycled into a new connection AND a new owner re-armed it: either the kernel still queued an
+                // event tagged with the OLD id (kqueue residual knote), or epoll_wait already drained the prior owner's event into this batch before the
+                // close+recycle (epoll auto-removes a closed fd, but an already-dequeued event survives). This branch never runs the normal
                 // read/eof/error/write dispatch for the stale event, which is what closes the connect-burst race: the prior owner's spurious EV_EOF /
                 // EV_ERROR / read edge can no longer surface a phantom close on the NEW owner's fresh connection, and it never reaches dispatchRead's
                 // missed-edge tracking to contaminate it.
@@ -1012,22 +1015,23 @@ final private[net] class PollerIoDriver private[posix] (
                 // owner (a different id) is left untouched: a stale event must never complete the new owner's op. In the connect-burst the prior
                 // owner's pending op was already failed by its close, so pendingReads[fd] there is the new owner (different id) and is correctly left
                 // alone; only the synthetic recycle-without-close path (the stale-read / stale-writable regression guards) has a matching-id op here.
-                val staleId  = ids(i)
+                // Compared low-32 (matching the guard above): the epoll event carries id-low-32, so an orphaned op's full id is masked to match.
+                val staleId  = ids(i) & 0xffffffffL
                 val staleErr = Closed(label, summon[Frame], s"stale event fd=$fd")
                 Maybe(pendingReads.get(fd)).foreach { h =>
-                    if h.id == staleId then
+                    if (h.id & 0xffffffffL) == staleId then
                         discard(pendingReads.remove(fd))
                         h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
                         h.pendingReadPromise = Absent
                 }
                 Maybe(pendingAccepts.get(fd)).foreach { h =>
-                    if h.id == staleId then
+                    if (h.id & 0xffffffffL) == staleId then
                         discard(pendingAccepts.remove(fd))
                         h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
                         h.pendingAcceptPromise = Absent
                 }
                 Maybe(pendingWritables.get(fd)).foreach { entry =>
-                    if entry.id == staleId then
+                    if (entry.id & 0xffffffffL) == staleId then
                         discard(pendingWritables.remove(fd))
                         entry.promise.completeDiscard(Result.fail(staleErr))
                 }

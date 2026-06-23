@@ -38,15 +38,17 @@ private[net] object EpollPollerBackend extends PollerBackend:
 
     def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value.toInt
 
-    // `id` (the owning handle id) is ignored on epoll: the kqueue arm encodes it into the knote `udata` for the recycled-fd stale-event guard, but
-    // epoll cleanly drops a closed fd's pending events so it has no such exposure and carries no per-event owner cookie. The parameter is kept on the
-    // shared seam so the driver passes one register call shape to both backends.
+    // `id` (the owning handle id) is encoded into the high 32 bits of the epoll_event.data u64 (the fd takes the low 32) so a stale event for a
+    // closed-and-recycled fd is detectable on epoll: epoll auto-removes a closed fd from its set, but an event already dequeued by epoll_wait into
+    // the userspace batch BEFORE the close+recycle is still processed, and without an owner cookie it would surface a phantom readiness/EOF on the
+    // recycled fd's NEW owner. The driver's drainReady checks the decoded id against activeFds (the fd's current owner) and drops a mismatch. This
+    // mirrors the kqueue `udata` discriminator; epoll just packs it into the one data field instead of a separate knote slot.
     def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLIN)
         // reReport=false: a read re-arm with an unchanged mask skips the MOD (register-once). The already-ready read case is covered by
         // missedReads + readMightHaveMore re-dispatch, so no MOD-driven re-evaluation is needed.
-        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = false)
+        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = false, id)
     end registerRead
 
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
@@ -55,7 +57,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
         // reReport=true: the write side has no missed-edge recovery, and EPOLLET reports writability only on an empty->ready transition, so a
         // re-arm on an already-writable fd whose mask is unchanged would never deliver. Force the MOD so epoll re-evaluates and re-queues the fd
         // when currently writable, matching kqueue's EV_ADD which re-evaluates per arm (cross-backend consistency).
-        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = true)
+        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = true, id)
     end registerWrite
 
     /** OR `bit` into `fd`'s desired interest in this driver's scratch and return the new union. */
@@ -74,11 +76,13 @@ private[net] object EpollPollerBackend extends PollerBackend:
       * are always ORed in so the fd is never armed in level-triggered mode by mistake. The buffer is NOT closed here: it persists for the driver
       * lifetime and is freed via [[PollScratch.close]].
       */
-    private def arm(pollerFd: Int, fd: Int, interest: Int, prevUnion: Int, armBuf: Buffer[Byte], reReport: Boolean)(using
+    private def arm(pollerFd: Int, fd: Int, interest: Int, prevUnion: Int, armBuf: Buffer[Byte], reReport: Boolean, id: Long)(using
         AllowUnsafe
     ): Int =
         val etInterest = interest | PosixConstants.EPOLLET | PosixConstants.EPOLLRDHUP
-        EpollEvent.encode(armBuf, 0, EpollEvent(etInterest, fd.toLong))
+        // data = (id << 32) | fd: the fd in the low 32 bits (decoded back as the watched fd) and the owning handle id in the high 32 bits (the
+        // recycled-fd stale-event discriminator). The id-low-32 is unique within any recycle window (adjacent monotonic ids never differ by 2^32).
+        EpollEvent.encode(armBuf, 0, EpollEvent(etInterest, (id << 32) | (fd.toLong & 0xffffffffL)))
         val added = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, fd, armBuf)
         if added.value < 0 && added.errorCode == EEXIST then
             // Already registered. Skip the MOD when the effective mask is unchanged AND the caller does not need a readiness re-report; otherwise
@@ -168,22 +172,29 @@ private[net] object EpollPollerBackend extends PollerBackend:
         end match
     end poll
 
-    /** Decode the events epoll_wait wrote into `scratch.eventsBuffer` into the poll scratch (`readyCount`, `fds`, `flags`) and return the ready
-      * count. Each `epoll_event`'s `data` is the watched fd and its `events` bitmask carries readiness: `EPOLLIN`/`EPOLLOUT` map to read/write,
-      * `EPOLLERR`/`EPOLLHUP` to error, and `EPOLLRDHUP` (peer half-close, can co-occur with `EPOLLIN` when bytes are buffered before EOF) to eof.
+    /** Decode the events epoll_wait wrote into `scratch.eventsBuffer` into the poll scratch (`readyCount`, `fds`, `flags`, `ids`) and return the
+      * ready count. Each `epoll_event`'s `data` packs the watched fd (low 32 bits) and the owning handle id (high 32 bits, the recycled-fd
+      * stale-event discriminator); its `events` bitmask carries readiness: `EPOLLIN`/`EPOLLOUT` map to read/write, `EPOLLERR`/`EPOLLHUP` to error,
+      * and `EPOLLRDHUP` (peer half-close, can co-occur with `EPOLLIN` when bytes are buffered before EOF) to eof.
       */
     private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch)(using AllowUnsafe): Int =
         val raw   = outcome.value.toInt
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags
+        val ids   = scratch.ids
         val evBuf = scratch.eventsBuffer
         scratch.readyCount = n
         var i = 0
         while i < n do
             val ev   = EpollEvent.decode(evBuf, i * EpollEvent.size)
             val bits = ev.events
-            fds(i) = ev.data.toInt
+            val data = ev.data
+            // data packs the owning handle id (high 32 bits) and the watched fd (low 32 bits). The id is the recycled-fd stale-event discriminator
+            // checked in PollerIoDriver.drainReady against activeFds. The wake eventfd was armed with its plain fd (id bits zero) and is intercepted
+            // by isWakeFd before the id check, so its zero id is never compared.
+            fds(i) = (data & 0xffffffffL).toInt
+            ids(i) = data >>> 32
             var f = 0
             if (bits & PosixConstants.EPOLLIN) != 0 then f |= PollFlags.Read
             if (bits & PosixConstants.EPOLLOUT) != 0 then f |= PollFlags.Write
@@ -199,8 +210,9 @@ private[net] object EpollPollerBackend extends PollerBackend:
         // Unsafe: off-heap allocations at driver init (called once; closed in driver.close via PollScratch.close).
         val eventsBuffer = Buffer.alloc[Byte](MaxEvents * EpollEvent.size)
         val armBuf       = Buffer.alloc[Byte](EpollEvent.size)
-        // ids is pre-filled with the no-check sentinel and never written by the epoll decode: epoll has no recycled-fd stale-event exposure, so the
-        // driver's per-event owner check is a no-op on epoll (every slot reads IdNoCheck). Sized MaxEvents to stay parallel to fds/flags.
+        // ids is pre-filled with the no-check sentinel; decodeReady overwrites slots 0..readyCount-1 each poll with the owning handle id unpacked
+        // from each event's data (the recycled-fd stale-event discriminator the driver's per-event owner check reads). Sized MaxEvents to stay
+        // parallel to fds/flags.
         val ids = Array.fill[Long](MaxEvents)(PollScratch.IdNoCheck)
         new PollScratch(eventsBuffer, new Array[Int](MaxEvents), new Array[Int](MaxEvents), armBuf, Absent, ids)
     end newPollScratch
