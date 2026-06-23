@@ -289,6 +289,9 @@ class NioIoDriverTest extends Test:
             case Present(Result.Failure(_)) => true
             case _                          => false)
 
+        // cancel only deregisters the selector key; it does not close the channel (closeHandle does). Close the client channel here so the test
+        // does not leak its fd.
+        client.close()
         sv.close()
         driver.close()
         succeed
@@ -302,6 +305,9 @@ class NioIoDriverTest extends Test:
         driver.registerChannel(handle)
         driver.cancel(handle)
         driver.cancel(handle) // must not throw
+        // cancel only deregisters the selector key; it does not close the channel (closeHandle does). Close the client channel here so the test
+        // does not leak its fd.
+        client.close()
         sv.close()
         driver.close()
         succeed
