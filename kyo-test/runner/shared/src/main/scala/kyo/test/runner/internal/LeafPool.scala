@@ -123,7 +123,7 @@ object LeafPool:
       * to the whole process. Native = 1 (single-threaded; concurrent unwinding crashes libunwind).
       */
     val globalK: Int =
-        if kyo.internal.Platform.isNative then 1
+        if kyo.internal.Platform.isNative || LeakDebug.enabled then 1
         else math.max(1, Async.defaultConcurrency)
 
     /** THE process-global pool: `globalK` workers, capacity 1024. Every suite routes its leaves through this one
