@@ -46,9 +46,14 @@ private[net] object EpollPollerBackend extends PollerBackend:
     def registerRead(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
         val prevUnion = scratch.epollDesired.getOrDefault(fd, 0)
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLIN)
-        // reReport=false: a read re-arm with an unchanged mask skips the MOD (register-once). The already-ready read case is covered by
-        // missedReads + readMightHaveMore re-dispatch, so no MOD-driven re-evaluation is needed.
-        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = false, id)
+        // reReport=false normally: a read re-arm with an unchanged mask skips the MOD (register-once); the already-ready read case is covered by
+        // missedReads + readMightHaveMore re-dispatch, so no MOD-driven re-evaluation is needed. BUT force the MOD when the owning id CHANGED
+        // (a recycled fd's new owner): the register-once skip leaves the kernel's packed epoll_event.data id at the PRIOR owner's value, and the
+        // driver's recycled-fd stale-event guard would then drop the new owner's legitimate edges as if they were the prior owner's.
+        val idChanged = scratch.armedId.getOrDefault(fd, -1L) != id
+        val rc        = arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = idChanged, id)
+        if rc >= 0 then discard(scratch.armedId.put(fd, id))
+        rc
     end registerRead
 
     def registerWrite(pollerFd: Int, fd: Int, id: Long, scratch: PollScratch)(using AllowUnsafe, Frame): Int =
@@ -56,8 +61,11 @@ private[net] object EpollPollerBackend extends PollerBackend:
         val union     = addInterest(scratch, fd, PosixConstants.EPOLLOUT)
         // reReport=true: the write side has no missed-edge recovery, and EPOLLET reports writability only on an empty->ready transition, so a
         // re-arm on an already-writable fd whose mask is unchanged would never deliver. Force the MOD so epoll re-evaluates and re-queues the fd
-        // when currently writable, matching kqueue's EV_ADD which re-evaluates per arm (cross-backend consistency).
-        arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = true, id)
+        // when currently writable, matching kqueue's EV_ADD which re-evaluates per arm (cross-backend consistency). The forced MOD also re-encodes
+        // the current owner id into epoll_event.data, so the armedId tracking below stays correct for the stale-event guard.
+        val rc = arm(pollerFd, fd, union, prevUnion, scratch.armBuf, reReport = true, id)
+        if rc >= 0 then discard(scratch.armedId.put(fd, id))
+        rc
     end registerWrite
 
     /** OR `bit` into `fd`'s desired interest in this driver's scratch and return the new union. */
@@ -97,6 +105,9 @@ private[net] object EpollPollerBackend extends PollerBackend:
 
     def deregister(pollerFd: Int, fd: Int, fdClosing: Boolean, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         discard(scratch.epollDesired.remove(fd))
+        // Mirror epollDesired's lifecycle exactly so the id-tracking map never leaks: armedId entries are a subset of epollDesired (only successful
+        // arms put one), and deregister is the sole per-fd removal site for epollDesired, so removing here covers every armedId entry too.
+        discard(scratch.armedId.remove(fd))
         if !fdClosing then
             // When the fd is still open, explicitly remove it from the epoll set. When fdClosing, the OS auto-removes it on close;
             // an EPOLL_CTL_DEL on a recycled fd number would target the wrong entry.

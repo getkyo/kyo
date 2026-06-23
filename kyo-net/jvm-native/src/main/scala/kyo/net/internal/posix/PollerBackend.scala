@@ -192,6 +192,15 @@ final private[net] class PollScratch(
       */
     val epollDesired: java.util.HashMap[Int, Int] = new java.util.HashMap[Int, Int]()
 
+    /** Per-driver fd -> the owning handle id currently encoded into the kernel `epoll_event.data` for that fd. The epoll arm packs this id so the
+      * driver's recycled-fd stale-event guard can compare it against `activeFds`. The register-once optimization skips the `epoll_ctl` on an
+      * unchanged-mask re-arm, which does NOT update the kernel's packed id; if a recycled fd's new owner re-armed via that skip, the kernel would
+      * keep the PRIOR owner's id and the guard would drop the new owner's legitimate edges. Tracking the last-armed id here lets the arm force a
+      * MOD (re-encoding the data) whenever the owner id changed, keeping the kernel id in sync with the current owner. Same single-writer
+      * (interest-change worker) ownership and lifecycle as `epollDesired`; unused on kqueue (it carries the id in the knote `udata`). GC'd.
+      */
+    val armedId: java.util.HashMap[Int, Long] = new java.util.HashMap[Int, Long]()
+
     /** Poll-loop wakeup state, initialized by [[PollerBackend.registerWake]] at driver start.
       *
       * epoll: `wakeFd` is the eventfd (created with EFD_NONBLOCK | EFD_CLOEXEC, registered in the epoll set for read interest); `wakeDrainBuf`
