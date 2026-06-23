@@ -169,6 +169,12 @@ final private[net] class IoUringDriver private[posix] (
     // `closeAfterDrain` is closed by the reap loop once this count drops to 0 (close runs only after the kernel releases the buffers).
     private val inFlight        = new ConcurrentHashMap[Long, Long]()
     private val closeAfterDrain = new ConcurrentHashMap[Long, PosixHandle]()
+    // Every handle whose close has been REQUESTED (closeHandle entered) but not yet completed (closeNow run). At ring teardown any still-pending
+    // requested close is force-completed so its fd is reclaimed: a connection close is async (engine FIFO / closeAfterDrain), and the last in-flight
+    // closes lose the race against a per-driver teardown, leaking the fd (an idle peer leaves it ESTABLISHED, a peer-FIN'd one CLOSE_WAIT). Only
+    // close-REQUESTED handles are tracked here, so teardown never force-closes a live connection or a STARTTLS-detached fd (those never enter
+    // closeHandle), which is what made the unconditional teardown-close break TLS round-trips.
+    private val pendingCloses = new ConcurrentHashMap[Long, PosixHandle]()
 
     // Handles whose pending raw tail could not flush because the SUBMISSION queue was full (flushRaw's get_sqe returned Absent), so the remainder
     // is buffered with no send in flight. SQ-full has no per-handle send CQE to re-drive the flush, so the reap loop re-flushes these (on the
@@ -820,6 +826,9 @@ final private[net] class IoUringDriver private[posix] (
     override def inlineRecvSafe: Boolean = false
 
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
+        // close can force-complete it and reclaim the fd. Removed in closeNow when the fd actually closes.
+        discard(pendingCloses.put(handle.id, handle))
         // Route the engine free through the engine queue so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before the close path can fire so freeResources sees the sink whether the close runs now or is
         // deferred until the in-flight count drains.
@@ -899,6 +908,8 @@ final private[net] class IoUringDriver private[posix] (
         // the handshake-deadline reap) does not double-close a possibly-recycled fd. sockets set readFd == writeFd; stdio (0/1) is process-owned.
         if handle.readFd == handle.writeFd && handle.claimFdClose() then discard(takeNow(sockets.close(handle.readFd)))
         PosixHandle.close(handle)
+        // The requested close has completed; drop it from the teardown force-close set.
+        discard(pendingCloses.remove(handle.id))
     end closeNow
 
     /** Read the inline result of an `@Ffi.blocking` fiber that completes synchronously on JVM/Native (the `SocketBindings.close` used by the
@@ -948,6 +959,9 @@ final private[net] class IoUringDriver private[posix] (
     private def teardownRing()(using AllowUnsafe, Frame): Unit =
         if teardownDone.compareAndSet(false, true) then
             val closed = Closed(label, summon[Frame], "driver closed")
+            // Snapshot the still-pending requested closes before the maps are torn down; force-complete them after the ring exits (below). closeNow
+            // removes from pendingCloses, so iterating a copy is race-free.
+            val orphanedCloses = new java.util.ArrayList[PosixHandle](pendingCloses.values())
             pending.forEach((_, op) => op.failPromise(closed))
             // The ring teardown reclaims any kernel-owned buffers; release every per-write buffer we still hold so none leaks.
             pending.forEach((_, op) => op.releaseBuffer())
@@ -971,6 +985,10 @@ final private[net] class IoUringDriver private[posix] (
             closeWakeGuarded()
             uring.io_uring_queue_exit(ring)
             cqePtr.close()
+            // Force-complete every requested-but-orphaned close now that io_uring_queue_exit released the kernel's hold on every recv buffer (so
+            // closeNow freeing the readBuffer is UAF-safe). These are all close-REQUESTED (closeHandle ran), never live or STARTTLS-detached
+            // connections, so reclaiming their fds here cannot disturb an in-use socket. closeNow's claimFdClose makes a racing close idempotent.
+            orphanedCloses.forEach(h => closeNow(h))
         end if
     end teardownRing
 
