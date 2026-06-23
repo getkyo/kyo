@@ -51,6 +51,10 @@ class RearmSurvivorsTest extends Test:
             // Wait for the read promise to complete (the driver dispatched the EOF read event). Then inspect the call log.
             readPromise.safe.get.map { _ =>
                 driver.close()
+                // Close the loopback pair: this leaf only tore the driver down, which does not close the connection fds, so without these the
+                // client + accepted fds leak (the second leaf below already closes them; this one was missing it).
+                discard(sock.close(clientFd))
+                discard(sock.close(acceptedFd))
                 val log = backend.callLog
                 assert(
                     !log.exists(_.startsWith("rearm(")),

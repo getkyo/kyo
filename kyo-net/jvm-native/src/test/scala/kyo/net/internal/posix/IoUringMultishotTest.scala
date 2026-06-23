@@ -74,8 +74,10 @@ class IoUringMultishotTest extends Test:
                     // client. This matches the production accept-loop pattern: await fd, arm next accept, handle fd.
                     Loop(p0, Vector.empty[Int]) { (currentPromise, fds) =>
                         connectTo(serverFd).flatMap { clientFd =>
-                            discard(clientFd)
                             currentPromise.safe.get.map { fd =>
+                                // Close this client once its connection has been accepted (the accepted server-side fd stays valid). Without this
+                                // the per-iteration client fds were discarded and never closed, leaking one fd per accepted connection.
+                                discard(sock.close(clientFd))
                                 val acc = fds :+ fd
                                 if acc.size >= C then Loop.done(acc)
                                 else
