@@ -100,7 +100,12 @@ object Sync:
       * @return
       *   The result of the computation, with the finalizer guaranteed to run.
       */
-    inline def ensure[A, S](inline f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
+    // `f` is intentionally not inline. Under Scala 3.8.4 an inlined pure-value finalizer body (a
+    // Unit-returning side effect) is inferred as the unfolded `Unit | Kyo[Unit, Any]` union, which no
+    // longer conforms to the opaque `Any < (Sync & Abort[Throwable])`. As a non-inline function value
+    // the body adapts to the opaque type at the call site; the cost is one finalizer-closure
+    // allocation. Restore inline once the upstream inference regression is resolved.
+    inline def ensure[A, S](f: Maybe[Error[Any]] => Any < (Sync & Abort[Throwable]))(v: => A < S)(using
         inline frame: Frame
     ): A < (Sync & S) =
         Unsafe.defer(Safepoint.ensure(ex => Sync.Unsafe.evalOrThrow(f(ex)))(v))

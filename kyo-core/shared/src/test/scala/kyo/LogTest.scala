@@ -3,6 +3,23 @@ package kyo
 import kyo.internal.Platform
 import scala.util.control.NoStackTrace
 
+// A minimal Log backend that tracks its own class, used by the sibling-derivation tests below to
+// check that a derived backend keeps the active backend's class. Defined at the top level rather
+// than as a local class inside the test bodies so its isInstanceOf type test is checkable at runtime.
+private class MarkedBackend(val name: String, val level: Log.Level) extends Log.Unsafe:
+    def withName(n: String): Log.Unsafe                                                      = new MarkedBackend(n, level)
+    def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
+    def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
+    def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
+    def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
+    def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                   = ()
+    def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit  = ()
+    def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                   = ()
+    def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit  = ()
+    def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
+    def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
+end MarkedBackend
+
 class LogTest extends kyo.test.Test[Any]:
 
     // The async tests share the process-global Log daemon, so they use Log.flush as a drain
@@ -291,21 +308,6 @@ class LogTest extends kyo.test.Test[Any]:
     }
 
     "Log.init derives a same-backend sibling named name" in {
-        // A minimal test backend that tracks its own class for backend-class checking
-        class MarkedBackend(val name: String, val level: Log.Level) extends Log.Unsafe:
-            def withName(n: String): Log.Unsafe                                                      = new MarkedBackend(n, level)
-            def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
-            def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
-            def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
-            def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
-            def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                   = ()
-            def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit  = ()
-            def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                   = ()
-            def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit  = ()
-            def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
-            def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
-        end MarkedBackend
-
         val rootLog = Log(new MarkedBackend("root", Log.Level.debug))
         Log.let(rootLog) {
             Log.init("com.example.worker").map { derived =>
@@ -317,20 +319,6 @@ class LogTest extends kyo.test.Test[Any]:
     }
 
     "Log.let(name) binds a sibling of the active backend for the scope" in {
-        class MarkedBackend(val name: String, val level: Log.Level) extends Log.Unsafe:
-            def withName(n: String): Log.Unsafe                                                      = new MarkedBackend(n, level)
-            def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
-            def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
-            def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
-            def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
-            def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                   = ()
-            def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit  = ()
-            def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                   = ()
-            def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit  = ()
-            def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit                  = ()
-            def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit = ()
-        end MarkedBackend
-
         val outerLog = Log(new MarkedBackend("outer", Log.Level.debug))
         Log.let(outerLog) {
             Log.let("child") {
