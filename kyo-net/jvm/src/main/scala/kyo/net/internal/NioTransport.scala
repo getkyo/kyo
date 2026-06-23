@@ -62,6 +62,25 @@ final private[kyo] class NioTransport private (
         IoDriverPool.init(Array[IoDriver[NioHandle]](driver))
     end pool
 
+    /** Every connection this transport opened (client connect, accepted server, or STARTTLS upgrade), keyed by its handle. A connection removes
+      * itself when its handle is torn down (via the `onClose` wired at creation); `close()` closes whatever is still registered before the driver
+      * shuts down, so a connection whose ordinary close never completed (its peer FIN never arrived, its handler never closed it) is reclaimed
+      * instead of leaking its fd. Mirrors PosixTransport's connection registry. The shared process transport never calls `close()`, so its
+      * registry only ever shrinks as connections close; an owned transport (per test, per kyo-http config) clears it at `close()`.
+      */
+    // Concurrent-collection audit: a raw ConcurrentHashMap tracking open connections, added on the connect/accept carrier and iterated on the
+    // transport-close carrier without suspension. kyo has no concurrent map its effect collections can back here; retained as a documented exception.
+    private val connections = new java.util.concurrent.ConcurrentHashMap[NioHandle, Connection[NioHandle]]()
+
+    /** Build a connection over `handle` and register it in [[connections]], wiring its `onClose` so it self-removes when its handle is torn
+      * down. Used for every connection so `close()` can reclaim any that did not close on their own.
+      */
+    private def initTracked(handle: NioHandle)(using AllowUnsafe, Frame): Connection[NioHandle] =
+        val conn = Connection.init(handle, driver, channelCapacity, () => discard(connections.remove(handle)))
+        discard(connections.put(handle, conn))
+        conn
+    end initTracked
+
     /** The NIO floor terminates TLS inline with the JDK SSLEngine, so it can serve only the "jdk" implementation. A connection pinning any
       * other [[NetTlsConfig.tlsProvider]] fails closed (see `startTlsHandshake`). The cross-backend test matrix reads this to skip non-jdk
       * cells against the NIO backend.
@@ -80,11 +99,23 @@ final private[kyo] class NioTransport private (
     private def connectFail(host: String, port: Int, cause: String | Throwable)(using Frame): NetException =
         if port < 0 then NetUnixConnectException(host, cause) else NetConnectException(host, port, cause)
 
+    /** Close a channel on a failure path, swallowing any close exception: the failure leaf is already being reported, so a secondary close error
+      * must not mask it. Used where a channel was opened but no [[NioHandle]]/[[Connection]] took ownership of it yet (a connect or handshake that
+      * fails before registration), so the fd would otherwise leak.
+      */
+    private def closeQuietly(channel: java.nio.channels.Channel): Unit =
+        try channel.close()
+        catch case _: Throwable => ()
+
     def connect(host: String, port: Int)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
+        // Hoisted so the catch can close it: channel.connect throws UnresolvedAddressException (DNS failure) / IOException AFTER the channel is
+        // open, and the failure paths inside the try (awaitConnect, registerChannel) already close it, so only this synchronous catch was leaking
+        // the just-opened channel fd.
+        var channel: SocketChannel = null
         try
-            val channel = SocketChannel.open()
+            channel = SocketChannel.open()
             channel.configureBlocking(false)
             channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
             Log.live.unsafe.debug(s"NioTransport connect $host:$port channel=${channel.hashCode()}")
@@ -106,8 +137,10 @@ final private[kyo] class NioTransport private (
             end if
         catch
             case e: UnresolvedAddressException =>
+                if channel != null then closeQuietly(channel)
                 promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
             case e: IOException =>
+                if channel != null then closeQuietly(channel)
                 promise.completeDiscard(Result.fail(connectFail(host, port, e)))
         end try
 
@@ -167,7 +200,7 @@ final private[kyo] class NioTransport private (
         promise: IOPromise[NetException, Connection[NioHandle]]
     )(using AllowUnsafe, Frame): Unit =
         Log.live.unsafe.debug(s"NioTransport completeConnect channel=${handle.channel.hashCode()}")
-        val connection = Connection.init(handle, driver, channelCapacity)
+        val connection = initTracked(handle)
         // Wire in the STARTTLS upgrade function. NioTransport is the only platform that supports it.
         connection.upgradeFn = Present { (tls, frame) =>
             given Frame = frame
@@ -199,8 +232,11 @@ final private[kyo] class NioTransport private (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
+        // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
+        // leaked the listen fd.
+        var serverChannel: ServerSocketChannel = null
         try
-            val serverChannel = ServerSocketChannel.open()
+            serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
             serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
@@ -219,8 +255,10 @@ final private[kyo] class NioTransport private (
             end if
         catch
             case e: UnresolvedAddressException =>
+                if serverChannel != null then closeQuietly(serverChannel)
                 promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
             case e: IOException =>
+                if serverChannel != null then closeQuietly(serverChannel)
                 promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
         end try
 
@@ -288,7 +326,7 @@ final private[kyo] class NioTransport private (
 
                     val handle = NioHandle.init(clientChannel, readBufferSize)
                     discard(driver.registerChannel(handle))
-                    val connection = Connection.init(handle, driver, channelCapacity)
+                    val connection = initTracked(handle)
                     // Accepted connection: a STARTTLS upgrade through the public upgradeToTls runs in the TLS server role (upgradeToTls reads
                     // isServerOrigin).
                     connection.isServerOrigin = true
@@ -325,8 +363,11 @@ final private[kyo] class NioTransport private (
     def connect(host: String, port: Int, tls: NetTlsConfig)(using AllowUnsafe, Frame): Fiber.Unsafe[NetConnection, Abort[NetException]] =
         val promise = new IOPromise[NetException, Connection[NioHandle]]
 
+        // Hoisted so the catch can close it (same as the plaintext connect): channel.connect throws after the channel is open, and the failure
+        // paths inside the try already close it, so only this synchronous catch was leaking the just-opened channel fd.
+        var channel: SocketChannel = null
         try
-            val channel = SocketChannel.open()
+            channel = SocketChannel.open()
             channel.configureBlocking(false)
             channel.setOption(StandardSocketOptions.TCP_NODELAY, java.lang.Boolean.TRUE)
             Log.live.unsafe.debug(s"NioTransport TLS connect $host:$port channel=${channel.hashCode()}")
@@ -339,8 +380,10 @@ final private[kyo] class NioTransport private (
             end if
         catch
             case e: UnresolvedAddressException =>
+                if channel != null then closeQuietly(channel)
                 promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
             case e: IOException =>
+                if channel != null then closeQuietly(channel)
                 promise.completeDiscard(Result.fail(NetConnectException(host, port, e)))
         end try
 
@@ -404,6 +447,19 @@ final private[kyo] class NioTransport private (
         existingHandle: Maybe[NioHandle],
         preRead: Maybe[Chunk[Span[Byte]]]
     )(using AllowUnsafe, Frame): Unit =
+        // Central failure-close for a channel THIS handshake owns (a fresh client connect, not a STARTTLS upgrade of an existing handle): every
+        // handshake failure path in this method and in driveHandshake completes connectPromise with a failure and never reaches completeConnect, so
+        // the just-opened channel would leak. One onComplete closes it on any failure (a version mismatch, a name-mismatch rejection, a CLOSED
+        // unwrap, a verifying-client-with-no-identity reject, a TLS-to-plaintext peer). On success completeConnect has already wrapped the channel
+        // in a tracked Connection that owns it, so the success arm skips the close. Closing the channel cancels its Selector key (NIO semantics), so
+        // no separate driver deregister is needed (matching the plaintext awaitConnect failure path). The STARTTLS case (existingHandle present) is
+        // owned by upgradeToTls, which closes on its own failure path.
+        if existingHandle.isEmpty then
+            connectPromise.onComplete {
+                case Result.Success(_) => ()
+                case _                 => closeQuietly(channel)
+            }
+        end if
         try
             // Honor a NetTlsConfig.tlsProvider pin: the NIO floor terminates TLS with the inline JDK SSLEngine, so it can serve only the "jdk"
             // implementation. A pin to any other provider fails closed (caught below and reported on connectPromise) rather than silently
@@ -488,11 +544,10 @@ final private[kyo] class NioTransport private (
             driveHandshake(handle, tlsState, host, port, connectPromise)
         catch
             case e: Exception =>
-                if existingHandle.isEmpty then
-                    try channel.close()
-                    catch case _: IOException => ()
-                end if
+                // The channel close is handled centrally by the connectPromise failure onComplete above (for a fresh channel); here just report the
+                // failure. A STARTTLS upgrade (existingHandle present) is closed by upgradeToTls.
                 connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
+        end try
     end startTlsHandshake
 
     /** Drive TLS handshake via callback-driven promise chains.
@@ -662,8 +717,11 @@ final private[kyo] class NioTransport private (
     )(using AllowUnsafe, Frame): Fiber.Unsafe[NetListener, Abort[NetException]] =
         val promise = new IOPromise[NetException, NetListener]
 
+        // Hoisted so the catch can close it: bind throws (e.g. address-already-in-use) after the server channel is open, and that catch otherwise
+        // leaked the listen fd.
+        var serverChannel: ServerSocketChannel = null
         try
-            val serverChannel = ServerSocketChannel.open()
+            serverChannel = ServerSocketChannel.open()
             serverChannel.configureBlocking(false)
             serverChannel.setOption(StandardSocketOptions.SO_REUSEADDR, java.lang.Boolean.TRUE)
             serverChannel.bind(new InetSocketAddress(host, port), backlog)
@@ -682,8 +740,10 @@ final private[kyo] class NioTransport private (
             end if
         catch
             case e: UnresolvedAddressException =>
+                if serverChannel != null then closeQuietly(serverChannel)
                 promise.completeDiscard(Result.fail(NetDnsResolutionException(host, e)))
             case e: IOException =>
+                if serverChannel != null then closeQuietly(serverChannel)
                 promise.completeDiscard(Result.fail(NetBindException(host, port, e)))
         end try
 
@@ -890,7 +950,12 @@ final private[kyo] class NioTransport private (
     end listenUnix
 
     def close()(using AllowUnsafe, Frame): Unit =
+        // Close every still-open connection first, while the driver is alive, so each connection's fd is reclaimed instead of being stranded when
+        // the pool tears down; a connection whose ordinary close never ran (peer FIN never arrived, handler never closed it) would otherwise leak.
+        connections.values().forEach(c => c.close())
+        connections.clear()
         pool.close()
+    end close
 
     /** Upgrade a plaintext [[Connection]] to TLS after STARTTLS-style pre-handshake bytes have been exchanged.
       *
@@ -916,6 +981,14 @@ final private[kyo] class NioTransport private (
             // Unsafe: NioTransport only creates Connection[NioHandle] instances, so this downcast is safe.
             val nioConn = conn.asInstanceOf[Connection[NioHandle]]
             val handle  = nioConn.handle
+            // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT closing
+            // it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the channel would leak
+            // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new
+            // tracked Connection that owns it, so the success arm skips the close.
+            promise.onComplete {
+                case Result.Success(_) => ()
+                case _                 => closeQuietly(handle.channel)
+            }
             // Step 1: detach the handle, closing inbound/outbound channels and cancelling selector
             // registration, but does NOT close the underlying SocketChannel.
             // Capture any bytes the ReadPump already pulled off the socket and staged in the inbound
