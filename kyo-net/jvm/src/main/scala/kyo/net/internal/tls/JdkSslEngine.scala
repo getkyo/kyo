@@ -46,6 +46,13 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
     // ONLY on the per-driver `submitEngineOp` FIFO worker carrier (see the class scaladoc), so the bare `var` carries no cross-carrier hazard.
     private var oneRecord: ByteBuffer = ByteBuffer.allocate(packetCap)
 
+    // The peer leaf-cert SHA-256, captured ONCE when the handshake completes (see captureCertHash, called from handshakeStep on the FIFO worker
+    // carrier where the session is finalized). @volatile so certSha256 can return it from any carrier without touching the live engine: the
+    // STARTTLS wiring carrier (PosixTransport.wireUpgraded -> installCertHash) reads it after the FIFO carrier wrote it, instead of racing
+    // engine.getSession against a session not yet populated/visible there. Absent until the handshake completes (and for a server engine with no
+    // client cert).
+    @volatile private var cachedCertHash: Maybe[Span[Byte]] = Absent
+
     private def emptyRead(cap: Int): ByteBuffer =
         val b = ByteBuffer.allocate(cap)
         b.flip() // position=0, limit=0: nothing to read yet
@@ -75,7 +82,13 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
         // SSLException. Return -2, the engine contract's fatal-failure code, so the driver routes it to onFailed -> Closed (and drains any alert
         // the engine queued), matching the BoringSSL/OpenSSL engines. Without this the raw SSLException escapes as an unhandled Panic, which the
         // public connect/upgrade surface (declared Abort[Closed]) must never produce.
-        try doHandshakeStep()
+        try
+            val r = doHandshakeStep()
+            // The handshake just completed on this serialized FIFO carrier (r == 1: FINISHED / NOT_HANDSHAKING), so the session is finalized and
+            // safe to read here. Capture the peer cert hash now; certSha256 then serves it from any carrier, fixing the cert-hash-after-STARTTLS
+            // race where the wiring carrier read getPeerCertificates against a session not yet populated/visible from there (io_uring/jdk).
+            if r == 1 then captureCertHash()
+            r
         catch case _: javax.net.ssl.SSLException => -2
     end handshakeStep
 
@@ -253,17 +266,29 @@ final private[net] class JdkSslEngine(engine: SSLEngine) extends TlsEngine:
             Span.fromUnsafe(arr)
     end readBuffered
 
-    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] =
-        try
-            val certs = engine.getSession.getPeerCertificates
-            if certs == null || certs.isEmpty then Absent
-            else
-                val leafDer = certs(0).getEncoded
-                val digest  = java.security.MessageDigest.getInstance("SHA-256")
-                Present(Span.fromUnsafe(digest.digest(leafDer)))
-            end if
-        catch case _: Throwable => Absent
-    end certSha256
+    /** The peer leaf-cert SHA-256 (RFC 5929 tls-server-end-point), captured at handshake completion (see [[cachedCertHash]] / captureCertHash).
+      * Returns the captured value WITHOUT touching the live engine, so it is safe to call from any carrier. Absent before the handshake completes
+      * and for a server engine with no client certificate.
+      */
+    def certSha256()(using AllowUnsafe): Maybe[Span[Byte]] = cachedCertHash
+
+    /** Compute the peer leaf-cert SHA-256 from the now-finalized session and cache it. Called only from [[handshakeStep]] at handshake completion,
+      * on the per-driver FIFO worker carrier where the session is populated and engine access is serialized, so the read cannot race the
+      * read/write engine ops. Idempotent: a non-empty hash is computed at most once; a server engine with no peer cert stays Absent.
+      */
+    private def captureCertHash()(using AllowUnsafe): Unit =
+        if cachedCertHash.isEmpty then
+            cachedCertHash =
+                try
+                    val certs = engine.getSession.getPeerCertificates
+                    if certs == null || certs.isEmpty then Absent
+                    else
+                        val leafDer = certs(0).getEncoded
+                        val digest  = java.security.MessageDigest.getInstance("SHA-256")
+                        Present(Span.fromUnsafe(digest.digest(leafDer)))
+                    end if
+                catch case _: Throwable => Absent
+    end captureCertHash
 
     def shutdownStep()(using AllowUnsafe): Int =
         // Mark the outbound side closed, then wrap to emit this side's close_notify into netOut for the driver to drain and flush. wrap on a
