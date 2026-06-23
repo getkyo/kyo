@@ -127,6 +127,28 @@ object Frame:
 
     private val allowKyoFileSuffixes = Set("Test.scala", "Spec.scala", "Bench.scala")
 
+    // Single-slot per-file memo for the source file's normalized content and its line
+    // split, keyed on the SOURCE FILE OBJECT identity. The compiler caches one source-file
+    // object per file for the whole run, so within a file every expansion finds the same
+    // object and hits; a hit reuses the stored content and line split and does NOT read the
+    // content again. Identity keying is required for correctness: a recompiled file produces
+    // a NEW source-file object, so it misses and recomputes; a stale window is impossible.
+    // Reading content reconstructs a fresh string each call, so the hit path that skips that
+    // read is the whole point. The slot is volatile for cross-thread visibility of the
+    // reference write; a parallel expansion on another file is last-writer-wins and the loser
+    // simply misses and recomputes the same values. Absent until the first miss.
+    @volatile private var fileCache: Maybe[(AnyRef, String, Array[String])] = Absent
+
+    private def contentAndLines(sourceFile: AnyRef, fetchContent: => String): (String, Array[String]) =
+        fileCache match
+            case Present((sf, content, lines)) if sf eq sourceFile => (content, lines)
+            case _ =>
+                val content = fetchContent.replace("\r\n", "\n")
+                val lines   = content.linesIterator.toArray
+                fileCache = Present((sourceFile, content, lines))
+                (content, lines)
+    end contentAndLines
+
     private def frameImpl(internal: Boolean)(using Quotes): Expr[String] =
         import quotes.reflect.*
 
@@ -149,9 +171,16 @@ object Frame:
         val cls    = FindEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
         val caller = if internal then "?" else FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
 
-        val rawContent =
-            if internal then ""
-            else pos.sourceFile.content.getOrElse(report.errorAndAbort("Can't locate source code")).replace("\r\n", "\n")
+        // For a non-internal frame, resolve the file's normalized content and line split from
+        // the per-file memo. On a hit (same source-file object) the content is reused without
+        // re-reading it; on a miss the content is read once, normalized, split, and stored.
+        val (rawContent, lines) =
+            if internal then ("", Array.empty[String])
+            else
+                contentAndLines(
+                    pos.sourceFile.asInstanceOf[AnyRef],
+                    pos.sourceFile.content.getOrElse(report.errorAndAbort("Can't locate source code"))
+                )
 
         // Callee = syntactic name of the function whose `(using Frame)` parameter the macro is filling.
         // The macro splice always lands at the end of a call expression: either right after the function
@@ -169,13 +198,41 @@ object Frame:
         val snippet =
             if internal then "<internal>"
             else
-                val marked = rawContent.take(pos.end) + "📍" + rawContent.drop(pos.end)
-                val lines  = marked.linesIterator.slice(pos.startLine - 1, pos.endLine + 2).filter(_.exists(_ != ' ')).toSeq
-                val toDrop = lines.map(_.takeWhile(_ == ' ').length).min
-                lines.map(_.drop(toDrop)).mkString("\n")
+                // Build the marker-inserted snippet from the [startLine-1, endLine+2) line
+                // window of the memoized per-file line array, inserting the marker at the
+                // (endLine, endColumn) point. pos.end always lies within the retained window,
+                // so the marker insertion is exact: the filtered, dedented, newline-joined
+                // window is the snippet.
+                //
+                // pos.endColumn is the 0-based column on pos.endLine where the marker is inserted.
+                // This line/column placement corresponds to the position offset `pos.end` maps to
+                // in the normalized (LF) content: for LF source it produces the same marker
+                // placement as a direct offset-based insertion, and it is also CRLF-correct
+                // because a raw-offset insertion into CRLF source would drift the marker right by
+                // the count of preceding CRs, while the line/column split sidesteps that drift.
+                val markerCol = pos.endColumn
+                val from      = pos.startLine - 1
+                val until     = math.min(pos.endLine + 2, lines.length)
+                val windowBuf = scala.collection.mutable.ArrayBuffer.empty[String]
+                var i         = math.max(0, from)
+                while i < until do
+                    val line =
+                        if i == pos.endLine then
+                            val col = math.min(math.max(0, markerCol), line0Length(lines, i))
+                            lines(i).substring(0, col) + "📍" + lines(i).substring(col)
+                        else lines(i)
+                    if line.exists(_ != ' ') then windowBuf += line
+                    i += 1
+                end while
+                val selected = windowBuf.toSeq
+                val toDrop   = selected.map(_.takeWhile(_ == ' ').length).min
+                selected.map(_.drop(toDrop)).mkString("\n")
 
         Expr(s"$version$fileName:${pos.startLine + 1}:${pos.startColumn + 1}|$cls|$caller|$callee|$snippet")
     end frameImpl
+
+    private def line0Length(lines: Array[String], i: Int): Int =
+        if i >= 0 && i < lines.length then lines(i).length else 0
 
     /** Source-text extraction of the callee identifier from `source` walking backwards starting at `end`. Pulled out to a pure helper so
       * the algorithm can be exercised directly from unit tests with hand-built inputs.

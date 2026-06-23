@@ -11,11 +11,60 @@ import scala.collection.immutable.HashMap
 import scala.quoted.{Type as SType, *}
 
 private[kyo] object TagMacro:
+    // Per-compilation-run memo of the derived static encoding. The cache key is the
+    // dealiased type's normalized `show` string concatenated with the source-position
+    // offsets of its class symbols (`symPositions`): the `show` alone is not sufficient
+    // because two distinct same-name local types (e.g. two `class Test` definitions in
+    // different test blocks) can produce identical `show` strings; appending each class
+    // symbol's definition-site position makes the key unique across those cases. Two
+    // types that are genuinely identical share every symbol and every position, so their
+    // keys match; two that share only source names but differ in their definitions carry
+    // different positions, so their keys diverge. deriveDB is a pure function of the
+    // TypeRepr, so the same type always derives the same encoded string: caching the
+    // encoded form across identical types within one run cannot change the emitted
+    // constant. Only the STATIC (dynamicDB-empty) case is memoized, the case that emits
+    // a pure string literal; the Dynamic-fallback case carries per-expansion Expr trees
+    // that are not reusable across call sites; on a miss the encoding is derived and
+    // stored. The macro object is a per-run singleton (the same lifecycle Frame's
+    // per-file memo relies on), so a key collision across runs is impossible and a miss
+    // simply derives the encoding.
+    @volatile private var encodedCache: Map[String, String] = Map.empty
+
     def deriveImpl[A: SType](allowDynamic: Boolean)(using Quotes): Expr[String | Tag.internal.Dynamic] =
         import quotes.reflect.*
+        // Collect source-position offsets of every class symbol in the type tree,
+        // recursively walking into applied type arguments and the components of
+        // intersection/union types. The show string alone is not sufficient to
+        // distinguish locally-defined classes with the same source name (e.g.
+        // multiple `class Test` definitions with different variances, or matching
+        // trait names in different test blocks). Appending the position of each
+        // class symbol's definition makes the key structurally unique: two types
+        // that are genuinely the same share every symbol, so their keys match;
+        // two types that share source names but differ in their definitions carry
+        // different definition positions, so their keys diverge. sym.pos returns
+        // Option[Position]; when absent (synthetic symbols, cross-JAR types)
+        // nothing is appended and the show string alone disambiguates.
+        def symPositions(t: TypeRepr): String =
+            val sym     = t.typeSymbol
+            val symPart = if sym.isNoSymbol then "" else sym.pos.map(p => "@" + p.start).getOrElse("")
+            val children = t match
+                case AndType(a, b) => List(a, b)
+                case OrType(a, b)  => List(a, b)
+                case _             => t.typeArgs
+            children.map(symPositions).mkString("") + symPart
+        end symPositions
+        val normTpe = TypeRepr.of[A].dealiasKeepOpaques.simplified.dealiasKeepOpaques
+        val typeKey = normTpe.show + symPositions(normTpe)
+        encodedCache.get(typeKey) match
+            case Some(hit) =>
+                return Expr(hit)
+            case None => ()
+        end match
         val (staticDB, dynamicDB) = deriveDB[A]
-        val encoded               = Expr(Tag.internal.encode(staticDB))
+        val encodedStr            = Tag.internal.encode(staticDB)
+        val encoded               = Expr(encodedStr)
         if dynamicDB.isEmpty then
+            encodedCache = encodedCache.updated(typeKey, encodedStr)
             encoded
         else if !allowDynamic && FindEnclosing.isInternal then
             val missing =

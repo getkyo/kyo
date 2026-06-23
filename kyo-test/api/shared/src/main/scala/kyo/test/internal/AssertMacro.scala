@@ -115,6 +115,18 @@ object AssertMacro:
 
         val boolType = TypeRepr.of[Boolean]
 
+        // The enclosing owner chain is fixed for the whole instrument expansion (it is the
+        // splice site's owner chain, not the subexpression's), so walk it once into a Set
+        // and replace the per-wrapWithRecord chain walk with a membership test.
+        val ownerChain: Set[Symbol] =
+            val b         = Set.newBuilder[Symbol]
+            var s: Symbol = Symbol.spliceOwner
+            while !s.isNoSymbol && !s.flags.is(Flags.Package) do
+                b += s
+                s = s.maybeOwner
+            b.result()
+        end ownerChain
+
         // A pure type/module/package reference (e.g. `Level`, `java.lang.Double`,
         // `ChronoUnit`, `java.lang.Integer`) has no first-class runtime value: it names
         // a class, type, module-object, or package node. Instrumenting/recording such a
@@ -227,16 +239,12 @@ object AssertMacro:
             end match
         end goFun
 
-        // Walk `Symbol.spliceOwner.maybeOwner…` until `sym` is found on the chain, stopping
-        // at package symbols. Returns true when `sym` IS a non-package class/object reachable
-        // as an enclosing `this` at the splice site.
+        // Returns true when `sym` is a non-package class/object that appears in the
+        // enclosing-`this` owner chain at the splice site, determined by membership in the
+        // `ownerChain` Set that was built once for this instrument expansion.
         def classOnChain(sym: Symbol): Boolean =
             if sym.isNoSymbol || sym.flags.is(Flags.Package) then false
-            else
-                var s: Symbol = Symbol.spliceOwner
-                while !s.isNoSymbol && !s.flags.is(Flags.Package) && !s.equals(sym) do
-                    s = s.maybeOwner
-                s.equals(sym)
+            else ownerChain.contains(sym)
 
         // Return true if `t`'s type symbol is an inner type whose owner class is accessible
         // as `this` at the splice site.
