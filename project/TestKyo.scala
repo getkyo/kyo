@@ -1,6 +1,8 @@
 import sbt.*
 import sbt.Keys.*
 import sbt.internal.BuildDependencies
+import sbt.internal.util.{ SourcePosition, FilePosition, LinePosition, RangePosition, LineRange }
+import java.io.File
 import scala.sys.process.*
 
 /** Unified test command for CI and local use.
@@ -13,6 +15,10 @@ import scala.sys.process.*
 object TestKyo {
 
     private val platformNames = Set("JVM", "JS", "Native", "Wasm")
+
+    // Root aggregate projects: testing one runs every leaf via aggregation, so the diff
+    // and full-run paths both exclude them and treat any change scoped to one as "run all".
+    private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
 
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
@@ -113,12 +119,10 @@ object TestKyo {
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
 
-        // Exclude aggregate projects
-        val excluded = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
         val testable = allRefs.filter { ref =>
             val name        = ref.project
             val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
-            val isAggregate = excluded.contains(name)
+            val isAggregate = aggregateProjects.contains(name)
             val platformMatch = if (isAggregate) false
             else platform match {
                 case Some(p) => matchesPlatform(name, p)
@@ -141,8 +145,10 @@ object TestKyo {
     }
 
     // --- Diff test mode ---
-    // If build/CI config changed (build.sbt, project/*, .github/*), run all modules.
-    // Otherwise, run only affected modules + their transitive dependents.
+    // If the meta-build changed (project/*, .github/*), run all modules. A build.sbt change is
+    // attributed to the specific projects whose settings are defined on the changed lines (see
+    // buildSbtAffectedProjects), widening to all only when a changed line cannot be pinned to a
+    // project. Otherwise, run only affected modules + their transitive dependents.
 
     private def runDiff(
         state: State,
@@ -154,15 +160,15 @@ object TestKyo {
     ): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
-            log(s"no changed files vs $baseRef — skipping tests")
+            log(s"no changed files vs $baseRef, skipping tests")
             return state
         }
 
         log(s"${changedFiles.size} changed files vs $baseRef:")
         changedFiles.foreach(f => log(s"  $f"))
 
-        if (buildConfigChanged(changedFiles)) {
-            log("build/CI config changed — running all modules")
+        if (metaBuildChanged(changedFiles)) {
+            log("meta-build changed (project/ or .github/), running all modules")
             return runAll(state, platform, scalaVersion, isDryRun, phase)
         }
 
@@ -172,14 +178,23 @@ object TestKyo {
         val allNames  = allRefs.map(_.project).toSet
         val bd        = extracted.get(buildDependencies)
 
-        val directlyChanged = changedFiles.flatMap(fileToProjects(_, allNames)).toSet
+        // A build.sbt change maps to the projects whose settings changed; None means a changed
+        // line could not be attributed to specific projects, so fall back to running all modules.
+        val buildSbtProjects: Set[String] =
+            if (!changedFiles.contains("build.sbt")) Set.empty
+            else buildSbtAffectedProjects(extracted, baseRef) match {
+                case Some(names) => names
+                case None        => return runAll(state, platform, scalaVersion, isDryRun, phase)
+            }
+
+        val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
         val filtered = platform match {
             case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
             case None    => directlyChanged
         }
 
         if (filtered.isEmpty) {
-            log("no affected projects found — skipping tests")
+            log("no affected projects found, skipping tests")
             return state
         }
 
@@ -201,7 +216,7 @@ object TestKyo {
         }
 
         if (toTest.isEmpty) {
-            log("no testable affected projects found — skipping tests")
+            log("no testable affected projects found, skipping tests")
             state
         } else {
             val sorted = toTest.toSeq.sorted
@@ -267,11 +282,107 @@ object TestKyo {
                 Seq.empty
         }
 
-    private def buildConfigChanged(files: Seq[String]): Boolean =
-        files.exists { f =>
-            f == "build.sbt" ||
-            f.startsWith("project/") ||
-            f.startsWith(".github/")
+    // project/ (the meta-build, plugins, this command) and .github/ (CI workflows) are genuinely
+    // global: a change there can alter how every module builds, so run all. A build.sbt change is
+    // handled separately by buildSbtAffectedProjects, which pins it to the projects that changed.
+    private def metaBuildChanged(files: Seq[String]): Boolean =
+        files.exists(f => f.startsWith("project/") || f.startsWith(".github/"))
+
+    /** New-side line numbers changed in build.sbt vs baseRef, or None when the change cannot be
+      * attributed from the new file alone. None covers a pure deletion (the removed setting has no
+      * new-side line to map) and a git/parse failure; both widen to running all modules.
+      */
+    private def changedBuildSbtLines(baseRef: String): Option[Set[Int]] =
+        try {
+            val diff = Seq("git", "diff", "--unified=0", baseRef, "--", "build.sbt").!!
+            // Hunk header: @@ -oldStart[,oldCount] +newStart[,newCount] @@ [context]
+            val hunk        = """@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@""".r
+            val lines       = scala.collection.mutable.Set.empty[Int]
+            var hasDeletion = false
+            diff.linesIterator.foreach { line =>
+                hunk.findFirstMatchIn(line).foreach { m =>
+                    val start = m.group(1).toInt
+                    val count = Option(m.group(2)).map(_.toInt).getOrElse(1)
+                    if (count == 0) hasDeletion = true
+                    else lines ++= (start until start + count)
+                }
+            }
+            if (hasDeletion || lines.isEmpty) None else Some(lines.toSet)
+        } catch {
+            case e: Exception =>
+                log(s"Failed to diff build.sbt: ${e.getMessage}")
+                None
+        }
+
+    /** Projects affected by the build.sbt change, or None to run all modules.
+      *
+      * sbt tracks every setting's definition position (file:line) and its resolved project scope,
+      * the same data `inspect` surfaces as "Defined at:". For each changed build.sbt line, this maps
+      * the settings defined there to their project(s) and returns the union. A setting written in a
+      * shared val (e.g. `kyo-settings`) is replicated once per applying project, each copy scoped to
+      * that project, so a change to such a line attributes to exactly the projects that apply it.
+      *
+      * Returns None (run all modules) whenever a changed line cannot be pinned to specific projects:
+      * it maps to a Global/ThisBuild/root-aggregate setting, to a non-setting line (a top-level val,
+      * import, plugin enablement, or a continuation line of a multi-line setting, none of which sbt
+      * tracks as a setting position, since it anchors a setting at its first line), or to a deletion.
+      * This keeps the narrowing conservative: it never under-tests a real build change.
+      */
+    private def buildSbtAffectedProjects(extracted: Extracted, baseRef: String): Option[Set[String]] =
+        try {
+            val structure    = extracted.structure
+            val buildSbtFile = new File(new File(extracted.currentRef.build), "build.sbt").getCanonicalFile
+
+            // The lines this position covers, but only if it is in the top-level build.sbt. Positions
+            // render the canonical absolute path, so match by canonical file, not a bare name.
+            def coveredLines(pos: SourcePosition): Set[Int] = pos match {
+                case fp: FilePosition if new File(fp.path).getCanonicalFile == buildSbtFile =>
+                    fp match {
+                        case RangePosition(_, LineRange(start, end)) => (start to end).toSet
+                        case LinePosition(_, line)                   => Set(line)
+                        case _                                       => Set(fp.startLine)
+                    }
+                case _ => Set.empty
+            }
+
+            changedBuildSbtLines(baseRef) match {
+                case None =>
+                    log("build.sbt change includes deletions or is unparseable, running all modules")
+                    None
+                case Some(changedLines) =>
+                    var sawGlobal = false
+                    val names     = scala.collection.mutable.Set.empty[String]
+                    val covered   = scala.collection.mutable.Set.empty[Int]
+                    structure.settings.foreach { s =>
+                        val hit = coveredLines(s.pos).intersect(changedLines)
+                        if (hit.nonEmpty) {
+                            covered ++= hit
+                            s.key.scope.project match {
+                                case Select(ref: ProjectRef) if !aggregateProjects.contains(ref.project) =>
+                                    names += ref.project
+                                case _ =>
+                                    // ThisBuild / Global / root-aggregate / unresolved: affects all.
+                                    sawGlobal = true
+                            }
+                        }
+                    }
+                    val uncovered = changedLines -- covered
+                    if (uncovered.nonEmpty) {
+                        log(s"build.sbt lines ${uncovered.toSeq.sorted.mkString(", ")} are not settings " +
+                            "(val/import/plugin), running all modules")
+                        None
+                    } else if (sawGlobal) {
+                        log("build.sbt change touches a Global/ThisBuild/root setting, running all modules")
+                        None
+                    } else {
+                        log(s"build.sbt change attributed to: ${names.toSeq.sorted.mkString(", ")}")
+                        Some(names.toSet)
+                    }
+            }
+        } catch {
+            case e: Exception =>
+                log(s"build.sbt attribution failed (${e.getMessage}), running all modules")
+                None
         }
 
     private def transitiveDependents(
