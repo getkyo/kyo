@@ -102,26 +102,31 @@ private[kyo] object LifecycleEngine:
             // Step 3: cancel writer fiber
             // Unsafe: interruptDiscard must run outside the fiber scheduler; Sync.Unsafe.defer bridges to safe context
             Sync.Unsafe.defer(writerFiber.unsafe.interruptDiscard(Result.Panic(Interrupted(initFrame)))).andThen {
-                // Step 4: close transport
-                transport.close.andThen {
-                    // Step 5: drain callerRegistry. Fail all Exchange pending promises with internalError (not Closed)
-                    // so the abortSignal arm wins raceFirst (JsonRpcError path). Then complete each abortSignal.
-                    // Calls not yet in callerRegistry when Exchange.close fires (step 6) see Closed via donePromise check.
-                    // Unsafe: bulk-fail and complete from outside originating fibers
-                    Sync.Unsafe.defer {
-                        // Unsafe: failAllPending fails all Exchange pending promises with the given error
-                        // Exchange bulk-fail of pending promises from finalizer; no safe equivalent in Exchange public API
-                        exchange.unsafe.failAllPending(
-                            JsonRpcLifecycleError(JsonRpcLifecycleError.Stage.Close)
+                // Step 4: drain callerRegistry BEFORE closing the transport. Fail all Exchange pending promises
+                // with a JsonRpcError (not Closed) so the call's raceFirst resolves on the JsonRpcError path,
+                // then complete each abortSignal. This must precede transport.close: closing the transport ends
+                // the receive stream, and the Exchange reader's clean-stream-end path would otherwise fail the
+                // same pending promises with Closed and win the caller's raceFirst, leaking a raw Closed for a
+                // call the contract says drains as JsonRpcError. failAllPending clears the pending map and
+                // promise completion is idempotent, so the later reader-end completion is a no-op. Calls not yet
+                // in callerRegistry when Exchange.close fires (step 6) still see Closed via the donePromise check.
+                // Unsafe: bulk-fail and complete from outside originating fibers
+                Sync.Unsafe.defer {
+                    // Unsafe: failAllPending fails all Exchange pending promises with the given error
+                    // Exchange bulk-fail of pending promises from finalizer; no safe equivalent in Exchange public API
+                    exchange.unsafe.failAllPending(
+                        JsonRpcLifecycleError(JsonRpcLifecycleError.Stage.Close)
+                    )(using AllowUnsafe.embrace.danger)
+                    callerRegistry.forEach { (_, info) =>
+                        // promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
+                        info.abortSignal.unsafe.completeDiscard(
+                            Result.succeed(JsonRpcLifecycleError(JsonRpcLifecycleError.Stage.Close))
                         )(using AllowUnsafe.embrace.danger)
-                        callerRegistry.forEach { (_, info) =>
-                            // promise completion called from outside originating fiber to signal abort or cancel; no safe equivalent in Promise public API
-                            info.abortSignal.unsafe.completeDiscard(
-                                Result.succeed(JsonRpcLifecycleError(JsonRpcLifecycleError.Stage.Close))
-                            )(using AllowUnsafe.embrace.danger)
-                        }
-                        callerRegistry.clear()
-                    }.andThen {
+                    }
+                    callerRegistry.clear()
+                }.andThen {
+                    // Step 5: close transport
+                    transport.close.andThen {
                         // Step 6: close Exchange; sets donePromise to Closed for future calls; pending map is now empty
                         exchange.close.andThen {
                             // Step 7: close all progress channels so stream consumers see Closed
