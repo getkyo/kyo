@@ -1192,7 +1192,17 @@ final private[net] class PollerIoDriver private[posix] (
             // Poll-fiber-confined: rearmOwned runs only from the dispatch paths on the poll-loop carrier, so this re-deposit is a direct put.
             // activeFds(fd) is still set from the original awaitRead, so no re-put is needed.
             pendingReads.put(fd, handle)
-            // ET: fd stays armed at the kernel. The consumer-paced drain in dispatchCmd handles any residual bytes.
+            // Consume any read edge that fired while this read was IN FLIGHT. A TLS read decrypts on the engine FIFO, so the fd is out of
+            // pendingReads for the duration of the async feed; a kernel edge arriving in that window hits dispatchRead's no-pending-read branch
+            // and is parked in missedReads (with the bytes already in the kernel). This re-arm keeps the SAME parked promise, so the consumer
+            // never re-registers and the OpRegisterRead drain that normally clears missedReads never runs; under EPOLLET no fresh edge re-fires
+            // for the already-buffered bytes, so without consuming it here the read strands forever. Re-dispatch now to pull those bytes (the
+            // plain read path is synchronous on the poll carrier, so no edge can interleave its dispatch and missedReads is empty there: a no-op).
+            val missed     = missedReads.remove(fd)
+            val missedEofd = missedEof.remove(fd)
+            if missedEofd then handle.halfClosePending = true
+            if missed || missedEofd || handle.readMightHaveMore then dispatchRead(fd)
+            // ET: otherwise the fd stays armed at the kernel; the consumer-paced drain in dispatchCmd handles residual bytes on the next re-register.
 
     /** Consumer-paced plain (non-TLS) read under edge-triggered registration.
       *
