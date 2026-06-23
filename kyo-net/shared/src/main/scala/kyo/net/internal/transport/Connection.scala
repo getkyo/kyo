@@ -175,7 +175,11 @@ private[kyo] object Connection:
         val closeFn: () => Unit = () =>
             if closedFlag.compareAndSet(false, true) then
                 closeInitiated.set(true)
-                discard(inbound.close())
+                // closeAwaitEmpty, not close: a consumer that has not yet drained the bytes the ReadPump staged before EOF can still take them
+                // (takes drain a closing channel until empty), so a close initiated on the read side does not discard buffered inbound bytes as
+                // close()'s dropped backlog would. The handle teardown below does not wait for that drain, so the fd is reclaimed even if the
+                // consumer never reads the rest (a pooled connection with no reader).
+                discard(inbound.closeAwaitEmpty())
                 // Mirror the ReadPump's inbound drain on the outbound side: closeAwaitEmpty marks the channel closing-for-writes (new offers
                 // fail Closed) while the WritePump keeps taking the already-queued spans until the channel is empty. A peer half-close
                 // (shutdown(SHUT_WR)) leaves the peer still READING, so the WritePump's parked partial write resumes when the socket becomes
