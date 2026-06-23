@@ -58,7 +58,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           * defs, conditionals) fire and register children. No compile-time inference; leaves are written with `in`. Mirrors ScalaTest's `-`
           * (scope).
           */
-        inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
+        inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
             regCtx.visitGroup[S](name, body)
         end -
 
@@ -163,7 +163,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
     extension (b: TestBuilder)
 
         /** Register with the TestBuilder's accumulated metadata. Honor terminal decorators (ignore, pending, onlyIf) before dispatching. */
-        inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
+        inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
             b.ignore match
                 case Maybe.Present(reason) => regCtx.registerIgnored(b.name, reason)
                 case _ =>
@@ -277,7 +277,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
         end in
 
         /** Register a platform-gated GROUP. Same compile-time gate as `in`: on a disabled platform the group body is discarded unapplied. */
-        inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
+        inline infix def -(inline body: => Unit < (S & Async & Abort[Any] & Scope)): Unit =
             inline if gateOf[P] then
                 val b = pb.builder
                 b.ignore match
@@ -549,7 +549,7 @@ abstract class TestBase[S] extends KyoTestReflect with TypeCheck:
           * The honored terminal decorators (`ignore`/`pending`/platform/`onlyIf`) carried in `builder` gate dispatch exactly as the
           * `TestBuilder` `-` does.
           */
-        inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope))(using inline f: Frame): Unit =
+        inline infix def -(inline body: => Unit < (S0 & Async & Abort[Any] & Scope)): Unit =
             builder.ignore match
                 case Maybe.Present(reason) => regCtx.registerIgnored(builder.name, reason)
                 case _ =>
