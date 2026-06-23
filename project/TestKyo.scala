@@ -1,8 +1,12 @@
+import java.io.File
 import sbt.*
 import sbt.Keys.*
 import sbt.internal.BuildDependencies
-import sbt.internal.util.{ SourcePosition, FilePosition, LinePosition, RangePosition, LineRange }
-import java.io.File
+import sbt.internal.util.FilePosition
+import sbt.internal.util.LinePosition
+import sbt.internal.util.LineRange
+import sbt.internal.util.RangePosition
+import sbt.internal.util.SourcePosition
 import scala.sys.process.*
 
 /** Unified test command for CI and local use.
