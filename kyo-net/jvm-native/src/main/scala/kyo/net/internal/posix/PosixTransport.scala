@@ -425,6 +425,14 @@ final private[net] class PosixTransport private[posix] (
             end match
         }
         driver.awaitConnect(handle, writablePromise.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+        // If the connect promise is completed before the writable arm resolves (an external interrupt: e.g. an Async.timeout connectTimeout
+        // interrupts the awaiting fiber, which interrupts this promise), the arm is still parked with the socket in SYN_SENT. Forward the
+        // completion to the arm so its onComplete runs the connect-failure cleanup (closeUnwiredHandle), reclaiming the in-flight connect fd
+        // instead of leaking it until the OS TCP timeout. completeDiscard is at-most-once: a normal connect outcome (the arm completed first)
+        // makes this a no-op, and the arm's own onComplete then completes this promise.
+        promise.onComplete { _ =>
+            writablePromise.completeDiscard(Result.panic(Closed("PosixTransport", summon[Frame], "connect interrupted before completion")))
+        }
     end awaitConnectThen
 
     /** Build the handshake engine for a config/host/role via [[TlsProviderPlatform.engine]], which honors a [[NetTlsConfig.tlsProvider]] pin
