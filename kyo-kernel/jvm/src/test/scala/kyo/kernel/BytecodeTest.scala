@@ -31,7 +31,7 @@ class BytecodeTest extends kyo.test.Test[Any]:
 
     "map" in {
         val map = methodBytecodeSize[TestMap]
-        assert(map == Map("test" -> 26, "anonfun" -> 11, "mapLoop" -> 162))
+        assert(map == Map("test" -> 26, "anonfun" -> 11, "mapLoop" -> 155))
     }
 
     "handle" in {
