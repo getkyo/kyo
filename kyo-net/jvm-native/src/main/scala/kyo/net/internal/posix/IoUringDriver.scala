@@ -193,6 +193,10 @@ final private[net] class IoUringDriver private[posix] (
     // the engine FIFO worker (onTlsSendComplete / onRawSendComplete), so a plain count under ConcurrentHashMap is single-owner here.
     private val sendEintrRetries = new ConcurrentHashMap[Long, Int]()
 
+    // Reap-loop liveness counter, incremented once per reap-loop iteration and exposed through the Diagnostics dump: a frozen
+    // value when a leaf hangs means the reap loop is dead/stuck; an advancing value means it is live but a pending completion is not delivered.
+    @volatile private var diagReapCycles: Long = 0L
+
     // Bound on consecutive `-EINTR` retries for one logical read or send. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal
     // before any byte is transferred completes with `-EINTR` and MUST be retried (no data was moved, the socket is unchanged), exactly as
     // PollerIoDriver retries EINTR in place (commit 5498ada6b) and as the accept path already retries it. The retry is bounded so a pathological
@@ -982,8 +986,26 @@ final private[net] class IoUringDriver private[posix] (
         started.set(true)
         // When this driver belongs to the process-shared default transport, spawn the carrier through a named wrapper the kyo-test leak check
         // allowlists (the singleton is never closed by design); an owned transport keeps the plain reapLoop frame so a real leak still trips.
-        if kyo.net.internal.ProcessSharedTransport.isBuilding then Fiber.Unsafe.init { processSharedTransportReapLoop() }
+        if kyo.net.internal.ProcessSharedTransport.isBuilding then
+            discard(kyo.internal.Diagnostics.register("IoUringDriver@" + java.lang.System.identityHashCode(this)) { () =>
+                val pend = new StringBuilder
+                pending.forEach((k, v) =>
+                    discard(
+                        pend.append(k).append("->").append(v.getClass.getSimpleName)
+                            .append("(fd=").append(v.handle.readFd).append(",id=").append(v.handle.id)
+                            .append(if v.handle.connectTarget.isDefined then ",client) " else ",server) ")
+                    )
+                )
+                val infl = new StringBuilder
+                inFlight.forEach((k, v) => discard(infl.append('h').append(k).append('=').append(v).append(' ')))
+                val cad = new StringBuilder
+                closeAfterDrain.forEach((k, _) => discard(cad.append(k).append(' ')))
+                s"closed=${closedFlag.get()} reapExited=${reapExited.get()} reapCycles=$diagReapCycles " +
+                    s"pending(${pending.size})=[$pend] inFlight=[$infl] closeAfterDrain(${closeAfterDrain.size})=[$cad] stalledRaw=${stalledRaw.size}"
+            })
+            Fiber.Unsafe.init { processSharedTransportReapLoop() }
         else Fiber.Unsafe.init { reapLoop() }
+        end if
     end start
 
     /** Carrier wrapper used only when this driver belongs to the process-shared default transport ([[kyo.net.NetPlatform.transport]]), so the
@@ -1102,6 +1124,7 @@ final private[net] class IoUringDriver private[posix] (
             // unconditionally, and the eventfd counter persists until this loop drains it, so a write that lands at any point before the park makes
             // the armed poll fire and return it: no clear-then-arm ordering is needed. If the wake could not arm (no eventfd, or SQ full this turn)
             // the park falls back to the bounded timeout so a missing wake can never hang the loop.
+            diagReapCycles += 1L
             armWake()
             // Single-producer SQ: prepare every queued SQE (reads/writes/connects/accepts + TLS engine ops) on THIS carrier, then fuse
             // submit+wait in one io_uring_enter syscall. Because the fused enter submits AND reads the SQ tail, no other carrier may
@@ -1245,6 +1268,11 @@ final private[net] class IoUringDriver private[posix] (
         given Frame = Frame.internal
         Maybe(pending.remove(key)) match
             case Present(op) =>
+                // Ops that hand their resource use to a deferred engine-FIFO op (the TLS read feed, the send completions) defer their in-flight
+                // decrement until AFTER that op runs, so the count -- and therefore freeResources -- stays pending while the deferred op is still
+                // touching the engine / buffers. Decrementing inline at CQE-reap time drops the count to zero and lets a deferred close free those
+                // resources before the queued op runs (the BoringSSL feedCiphertext MemorySession-alreadyClosed use-after-free).
+                var deferredDecrement = false
                 op match
                     case PendingOp.Read(promise, h, eintrRetries) =>
                         if res < 0 && -res == PosixConstants.EINTR && eintrRetries < maxTransientIoRetries && !h.isClosing() then
@@ -1309,6 +1337,7 @@ final private[net] class IoUringDriver private[posix] (
                                     // The re-arm inside the engine op (awaitRead on zero-plaintext) happens only after feedAndDecrypt consumes the
                                     // staging, preserving the single-in-flight-per-handle property.
                                     val staging = recvStagingFor(h)
+                                    deferredDecrement = true
                                     submitEngineOp { () =>
                                         val plain = feedAndDecrypt(engine, staging, res, h)
                                         // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): feedAndDecrypt calls
@@ -1355,6 +1384,7 @@ final private[net] class IoUringDriver private[posix] (
                         else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
                         end if
                     case PendingOp.Write(h, _, _, len) =>
+                        deferredDecrement = true
                         // The raw-send CQE was reaped: account for it (advance the pending tail, re-submit the remainder on a partial send or any
                         // coalesced bytes) on the engine FIFO worker so rawPending stays single-owner, mirroring the TlsWrite path. The pinned
                         // per-write send buffer is released below via releaseBuffer(); onRawSendComplete re-flushes from the handle's tail, not
@@ -1362,6 +1392,7 @@ final private[net] class IoUringDriver private[posix] (
                         val sent = if res < 0 then res else math.min(res, len)
                         submitEngineOp { () => onRawSendComplete(h, sent) }
                     case PendingOp.TlsWrite(h, _, len) =>
+                        deferredDecrement = true
                         // The TLS-send CQE was reaped: account for it (advance the tail, re-submit the remainder on a partial send) on the engine
                         // FIFO worker so pendingCipher stays single-owner. The pinned send buffer is released below via releaseBuffer().
                         val sent = if res < 0 then res else math.min(res, len)
@@ -1370,11 +1401,20 @@ final private[net] class IoUringDriver private[posix] (
                         if res == 0 then promise.completeDiscard(Result.succeed(()))
                         else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"connect errno=${-res}")))
                     case PendingOp.Accept(promise, _, _, _) =>
-                        if res >= 0 then promise.completeDiscard(Result.succeed(res))
+                        if res >= 0 then
+                            // The accept SQE produced a connected fd. If the accept promise was already completed -- the listener's close
+                            // cancel() failed it while this accept was in flight (the closeListener teardown) -- nobody will wrap or dispatch
+                            // this fd, so close it here instead of leaking an established, handler-less connection. A peer that connected into
+                            // the closing listener would otherwise see its connect succeed, then hang forever on its first read: no handler
+                            // ever responds, and the orphaned fd is never closed so no FIN/RST reaches the peer.
+                            if !promise.complete(Result.succeed(res)) then discard(takeNow(sockets.close(res)))
                         else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"accept errno=${-res}")))
                 end match
                 op.releaseBuffer() // release per-op buffers (Write send buf, Accept addr/len) now that the CQE is reaped
-                decrementInFlight(op.handle)
+                // For ops whose resource use was handed to a deferred engine op above, queue the decrement BEHIND that op (FIFO order on the
+                // engine queue) so the in-flight count stays non-zero until the deferred op has finished with the engine / buffers; otherwise
+                // decrement inline now. drainEngineOps catches a throwing op and continues, so the queued decrement always runs (no leaked count).
+                if deferredDecrement then submitEngineOp { () => decrementInFlight(op.handle) } else decrementInFlight(op.handle)
             case Absent =>
                 Log.live.unsafe.warn(s"$label CQE for unknown key=$key")
         end match

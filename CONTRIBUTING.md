@@ -868,6 +868,23 @@ The string passed to `typeCheckFailure` is a substring match against the compile
 }
 ```
 
+### Debugging Hangs and Timeouts
+
+When a leaf stalls past the heartbeat interval or hits its timeout, the runner captures a full thread dump and every registered diagnostic snapshot alongside the failure. This makes a rare hang or deadlock root-causable from a single occurrence, rather than needing a second, instrumented reproduction.
+
+Runtime components publish their live internal state through the process-global registry `kyo.internal.Diagnostics`. Register a named dumper (typically at construction) and close the registration when the component shuts down so it does not accumulate across a long-lived process:
+
+```scala
+private val diag =
+    Diagnostics.register("ConnectionPool@" + java.lang.System.identityHashCode(this)) { () =>
+        s"active=${active.size} idle=[${idleKeys.mkString(" ")}]"
+    }
+// on shutdown:
+diag.close()
+```
+
+A dumper runs on the reporter's thread, concurrently with the component it inspects, so it must read state best-effort (a stale or partial snapshot is acceptable) and must never block. The posix network drivers register their pending-operation tables and poll/reap liveness counters this way.
+
 ### Exception and Failure Assertions
 
 `intercept[E](body)` asserts that `body` throws an exception of type `E` and returns the caught exception:

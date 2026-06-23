@@ -128,6 +128,10 @@ final private[net] class PollerIoDriver private[posix] (
     // The check in drainReady tries pendingAccepts first, then falls through to pendingReads.
     private val pendingAccepts = new IntRefMap[PosixHandle]()
 
+    // Poll-cycle liveness counter, incremented once per poll-loop iteration and exposed through the Diagnostics dump: a frozen
+    // value when a leaf hangs means the poll loop is dead/stuck; an advancing value means it is live but not delivering to some fd.
+    @volatile private var diagPollCycles: Long = 0L
+
     // Registration intake: many fibers enqueue a pending registration (awaitRead/armSocketWritable/awaitAccept) here; the poll-loop carrier consumes
     // it and applies the activeFds + pendingReads/pendingWritables/pendingAccepts puts on its own carrier, so the maps are written by ONE carrier.
     // A ConcurrentLinkedQueue (single poll-fiber consumer) mirrors the engineQueue; the small Registration record per await replaces the
@@ -236,8 +240,20 @@ final private[net] class PollerIoDriver private[posix] (
         // allowlists: that singleton is never closed by design, so its idle head-of-line-blocked carrier is expected infra, not a leak. An owned
         // transport keeps the plain pollLoop frame, so a leaked owned transport still trips the check. The flag is read here on the construction
         // thread, before the spawn; the body then runs on a worker carrying the chosen frame.
-        if kyo.net.internal.ProcessSharedTransport.isBuilding then Fiber.Unsafe.init { processSharedTransportPollLoop() }
+        if kyo.net.internal.ProcessSharedTransport.isBuilding then
+            discard(kyo.internal.Diagnostics.register("PollerIoDriver@" + java.lang.System.identityHashCode(this)) { () =>
+                val reads = new StringBuilder
+                pendingReads.foreach((fd, h) => discard(reads.append(fd).append("(id=").append(h.id).append(") ")))
+                val writes = new StringBuilder
+                pendingWritables.foreach((fd, _) => discard(writes.append(fd).append(' ')))
+                val accepts = new StringBuilder
+                pendingAccepts.foreach((fd, h) => discard(accepts.append(fd).append("(id=").append(h.id).append(") ")))
+                s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
+                    s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
+            })
+            Fiber.Unsafe.init { processSharedTransportPollLoop() }
         else Fiber.Unsafe.init { pollLoop() }
+        end if
     end start
 
     /** Carrier wrapper used only when this driver belongs to the process-shared default transport ([[kyo.net.NetPlatform.transport]]), so the
@@ -341,6 +357,7 @@ final private[net] class PollerIoDriver private[posix] (
             // out the timeout). This, paired with the submitChange wake that cuts a park short when work arrives DURING it, is what keeps the connect
             // write-readiness from being stranded behind the ~100ms park past a short connect deadline (the NetConnectTimeoutException regression).
             // Clearing wakePending right before the park arms the wake for any change submitted from here on.
+            diagPollCycles += 1L
             wakePending.set(false)
             drainChanges()
             // Pass the kqueue changelist (changelistBuf + nChanges) so kevent can submit pending changes (e.g. EV_DISABLE from
