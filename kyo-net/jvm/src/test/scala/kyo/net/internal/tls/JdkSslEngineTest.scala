@@ -108,7 +108,7 @@ class JdkSslEngineTest extends Test:
             // Client pinned to TLS1.2, server to TLS1.3: no common version. SslEngineProvider must APPLY the pins (without enforcement the engines
             // negotiate a shared version and the handshake completes), and JdkSslEngine.handshakeStep must report the resulting SSLHandshakeException
             // as the -2 failure code so the driver aborts Closed, rather than letting it escape as a thrown Panic (which TlsEngineLoopback would
-            // propagate instead of returning a clean false). Locks the two JDK-floor fixes the sbt-linux run surfaced (version pins + Closed wrap).
+            // propagate instead of returning a clean false). Locks the two JDK-floor fixes the Linux container run surfaced (version pins + Closed wrap).
             val clientTls12 = NetTlsConfig(
                 trustAll = true,
                 hostnameVerification = false,
