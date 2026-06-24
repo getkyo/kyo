@@ -446,6 +446,7 @@ lazy val kyoWasm = project
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
         `kyo-flow`.wasm,
+        `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
         `kyo-pod`.wasm,
@@ -1201,7 +1202,7 @@ lazy val `kyo-http` =
         .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-ai` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-ai"))
         .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`)
@@ -1216,6 +1217,7 @@ lazy val `kyo-ai` =
             `native-settings`,
             `openssl-native-settings`
         )
+        .wasmSettings(`wasm-settings`)
 
 lazy val `kyo-flow` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)

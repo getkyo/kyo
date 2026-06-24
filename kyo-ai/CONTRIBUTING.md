@@ -17,7 +17,7 @@ kyo-ai is a typed effect for first-class conversations with a language model. Th
 
 The settings/content value types `Config`, `Context`, `Image` live in package `kyo.ai`, but they are surfaced into `kyo` so `import kyo.*` reaches everything: the `AI` companion `export`s `kyo.ai.Config` / `Context` / `Image` ([`AI.scala:36-38`]), so a user writes `AI.Config`, `AI.Context`, `AI.Image`; `LLM` also `export`s `Config` ([`LLM.scala:31`]).
 
-All code lives in `shared/src/main/scala` (`kyo/` for the effect surface, `kyo/ai/` for the value types, `kyo/ai/completion/` for the wire backends). All tests live in `shared/src/test/scala` and run cross-platform (JVM, Scala.js, Scala Native). The `jvm/`, `js/`, and `native/` trees carry no `.scala` source.
+All code lives in `shared/src/main/scala` (`kyo/` for the effect surface, `kyo/ai/` for the value types, `kyo/ai/completion/` for the wire backends). All tests live in `shared/src/test/scala` and run cross-platform (JVM, Scala.js, Scala Native, Wasm). The `jvm/`, `js/`, `native/`, and `wasm/` trees carry no `.scala` source.
 
 ## The explicit-instance model
 
@@ -251,7 +251,7 @@ Assert concrete values, not just types or non-emptiness: the scripted reply roun
 
 ### Cross-platform discipline
 
-All source and tests live in `shared/`. The `jvm/`, `js/`, `native/` trees carry no `.scala` source; never move a test to a platform subtree to dodge a platform cost.
+All source and tests live in `shared/`. The `jvm/`, `js/`, `native/`, `wasm/` trees carry no `.scala` source; never move a test to a platform subtree to dodge a platform cost.
 
 ### Effect-row precision
 
