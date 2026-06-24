@@ -1410,7 +1410,7 @@ lazy val `kyo-net` =
                 val destDir    = (Compile / resourceManaged).value / "scala-native"
                 // The two co-located headers are byte-identical (each shim's directory carries its own copy
                 // so the quoted include resolves on JVM); on the flat Native dir they collapse to one file.
-                val headers    = Seq(
+                val headers = Seq(
                     sharedBase / "c-boringssl" / "kyo_ssl_common.h",
                     sharedBase / "c-openssl" / "kyo_ssl_common.h"
                 ).filter(_.exists())
