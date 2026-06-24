@@ -12,7 +12,9 @@ package kyo.test
   *   `kyo.test.runner.Reporters.console` factory that accepts a Verbosity value
   */
 enum Verbosity derives CanEqual:
-    /** Suppress per-leaf pass lines; only failures, cancellations, and the final summary are printed. */
+    /** Suppress per-leaf pass lines and the routine `[STUCK]` heartbeat line. Failures, cancellations, the final summary, and the one-shot
+      * hang diagnostics emitted on the first STUCK leaf are still printed.
+      */
     case Quiet
 
     /** Print one line per leaf (pass or fail) plus suite and run summaries. This is the default. */
