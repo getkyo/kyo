@@ -67,6 +67,16 @@ final private[runner] class SbtRunner(
     private val leakBaseline = if forked then LeakCheck.baseline() else LeakCheck.Baseline(kyo.Maybe.empty, Set.empty)
     private val leakCheckRan = new java.util.concurrent.atomic.AtomicBoolean(false)
 
+    // Leak-debug mode (KYO_TEST_LEAK_DEBUG=1): leaves are forced serial (LeafPool.globalK = 1), so install a per-leaf probe that snapshots the
+    // open descriptors around each leaf and records which descriptors the leaf left open. The end-of-run leak report then attributes each leaked
+    // descriptor to the test that opened it (see LeakCheck.originOf). Only in a forked JVM, where the descriptor probe is sound.
+    if forked && LeakDebug.enabled then
+        LeakDebug.leafProbe = kyo.Maybe((path: Chunk[String]) =>
+            val before = LeakCheck.openFdTargets().getOrElse(Set.empty)
+            () => LeakCheck.recordLeafOrigins(path.mkString(" > "), before, LeakCheck.openFdTargets().getOrElse(Set.empty))
+        )
+    end if
+
     // Populated on first tasks() invocation. SuiteDiscovery scans the META-INF/services file
     // and surfaces classloader / non-TestBase failures so they end up in Summary's warning line.
     private[runner] val discoveryErrors: AtomicReference[Chunk[String]] =
