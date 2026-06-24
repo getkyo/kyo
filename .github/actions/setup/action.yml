@@ -146,3 +146,31 @@ runs:
           command -v go >/dev/null 2>&1 || brew install go
         fi
         bash kyo-net/build/boringssl/build-boringssl.sh "$OS_ARCH"
+
+    # Build and stage the Aeron static archive (libaeron_driver_static.a, which embeds the full client)
+    # at the pinned 1.50.2 tag for the runner's os-arch, used by the kyo-aeron C shim. build-aeron.sh
+    # clones Aeron and builds via CMake (pre-installed on GitHub-hosted runners; installed defensively
+    # if absent). The staged tree is gitignored, so it is produced on every JVM/Native/JS runner;
+    # without it the kyo_aeron shim fails to compile. Native and JS link the archive into their runtime
+    # backend; the JVM leg also compiles the shim against it via the shared ffiGenerate step, though the
+    # JVM runtime backend is the pure-Java io.aeron client.
+    - name: Prepare libaeron
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' }}
+      shell: bash
+      run: |
+        case "${{ inputs.os }}" in
+          linux-x64)   OS_ARCH=linux-x86_64 ;;
+          linux-arm64) OS_ARCH=linux-aarch64 ;;
+          macos-arm64) OS_ARCH=darwin-aarch64 ;;
+          *) echo "libaeron not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+        esac
+        if [[ "${{ inputs.os }}" == linux-* ]]; then
+          command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+          # libuuid: the Aeron driver links -luuid on Linux (aeron_driver_context.c calls uuid_generate); the
+          # dev package providing the libuuid.so link target is not preinstalled on the runners. macOS gets
+          # uuid from libSystem, so it needs no install.
+          dpkg -s uuid-dev >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 uuid-dev; }
+        else
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+        fi
+        bash build-aeron.sh "$OS_ARCH"

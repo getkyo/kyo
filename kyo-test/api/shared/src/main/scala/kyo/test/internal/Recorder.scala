@@ -127,13 +127,22 @@ object Recorder:
         if s.length <= max then s
         else s.substring(0, max) + s"...(${s.length} chars total)"
 
-    /** Null-safe, single-line, length-bounded rendering of an arbitrary value for inline placement in a
-      * diagram or diff. `String.valueOf` renders `null` as `"null"` without a NullPointerException (unlike
-      * `value.toString`); control characters are escaped so a multi-line value cannot break the
-      * column-aligned diagram layout.
+    /** Renders an arbitrary value as a single bounded-length line for inline placement in a
+      * diagram or diff. `String.valueOf` renders `null` as `"null"` without a NullPointerException (unlike `value.toString`); control
+      * characters are escaped so a multi-line value cannot break the column-aligned diagram layout.
+      *
+      * `String.valueOf` invokes the value's `toString`, which can throw: on Scala.js an opaque foreign object (such as a koffi `void*`
+      * pointer) throws "Cannot convert object to primitive value" on any string coercion. The macro records subexpression values eagerly,
+      * for passing and failing asserts alike, so a value that appears in a passing assertion would otherwise crash the leaf. A
+      * diagram is diagnostic output, so an unrenderable value degrades to a placeholder rather than propagating the failure.
       */
     private[internal] def render(value: Any): String =
-        val s = String.valueOf(value.asInstanceOf[AnyRef])
+        // The placeholder is a bare constant: any reflection on the offending value (e.g. `getClass.getName`)
+        // is itself unsafe, since a foreign Scala.js object such as a koffi pointer has no class metadata and
+        // makes the class-name lookup throw a NullPointerException of its own, which would re-escape.
+        val s =
+            try String.valueOf(value.asInstanceOf[AnyRef])
+            catch case scala.util.control.NonFatal(_) => Unrenderable
         val flat = s
             .replace("\\", "\\\\")
             .replace("\n", "\\n")
@@ -142,5 +151,8 @@ object Recorder:
         if flat.length <= MaxRenderedValue then flat
         else flat.substring(0, MaxRenderedValue) + s"...(${s.length} chars total)"
     end render
+
+    /** Placeholder rendered in place of a value whose `toString` threw. */
+    private[internal] val Unrenderable = "<unrenderable>"
 
 end Recorder

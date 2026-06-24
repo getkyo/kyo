@@ -345,6 +345,7 @@ lazy val kyoJS = project
         `kyo-tasty-fixtures-internal`.js,
         `kyo-schema`.js,
         `kyo-http`.js,
+        `kyo-aeron`.js,
         `kyo-flow`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
@@ -393,6 +394,7 @@ lazy val kyoNative = project
         `kyo-tasty-fixtures-internal`.native,
         `kyo-schema`.native,
         `kyo-http`.native,
+        `kyo-aeron`.native,
         `kyo-flow`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
@@ -1488,14 +1490,90 @@ lazy val `kyo-net` =
         )
         .wasmSettings(`wasm-settings`)
 
+def aeronHostOsArch: String = {
+    val osName = System.getProperty("os.name", "").toLowerCase
+    val os =
+        if (osName.contains("mac")) "darwin"
+        else if (osName.contains("win")) "windows"
+        else "linux"
+    val arch = System.getProperty("os.arch", "") match {
+        case "x86_64" | "amd64"  => "x86_64"
+        case "aarch64" | "arm64" => "aarch64"
+        case other               => other
+    }
+    s"$os-$arch"
+}
+
 lazy val `kyo-aeron` =
-    crossProject(JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .crossType(CrossType.Full)
+        .enablePlugins(KyoFfiPlugin)
         .in(file("kyo-aeron"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-ffi`)
+        .dependsOn(`kyo-schema`)
         .withKyoTest
         .settings(
             `kyo-settings`,
+            // In-repo codegen bootstrap (mirrors kyo-ffi-it and kyo-net): hand the plugin the codegen
+            // project's own classpath so a cold build compiles the codegen first and generates the FFI
+            // impls directly. Without it kyo-aeron's ffiGenerate falls back to the plugin's bundled-resource
+            // path, which is absent on a clean checkout (the plugin JAR carries no bundled.txt), so
+            // AeronBindingsImpl is never generated and Ffi.load fails at runtime with ImplNotFound.
+            ffiCodegenClasspath := (LocalProject("kyo-ffi-codegen") / Compile / fullClasspath).value.map(_.data),
+            ffiLibraries := {
+                // baseDirectory points at the per-platform dir (jvm/native/js) for a cross-project;
+                // the C shim lives under shared/src/main/c/ and the staged aeron archives under
+                // build/aeron/staged/<osArch>/ relative to the module root (one level up).
+                val sharedBase  = baseDirectory.value / ".." / "shared"
+                val aeronStaged = baseDirectory.value / ".." / "build" / "aeron" / "staged" / aeronHostOsArch
+                // System libs the aeron_driver_static archive references on Linux, supplied by the
+                // consumer: Aeron's CMake records them as the archive's link interface
+                // (aeron-driver/.../CMakeLists.txt: ${AERON_LIB_*_LIBS}) but does NOT bake them into the
+                // .a, so linking the archive directly (as the FfiLibrary does, not as a CMake target)
+                // leaves uuid_generate / pthread / etc. undefined unless named. They go in linkFlags, NOT
+                // linkLibsByOs: linkLibsByOs is static-folded (-Wl,-Bstatic) together with the staged
+                // aeron_driver_static, but these are OS libraries that must stay dynamic. libc components
+                // cannot be folded into a -shared object, and the runners' system libuuid.a is non-PIC, so
+                // -Bstatic-ing it into the shim .so fails with "relocation R_X86_64_TPOFF32 ... can not be
+                // used when making a shared object". linkFlags places them AFTER the static archive (GNU ld
+                // resolves -l left to right, so the archive's undefined refs bind against them), the same
+                // post-archive slot BoringSSL uses for -lstdc++. On Linux Aeron needs m + uuid
+                // (aeron_driver_context.c calls uuid_generate under HAVE_UUID_GENERATE; the CI setup action
+                // installs uuid-dev) plus pthread + dl; and ONLY on aarch64 it adds atomic, because aarch64
+                // selects aeron_atomic64_c11.h whose 64-bit atomic_fetch_add lowers to the
+                // __atomic_fetch_add_8 libcall in libatomic (x86_64 uses inline asm in
+                // aeron_atomic64_gcc_x86_64.h and needs no -latomic). macOS provides all of these via
+                // libSystem, so no flags there. arc4random is intentionally NOT backed by -lbsd: it resolves
+                // from glibc (>= 2.36) on the runners, and libbsd is not staged, so find_library(bsd) stays
+                // empty in Aeron's build too.
+                val aeronArch = aeronHostOsArch.split("-").lastOption.getOrElse("")
+                val linuxSystemLinkFlags =
+                    if (aeronHostOsArch.startsWith("linux"))
+                        Seq("-lpthread", "-lm", "-ldl", "-luuid") ++ (if (aeronArch == "aarch64") Seq("-latomic") else Nil)
+                    else Nil
+                Seq(
+                    FfiLibrary(
+                        id          = "kyo_aeron",
+                        cSources    = (sharedBase / "src" / "main" / "c" ** "*.c").get,
+                        includeDirs = Seq(
+                            aeronStaged / "include" / "aeron",
+                            aeronStaged / "include" / "aeronmd"
+                        ),
+                        libDirs     = Seq(aeronStaged / "lib"),
+                        // aeron_driver_static already embeds all client code from aeron_static
+                        // (the driver CMakeLists inlines the full client source list). Linking
+                        // both archives causes 784 duplicate-symbol errors on Darwin ld64. Link
+                        // only aeron_driver_static, which provides the complete client + driver API.
+                        linkLibs    = Seq("aeron_driver_static"),
+                        linkFlags   = linuxSystemLinkFlags,
+                        staticLink  = true
+                    )
+                )
+            }
+        )
+        .jvmSettings(
+            mimaCheck(false),
             fork := true,
             javaOptions ++= Seq(
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
@@ -1504,12 +1582,95 @@ lazy val `kyo-aeron` =
                 "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
             ),
             libraryDependencies ++= Seq(
-                "io.aeron"     % "aeron-driver" % "1.51.0",
-                "io.aeron"     % "aeron-client" % "1.51.0",
-                "com.lihaoyi" %% "upickle"      % "4.4.3"
+                "io.aeron" % "aeron-driver" % "1.50.2",
+                "io.aeron" % "aeron-client" % "1.50.2"
             )
         )
-        .jvmSettings(mimaCheck(false))
+        .nativeSettings(
+            `native-settings`,
+            // Each embedded driver uses a unique per-instance directory (Path.tempDir), so concurrent
+            // drivers never collide on the same CnC file. Sequential execution is retained because the
+            // UDP round-trip and URI-validation test suites use fixed high ports (e.g. 24519) that
+            // would collide if tests from different suites ran concurrently, and because the embedded
+            // driver and its test resources favor serial execution to avoid resource contention.
+            // NOTE: the kyo-aeron JS block has no aeron-specific parallelExecution setting; it inherits
+            // the global Test/parallelExecution := false that is Chrome-isolation-driven (see the
+            // surrounding jsSettings comment).
+            Test / parallelExecution := false,
+            nativeConfig := {
+                val base        = nativeConfig.value
+                // The kyo_aeron.c shim uses #if __has_include(<aeronc.h>) and must be compiled
+                // with the staged Aeron include dirs so the guard is true and the symbols are
+                // emitted. Scala Native compiles C sources from the scala-native/ resource dirs
+                // using nativeConfig.compileOptions; without these -I flags the guard is false
+                // and all functions compile out (empty .c.o), causing undefined-symbol link errors.
+                val aeronStaged = baseDirectory.value / ".." / "build" / "aeron" / "staged" / aeronHostOsArch
+                // Also include the C shim source directory so #include "kyo_aeron.h"
+                // resolves when Scala Native compiles the copied kyo_aeron.c from the
+                // scala-native/ resource directory (where kyo_aeron.h is absent).
+                val cSrcDir = baseDirectory.value / ".." / "shared" / "src" / "main" / "c"
+                val aeronIncludes = Seq(
+                    s"-I${cSrcDir.absolutePath}",
+                    s"-I${(aeronStaged / "include" / "aeron").absolutePath}",
+                    s"-I${(aeronStaged / "include" / "aeronmd").absolutePath}"
+                )
+                base
+                    .withLinkingOptions(base.linkingOptions ++ ffiNativeLinkingOptions.value)
+                    .withCompileOptions(base.compileOptions ++ aeronIncludes)
+            }
+        )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            Test / jsEnv := {
+                val targetDir = target.value
+                val ffiOut    = targetDir / "ffi"
+                val os        = sys.props.getOrElse("os.name", "").toLowerCase
+                val ext =
+                    if (os.contains("mac")) "dylib"
+                    else if (os.contains("win")) "dll"
+                    else "so"
+                val arch =
+                    sys.props.getOrElse("os.arch", "") match {
+                        case "x86_64" | "amd64"  => "x86_64"
+                        case "aarch64" | "arm64" => "aarch64"
+                        case other               => other
+                    }
+                val osDetect =
+                    if (os.contains("mac")) "darwin"
+                    else if (os.contains("win")) "windows"
+                    else if (os.contains("linux")) "linux"
+                    else os
+                val lib = ffiOut / s"libkyo_aeron-$osDetect-$arch.$ext"
+                new NodeJSEnv(
+                    NodeJSEnv.Config()
+                        .withArgs(List("--max_old_space_size=5120"))
+                        .withEnv(Map("KYO_FFI_KYO_AERON_PATH" -> lib.getAbsolutePath))
+                )
+            },
+            Test / compile := (Test / compile).dependsOn(Def.task {
+                val log        = streams.value.log
+                val targetBase = target.value
+                val nodeMods   = targetBase / "node_modules"
+                val marker     = nodeMods / "koffi" / "package.json"
+                val koffiRange = "^2.7" // must match kyo.ffi.internal.FfiErrors.KoffiSupportedRange
+                val pjContent  =
+                    s"""{"name":"kyo-aeron-js-test","private":true,"dependencies":{"koffi":"$koffiRange"}}"""
+                val pj = targetBase / "package.json"
+                if (!pj.exists() || IO.read(pj) != pjContent) {
+                    IO.createDirectory(targetBase)
+                    IO.write(pj, pjContent)
+                }
+                if (!marker.exists()) {
+                    log.info(s"[kyo-aeron JS] installing koffi@$koffiRange into $targetBase ...")
+                    val rc = scala.sys.process.Process(
+                        Seq("npm", "install", "--no-audit", "--no-fund", "--silent"),
+                        targetBase
+                    ).!
+                    if (rc != 0) sys.error(s"npm install koffi failed (exit $rc)")
+                }
+            }).value
+        )
 
 lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)

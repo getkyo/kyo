@@ -1,60 +1,60 @@
 # kyo-aeron
 
-`Topic` is a typed publish-subscribe channel built on the Aeron transport. You name a destination with an Aeron URI (`aeron:ipc` for shared-memory IPC on one machine, `aeron:udp?endpoint=...` for unicast or multicast across machines), pick a message type that has an upickle `ReadWriter` instance, and call `Topic.publish` or `Topic.stream`. The transport handles fragmentation, reassembly, and flow control; you handle the program shape.
+`Topic` is a typed publish-subscribe channel built on the Aeron transport. You name a destination with an Aeron URI (`aeron:ipc` for shared-memory IPC on one machine, `aeron:udp?endpoint=...` for unicast or multicast across machines), pick a message type with a `Schema` (derive it with `derives Schema`), and call `Topic.publish` or `Topic.stream`. Messages travel as MsgPack-encoded envelopes, so the producer and the consumer must agree on the exact Scala type. The transport handles fragmentation, reassembly, and flow control; you handle the program shape.
 
-The mental model is "one Aeron stream per exact Scala type." `Topic` derives the stream ID from the message type's `Tag` hash, so `Topic.stream[Message]` and `Topic.publish[Message]` only see each other. There is no subtype polymorphism, and `Topic.stream[Base]` will not receive `Derived` messages even when `Derived <: Base`. A `Topic.run` handler stands up an embedded Aeron `MediaDriver` (or wraps one you supply) and discharges the effect; everything inside the handler shares that driver.
+The mental model is "one Aeron stream per exact Scala type." `Topic` derives the stream ID from the message type's `Tag` hash, so `Topic.stream[Message]` and `Topic.publish[Message]` only see each other. There is no subtype polymorphism, and `Topic.stream[Base]` will not receive `Derived` messages even when `Derived <: Base`. A `Topic.run` handler stands up an embedded Aeron media driver and discharges the effect; everything inside the handler shares that driver. The same `Topic.run`/`publish`/`stream` API compiles and runs unchanged on JVM, Scala Native, and Scala.js, with only the I/O backend differing underneath.
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L))
 
 Topic.run {
     Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
 }
-// : Unit < (Async & Abort[Closed | Backpressured])
+// : Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException])
 ```
 
-`derives Topic.AsMessage` wires the codec, `Topic.run` owns the embedded driver, and `Topic.publish` streams values onto the named URI. The rest of this document walks each capability one cluster at a time.
+`derives Schema` wires the codec, `Topic.run` owns the embedded driver, and `Topic.publish` streams values onto the named URI.
 
 ## Getting started
 
 The minimum useful program is a publisher and a subscriber on the same URI with the same exact message type. The subscriber runs on its own fiber so the publisher can run concurrently in the same handler.
 
-### Deriving `Topic.AsMessage`
+### Deriving `Schema`
 
-`Topic.AsMessage[A]` is a type alias for upickle's `ReadWriter[A]`. Any case class can derive it directly, and the same derive enables publish and subscribe of that type.
+A message type's only requirement is a `Schema[A]` instance from kyo-schema, derivable with `derives Schema`. The same instance serves both publish and subscribe of that type, and payloads are MsgPack-encoded on the wire.
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 ```
 
-`Topic.AsMessage` is the only typeclass requirement on a message type. Standard library types that upickle handles out of the box (`String`, `Int`, `Long`, `Double`, `List`, `Map`, ...) work without an explicit derive.
-
-> **Note:** `derives Topic.AsMessage` desugars to `derives ReadWriter`. If the type already has a `ReadWriter` in scope from upickle, no further derive is needed.
+`Schema` is the only typeclass requirement on a message type. Standard types that kyo-schema already provides a `Schema` for work without an explicit derive.
 
 ### Running a `Topic` handler
 
-`Topic.run` stands up an Aeron `MediaDriver` and an `Aeron` client, runs the inner computation, and closes both on exit. The zero-arg overload is the path you take when you just want a working topic; the inner computation can publish, subscribe, and fork freely.
+`Topic.run` stands up an Aeron media driver and client, runs the inner computation, and closes both on exit. The zero-arg overload is the path you take when you want a working topic; the inner computation can publish, subscribe, and fork freely.
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
 
 Topic.run {
     Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
 }
-// : Unit < (Async & Abort[Closed | Backpressured])
+// : Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException])
 ```
 
 The `Topic` effect is discharged by `run`; what remains in the row is `Async` (because Aeron polling is suspended on the fiber scheduler) and the `Abort` channels each call carries.
 
-> **Note:** Any build that hosts an embedded Aeron driver must set `fork := true` and pass four `--add-opens` flags, because Aeron's off-heap log buffers reach into JDK internals:
+The zero-arg `Topic.run(v)` carries no `Abort` for startup: an embedded-startup defect (a temp dir that cannot be allocated, or an embedded driver that fails to launch, e.g. a missing `--add-opens` below) surfaces as a panic, not a recoverable abort, because it is an environment defect rather than a per-call condition. The external overloads (`Topic.run(aeronDir)` and `AeronClient.connect`) instead surface a missing external driver as a typed `Abort[TopicTransportFailedException]`, because that connect failure is a per-call recoverable condition.
+
+> **Note:** On the JVM, any build that hosts an embedded Aeron driver must set `fork := true` and pass four `--add-opens` flags, because Aeron's off-heap log buffers reach into JDK internals:
 > ```
 > fork := true
 > javaOptions ++= Seq(
@@ -64,16 +64,16 @@ The `Topic` effect is discharged by `run`; what remains in the row is `Async` (b
 >   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
 > )
 > ```
-> Without these, `Topic.run` fails when it launches the embedded `MediaDriver`.
+> Without these, `Topic.run` fails when it launches the embedded media driver. Scala Native and Scala.js run an embedded C media driver through kyo-ffi and need no `--add-opens`.
 
 ### Publishing
 
-`Topic.publish` takes a URI and a `Stream[A, S]` of messages. Each chunk that flows through the input stream becomes one Aeron message frame; the publisher serializes the chunk with upickle binary, claims buffer space, and commits.
+`Topic.publish` takes a URI and a `Stream[A, S]` of messages. Each chunk that flows through the input stream becomes one Aeron message frame; the publisher encodes the chunk as a MsgPack `Envelope` (kyo-schema) and offers it to the publication.
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 
 val ticks = Stream.init(
     Seq(
@@ -90,17 +90,17 @@ Topic.run {
 
 ### Subscribing
 
-`Topic.stream` returns a `Stream[A, Topic & Abort[Backpressured] & Async]` that emits chunks of messages as they arrive. Each Aeron frame carries a whole chunk, so consumers observe chunk-granularity arrival rather than message-by-message.
+`Topic.stream` returns a `Stream[A, Topic & Abort[TopicBackpressureException | TopicTransportException] & Async]` that emits chunks of messages as they arrive. Each Aeron frame carries a whole chunk, so consumers observe chunk-granularity arrival rather than message-by-message.
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 
 Topic.run {
     Topic.stream[Tick]("aeron:ipc").take(2).run
 }
-// : Chunk[Tick] < (Async & Abort[Backpressured])
+// : Chunk[Tick] < (Async & Abort[TopicBackpressureException | TopicTransportException])
 ```
 
 > **Note:** `Topic.stream` emits in chunks because the publisher commits one chunk per Aeron frame. A consumer doing `.take(n)` counts messages, not chunks; the underlying stream stays chunk-shaped end to end.
@@ -112,7 +112,7 @@ Run both sides under one `Topic.run` block. The subscriber must be started befor
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 
 val messages = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L))
 
@@ -144,7 +144,7 @@ The URI you pass to `publish` and `stream` selects the wire format. The API surf
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
 
 Topic.run {
@@ -159,7 +159,7 @@ Topic.run {
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
 
 val uri = "aeron:udp?endpoint=127.0.0.1:40123"
@@ -180,7 +180,7 @@ Topic.run {
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
 
 val uri = "aeron:udp?endpoint=224.1.1.1:40123|interface=192.168.1.1"
@@ -203,8 +203,8 @@ You can publish `Tick`s and `Trade`s to the same `aeron:ipc` URI from separate c
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
-case class Trade(symbol: String, qty: Int, priceCents: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
+case class Trade(symbol: String, qty: Int, priceCents: Long) derives CanEqual, Schema
 
 val ticks  = Seq(Tick("AAPL", 19023, 1L))
 val trades = Seq(Trade("AAPL", 100, 19023L))
@@ -236,15 +236,15 @@ A `sealed trait` with subtype variants does NOT give you "subscribe to the base,
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
-sealed trait Event derives Topic.AsMessage
-case class TickEvent(t: Tick) extends Event derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
+sealed trait Event derives Schema
+case class TickEvent(t: Tick) extends Event derives CanEqual, Schema
 
 val failSchedule = Schedule.fixed(1.millis).take(3)
 
 // Subscriber asks for Event but publisher writes TickEvent;
 // the stream ids do not match, so the subscriber sees nothing
-// and eventually fails with Backpressured.
+// and eventually fails with TopicBackpressureExhaustedException.
 Topic.run {
     for
         fiber <- Fiber.initUnscoped(
@@ -261,22 +261,28 @@ Topic.run {
 // : (true, true)
 ```
 
-If you want a union, publish each variant under its concrete type and let the subscribers pick the variants they care about. Or define a wrapper case class that erases the variance: `case class AnyEvent(payload: String) derives Topic.AsMessage` and serialize the union into `payload`.
+If you want a union, publish each variant under its concrete type and let the subscribers pick the variants they care about. Or define a wrapper case class that erases the variance: `case class AnyEvent(payload: String) derives Schema` and serialize the union into `payload`.
 
 > **Caution:** Stream IDs are hashes of `Tag.show`, so a hash collision between two unrelated types is theoretically possible. On receipt, the subscriber compares the full type-tag string from the wire to its own; a mismatch raises `Abort.panic` (not a normal `Abort` failure) with the expected and actual tags. A panic here means "you wired the wrong types together," not "the network blipped."
 
 ## Backpressure and retries
 
-The Aeron transport reports back-pressure as a return code from `tryClaim` on the publish path and as "no fragments read" on the subscribe path. `Topic` surfaces both through one `Abort[Backpressured]` channel, and routes that channel through a `Schedule`-driven retry before letting the failure escape.
+The Aeron transport reports back-pressure as a negative offer return code on the publish path and as "no fragments read" on the subscribe path. `Topic` routes transient conditions through a `Schedule`-driven retry before letting the failure escape as a typed `TopicException`.
 
-### `Topic.Backpressured`
+### Transient vs terminal: the TopicException subcategories
 
-`Backpressured` is a `KyoException` raised when Aeron cannot accept a write right now (publisher) or has nothing to read right now (subscriber). Both publish and subscribe carry `Abort[Backpressured]` in the row, so the retry knob applies symmetrically.
+`TopicException` is organized into three `sealed abstract` subcategories by failure mode:
+
+- `TopicBackpressureException` (transient, retry-absorbed): Aeron is busy, the peer is briefly absent, or an admin action is in progress. The retry schedule absorbs these; they surface as `TopicBackpressureExhaustedException` only after the schedule exhausts. Both `publish` and `stream` carry `Abort[TopicBackpressureException]` in the row.
+- `TopicPublishException` (terminal, publish-side offer path): publication or client closed (`TopicPublicationClosedException`), term-buffer position limit hit (`TopicMaxPositionExceededException`), or message too large (`TopicMessageTooLargeException`). Reachable on `publish` only; `stream` does not carry this arm.
+- `TopicTransportException` (terminal, add/lifecycle path): registration rejected (`TopicRegistrationFailedException`), bounded add-loop timed out (`TopicAddTimeoutException`), or fatal conductor error (`TopicTransportFailedException`). Reachable on both `publish` and `stream`.
 
 ```scala
-// Publisher row:    Unit         < (Topic & S & Abort[Closed | Backpressured] & Async)
-// Subscriber row:   Stream[A, Topic & Abort[Backpressured] & Async]
+// publish row: Unit < (Topic & S & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException] & Async)
+// stream row:  Stream[A, Topic & Abort[TopicBackpressureException | TopicTransportException] & Async]
 ```
+
+The two rows differ intentionally: `TopicPublishException` is unreachable on the subscribe path (it covers offer-side codes that only a publication returns), so `stream` does not carry it.
 
 ### `Topic.defaultRetrySchedule`
 
@@ -286,7 +292,7 @@ Both `publish` and `stream` accept a `retrySchedule: Schedule = defaultRetrySche
 val defaultRetrySchedule = Schedule.linear(10.millis).min(Schedule.fixed(1.second)).jitter(0.2)
 ```
 
-This default makes a publisher willing to wait through reasonably long subscriber stalls without giving up, and makes a subscriber poll patiently against an idle channel. When the default is in effect, a "quiet" channel does NOT fail; the retry just keeps trying.
+This default makes a publisher willing to wait through reasonably long subscriber stalls without giving up, and makes a subscriber poll patiently against an idle channel. When the default is in effect, a "quiet" channel does NOT fail; the retry keeps trying.
 
 ### Choosing a fail-fast schedule
 
@@ -295,7 +301,7 @@ When you want missing-peer scenarios to surface as failures rather than indefini
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 
 val failSchedule = Schedule.fixed(1.millis).take(3)
 
@@ -311,12 +317,12 @@ Topic.run {
 // : true
 ```
 
-The same schedule works on the publish side. A publisher with no subscriber, with a fail-fast schedule, surfaces a failure (`Backpressured` exhausted, or `Closed("Not connected")`) instead of stalling:
+The same schedule works on the publish side. A publisher with no subscriber, with a fail-fast schedule, surfaces a `TopicBackpressureExhaustedException` failure instead of stalling:
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 
 val failSchedule = Schedule.fixed(1.millis).take(3)
 
@@ -330,29 +336,42 @@ Topic.run {
 
 > **Note:** The retry schedule applies to BOTH `publish` and `stream`. The same call passes the same schedule to both endpoints in the same handler when you want symmetric behavior; pass different schedules per endpoint when their tolerance differs (e.g. a publisher that should fail fast feeding a subscriber that should wait).
 
-### `Backpressured` vs `Closed`
+### Recovering from backpressure
 
-`Backpressured` is transient: Aeron is busy or the peer is briefly absent, and a retry might succeed. `Closed` is terminal: the publication or subscription is shut, the peer says `NOT_CONNECTED`, or an admin action invalidated the session. The publish path raises `Closed` directly without retry; the subscribe path raises `Backpressured` for the not-connected case as well, leaning on the schedule to decide when "not yet connected" becomes "not coming."
-
-```scala
-// publish row:  Abort[Closed | Backpressured]
-// stream row:   Abort[Backpressured]
-```
-
-If you want a publisher to treat `NOT_CONNECTED` like a retryable backpressure event, wrap the publish in `Abort.recover[Closed]` and re-issue; the API does not collapse the two by default.
-
-## Driver lifecycle
-
-Aeron has two long-lived resources: a `MediaDriver` (the IPC daemon, one per host) and an `Aeron` client (a connection to one media driver). `Topic.run` has three overloads, one per "who owns each resource" arrangement.
-
-### Embedded driver (the default)
-
-`Topic.run(v)` (no driver argument) launches a new embedded `MediaDriver`, opens an `Aeron` client against it, and closes both on exit. This is what every getting-started example uses, and it's the right call when your program owns its own Aeron instance.
+`TopicBackpressureException` is the only retryable subcategory. Match on it to distinguish a transient stall from a terminal transport error:
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+Abort.recover[TopicBackpressureException] { _ =>
+    // transient: the retry schedule exhausted; handle or re-issue
+    ()
+} {
+    Topic.publish[Int]("aeron:ipc")(Stream.init(Seq(1, 2, 3)))
+}
+```
+
+Terminal errors (`TopicPublishException`, `TopicTransportException`) require a fresh `Topic.run` scope to recover; no retry of the same publication or subscription will succeed.
+
+## Driver lifecycle
+
+`Topic.run(v)` launches an embedded Aeron media driver and discharges the `Topic` effect
+for the inner computation. Two additional overloads connect to a driver that already exists:
+`Topic.run(aeronDir: Path)(v)` connects a fresh client to an external driver at `aeronDir`
+and closes only the client on exit; `AeronClient.connect(aeronDir)` acquires a
+`Scope`-managed client that multiple `Topic.run(client)` blocks can share.
+
+### Embedded driver (the default)
+
+`Topic.run(v)` (no driver argument) starts a fresh embedded driver with a unique per-instance
+directory, opens a client against it, and closes both on exit. Use this when the program is
+the only Aeron user in the process and you do not need to share state across `Topic.run`
+blocks.
+
+```scala
+import kyo.*
+
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
 
 Topic.run {
@@ -360,61 +379,71 @@ Topic.run {
 }
 ```
 
-> **Caution:** The embedded driver writes to a temporary Aeron directory derived from the OS temp dir. Two processes that both call `Topic.run()` with no argument get two separate drivers and cannot see each other's IPC traffic. To share one driver between processes, use the next overload.
+Each `Topic.run(v)` call allocates a unique temporary directory for its driver instance, so
+two concurrent `Topic.run(v)` calls in the same process each get an isolated driver; they
+can communicate only if they publish/subscribe on the same Aeron URI, not because they share
+the same driver directory.
 
-### Shared `MediaDriver`
+### External driver: `Topic.run(aeronDir)`
 
-`Topic.run(driver: MediaDriver)(v)` reuses a driver you launched. Kyo opens an `Aeron` client against `driver.aeronDirectoryName()` and closes the client on exit; you remain responsible for closing the driver.
-
-```scala
-import io.aeron.driver.MediaDriver
-import kyo.*
-
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
-val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
-
-val driver = MediaDriver.launchEmbedded()
-try
-    Topic.run(driver) {
-        Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
-    }
-finally driver.close()
-end try
-```
-
-Use this when one driver should outlive multiple `Topic.run` blocks (a long-running service, a test fixture that reuses one driver for many tests) or when several processes share a driver that an out-of-band script started.
-
-### External `Aeron` client
-
-`Topic.run(aeron: Aeron)(v)` reuses an `Aeron` client you opened. Kyo closes nothing; you own driver and client.
+`Topic.run(aeronDir)(v)` connects a fresh client to an external driver already running at
+`aeronDir`, runs `v`, then closes only the client. The driver is not started or stopped;
+the caller owns the driver lifecycle. Use this when one driver outlives multiple
+`Topic.run` blocks or when a separate process manages the driver.
 
 ```scala
-import io.aeron.Aeron
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
 val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
 
-val aeron = Aeron.connect(new Aeron.Context().aeronDirectoryName("/dev/shm/aeron"))
-try
-    Topic.run(aeron) {
+def publish(aeronDir: Path): Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException]) =
+    Topic.run(aeronDir) {
         Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
     }
-finally aeron.close()
-end try
 ```
 
-This is the path when something else in the process already manages Aeron lifetime: a test harness, an embedding framework, or a service that wires Aeron at startup and tears it down at shutdown.
+Connecting to a directory where no driver is running aborts with `TopicTransportFailedException`
+(a `TopicTransportException` leaf), eagerly and in-band after the driver timeout on every
+platform.
 
-> **Caution:** The three overloads do NOT compose. Passing your own `MediaDriver` to the zero-arg overload by way of `Aeron.connect(...)` inside the inner computation results in a driver that you close AND that kyo's outer ensure also closes; one of the closes will fail or, worse, double-close the underlying file descriptors. Pick the overload that matches what you own, and don't reach for Aeron-the-library directly inside `Topic.run { ... }`.
+### Shared client: `AeronClient`
+
+`AeronClient.connect(aeronDir)` acquires a `Scope`-managed handle to a connected Aeron
+client. Multiple `Topic.run(client)` blocks can borrow the same client without closing it;
+the `Scope` that produced the `AeronClient` closes it exactly once on scope exit.
+
+```scala
+import kyo.*
+
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
+val ticks = Seq(Tick("AAPL", 19023, 1L), Tick("AAPL", 19045, 2L), Tick("MSFT", 41210, 3L))
+
+def publishWithSharedClient(client: AeronClient)
+    : Unit < (Async & Abort[TopicBackpressureException | TopicPublishException | TopicTransportException]) =
+    Topic.run(client) {
+        Topic.publish[Tick]("aeron:ipc")(Stream.init(ticks, 4096))
+    }
+```
+
+`AeronClient.connect` carries `Scope & Async & Abort[TopicTransportFailedException]`; a failed connect
+aborts with `TopicTransportFailedException` the same way as `Topic.run(aeronDir)` (both consume the
+one shared connect primitive in `AeronPlatform.external`). `Topic.run(client)` carries only
+`Async & S` because the client is already connected.
 
 ### Choosing an overload
 
-Reach for the zero-arg overload when the program is the only Aeron user in the process. Reach for the `MediaDriver` overload when several `Topic.run` blocks should share one IPC daemon. Reach for the `Aeron` overload when Aeron lifetime is managed by something outside `Topic.run` entirely.
+- `Topic.run(v)`: the program is the sole Aeron user; simplest setup; no external driver needed.
+- `Topic.run(aeronDir)(v)`: one long-lived driver serves multiple `Topic.run` blocks or processes.
+- `AeronClient` + `Topic.run(client)`: amortize the connect cost across many short `Topic.run` blocks.
+
+All three overloads are uniform across JVM, Scala Native, and Scala.js.
 
 ## Concurrency
 
-`Topic` is `opaque type Topic <: Env[Aeron]`, so it composes wherever `Env` does. The `Aeron` value lives in the `Env` row of every computation between `Topic.run` and a `Topic.publish`/`Topic.stream` call, and forks with `Fiber.initUnscoped` carry the row across the fiber boundary with no extra ceremony.
+`Topic` is `opaque type Topic <: Env[AeronTransport]`, so it composes wherever `Env` does. The row carries the `AeronTransport` capability, a cross-platform transport handle rather than a JVM `Aeron` value, on every computation between `Topic.run` and a `Topic.publish`/`Topic.stream` call, and forks with `Fiber.initUnscoped` carry that row across the fiber boundary.
+
+> **Note:** Crossing a fiber boundary requires a `given Isolate[Topic, ...]`. One lives in `Topic`'s companion (`Topic.isolate`), so it is in implicit scope automatically and `Fiber.initUnscoped(...)` carries the `Topic` row into the child fiber with no explicit `using`.
 
 ### Why `Topic` cannot be constructed directly
 
@@ -422,15 +451,19 @@ Reach for the zero-arg overload when the program is the only Aeron user in the p
 
 If you need to share publishing or subscribing logic across modules, write methods that return `Unit < (Topic & Async & Abort[...])` and let the call sites discharge `Topic` with `Topic.run`. The effect row, not a `Topic` value, is what travels.
 
+## Cross-platform backends
+
+The same `Topic` API (`run`, `publish[A: Schema]`, `stream[A: Schema]`, `AeronClient.connect`) compiles and runs identically on JVM, Scala Native, and Scala.js. Only the transport underneath differs. On the JVM it uses the pure-Java `io.aeron` client and launches an embedded `MediaDriver`. On Scala Native and Scala.js it uses Aeron's C client and an embedded C media driver, bound through kyo-ffi and statically linked from libaeron built for the target. Native and JS therefore require libaeron staged for the target at build time. The external-driver path (`Topic.run(aeronDir)` and `AeronClient.connect(aeronDir)`) works on all three platforms with the same `kyo.Path` type and the same `Abort[TopicTransportFailedException]` failure channel. The wire format, MsgPack envelopes, is byte-identical across platforms, so a JVM publisher and a Native subscriber on the same Aeron URI interoperate.
+
 ## Putting it together
 
-The sections above introduced each capability in isolation. This example combines them: one `Topic.run` block that publishes a batch of ticks and subscribes to them on the same URI, with a `Latch` coordinating startup so the subscriber is ready before the publisher writes.
+This example combines publish and subscribe in one `Topic.run` block that publishes a batch of ticks and subscribes to them on the same URI, with a `Latch` coordinating startup so the subscriber is ready before the publisher writes.
 
 ```scala
 import kyo.*
 
-case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Topic.AsMessage
-case class Trade(symbol: String, qty: Int, priceCents: Long) derives CanEqual, Topic.AsMessage
+case class Tick(symbol: String, priceCents: Long, ts: Long) derives CanEqual, Schema
+case class Trade(symbol: String, qty: Int, priceCents: Long) derives CanEqual, Schema
 
 val ticks = Seq(
     Tick("AAPL", 19023, 1L),
@@ -458,7 +491,3 @@ Topic.run {
     yield received
 }
 ```
-
-## Known limitations
-
-Publishing a large batch currently panics rather than delivering messages in order. The test suite marks this edge as `pendingUntilFixed`: the 200-message case raises a `Result.Panic` instead of delivering the sequence intact. A single Aeron frame can carry a small chunk in order, but the reassembly path breaks down under multi-frame pressure. Design around small, single-frame chunks when strict ordering matters.

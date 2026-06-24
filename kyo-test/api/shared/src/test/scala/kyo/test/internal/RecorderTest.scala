@@ -77,7 +77,7 @@ class RecorderTest extends AsyncFreeSpec with NonImplicitAssertions:
             Future.successful(succeed)
         }
 
-        "diagram does not throw NegativeArraySizeException when maxCol == Int.MaxValue (M32 overflow guard)" in {
+        "diagram does not throw NegativeArraySizeException when maxCol == Int.MaxValue (column overflow guard)" in {
             val r = new Recorder()
             // Record a value at Int.MaxValue column. Without math.max(0, maxCol+1) the
             // Array.fill call would receive a negative size and throw NegativeArraySizeException.
@@ -119,6 +119,29 @@ class RecorderTest extends AsyncFreeSpec with NonImplicitAssertions:
 
         "render is null-safe (String.valueOf, not value.toString)" in {
             assert(Recorder.render(null) == "null")
+            Future.successful(succeed)
+        }
+
+        "render degrades a value whose toString throws to an <unrenderable> placeholder" in {
+            // Regression: the assert macro records subexpression values eagerly, for passing and failing
+            // asserts alike. A value whose toString throws (on Scala.js an opaque koffi void* pointer
+            // throws "Cannot convert object to primitive value" on coercion) must degrade to a placeholder
+            // rather than crash the leaf that captured it.
+            val hostile = new AnyRef:
+                override def toString: String = throw new RuntimeException("boom")
+            val rendered = Recorder.render(hostile)
+            assert(rendered == "<unrenderable>", s"got: '$rendered'")
+            Future.successful(succeed)
+        }
+
+        "record does not propagate a toString failure and the diagram shows the placeholder" in {
+            val hostile = new AnyRef:
+                override def toString: String = throw new RuntimeException("boom")
+            val r      = new Recorder()
+            val result = r.record(hostile, 0)
+            assert(result eq hostile)
+            val diagram = r.diagram("assert(h == h)", summon[Frame])
+            assert(diagram.contains("<unrenderable>"), s"expected placeholder in diagram:\n$diagram")
             Future.successful(succeed)
         }
 
