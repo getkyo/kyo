@@ -336,7 +336,7 @@ val r     = risky.riskyOp(42)
 if r.errorCode != 0 then
     handleError(r.errorCode)
 else
-    useValue(r.value.toInt) // .value is Long; an Int consumer reads .toInt
+    useValue(r.value) // .value is Int for Outcome[Int], Long for Outcome[Long]
 end if
 ```
 
@@ -355,7 +355,7 @@ val res   = risky.riskyOp(7)
 if res.errorCode != 0 then
     throw FfiErrno(res.errorCode, "RiskyBindings", "riskyOp")
 else
-    useValue(res.value.toInt) // .value is Long; an Int consumer reads .toInt
+    useValue(res.value) // .value is Int for Outcome[Int], Long for Outcome[Long]
 end if
 ```
 

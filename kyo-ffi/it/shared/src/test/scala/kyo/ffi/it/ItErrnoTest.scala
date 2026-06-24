@@ -15,8 +15,6 @@ import kyo.ffi.FfiErrno
   */
 class ItErrnoTest extends ItTestBase:
 
-    import AllowUnsafe.embrace.danger
-
     "kyoItAlwaysFail (Outcome return)" - {
         "returns -1 with errorCode 22 (EINVAL)" in {
             val b = Ffi.load[ItErrnoBindings]
