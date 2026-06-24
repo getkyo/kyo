@@ -275,10 +275,10 @@ private[kyo] object OpenApiGenerator:
             case JsonSchema.Integer(_, _, _, _, _) =>
                 HttpOpenApi.SchemaObject.integer
 
-            case JsonSchema.Bool =>
+            case JsonSchema.Bool(_) =>
                 HttpOpenApi.SchemaObject.boolean
 
-            case JsonSchema.Null =>
+            case JsonSchema.Null(_) =>
                 HttpOpenApi.SchemaObject(
                     `type` = Some("null"),
                     format = None,

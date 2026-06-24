@@ -101,7 +101,7 @@ import scala.annotation.publicInBinary
 
     /** Adds a description to a JsonSchema, supporting the types that have a description field.
       *
-      * For types without a description field (Bool, NullType, Enum, etc.), returns the schema unchanged.
+      * For types without a description field (Nullable, OneOf, etc.), returns the schema unchanged.
       */
     def addDescription(schema: Json.JsonSchema, desc: String): Json.JsonSchema =
         import Json.JsonSchema
@@ -111,7 +111,9 @@ import scala.annotation.publicInBinary
             case s: JsonSchema.Num     => s.copy(description = Maybe(desc))
             case s: JsonSchema.Integer => s.copy(description = Maybe(desc))
             case s: JsonSchema.Arr     => s.copy(description = Maybe(desc))
-            case other                 => other // types without description field
+            case s: JsonSchema.Bool    => s.copy(description = Maybe(desc))
+            case s: JsonSchema.Null    => s.copy(description = Maybe(desc))
+            case other                 => other // remaining types without a description field
         end match
     end addDescription
 
