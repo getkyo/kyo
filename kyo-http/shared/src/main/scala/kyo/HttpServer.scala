@@ -5,19 +5,18 @@ import kyo.internal.HttpPlatformTransport
 import kyo.internal.codec.OpenApiGenerator
 import kyo.internal.server.HttpRouter
 import kyo.internal.server.UnsafeServerDispatch
-import kyo.internal.transport.Connection
-import kyo.internal.transport.Transport
+import kyo.internal.transport.NetConfigTranslation
 
 /** HTTP server that binds one or more handlers to a port and manages the server lifecycle.
   *
-  * `HttpServer.init` returns a server managed by `Scope` — it shuts down automatically when the enclosing scope exits. Use
+  * `HttpServer.init` returns a server managed by `Scope`, it shuts down automatically when the enclosing scope exits. Use
   * `HttpServer.initUnscoped` when you need manual lifecycle control and must close the server explicitly via `close()`. Both forms accept
   * one or more `HttpHandler` instances as varargs and an optional `HttpServerConfig`.
   *
   * When `HttpServerConfig.openApi` is configured, the server automatically generates an OpenAPI 3.x spec from all registered handlers and
   * serves it at the configured path (default: `/openapi.json`).
   *
-  * The `initWith` variants combine `init` and a continuation — they bind the server and pass it to a function, which is useful for keeping
+  * The `initWith` variants combine `init` and a continuation, they bind the server and pass it to a function, which is useful for keeping
   * the server reference local to the block that uses it.
   *
   * Note: Port 0 tells the OS to assign any available port. After binding, the actual port is available via `server.port`. This is the
@@ -120,15 +119,26 @@ object HttpServer:
             if serverFilter eq HttpFilter.noop then allHandlers
             else allHandlers.map(h => HttpHandler.withFilter(h, serverFilter))
         Sync.Unsafe.defer {
-            val listenFiber = Unsafe.init(HttpPlatformTransport.transport, config, filteredHandlers)
+            // Reuse the process-global shared transport for the default config (no per-server resources). When the config customizes
+            // transport tuning, build and OWN a per-config transport so handshakeTimeout (the slowloris-handshake DoS guard) and the
+            // other HttpTransportConfig fields actually take effect rather than being ignored under the shared default transport. An
+            // owned transport is closed when the server closes (and on a bind failure here, so it never leaks).
+            val ownsTransport = config.transportConfig != HttpTransportConfig.default
+            val transport =
+                if ownsTransport then kyo.net.NetPlatform.transport(NetConfigTranslation.toNetTransportConfig(config.transportConfig))
+                else HttpPlatformTransport.transport
+            val listenFiber = Unsafe.init(transport, config, filteredHandlers, ownsTransport)
             Abort.run[Closed](listenFiber.safe.get).map {
                 case Result.Success(server) => server.safe
                 case Result.Failure(closed) =>
+                    if ownsTransport then transport.close()
                     val bindTarget = config.unixSocket match
                         case Present(path) => path
                         case Absent        => config.host
                     throw HttpBindException(bindTarget, config.port, new java.io.IOException(closed.getMessage))
-                case Result.Panic(t) => throw t
+                case Result.Panic(t) =>
+                    if ownsTransport then transport.close()
+                    throw t
             }
         }
     end initUnscoped
@@ -182,18 +192,19 @@ object HttpServer:
           * @return
           *   A fiber that completes with the unsafe server once bound
           */
-        def init[H](
-            transport: Transport[H],
+        def init(
+            transport: kyo.net.Transport,
             config: HttpServerConfig,
-            handlers: Seq[HttpHandler[?, ?, ?]]
+            handlers: Seq[HttpHandler[?, ?, ?]],
+            ownsTransport: Boolean = false
         )(using AllowUnsafe, Frame): Fiber.Unsafe[Unsafe, Abort[Closed]] =
             val router = HttpRouter(handlers, config.cors)
             // Track every accepted connection so the server can close them on shutdown: the transport listener owns only
             // the listening socket, so an accepted keep-alive connection would otherwise stay open until a 60s idle timer
             // fires (it leaks whenever the peer keeps its side pooled rather than sending an EOF). The shared registry is
             // the same mechanism HttpClientBackend uses for the connections it creates.
-            val registry = new kyo.internal.ConnectionRegistry[Connection[H]]
-            def tracked(conn: Connection[H]): Unit < Async =
+            val registry = new kyo.internal.ConnectionRegistry[kyo.net.Connection]
+            def tracked(conn: kyo.net.Connection): Unit =
                 // Prune closed entries on accept (no per-connection close hook), then register this one. register closes
                 // the connection itself and returns false when a shutdown races this accept, so the connection is
                 // neither served nor left open, and a failing close is contained inside the registry rather than
@@ -202,38 +213,45 @@ object HttpServer:
                 if registry.register(conn)(_.close()) then
                     UnsafeServerDispatch.serve(router, conn.inbound, conn.outbound, config)
                 else
-                    Kyo.unit
+                    (
+                )
                 end if
             end tracked
             val listenFiber = (config.unixSocket, config.tls) match
                 case (Present(path), _) =>
                     transport.listenUnix(path, config.backlog)(tracked)
                 case (Absent, Present(tls)) =>
-                    transport.listen(config.host, config.port, config.backlog, tls)(tracked)
+                    NetConfigTranslation.listenTls(transport, config.host, config.port, config.backlog, tls)(tracked)
                 case _ =>
                     transport.listen(config.host, config.port, config.backlog)(tracked)
-            listenFiber.map(listener => new ListenerUnsafe(listener, registry))
+            listenFiber.map(listener => new ListenerUnsafe(listener, transport, ownsTransport, registry))
         end init
     end Unsafe
 
     // --- Private implementations ---
 
-    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. */
-    final private class ListenerUnsafe[H](
-        listener: kyo.internal.transport.Listener,
-        registry: kyo.internal.ConnectionRegistry[Connection[H]]
+    /** Unsafe implementation wrapping a Listener from Transport, plus the registry of accepted connections it owns. When `ownsTransport`
+      * is true (the server built a per-config transport rather than reusing the shared global one), closing the server also closes that
+      * transport so its driver/pool is released.
+      */
+    final private class ListenerUnsafe(
+        listener: kyo.net.Listener,
+        transport: kyo.net.Transport,
+        ownsTransport: Boolean,
+        registry: kyo.internal.ConnectionRegistry[kyo.net.Connection]
     )(using allow: AllowUnsafe) extends Unsafe:
-        private val closedPromise = Promise.Unsafe.init[Unit, Any]()
+        private val closedPromise            = Promise.Unsafe.init[Unit, Any]()
+        private val httpAddress: HttpAddress = NetConfigTranslation.toHttpAddress(listener.address)
 
-        def port: Int = listener.address match
+        def port: Int = httpAddress match
             case HttpAddress.Tcp(_, p) => p
             case HttpAddress.Unix(_)   => -1
 
-        def host: String = listener.address match
+        def host: String = httpAddress match
             case HttpAddress.Tcp(h, _) => h
             case HttpAddress.Unix(_)   => "localhost"
 
-        def address: HttpAddress = listener.address
+        def address: HttpAddress = httpAddress
 
         def closeFiber(gracePeriod: Duration)(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             listener.close()       // stop accepting new connections first
@@ -241,6 +259,9 @@ object HttpServer:
 
             def forceCloseAndComplete(): Unit =
                 registry.closeAll(_.close())
+                // When the server built a per-config transport (not the shared global one), release it after the accepted
+                // connections are closed so its driver/pool is freed.
+                if ownsTransport then transport.close()
                 discard(closedPromise.completeDiscard(Result.succeed(())))
             end forceCloseAndComplete
 

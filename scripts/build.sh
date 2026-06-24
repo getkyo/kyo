@@ -163,8 +163,10 @@ ci_cmd() { "$SCRIPT_DIR/ci-test.sh" "$1" "$ACTION"; }
 # a shell prelude run inside the already-launched container, quiet and idempotent.
 container_provision() {
     local platform="$1"
-    local apt_pkgs="curl ca-certificates patch"
-    local node_pkgs="" native_pkgs=""
+    # liburing-dev + libssl-dev: the kyo-net JVM FFI shims link the io_uring (-luring) and OpenSSL TLS data planes; without them
+    # kyo-netJVM's ffiCompile fails (cannot find -luring). Small and always installed so any kyo-net command builds in the container.
+    local apt_pkgs="curl ca-certificates patch liburing-dev libssl-dev"
+    local node_pkgs="" native_pkgs="" bssl_pkgs=""
     # "all" provisions the union (raw sbt mode may run any platform's command in the container).
     case "$platform" in
         JS|Wasm|all) node_pkgs="nodejs npm" ;;
@@ -172,18 +174,30 @@ container_provision() {
     case "$platform" in
         Native|all) native_pkgs="libcurl4-openssl-dev libidn2-dev libh2o-evloop-dev=2.2.5+dfsg2-8.1ubuntu3" ;;
     esac
+    # BoringSSL build toolchain (cmake + Go + a C toolchain), only when STAGE_BORINGSSL=1 builds the vendored BoringSSL so kyo-net's
+    # TLS tests run against real libssl/libcrypto instead of cancelling. Heavy, so off by default.
+    [ "${STAGE_BORINGSSL:-}" = 1 ] && bssl_pkgs="cmake golang-go build-essential git clang libunwind-dev"
     cat <<PROVISION
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq >/dev/null
-    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs >/dev/null
+    apt-get install -y -qq -o Acquire::Retries=3 $apt_pkgs $node_pkgs $native_pkgs $bssl_pkgs >/dev/null
 fi
 export COURSIER_CACHE=/root/.cache/coursier
 if ! command -v cs >/dev/null 2>&1; then
-    arch=\$(uname -m); cs_arch=x86_64-pc-linux
-    [ "\$arch" = aarch64 ] && cs_arch=aarch64-pc-linux
-    curl -fsSL "https://github.com/coursier/coursier/releases/latest/download/cs-\$cs_arch.gz" \
-        | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
+    arch=\$(uname -m)
+    if [ "\$arch" = x86_64 ]; then
+        # x86_64 Linux: coursier ships a native standalone launcher (no JVM needed to run it).
+        curl -fsSL "https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz" \
+            | gzip -d > /usr/local/bin/cs && chmod +x /usr/local/bin/cs
+    else
+        # aarch64 Linux: coursier ships NO native launcher (only x86_64-pc-linux and aarch64-apple-darwin), so
+        # bootstrap a JDK via apt and use coursier's arch-independent JVM launcher (a self-executable polyglot
+        # script that runs on any JVM). This is the only path that works on the arm64-native container.
+        apt-get install -y -qq -o Acquire::Retries=3 default-jdk-headless >/dev/null
+        curl -fsSL "https://github.com/coursier/coursier/releases/latest/download/coursier" > /usr/local/bin/cs \
+            && chmod +x /usr/local/bin/cs
+    fi
 fi
 eval "\$(cs java --jvm corretto:25 --env)"
 command -v sbt >/dev/null 2>&1 || cs install sbt >/dev/null
@@ -200,9 +214,18 @@ run_in_container() {
     git -C "$PROJECT_DIR" archive HEAD --format=tar > "$snap/src.tar"
     git -C "$PROJECT_DIR" diff HEAD > "$snap/changes.patch" 2>/dev/null || true
 
-    local args=(run --rm --security-opt label=disable -v "$snap:/build-input:ro")
+    # --privileged + memlock: podman's default seccomp/limits block the io_uring syscalls and ring buffer locking that kyo-net's io_uring
+    # backend needs; without these the io_uring tests fail to init the ring and cancel. (GitHub runners allow them without privilege; this is a
+    # podman-sandbox concern only, so it does not change observed behavior.)
+    local args=(run --rm --security-opt label=disable --privileged --ulimit memlock=-1:-1 -v "$snap:/build-input:ro")
     [ -n "$platform_flag" ] && args+=(--platform "$platform_flag")
     local envs=()
+    # Forward the leak-debug flag so the forked test JVM (which inherits the container env) runs leaves serially and attributes each leaked
+    # descriptor to the test that opened it (see kyo.test.runner.internal.LeakDebug). Unset by default, so a normal run is unaffected.
+    [ -n "${KYO_TEST_LEAK_DEBUG:-}" ] && envs+=(-e "KYO_TEST_LEAK_DEBUG=$KYO_TEST_LEAK_DEBUG")
+    # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
+    # against real libssl/libcrypto instead of cancelling.
+    [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
     if [ "$ENV_KIND" = "podman-ci" ]; then
         args+=(--memory "$CI_MEMORY" --cpus "$CI_CPUS")
         envs+=(-e CI=true -e SBT_TASK_LIMIT=1
@@ -224,6 +247,7 @@ run_in_container() {
 $provision
 mkdir -p /work && cd /work && tar xf /build-input/src.tar \
     && if [ -s /build-input/changes.patch ]; then patch -p1 < /build-input/changes.patch; fi \
+    && if [ \"\${STAGE_BORINGSSL:-}\" = 1 ]; then bash kyo-net/build/boringssl/build-boringssl.sh \"linux-\$(uname -m)\"; fi \
     && $inner"
     local rc=$?
     rm -rf "$snap"

@@ -5,10 +5,10 @@ import kyo.*
 /** Base class for all HTTP-related errors, organized into four sealed subcategories by failure mode.
   *
   * The four subcategories map to distinct failure modes:
-  *   - [[kyo.HttpConnectionException]] — transport-level failures before a response is received (connection refused, pool exhausted)
-  *   - [[kyo.HttpRequestException]] — protocol-level failures during request processing (timeout, redirect loop, non-success status)
-  *   - [[kyo.HttpServerException]] — server-side operational failures (bind error, unhandled handler error)
-  *   - [[kyo.HttpDecodeException]] — parsing and deserialization failures (URL parse, field decode, JSON decode)
+  *   - [[kyo.HttpConnectionException]], transport-level failures before a response is received (connection refused, pool exhausted)
+  *   - [[kyo.HttpRequestException]], protocol-level failures during request processing (timeout, redirect loop, non-success status)
+  *   - [[kyo.HttpServerException]], server-side operational failures (bind error, unhandled handler error)
+  *   - [[kyo.HttpDecodeException]], parsing and deserialization failures (URL parse, field decode, JSON decode)
   *
   * All exception constructors strip query parameters from URLs before storing them, so sensitive data embedded in query strings (API keys,
   * tokens, session identifiers) is never retained in exception messages or stack traces.
@@ -44,6 +44,10 @@ end HttpException
   * @see
   *   [[kyo.HttpConnectException]] Connection refused or unreachable host
   * @see
+  *   [[kyo.HttpDnsResolutionException]] Name resolution failed for the host
+  * @see
+  *   [[kyo.HttpUnixConnectException]] Connection to a Unix domain socket failed
+  * @see
   *   [[kyo.HttpPoolExhaustedException]] All connections to a host are in use
   */
 sealed abstract class HttpConnectionException(message: String, cause: String | Throwable = "")(using Frame)
@@ -55,6 +59,24 @@ case class HttpConnectException(host: String, port: Int, cause: Throwable)(using
         s"""Connection to $host:$port failed.
            |
            |  Verify the server is running and reachable.""".stripMargin,
+        cause
+    )
+
+/** Name resolution for the request host failed (no such host, no address, temporary resolver failure). */
+case class HttpDnsResolutionException(host: String, cause: Throwable)(using Frame)
+    extends HttpConnectionException(
+        s"""DNS resolution failed for $host.
+           |
+           |  Verify the hostname is correct and resolvable.""".stripMargin,
+        cause
+    )
+
+/** Connection to a Unix domain socket failed (no such file, connection refused, permission denied). */
+case class HttpUnixConnectException(path: String, cause: Throwable)(using Frame)
+    extends HttpConnectionException(
+        s"""Connection to Unix socket $path failed.
+           |
+           |  Verify the socket path exists and the server is listening.""".stripMargin,
         cause
     )
 
@@ -343,6 +365,6 @@ case class HttpPayloadTooLargeException private[kyo] (bodySize: Int, maxSize: In
         s"Request body size $bodySize exceeds maximum allowed $maxSize"
     )
 
-/** Connection closed cleanly (EOF). Not an error — normal keep-alive termination. */
+/** Connection closed cleanly (EOF). Not an error, normal keep-alive termination. */
 case class HttpConnectionClosedException private[kyo] ()(using Frame)
     extends HttpDecodeException("Connection closed")

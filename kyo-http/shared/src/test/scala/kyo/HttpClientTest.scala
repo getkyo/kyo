@@ -527,6 +527,36 @@ class HttpClientTest extends BaseHttpTest:
                 }
             }
         }
+
+        "a buffered response larger than maxResponseLength fails HttpPayloadTooLargeException (CWE-400)".notNative in {
+            // A server returns a 256 KiB body; the client caps buffered responses at 64 KiB. The client must reject the
+            // over-cap response (here via the Content-Length pre-check) rather than buffer it without limit. Exercises the
+            // full production path: HttpClientConfig.maxResponseLength threaded through sendWithConfig -> readBufferedBody.
+            val largeBody = "x" * (256 * 1024)
+            val route     = HttpRoute.getRaw("big").response(_.bodyText)
+            val ep        = route.handler(_ => HttpResponse.ok(largeBody))
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                    Abort.run[HttpException](HttpClient.getText(s"$url/big")).map {
+                        case Result.Failure(_: HttpPayloadTooLargeException) => succeed
+                        case other =>
+                            fail(s"expected HttpPayloadTooLargeException for a 256 KiB response under a 64 KiB cap, got $other")
+                    }
+                }
+            }
+        }
+
+        "a buffered response within maxResponseLength still succeeds".notNative in {
+            // The cap must not break legitimate responses below it: a 32 KiB body under a 64 KiB cap round-trips.
+            val body  = "y" * (32 * 1024)
+            val route = HttpRoute.getRaw("ok").response(_.bodyText)
+            val ep    = route.handler(_ => HttpResponse.ok(body))
+            withServer(ep) { url =>
+                HttpClient.withConfig(_.maxResponseLength(64 * 1024)) {
+                    HttpClient.getText(s"$url/ok").map(b => assert(b.length == 32 * 1024))
+                }
+            }
+        }
     }
 
     "streaming" - {
@@ -1072,7 +1102,12 @@ class HttpClientTest extends BaseHttpTest:
             }
             withServer(ep) { url =>
                 var called = false
-                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(50.millis, 2.0).take(5)))) {
+                // The base must dominate per-retry overhead noise. The delays are measured as wall-clock gaps
+                // between server hits, which include request overhead: the first retry pays connection setup and
+                // JIT warmup while later retries reuse a warm path, so that overhead is non-uniform across retries.
+                // A small base (tens of ms) is smaller than that noise and can invert the comparison; a 500ms base
+                // makes the exponential increment the dominant term so the gap growth reflects the backoff, not jitter.
+                HttpClient.withConfig(noTimeout.copy(retrySchedule = Present(Schedule.exponential(500.millis, 2.0).take(5)))) {
                     withClient { client =>
                         val request = HttpRequest.getRaw(HttpUrl(url.scheme, url.host, url.port, "/slow", Absent))
                         client.sendWith(route, request) { resp =>
@@ -1882,6 +1917,19 @@ class HttpClientTest extends BaseHttpTest:
                         // connection refused: the typed failure carries the target host and port
                         assert(e.host == "localhost" && e.port == 1)
                     case other => fail(s"Expected ConnectionError but got $other")
+            }
+        }
+
+        "buffered response: an unresolvable host is classified as HttpDnsResolutionException".notNative in {
+            // The transport reports a name-resolution failure as NetDnsResolutionException; the client boundary maps it to the matching
+            // HttpDnsResolutionException rather than a generic connection error. `.invalid` (RFC 2606) answers NXDOMAIN on a conformant resolver.
+            val route = HttpRoute.getRaw("test").response(_.bodyText)
+            Abort.run[HttpException] {
+                send(HttpUrl(Present("http"), "nonexistent.invalid", 80, "/", Absent), route, HttpRequest.getRaw(HttpUrl.fromUri("/test")))
+            }.map { result =>
+                result match
+                    case Result.Failure(_: HttpDnsResolutionException) => succeed
+                    case other                                         => fail(s"Expected HttpDnsResolutionException but got $other")
             }
         }
 

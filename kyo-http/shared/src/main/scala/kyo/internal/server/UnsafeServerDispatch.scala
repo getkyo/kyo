@@ -30,6 +30,13 @@ import scala.annotation.tailrec
   */
 private[kyo] object UnsafeServerDispatch:
 
+    /** Singleton used on the normal idle-timer cancel path (no error message needed). Avoids allocating a new
+      * Closed instance on every keep-alive request. Error paths that carry a meaningful message still construct
+      * a fresh Closed.
+      */
+    private[kyo] val IdleTimerClosed: Closed =
+        new Closed("idle timer", Frame.internal, "")(using Frame.internal)
+
     // -- Date header caching (RFC 9110 section 6.6.1) --
 
     private val dateFormatter: DateTimeFormatter =
@@ -88,7 +95,7 @@ private[kyo] object UnsafeServerDispatch:
         def cancelIdleTimer(): Unit =
             idleTimerFiber match
                 case Present(fiber) =>
-                    discard(fiber.interrupt(Result.Panic(new Closed("idle timer", summon[Frame], ""))))
+                    discard(fiber.interrupt(Result.Panic(IdleTimerClosed)))
                     idleTimerFiber = Absent
                 case Absent => ()
 
@@ -112,6 +119,10 @@ private[kyo] object UnsafeServerDispatch:
             lookup.reset()
             parser.start()
         end restartParserKeepAlive
+
+        // Hoisted per-connection closure: parser and restartParserKeepAlive are both connection-scoped,
+        // so this val is safe to allocate once and reuse across all requests on the connection.
+        lazy val restartParserFn: () => Unit = () => restartParserKeepAlive(parser)
 
         // Note on re-entrancy: onRequestParsed fires inside parse(), which may call
         // parser.start() -> needMoreBytes(). This is correct (tail position) but worth
@@ -166,7 +177,7 @@ private[kyo] object UnsafeServerDispatch:
                                     config,
                                     parser,
                                     lookup,
-                                    () => restartParserKeepAlive(parser)
+                                    restartParserFn
                                 )
                             case Result.Failure(error) =>
                                 writeErrorResponse(streamCtx, error)

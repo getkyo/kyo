@@ -4,7 +4,7 @@ import kyo.*
 
 /** Configuration for an [[kyo.HttpClient]], controlling timeouts, retries, redirects, client filters, and base URL resolution.
   *
-  * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config — nested
+  * Applied via `HttpClient.withConfig(_.timeout(10.seconds)) { ... }`. The function overload composes with the current config, nested
   * `withConfig` calls stack rather than replace each other, so each layer only overrides the fields it changes. To discard the current
   * config entirely, use `HttpClient.withConfig(newConfig) { ... }`.
   *
@@ -17,7 +17,7 @@ import kyo.*
   * retries from running. Retries do not apply to WebSocket or streaming connections.
   *
   * @param baseUrl
-  *   Prefix for path-only request URLs. Absent by default — all URLs must be absolute. When set, requests to `/path` resolve to
+  *   Prefix for path-only request URLs. Absent by default, all URLs must be absolute. When set, requests to `/path` resolve to
   *   `baseUrl + /path`. Requests with a scheme (e.g. `https://...`) ignore this field. Also applied to WebSocket connections.
   * @param timeout
   *   Maximum duration for the entire request lifecycle including retries. Defaults to 5 seconds. Set to `Duration.Infinity` to disable.
@@ -36,11 +36,19 @@ import kyo.*
   * @param retryOn
   *   Predicate that determines which response status codes trigger a retry. Defaults to `_.isServerError` (5xx). Only evaluated when
   *   `retrySchedule` is set.
-  * @param transportConfig
-  *   Low-level I/O tuning: read buffer size, channel capacity, I/O pool size. See [[HttpTransportConfig]].
   * @param tls
   *   TLS settings applied to HTTPS connections made by this client. See [[HttpTlsConfig]]. Per-request TLS overrides can be set via
   *   `HttpClientConfig` on [[HttpClient.init]].
+  * @param transportConfig
+  *   Transport-level tuning applied to connections this client opens (connect/handshake timeouts, buffer sizes). See
+  *   [[HttpTransportConfig]].
+  * @param maxResponseLength
+  *   Hard cap, in bytes, on a BUFFERED response body the client accumulates in memory. A server (malicious or buggy) that streams an
+  *   unbounded chunked or connection-close-framed body, or declares an enormous `Content-Length`, would otherwise grow the client's buffer
+  *   without limit until the JVM runs out of memory (CWE-400). When a buffered response exceeds this, the request fails with
+  *   [[HttpPayloadTooLargeException]] instead. Defaults to 100 MiB: a safety ceiling, not a functional limit, large enough for realistic
+  *   buffered JSON/HTML/file responses. Responses larger than this should use the streaming API (`getStreamBytes`, `getSseJson`, etc.),
+  *   which is NOT subject to this cap (the caller controls consumption). Must be positive.
   * @param autoFilters
   *   Whether ServiceLoader-discovered client filters are applied. Defaults to true.
   * @param clientFilter
@@ -49,8 +57,6 @@ import kyo.*
   *
   * @see
   *   [[kyo.HttpClient.withConfig]] Applies this config to a block of code
-  * @see
-  *   [[kyo.HttpTransportConfig]] Low-level I/O buffer and pool size tuning
   * @see
   *   [[kyo.HttpTlsConfig]] TLS certificate validation settings
   * @see
@@ -66,10 +72,12 @@ case class HttpClientConfig(
     retryOn: HttpStatus => Boolean = _.isServerError,
     transportConfig: HttpTransportConfig = HttpTransportConfig.default,
     tls: HttpTlsConfig = HttpTlsConfig.default,
+    maxResponseLength: Int = 100 * 1024 * 1024,
     autoFilters: Boolean = true,
     clientFilter: HttpFilter.Passthrough[Nothing] = HttpFilter.noop
 ):
     require(maxRedirects >= 0, s"maxRedirects must be non-negative: $maxRedirects")
+    require(maxResponseLength > 0, s"maxResponseLength must be positive: $maxResponseLength")
     require(timeout > Duration.Zero || timeout == Duration.Infinity, s"timeout must be positive or Infinity: $timeout")
     require(
         connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
@@ -86,6 +94,7 @@ case class HttpClientConfig(
     def retryOn(f: HttpStatus => Boolean): HttpClientConfig       = copy(retryOn = f)
     def transportConfig(v: HttpTransportConfig): HttpClientConfig = copy(transportConfig = v)
     def tls(config: HttpTlsConfig): HttpClientConfig              = copy(tls = config)
+    def maxResponseLength(v: Int): HttpClientConfig               = copy(maxResponseLength = v)
     def autoFilters(v: Boolean): HttpClientConfig                 = copy(autoFilters = v)
     def withoutAutoFilters: HttpClientConfig                      = autoFilters(false)
     def filter(f: HttpFilter.Passthrough[Nothing]): HttpClientConfig =
