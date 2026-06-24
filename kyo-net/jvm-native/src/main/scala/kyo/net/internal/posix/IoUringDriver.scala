@@ -1148,10 +1148,14 @@ final private[net] class IoUringDriver private[posix] (
             // submit+wait in one io_uring_enter syscall. Because the fused enter submits AND reads the SQ tail, no other carrier may
             // touch the SQ; the engine queue is the cross-carrier handoff and this drain is its only consumer.
             drainEngineOps()
-            // kyo_uring_submit_and_wait_timeout submits accumulated SQEs AND waits for a CQE in one io_uring_enter syscall.
-            // The pendingSubmits counter is consumed here implicitly: the fused enter submits everything in the SQ ring at the time of the call.
-            // We reset pendingSubmits so the count stays consistent for the submitPrepared short-count retry path.
-            discard(pendingSubmits.getAndSet(0L))
+            // Submit every prepared SQE to the kernel BEFORE the park, through the short-submit-retrying flushSubmits/submitPrepared path. The
+            // fused kyo_uring_submit_and_wait_timeout below also submits, but its C wrapper discards the submit count and can leave prepared SQEs
+            // unsubmitted (a short submit under load), with no retry because the count was assumed fully consumed. Those SQEs then sit in the SQ
+            // ring forever: the reap loop parks indefinitely waiting for CQEs that never come (the ops were counted in-flight but were never on the
+            // kernel), a head-of-line stall (e.g. dozens of upgrades "stalled-at=connect"). An explicit flush guarantees submission, so by the time
+            // we park every op is genuinely in flight and a real CQE (or the wake eventfd) returns the wait. io_uring_submit submits the whole SQ
+            // ring (the wake POLL_ADD included), so the park is never entered with an unsubmitted op outstanding.
+            flushSubmits()
             // Indefinite when the wake watch is armed AND no op is parked on a full submission queue (woken by a real CQE or by the wake eventfd,
             // like NIO's select() + wakeup()). When ops ARE parked in stalledRaw / stalledSubmits, the fused enter that submits this turn frees SQ
             // slots, but reArmStalled re-arms the parked ops only AFTER the wait returns; an indefinite wait whose sole submitted op is the
