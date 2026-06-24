@@ -1318,22 +1318,24 @@ class ResolverTest extends BaseCalibanTest:
         end for
     }
 
-    // graphql-transport-ws says the server MAY close 4429 on a second connection_init; we take the permissive
-    // behavior of re-acking instead. Wrap with a beforeInit hook that fails on repeat to get strict 4429.
-    "WS - transport-ws second connection_init re-acks (deliberate deviation from spec MAY 4429)" in {
+    // graphql-transport-ws says the server MAY close 4429 ("Too many initialisation requests") on a second
+    // connection_init. Caliban owns the GraphQL-over-WS state machine (Resolvers delegates to caliban.ws.Protocol),
+    // and as of caliban 3.1.2 it takes that option: the duplicate init acks once, then closes the socket with 4429.
+    "WS - transport-ws second connection_init closes with 4429 (graphql-transport-ws spec)" in {
         val api = wsApi
         for
             interpreter <- Resolvers.get(api)
             server      <- Resolvers.run(interpreter)
             url = s"ws://localhost:${server.port}/api/graphql/ws"
-            acks <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
+            cr <- HttpClient.webSocket(url, config = wsSubprotocol("graphql-transport-ws")) { ws =>
                 for
-                    _    <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
-                    _    <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
-                    msgs <- collectMessages(ws, 2)
-                yield msgs
+                    _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
+                    _ <- expectMessage(ws, _.contains("connection_ack"))
+                    _ <- ws.put(HttpWebSocket.Payload.Text("""{"type":"connection_init"}"""))
+                    r <- awaitClose(ws)
+                yield r
             }
-        yield assert(acks.count(_.contains("connection_ack")) == 2, s"expected two acks, got: $acks")
+        yield assert(cr._1 == 4429, s"Expected close 4429, got: $cr")
         end for
     }
 
