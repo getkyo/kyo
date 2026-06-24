@@ -69,11 +69,18 @@ object `<`:
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 mapLoop(kyo(v, context))
                     case v =>
-                        val value = v.unsafeGet
-                        Safepoint.handle(value)(
-                            suspend = mapLoop(value),
-                            continue = f(value): B < S2
-                        )
+                        val value     = v.unsafeGet
+                        val safepoint = summon[Safepoint]
+                        // Hand-inlined Safepoint.handle (2-arg overload); see
+                        // kyo.kernel.internal.Safepoint.handle for the canonical enter/defer/exit
+                        // protocol this reproduces. A future protocol change updates that method
+                        // AND this site.
+                        if !safepoint.enter(_frame, value) then
+                            Effect.defer(mapLoop(value))
+                        else
+                            try f(value): B < S2
+                            finally safepoint.exit()
+                        end if
             mapLoop(v)
         end map
 
@@ -98,11 +105,18 @@ object `<`:
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 flatMapLoop(kyo(v, context))
                     case v =>
-                        val value = v.unsafeGet
-                        Safepoint.handle(value)(
-                            suspend = flatMapLoop(value),
-                            continue = f(value): B < S2
-                        )
+                        val value     = v.unsafeGet
+                        val safepoint = summon[Safepoint]
+                        // Hand-inlined Safepoint.handle (2-arg overload); see
+                        // kyo.kernel.internal.Safepoint.handle for the canonical enter/defer/exit
+                        // protocol this reproduces. A future protocol change updates that method
+                        // AND this site.
+                        if !safepoint.enter(_frame, value) then
+                            Effect.defer(flatMapLoop(value))
+                        else
+                            try f(value): B < S2
+                            finally safepoint.exit()
+                        end if
             flatMapLoop(v)
         end flatMap
 
@@ -124,11 +138,18 @@ object `<`:
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 andThenLoop(kyo(v, context))
                     case v =>
-                        val value = v.unsafeGet
-                        Safepoint.handle(value)(
-                            suspend = andThenLoop(value),
-                            continue = f: B < S2
-                        )
+                        val value     = v.unsafeGet
+                        val safepoint = summon[Safepoint]
+                        // Hand-inlined Safepoint.handle (2-arg overload); see
+                        // kyo.kernel.internal.Safepoint.handle for the canonical enter/defer/exit
+                        // protocol this reproduces. A future protocol change updates that method
+                        // AND this site.
+                        if !safepoint.enter(_frame, value) then
+                            Effect.defer(andThenLoop(value))
+                        else
+                            try f: B < S2
+                            finally safepoint.exit()
+                        end if
             andThenLoop(v)
         end andThen
 
