@@ -7,6 +7,7 @@ import kyo.Maybe.Absent
 import kyo.Maybe.Present
 import kyo.discard
 import scala.annotation.StaticAnnotation
+import scala.compiletime.erasedValue
 import scala.concurrent.duration.FiniteDuration
 
 /** Marker trait. FFI binding traits extend this.
@@ -118,7 +119,7 @@ object Ffi:
       *
       * Packs a syscall result and its errno into one `Long`: `o >= 0` carries the return value (an fd, a byte count, 0); `o < 0` carries
       * `-errno`. POSIX returns are `Int` fds and result codes and `Long` byte counts, all of which fit a 64-bit word, so the opaque `Long`
-      * is lossless. An `Int`-valued consumer reads `.value.toInt`.
+      * is lossless. `.value` reads back at the C width: an `Outcome[Int]` yields an `Int`, an `Outcome[Long]` a `Long`.
       *
       * The phantom type parameter `A` records the C return width (`Int` or `Long`): the code generator reads it to pick the function
       * descriptor's return layout, so an `Outcome[Int]` reads a C `int` at `JAVA_INT` (sign-extended into the packed `Long`) and an
@@ -130,7 +131,7 @@ object Ffi:
       * {{{
       * val r = bindings.riskyOp(42)        // returns Outcome[Int]
       * if r.errorCode != 0 then handleError(r.errorCode)
-      * else useValue(r.value.toInt)        // .value is Long; an Int consumer reads .toInt
+      * else useValue(r.value)              // .value is Int for Outcome[Int], Long for Outcome[Long]
       * }}}
       */
     opaque type Outcome[A] = Long
@@ -147,8 +148,15 @@ object Ffi:
         private[kyo] inline def fromValueErrno[A](value: Long, errno: Int): Outcome[A] =
             if errno == 0 || value >= 0L then value else -errno.toLong
         extension [A](o: Outcome[A])
-            /** The syscall return value when `o >= 0`; `-1` when `o` packs an error (matching the POSIX `-1`-on-error convention). */
-            def value: Long = if o >= 0L then o else -1L
+            /** The syscall return value at its C width (`Int` for `Outcome[Int]`, `Long` for `Outcome[Long]`) when `o >= 0`; `-1` when
+              * `o` packs an error (matching the POSIX `-1`-on-error convention). `inline` so the width is resolved at the call site and the
+              * primitive is returned unboxed: a non-`inline` `def value: A` would box the `Int` (the erased `A` is `Object`), defeating the
+              * zero-allocation goal.
+              */
+            inline def value: A =
+                inline erasedValue[A] match
+                    case _: Int  => (if o >= 0L then o.toInt else -1).asInstanceOf[A]
+                    case _: Long => (if o >= 0L then o else -1L).asInstanceOf[A]
 
             /** 0 when `value >= 0` (success); the positive errno (`= -o`) when `o < 0`. The `errorCode != 0` error test. */
             def errorCode: Int = if o < 0L then (-o).toInt else 0
