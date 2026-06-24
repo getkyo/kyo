@@ -38,7 +38,7 @@ final class IonReader private (
     private var parsed: Maybe[IonValue],
     private var current: Maybe[IonValue],
     private var _frame: Frame
-) extends Reader:
+) extends Codec.IntrospectingReader:
     import IonValue.*
 
     private enum Context:
@@ -262,6 +262,22 @@ final class IonReader private (
         value match
             case IntNum(v) => v
             case other     => mismatch("int", other)
+
+    override def readStructure(): Structure.Value =
+        def toValue(v: IonValue): Structure.Value = v match
+            case IonValue.NullValue     => Structure.Value.Null
+            case IonValue.Bool(b)       => Structure.Value.Bool(b)
+            case IonValue.IntNum(i)     => Structure.Value.BigNum(BigDecimal(i))
+            case IonValue.DecNum(d)     => Structure.Value.BigNum(d)
+            case IonValue.FloatNum(d)   => Structure.Value.Decimal(d)
+            case IonValue.Str(s)        => Structure.Value.Str(s)
+            case IonValue.Symbol(s)     => Structure.Value.Str(s)
+            case IonValue.Timestamp(s)  => Structure.Value.Str(s)
+            case IonValue.Blob(_)       => Structure.Value.Str(v.display)
+            case IonValue.ListVal(vs)   => Structure.Value.Sequence(Chunk.from(vs.map(toValue)))
+            case IonValue.StructVal(fs) => Structure.Value.Record(Chunk.from(fs.map((k, x) => (k, toValue(x)))))
+        toValue(value)
+    end readStructure
 
     private def value: IonValue =
         current.getOrElse {
