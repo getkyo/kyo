@@ -26,16 +26,19 @@ import scala.jdk.CollectionConverters.*
 private[runner] object LeakCheck:
 
     /** Built-in allowlist patterns applied by [[detect]] in addition to each suite's `RunConfig.leakCheckAllowlist`, for process-lifetime infra
-      * that legitimately outlives every test in the fork.
+      * that legitimately outlives every test in the fork. Both entries name a process-shared I/O carrier that is never closed by design and so
+      * is a busy scheduler fiber at every net/http-using module's end-of-run check; the union covers both the current and the migrated network
+      * stack, so neither is reported as a leak.
+      *
+      * `NioIoDriver` matches kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`), a lazy singleton whose `NioIoDriver` runs
+      * a selector event loop on a scheduler fiber for the JVM's lifetime.
       *
       * `processSharedTransport` matches the I/O carrier of kyo-net's process-shared default transport (`kyo.net.NetPlatform.transport`): a lazy
-      * singleton shared across every client and server in the process and never closed by design. Its carrier blocks head-of-line in the OS poll
-      * call for the JVM's lifetime, so it is a busy scheduler fiber at every net/http-using module's end-of-run check, intentional infra, not a
-      * leak. The kyo-net drivers route ONLY this singleton's carrier through a `processSharedTransport*` frame (see
-      * `kyo.net.internal.ProcessSharedTransport`); an owned, per-config transport keeps its plain `pollLoop`/`reapLoop` frame, so a genuinely
-      * leaked owned transport is still reported rather than masked by a broad driver-name match.
+      * singleton shared across every client and server in the process and never closed by design. The kyo-net drivers route ONLY this singleton's
+      * carrier through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config transport keeps its
+      * plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than masked by a broad driver-name match.
       */
-    val defaultAllowlist: Chunk[String] = Chunk("processSharedTransport")
+    val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver", "processSharedTransport")
 
     /** The set of open file descriptors, each as its `/proc/self/fd` symlink target (`socket:[inode]`, `pipe:[inode]`, a file path, a `.jar`,
       * ...). `Absent` on a platform without `/proc/self/fd` (macOS, Windows), where the descriptor probe is a no-op. The descriptor that the
