@@ -151,14 +151,29 @@ private[kyo] object LogDaemon:
             case _ => ()
     end drainFlushWaiters
 
-    // Off-daemon failure report: route through Log.live's console backend (a fixed sink, never the
-    // failing event.sink) and inline (never back through the daemon channel), so a failing sink
-    // cannot recurse into the logging system. Contain ANY throw: the reporter runs inside a catch
-    // handler whose escape would kill the drain fiber, and Log.live.unsafe.error can itself throw
-    // (a broken stderr, a Throwable whose printStackTrace throws), so the whole call is wrapped and
-    // any throw absorbed. event.message is the already-forced message string, so reading it is safe.
+    // Off-daemon failure report: write INLINE to Log.live's console sink via emit (the terminal writeLine
+    // path) -- a fixed sink, never the failing event.sink, and never the async dispatcher. reportDrainFailure
+    // runs ON the drain fiber, so routing through Log.live.unsafe.error (async by default since the unsafe
+    // tier now dispatches) would re-enqueue the failure into the drain's own channel; emit() writes
+    // synchronously and cannot recurse. Contain ANY throw: the reporter runs inside a catch handler whose
+    // escape would kill the drain fiber, and emit/the clock read can themselves throw (a broken stderr, a
+    // Throwable whose printStackTrace throws), so the whole call is wrapped and any throw absorbed.
+    // event.message is the already-forced message string, so reading it is safe.
     private def reportDrainFailure(event: Log.Event, error: Throwable)(using Frame, AllowUnsafe): Unit =
-        try Log.live.unsafe.error("Log drain failed for '" + event.message + "'", error)
+        try
+            // Reuse the failing event's own timestamp rather than reading the clock: this is an error-path
+            // report tied to that event, so a fresh clock read (and the Sync.Unsafe.evalOrThrow bridge it
+            // would need here) is not warranted.
+            Log.live.unsafe.emit(
+                Log.Event(
+                    Log.Level.error,
+                    Log.live.unsafe,
+                    "Log drain failed for '" + event.message + "'",
+                    Present(error),
+                    summon[Frame],
+                    event.timestamp
+                )
+            )
         catch case _: Throwable => ()
 
 end LogDaemon
