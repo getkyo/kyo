@@ -125,7 +125,7 @@ object Ffi:
       * `Outcome[Long]` reads a C `long` at `JAVA_LONG`. `A` carries no runtime cost, `Outcome[A]` still erases to a bare `Long`.
       *
       * The failure model is the throwing one: this is a value representation, not a typed `Abort`. The caller inspects `.errorCode`
-      * (or the branch-free `.isError`); `.errorCode != 0` is the success test.
+      * (or the branch-free `.isError`); `.errorCode != 0` is the error test.
       *
       * {{{
       * val r = bindings.riskyOp(42)        // returns Outcome[Int]
@@ -150,7 +150,7 @@ object Ffi:
             /** The syscall return value when `o >= 0`; `-1` when `o` packs an error (matching the POSIX `-1`-on-error convention). */
             def value: Long = if o >= 0L then o else -1L
 
-            /** 0 when `value >= 0` (success); the positive errno (`= -o`) when `o < 0`. The `errorCode != 0` success test. */
+            /** 0 when `value >= 0` (success); the positive errno (`= -o`) when `o < 0`. The `errorCode != 0` error test. */
             def errorCode: Int = if o < 0L then (-o).toInt else 0
 
             /** Total, branch-free error predicate (`o < 0L`); the canonical check `errorCode != 0` stays valid. */
