@@ -12,7 +12,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 final class BlockingBindingsImpl extends BlockingBindings:
     import BlockingBindingsImpl.*
 
-    def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.WithError[Long], Any] =
+    def recv(fd: Int, buf: Buffer[Byte], len: Int)(using kyo.AllowUnsafe): kyo.Fiber.Unsafe[Ffi.Outcome[Long], Any] =
         kyo.ffi.internal.BlockingBridge.run {
             val __kyoScratch$ = Scratch.currentFor("kyo.example.BlockingBindings", Scratch.configuredSize)
             val __kyoMark$ = __kyoScratch$.mark()
@@ -22,7 +22,7 @@ final class BlockingBindingsImpl extends BlockingBindings:
                 val retVal: Long = recvMH.invokeExact(errnoSeg, fd, bufSeg, len)
                 val __errno = errnoSeg.get(JAVA_INT, 0L)
                 val __kyoResult = retVal
-                new Ffi.WithError(__kyoResult, __errno)
+                Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)
             finally __kyoScratch$.reset(__kyoMark$)
         }
 end BlockingBindingsImpl

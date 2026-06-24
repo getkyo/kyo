@@ -724,6 +724,69 @@ object ClasspathOrchestrator:
                 // Keep classfile result for parent-type wiring in finalizeMerge.
                 state.javaClassfileResults += ((fullName, cfResult))
 
+    /** Result of [[globalizeUnresolvedNegIds]]: per-file remaps from a file's raw decode-time negId to either a
+      * resolved final symbol index (`perFileNegIdToFinal`, value >= 0) or a classpath-unique unresolved negId
+      * (`perFileNegIdToGlobalNeg`, value < -1), plus the merged `unresolvedFullNameByNegId` keyed by those
+      * classpath-unique negIds. The arrays are indexed by position in the input `perFileUnresolved` sequence.
+      */
+    final private[kyo] case class UnresolvedNegIdRemap(
+        perFileNegIdToFinal: Array[java.util.HashMap[Int, Int]],
+        perFileNegIdToGlobalNeg: Array[java.util.HashMap[Int, Int]],
+        unresolvedFullNameByNegId: mutable.HashMap[Tasty.SymbolId, String]
+    )
+
+    /** Assign classpath-unique negative SymbolIds to cross-file references that do not resolve to a loaded symbol.
+      *
+      * Each file decodes its unresolved references with negIds from a per-file counter that always starts at -2
+      * (TypeUnpickler.DecodeSession), so distinct files reuse the same negId values for different fully-qualified
+      * names. Keeping those per-file values would make them collide in the single `unresolvedFullNameByNegId` map,
+      * and the surviving name would then depend on the (non-deterministic) order in which decoded files reach the
+      * merger. Each distinct unresolved fully-qualified name instead gets one classpath-unique negId, assigned in
+      * sorted-name order so the assignment is a pure function of the unresolved-name set, independent of file order.
+      *
+      * `resolveFinalIdx` returns the final symbol index for a fully-qualified name that is loaded (>= 0), or a
+      * negative value when it is not; the negative case folds the "name present in the index but not materialised"
+      * orphan into the unresolved path so its negId is never dropped.
+      */
+    private[kyo] def globalizeUnresolvedNegIds(
+        perFileUnresolved: Seq[scala.collection.Map[Int, String]],
+        resolveFinalIdx: String => Int
+    ): UnresolvedNegIdRemap =
+        val fileCount = perFileUnresolved.size
+        // Resolve each distinct fully-qualified name once.
+        val finalIdxByName = mutable.HashMap.empty[String, Int]
+        def resolved(fullName: String): Int =
+            finalIdxByName.getOrElseUpdate(fullName, resolveFinalIdx(fullName))
+        // Collect the unresolved names in sorted order so global negId assignment is deterministic.
+        val unresolvedNames = mutable.TreeSet.empty[String]
+        for fileMap <- perFileUnresolved; fullName <- fileMap.values do
+            if resolved(fullName) < 0 then discard(unresolvedNames.add(fullName))
+        val globalNegByName           = mutable.HashMap.empty[String, Int]
+        val unresolvedFullNameByNegId = mutable.HashMap.empty[Tasty.SymbolId, String]
+        var nextGlobalNeg             = -2
+        for fullName <- unresolvedNames do
+            globalNegByName(fullName) = nextGlobalNeg
+            unresolvedFullNameByNegId(SymbolId(nextGlobalNeg)) = fullName
+            nextGlobalNeg -= 1
+        end for
+        val perFileNegIdToFinal     = new Array[java.util.HashMap[Int, Int]](fileCount)
+        val perFileNegIdToGlobalNeg = new Array[java.util.HashMap[Int, Int]](fileCount)
+        var fi                      = 0
+        for fileMap <- perFileUnresolved do
+            val toFinal  = new java.util.HashMap[Int, Int](fileMap.size * 2)
+            val toGlobal = new java.util.HashMap[Int, Int](fileMap.size * 2)
+            fileMap.foreach { case (negId, fullName) =>
+                val idx = resolved(fullName)
+                if idx >= 0 then discard(toFinal.put(negId, idx))
+                else discard(toGlobal.put(negId, globalNegByName(fullName)))
+            }
+            perFileNegIdToFinal(fi) = toFinal
+            perFileNegIdToGlobalNeg(fi) = toGlobal
+            fi += 1
+        end for
+        UnresolvedNegIdRemap(perFileNegIdToFinal, perFileNegIdToGlobalNeg, unresolvedFullNameByNegId)
+    end globalizeUnresolvedNegIds
+
     /** Phase C: SymbolDescriptor construction + single-shot Symbol materialization + index building.
       *
       * Runs once after the merger has drained the result channel. Builds SymbolDescriptors from the accumulated per-file data, calls
@@ -843,37 +906,47 @@ object ClasspathOrchestrator:
 
                     final case class FileRemap(
                         addrToFinal: java.util.HashMap[Int, Int],
-                        negIdToFinal: java.util.HashMap[Int, Int]
+                        negIdToFinal: java.util.HashMap[Int, Int],
+                        negIdToGlobalNeg: java.util.HashMap[Int, Int]
                     )
 
-                    // Accumulate negId -> fully-qualified name for annotation types that reference external symbols not in the
-                    // classpath (e.g. scala.deprecated when scala-library is absent). Stored in the Classpath
-                    // so that typeFullNameString can fall back to the fully-qualified name string for symbolsAnnotatedWith matching.
-                    val unresolvedFullNameByNegId = mutable.HashMap.empty[Tasty.SymbolId, String]
+                    // Give every cross-file reference that does not resolve to a loaded symbol a classpath-unique
+                    // negId so the per-file decode-time negIds (all starting at -2) cannot collide in the shared
+                    // unresolvedFullNameByNegId map; see globalizeUnresolvedNegIds. A name present in fullNameIndex
+                    // but without a materialised final id (symbolIdMap miss) is treated as unresolved here so its
+                    // negId is never dropped.
+                    val negRemap = globalizeUnresolvedNegIds(
+                        fileResults.map(_.unresolvedIdToFullName),
+                        fullName =>
+                            state.fullNameIndex.get(fullName) match
+                                case Some(partialSym) => symbolIdMap.getOrElse(partialSym.id.toLong, -1)
+                                case None             => -1
+                    )
+                    // Stored in the Classpath so that typeFullNameString can recover the fully-qualified name for
+                    // symbolsAnnotatedWith matching when the annotation's defining library is absent.
+                    val unresolvedFullNameByNegId = negRemap.unresolvedFullNameByNegId
 
-                    val fileRemaps = fileResults.map { fr =>
-                        // Map 1: address -> finalId (for PHASE_B_ADDR_OFFSET refs)
+                    val fileRemaps = fileResults.iterator.zipWithIndex.map { case (fr, fi) =>
+                        // address -> finalId (for PHASE_B_ADDR_OFFSET refs)
                         val addrToFinal = new java.util.HashMap[Int, Int](fr.addrMap.size * 2)
                         fr.addrMap.foreach { case (address, partialSym) =>
                             val finalIdx = symbolIdMap.getOrElse(partialSym.id.toLong, -1)
                             if finalIdx >= 0 then discard(addrToFinal.put(address, finalIdx))
                         }
-                        // Map 2: negId -> finalId (for cross-file fully-qualified name refs)
-                        val negIdToFinal = new java.util.HashMap[Int, Int](fr.unresolvedIdToFullName.size * 2)
-                        fr.unresolvedIdToFullName.foreach { case (negId, fullName) =>
-                            // Look up fully-qualified name in the partial fullNameIndex and then get the final SymbolId
-                            state.fullNameIndex.get(fullName) match
-                                case Some(partialSym) =>
-                                    val finalIdx = symbolIdMap.getOrElse(partialSym.id.toLong, -1)
-                                    if finalIdx >= 0 then discard(negIdToFinal.put(negId, finalIdx))
-                                case None =>
-                                    // Fully-qualified name not found: the defining library is absent from the classpath.
-                                    // Record the negId -> fully-qualified name mapping so typeFullNameString can match by name string
-                                    // even without a resolved symbol (e.g. scala.deprecated on JS/Native).
-                                    unresolvedFullNameByNegId(SymbolId(negId)) = fullName
-                        }
-                        FileRemap(addrToFinal, negIdToFinal)
+                        FileRemap(addrToFinal, negRemap.perFileNegIdToFinal(fi), negRemap.perFileNegIdToGlobalNeg(fi))
                     }.toArray
+
+                    // Resolve a cross-file negId (< -1) to its final symbol index (>= 0) or its classpath-unique
+                    // unresolved negId (< -1). Returns the original value unchanged when the negId is untracked.
+                    def remapNegId(v: Int, fr: FileRemap): Int =
+                        val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
+                        if finalIdx >= 0 then finalIdx
+                        else
+                            // 0 is never a valid global negId (all are < -1); it marks "absent".
+                            val globalNeg = fr.negIdToGlobalNeg.getOrDefault(v, 0)
+                            if globalNeg != 0 then globalNeg else v
+                        end if
+                    end remapNegId
 
                     def remapType(t: Tasty.Type, fr: FileRemap): Tasty.Type =
                         t match
@@ -887,8 +960,8 @@ object ClasspathOrchestrator:
                                     else t
                                 else if v < -1 then
                                     // Cross-file fully-qualified name reference (unique negative ID)
-                                    val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
-                                    if finalIdx >= 0 then Tasty.Type.Named(SymbolId(finalIdx))
+                                    val r = remapNegId(v, fr)
+                                    if r != v then Tasty.Type.Named(SymbolId(r))
                                     else t
                                 else t
                                 end if
@@ -908,8 +981,8 @@ object ClasspathOrchestrator:
                                         val finalIdx = fr.addrToFinal.getOrDefault(address, -1)
                                         if finalIdx >= 0 then SymbolId(finalIdx) else id
                                     else if v < -1 then
-                                        val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
-                                        if finalIdx >= 0 then SymbolId(finalIdx) else id
+                                        val r = remapNegId(v, fr)
+                                        if r != v then SymbolId(r) else id
                                     else id
                                     end if
                                 }
@@ -962,8 +1035,8 @@ object ClasspathOrchestrator:
                                     else t
                                 else if v < -1 then
                                     // Cross-file: fully-qualified-name-tracked nested-class ThisType.
-                                    val finalIdx = fr.negIdToFinal.getOrDefault(v, -1)
-                                    if finalIdx >= 0 then Tasty.Type.ThisType(SymbolId(finalIdx))
+                                    val r = remapNegId(v, fr)
+                                    if r != v then Tasty.Type.ThisType(SymbolId(r))
                                     else t
                                 else t
                                 end if

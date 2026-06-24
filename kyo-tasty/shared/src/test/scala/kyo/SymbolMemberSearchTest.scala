@@ -145,7 +145,7 @@ class SymbolMemberSearchTest extends kyo.test.Test[Any]:
             // A Method is neither ClassLike nor Package, so it carries no declarationIds.
             classpath.symbol(SymbolId(1)) match
                 case Maybe.Present(m: Tasty.Symbol.Method) =>
-                    assert(!m.isInstanceOf[Tasty.Symbol.ClassLike] && !m.isInstanceOf[Tasty.Symbol.Package])
+                    assert(!(m: Tasty.Symbol).isInstanceOf[Tasty.Symbol.ClassLike] && !(m: Tasty.Symbol).isInstanceOf[Tasty.Symbol.Package])
                     succeed
                 case other =>
                     fail(s"expected Symbol.Method at id 1, got $other")

@@ -86,11 +86,16 @@ class ConsoleReporterTest extends kyo.test.Test[Any]:
         assert(out.contains("30s"))
     }
 
-    "onLeafHeartbeat at Quiet verbosity prints nothing" in {
+    "onLeafHeartbeat at Quiet verbosity emits the one-shot hang diagnostics but not the [STUCK] line" in {
         val out = capture(Verbosity.Quiet) { r =>
             r.onLeafHeartbeat(leaf("slow-leaf"), 30L.seconds)
         }
-        assert(out.isEmpty)
+        // The one-shot hang dump is a rare, high-value root-cause aid; it fires even at Quiet so a hang in a minimal
+        // CI run is still diagnosable on its first occurrence.
+        assert(out.contains("kyo-test hang diagnostics on STUCK leaf"))
+        assert(out.contains("slow-leaf"))
+        // The routine per-heartbeat [STUCK] line stays suppressed at Quiet.
+        assert(!out.contains("[STUCK]"))
     }
 
     "onLeafComplete with Pending with reason" in {

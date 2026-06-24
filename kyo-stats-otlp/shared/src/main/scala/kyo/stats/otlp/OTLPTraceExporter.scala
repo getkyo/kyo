@@ -42,6 +42,12 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         given Frame = Frame.internal
         Channel.Unsafe.init[Unit](1, Access.MultiProducerSingleConsumer)
 
+    // Coalesces flush requests through a single work counter so the single-consumer span channel is never drained by
+    // two fibers at once (which would corrupt the MPSC queue). Each flush increments the counter; the caller that
+    // increments it from zero owns the drain and keeps draining, decrementing once per request, until the counter
+    // returns to zero. Concurrent requests just increment and return; the owner picks them up on its next decrement.
+    private val flushCount = AtomicLong.Unsafe.init(0)
+
     OTLPInitPlatform.triggerStart(this)
 
     /** Creates a new span and returns an unsafe handle for recording events, setting status, and ending the span.
@@ -154,8 +160,31 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
         end drainEvents
     end SpanUnsafe
 
-    /** Drains up to `bspMaxExportBatchSize` spans from the queue and sends them. Recurses if a full batch was drained. */
+    /** Requests a drain of buffered spans to the collector.
+      *
+      * Non-blocking and coalescing: the span channel is single-consumer, so two fibers draining at once would corrupt the MPSC queue. The
+      * caller that increments `flushCount` from zero owns the drain; a request that arrives while a drain is running just increments the
+      * counter and returns, and the owner observes it on its next decrement. No fiber waits to acquire a lock.
+      */
     private[otlp] def flush(config: OTLPConfig)(using Frame): Unit < Async =
+        Sync.Unsafe.defer {
+            if flushCount.getAndIncrement() == 0L then drainLoop(config)
+            else ()
+        }
+
+    /** Owner-only drain loop: drains everything queued, then decrements one request. Repeats while the counter stays above zero, so any
+      * request that arrived during a drain triggers another pass. Only the fiber that incremented from zero runs this, so `drainAndSend`
+      * never has a concurrent consumer.
+      */
+    private def drainLoop(config: OTLPConfig)(using Frame): Unit < Async =
+        drainAndSend(config).andThen {
+            Sync.Unsafe.defer {
+                if flushCount.decrementAndGet() == 0L then ()
+                else drainLoop(config)
+            }
+        }
+
+    private def drainAndSend(config: OTLPConfig)(using Frame): Unit < Async =
         Sync.Unsafe.defer {
             spanChannel.drainUpTo(config.bspMaxExportBatchSize) match
                 case Result.Success(spans) if spans.nonEmpty =>
@@ -170,7 +199,7 @@ class OTLPTraceExporter private (val config: OTLPConfig)(using AllowUnsafe) exte
                     )
                     OTLPClient.sendTraces(config, request).map { _ =>
                         if spans.size == config.bspMaxExportBatchSize then
-                            flush(config)
+                            drainAndSend(config)
                         else ()
                     }
                 case _ => ()

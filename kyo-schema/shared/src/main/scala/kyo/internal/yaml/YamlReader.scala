@@ -16,7 +16,7 @@ final private[kyo] class YamlReader private (
     private val anchors: scala.collection.mutable.Map[String, YamlReader.Anchor],
     private val expansion: YamlReader.Expansion,
     private val allowSourcePull: Boolean
-)(using _frame: Frame) extends Reader:
+)(using _frame: Frame) extends Codec.IntrospectingReader:
     import YamlReader.*
 
     private var prepared: Boolean               = events ne null
@@ -32,6 +32,42 @@ final private[kyo] class YamlReader private (
     private var fieldDepth: Int                 = 0
 
     override def frame: Frame = _frame
+
+    override def readStructure(): Structure.Value =
+        peek match
+            case _: MappingStart =>
+                discard(objectStart())
+                val acc = ArrayBuffer.empty[(String, Structure.Value)]
+                @tailrec def loop(): Unit =
+                    if hasNextField() then
+                        val name = field()
+                        discard(acc.addOne((name, readStructure())))
+                        loop()
+                loop()
+                objectEnd()
+                Structure.Value.Record(Chunk.from(acc.toSeq))
+            case _: SequenceStart =>
+                discard(arrayStart())
+                val acc = ArrayBuffer.empty[Structure.Value]
+                @tailrec def loop(): Unit =
+                    if hasNextElement() then
+                        discard(acc.addOne(readStructure()))
+                        loop()
+                loop()
+                arrayEnd()
+                Structure.Value.Sequence(Chunk.from(acc.toSeq))
+            case _ =>
+                scalarValue() match
+                    case ScalarValue.Null       => Structure.Value.Null
+                    case ScalarValue.Bool(b)    => Structure.Value.Bool(b)
+                    case ScalarValue.Str(s)     => Structure.Value.Str(s)
+                    case ScalarValue.Special(s) => Structure.Value.Str(s)
+                    case ScalarValue.Number(n) =>
+                        if n.indexOf('.') >= 0 || n.indexOf('e') >= 0 || n.indexOf('E') >= 0 then
+                            Structure.Value.Decimal(n.toDouble)
+                        else Structure.Value.Integer(n.toLong)
+        end match
+    end readStructure
 
     override private[kyo] def resetLimits(maxDepth: Int, maxCollectionSize: Int): Unit =
         super.resetLimits(maxDepth, maxCollectionSize)

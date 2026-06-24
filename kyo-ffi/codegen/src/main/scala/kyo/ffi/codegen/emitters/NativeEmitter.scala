@@ -421,7 +421,7 @@ object NativeEmitter extends EmitterBase.Ops with PlatformTypes:
         if method.withError then
             callBlockSb ++= "val __errno = errno\n"
             callBlockSb ++= s"val __kyoResult = $resultExpr\n"
-            callBlockSb ++= "new Ffi.WithError(__kyoResult, __errno)"
+            callBlockSb ++= "Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)"
         else
             callBlockSb ++= resultExpr
         end if

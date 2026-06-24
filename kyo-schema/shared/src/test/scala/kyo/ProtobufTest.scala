@@ -707,7 +707,7 @@ class ProtobufTest extends kyo.test.Test[Any]:
         "ProtoSchema.fromStructure on Open throws SchemaNotSerializableException not IllegalArgumentException" in {
             val open = Structure.Type.Open(Tag[Structure.Value].asInstanceOf[Tag[Any]])
             val ex   = intercept[SchemaNotSerializableException](Protobuf.ProtoSchema.fromStructure(open))
-            assert(!ex.isInstanceOf[IllegalArgumentException])
+            assert(!(ex: Throwable).isInstanceOf[IllegalArgumentException])
         }
 
     }
