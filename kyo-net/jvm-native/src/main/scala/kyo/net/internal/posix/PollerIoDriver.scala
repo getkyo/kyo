@@ -1332,6 +1332,7 @@ final private[net] class PollerIoDriver private[posix] (
             // submitEngineOp enqueue, the same mechanism as writableArmed. The at-most-one-in-flight guarantee ensures the next
             // recvNow write cannot happen before this feedCiphertext completes.
             submitEngineOp { () =>
+              try
                 var plain   = feedAndDecrypt(engine, staging, n, handle)
                 var eof     = false
                 var errno   = 0
@@ -1373,6 +1374,17 @@ final private[net] class PollerIoDriver private[posix] (
                     // Only handshake/partial-record bytes consumed and the socket is drained (EAGAIN): wait for more ciphertext on the next edge.
                     rearmOwned(fd, handle, promise)
                 end if
+              catch
+                  // A TLS engine op threw, almost always a fatal alert surfaced by the engine (feedAndDecrypt -> JdkSslEngine.readPlain ->
+                  // SSLEngine.unwrap raising SSLHandshakeException, e.g. a peer's certificate_required). drainEngineOps deliberately catches
+                  // a throwing op to keep the FIFO worker draining for other connections, with the contract "the throwing op's own promise
+                  // handling is its concern" -- but this op held a pending read promise, so a bare escape strands it (the connection's read
+                  // never completes -> a silent hang to the leaf timeout). Honor that contract: fail the read promise so the connection tears
+                  // down with the engine error instead of hanging. finishDispatch has not run on this path (the throw precedes every branch).
+                  case e: Throwable =>
+                      Log.live.unsafe.warn(s"$label TLS engine read failed fd=$fd, closing connection: ${e.getMessage}")
+                      finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"TLS engine read failed fd=$fd: ${e.getMessage}")))
+              end try
             }
         else if n == 0 then
             // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered EOF first): record
@@ -1385,6 +1397,7 @@ final private[net] class PollerIoDriver private[posix] (
             handle.readMightHaveMore = false
             // Socket buffer empty: check for already-buffered plaintext first (via the engine FIFO), then re-arm if none.
             submitEngineOp { () =>
+              try
                 if engine.hasBufferedPlaintext then
                     val buffered = engine.readBuffered()
                     if buffered.nonEmpty then finishDispatch(fd, handle, promise, Result.succeed(buffered))
@@ -1392,6 +1405,12 @@ final private[net] class PollerIoDriver private[posix] (
                     end if
                 else rearmOwned(fd, handle, promise)
                 end if
+              catch
+                  // A buffered-plaintext engine op threw (a fatal alert in the buffered records); fail the read promise rather than letting
+                  // the throw escape drainEngineOps and strand the connection (see the dispatchReadTls feed op above for the full rationale).
+                  case e: Throwable =>
+                      finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"TLS engine read failed fd=$fd: ${e.getMessage}")))
+              end try
             }
         else
             handle.readMightHaveMore = false

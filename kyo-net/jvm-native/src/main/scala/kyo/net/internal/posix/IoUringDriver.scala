@@ -592,6 +592,16 @@ final private[net] class IoUringDriver private[posix] (
         buf.writeFromBuffer(drain, len) // zero intermediate heap array (direct off-heap -> heap copy)
     end appendPending
 
+    /** True when the raw (plaintext / handshake-ciphertext) tail still holds bytes that have not been sent. Used by [[flushTls]] to keep a TLS
+      * send strictly after the raw tail across the STARTTLS upgrade: the handshake's final flight is sent via the raw path (writeRaw, while
+      * `handle.tls` is still Absent), so a TLS app-data send submitted while raw bytes are still queued (or a raw send is in flight) would put
+      * two send SQEs on one fd, which io_uring may reap out of order, reordering the wire bytes. Engine-FIFO-worker-only (same owner as the tails).
+      */
+    private def rawTailHasUnsent(handle: PosixHandle): Boolean =
+        handle.rawPending match
+            case Present(buf) => buf.size - handle.rawPendingSent > 0
+            case Absent       => false
+
     /** Submit one send SQE for the unsent region `[pendingCipherSent, size)` of the handle's pending ciphertext tail, holding AT MOST ONE TLS send
       * SQE in flight per handle. Engine-FIFO-worker-only.
       *
@@ -612,6 +622,14 @@ final private[net] class IoUringDriver private[posix] (
         if closedFlag.get() then ()
         else if handle.sendInFlight then
             () // a send SQE is already outstanding; its onTlsSendComplete re-flushes any bytes appended meanwhile
+        else if handle.rawSendInFlight || rawTailHasUnsent(handle) then
+            // STARTTLS ordering: the raw tail (the handshake's final flight, sent via writeRaw while handle.tls was Absent) has a send in flight
+            // or bytes still queued. Submitting a TLS app-data send now would put two send SQEs on one fd, which io_uring may reap out of order
+            // (liburing #1102, see writeRaw), reordering the wire bytes so the peer reads a byte-shifted record and aborts with bad_record_mac.
+            // Defer: onRawSendComplete re-flushes this TLS tail once the raw tail fully drains. The transition is one-way (handle.tls becomes
+            // Present at onFinished and writes only ever route to writeTls after, so rawPending never grows again), so this defers at most across
+            // the handshake's final flight, never indefinitely.
+            ()
         else
             handle.pendingCipher match
                 case Absent => () // nothing buffered (e.g. an engine that produced no ciphertext this write)
@@ -748,6 +766,10 @@ final private[net] class IoUringDriver private[posix] (
                     if handle.rawPendingSent >= buf.size then
                         buf.reset()
                         handle.rawPendingSent = 0
+                        // STARTTLS ordering: the raw tail is now fully drained. Kick the TLS tail in case a post-handshake app-data send was deferred
+                        // in flushTls to keep it strictly after the handshake's final raw flight (so two send SQEs never race on one fd and reorder on
+                        // the wire). A no-op when the TLS tail is empty (the common non-STARTTLS raw connection) or a TLS send is already in flight.
+                        flushTls(handle)
                     else
                         // Bytes remain (a partial send, or plaintext a coalesced write appended while this send was in flight): re-submit a send
                         // SQE for the new unsent region. flushRaw re-sets rawSendInFlight when it submits.
@@ -1361,6 +1383,7 @@ final private[net] class IoUringDriver private[posix] (
                                     val staging = recvStagingFor(h)
                                     deferredDecrement = true
                                     submitEngineOp { () =>
+                                      try
                                         val plain = feedAndDecrypt(engine, staging, res, h)
                                         // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): feedAndDecrypt calls
                                         // handle.requestClose() on a fatal TLS record (readPlain == -2). The io_uring read CQE holds no dispatch
@@ -1394,6 +1417,19 @@ final private[net] class IoUringDriver private[posix] (
                                             awaitRead(h, promise)
                                             flushTls(h)
                                         end if
+                                      catch
+                                          // A TLS engine op threw a fatal alert (JDK SSLEngine.unwrap raises SSLHandshakeException on a received
+                                          // fatal alert, which is NOT the readPlain==-2 return the isClosing branch above handles). drainEngineOps
+                                          // would otherwise swallow it and strand this read promise (a silent hang); fail the read so the connection
+                                          // tears down. The deferred in-flight decrement is a separate queued op, so it still runs after this.
+                                          case e: Throwable =>
+                                              Log.live.unsafe.warn(s"$label TLS engine read failed fd=${h.readFd}, closing connection: ${e.getMessage}")
+                                              promise.completeDiscard(Result.fail(Closed(
+                                                  label,
+                                                  summon[Frame],
+                                                  s"TLS engine read failed fd=${h.readFd}: ${e.getMessage}"
+                                              )))
+                                      end try
                                     }
                                 case Absent =>
                                     val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res) // right-sized copy out
