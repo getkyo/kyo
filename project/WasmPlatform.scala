@@ -30,8 +30,7 @@ case object WasmPlatform extends Platform {
     def enable(project: Project): Project =
         project.enablePlugins(ScalaJSPlugin).settings(
             scalaJSLinkerConfig ~= {
-                // Scala.js 1.22.0 made the WebAssembly backend require an ES2022-or-later target and deprecated the old
-                // `withExperimentalUseWebAssembly` flag in favor of the `withESFeatures(_.withUseWebAssembly(...))` form.
+                // sbt-scalajs 1.22.0 requires ES2022 for the Wasm backend (withUseWebAssembly replaces the deprecated flag).
                 _.withESFeatures(_.withESVersion(ESVersion.ES2022).withUseWebAssembly(true))
                     .withModuleKind(ModuleKind.ESModule)
             },
