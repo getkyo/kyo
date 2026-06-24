@@ -21,8 +21,9 @@ package kyo.ffi.codegen.model
   *   true when the binding's last parameter is a Scala varargs `Any*`, declaring a C-level variadic function. The varargs parameter is NOT
   *   listed in [[params]]; it is synthesized by emitters as a trailing `args: Any*` on the generated method.
   * @param withError
-  *   true when the binding method's Scala return type is `WithError[A]`. The emitter wraps the C return value together with the captured
-  *   errno into a `kyo.ffi.WithError` instead of throwing [[kyo.ffi.FfiErrno]] on non-zero errno.
+  *   true when the binding method's Scala return type is `Ffi.Outcome[A]`. The emitter packs the C return value together with the captured
+  *   errno into an `Ffi.Outcome[A]` instead of throwing [[kyo.ffi.FfiErrno]] on non-zero errno. The type argument `A` is the C return width
+  *   the descriptor reads (carried in [[returnShape]]).
   */
 final case class MethodSpec(
     scalaName: String,

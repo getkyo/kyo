@@ -1233,10 +1233,10 @@ class JsEmitterTest extends kyo.test.Test[Any]:
     }
 
     // -------------------------------------------------------------------------
-    // Section: WithError[A] errno capture
+    // Section: Outcome errno capture
     // -------------------------------------------------------------------------
 
-    "WithError[Int] return emits KoffiFacade.errno and Ffi.WithError wrapping" in {
+    "Outcome from Int return emits KoffiFacade.errno and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyOp",
             "risky_op",
@@ -1248,11 +1248,11 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         val src  = JsEmitter.emit(spec)
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Long] return emits KoffiFacade.errno and Ffi.WithError wrapping" in {
+    "Outcome from Long return emits KoffiFacade.errno and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyLong",
             "risky_long",
@@ -1264,11 +1264,11 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         val src  = JsEmitter.emit(spec)
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Long]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Double] return emits KoffiFacade.errno and Ffi.WithError wrapping" in {
+    "Outcome from Double return emits KoffiFacade.errno and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyDouble",
             "risky_double",
@@ -1280,11 +1280,11 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         val src  = JsEmitter.emit(spec)
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Double]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Boolean] return emits KoffiFacade.errno and Ffi.WithError wrapping" in {
+    "Outcome from Boolean return emits KoffiFacade.errno and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyBool",
             "risky_bool",
@@ -1296,11 +1296,11 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         val src  = JsEmitter.emit(spec)
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Boolean]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "WithError[Unit] (void return) emits KoffiFacade.errno and Ffi.WithError wrapping" in {
+    "Outcome from void return emits KoffiFacade.errno and Ffi.Outcome packing" in {
         val m = mkMethod(
             "riskyVoid",
             "risky_void",
@@ -1312,11 +1312,11 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         val src  = JsEmitter.emit(spec)
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("__errno"))
-        assert(src.contains("new Ffi.WithError("))
-        assert(src.contains("Ffi.WithError[Unit]"))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
+        assert(src.contains("Ffi.Outcome"))
     }
 
-    "plain Int return does NOT emit WithError or KoffiFacade.errno" in {
+    "plain Int return does NOT emit Outcome or KoffiFacade.errno" in {
         val m = mkMethod(
             "safeOp",
             "safe_op",
@@ -1325,13 +1325,13 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainTest", "plain_test", List(m))
         val src  = JsEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
         assert(!src.contains("KoffiFacade.errno()"))
     }
 
-    "plain void return does NOT emit WithError or KoffiFacade.errno" in {
+    "plain void return does NOT emit Outcome or KoffiFacade.errno" in {
         val m = mkMethod(
             "safeVoid",
             "safe_void",
@@ -1340,13 +1340,13 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainVoidTest", "plain_void_test", List(m))
         val src  = JsEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
         assert(!src.contains("KoffiFacade.errno()"))
     }
 
-    "plain Handle return does NOT emit WithError or KoffiFacade.errno" in {
+    "plain Handle return does NOT emit Outcome or KoffiFacade.errno" in {
         val m = mkMethod(
             "getHandle",
             "get_handle",
@@ -1355,13 +1355,13 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("PlainHandleTest", "plain_handle_test", List(m))
         val src  = JsEmitter.emit(spec)
-        assert(!src.contains("new Ffi.WithError("))
+        assert(!src.contains("Ffi.Outcome.fromValueErrno("))
         assert(!src.contains("__errno"))
-        assert(!src.contains("Ffi.WithError["))
+        assert(!src.contains("Ffi.Outcome"))
         assert(!src.contains("KoffiFacade.errno()"))
     }
 
-    "trait with both WithError and plain methods emits errno only for WithError method" in {
+    "trait with both Outcome and plain methods emits errno only for Outcome method" in {
         val riskyM = mkMethod(
             "riskyOp",
             "risky_op",
@@ -1377,13 +1377,13 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("MixedErrnoTest", "mixed_errno_test", List(riskyM, safeM))
         val src  = JsEmitter.emit(spec)
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains(": Ffi.Outcome[Int] ="))
         val safeDefLine = src.linesIterator.find(_.contains("def safeOp")).getOrElse(fail("safeOp def not found"))
-        assert(!safeDefLine.contains("WithError"))
+        assert(!safeDefLine.contains("Outcome"))
         assert(safeDefLine.contains(": Int ="))
     }
 
-    "WithError with Handle return emits KoffiFacade.errno and Handle wrapping" in {
+    "Outcome with Handle return emits KoffiFacade.errno and Handle wrapping" in {
         val m = mkMethod(
             "riskyHandle",
             "risky_handle",
@@ -1393,12 +1393,12 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("HandleErrnoTest", "handle_errno_test", List(m))
         val src  = JsEmitter.emit(spec)
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("Ffi.Handle.wrap"))
     }
 
-    "WithError with BorrowedString return emits KoffiFacade.errno and Borrowed wrapping" in {
+    "Outcome with BorrowedString return emits KoffiFacade.errno and Borrowed wrapping" in {
         val m = mkMethod(
             "riskyBorrowed",
             "risky_borrowed",
@@ -1408,12 +1408,12 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("BorrowedErrnoTest", "borrowed_errno_test", List(m))
         val src  = JsEmitter.emit(spec)
-        assert(src.contains("new Ffi.WithError("))
+        assert(src.contains("Ffi.Outcome.fromValueErrno("))
         assert(src.contains("KoffiFacade.errno()"))
         assert(src.contains("Ffi.Borrowed.wrap"))
     }
 
-    "trait with Handle and WithError on different methods emits errno only for WithError method" in {
+    "trait with Handle and Outcome on different methods emits errno only for Outcome method" in {
         val handleM = mkMethod(
             "getHandle",
             "get_handle",
@@ -1429,9 +1429,9 @@ class JsEmitterTest extends kyo.test.Test[Any]:
         )
         val spec = mkTrait("HandleMixedTest", "handle_mixed_test", List(handleM, riskyM))
         val src  = JsEmitter.emit(spec)
-        assert(src.contains("Ffi.WithError[Int]"))
+        assert(src.contains(": Ffi.Outcome[Int] ="))
         val handleDefLine = src.linesIterator.find(_.contains("def getHandle")).getOrElse(fail("getHandle def not found"))
-        assert(!handleDefLine.contains("WithError"))
+        assert(!handleDefLine.contains("Outcome"))
     }
 
 end JsEmitterTest
