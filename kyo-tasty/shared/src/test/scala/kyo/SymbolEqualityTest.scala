@@ -84,7 +84,10 @@ class SymbolEqualityTest extends kyo.test.Test[Any]:
         val s1: Tasty.Symbol = makeClass(-1)
         val s2: Tasty.Symbol = makeClass(-1)
         assert(s1 != s2, "two Symbol.Class with sentinel id (-1) should not be equal (sentinel guard)")
-        assert(s1 != s1, "a Symbol.Class with sentinel id (-1) should not equal itself (sentinel guard)")
+        // Call `equals` directly rather than `s1 != s1`: Scala 3.8.4 constant-folds a syntactic
+        // self-comparison to `false` (it assumes `equals` is reflexive), which would bypass the
+        // deliberately non-reflexive sentinel guard this assertion verifies.
+        assert(!s1.equals(s1), "a Symbol.Class with sentinel id (-1) should not equal itself (sentinel guard)")
         succeed
     }
 
