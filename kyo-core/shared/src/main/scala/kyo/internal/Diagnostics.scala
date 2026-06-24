@@ -17,7 +17,7 @@ package kyo.internal
   * `synchronized` guards only the registry list (a no-op on single-threaded JS); the dumper thunks run outside the lock so a slow dumper
   * cannot stall registration or other dumpers.
   */
-object Diagnostics:
+private[kyo] object Diagnostics:
 
     /** A live registration. Closing it removes the dumper, so a component that registered at construction unregisters at close and its state
       * stops appearing in [[dumpAll]] (and cannot leak across a long-lived process).
