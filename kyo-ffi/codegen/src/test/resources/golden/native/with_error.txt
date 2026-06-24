@@ -12,11 +12,11 @@ import kyo.ffi.internal.{AbiCheck, NativePtr, StructAbiCheck}
 @EnableReflectiveInstantiation final class WithErrorBindingsImpl extends WithErrorBindings:
     import `WithErrorBindings$externs` as ext
 
-    def failable(x: Int)(using kyo.AllowUnsafe): Ffi.WithError[Int] =
+    def failable(x: Int)(using kyo.AllowUnsafe): Ffi.Outcome[Int] =
         val retVal = ext.failable(x)
         val __errno = errno
         val __kyoResult = retVal
-        new Ffi.WithError(__kyoResult, __errno)
+        Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)
 end WithErrorBindingsImpl
 
 object WithErrorBindingsImpl:

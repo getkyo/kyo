@@ -249,16 +249,17 @@ end ByValueBindings
 object ByValueBindings extends Ffi.Config(library = "kyo_by_value")
 
 // -------------------------------------------------------------------------
-// WithError[A] return type fixture
+// Outcome return type fixture
 // -------------------------------------------------------------------------
 
-/** Fixture exercising `WithError[A]` return types for errno-aware C calls.
+/** Fixture exercising `Ffi.Outcome[A]` return types for errno-aware C calls.
   *
-  *   - `riskyOp` returns `WithError[Int]`, the codegen wraps the C return value + captured errno into a `WithError` instance.
-  *   - `safeOp` returns a plain `Int`, the codegen throws `FfiErrno` if errno is non-zero.
+  *   - `riskyOp` returns `Ffi.Outcome[Int]`, the codegen packs the C return value + captured errno into the opaque carrier and reads the C
+  *     `int` at the width the `[Int]` argument names.
+  *   - `safeOp` returns a plain `Int`, errno is not captured for it.
   */
 trait WithErrorBindings extends Ffi:
-    def riskyOp(x: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def riskyOp(x: Int)(using AllowUnsafe): Ffi.Outcome[Int]
     def safeOp(x: Int)(using AllowUnsafe): Int
 end WithErrorBindings
 
