@@ -85,7 +85,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
             var more = true
             while more do
                 val r = Ffi.load[SocketBindings].recvNow(peerFd, buf, 65536L, PosixConstants.MSG_DONTWAIT)
-                if r.value.toInt <= 0 then more = false
+                if r.value <= 0 then more = false
             end while
         finally buf.close()
         end try

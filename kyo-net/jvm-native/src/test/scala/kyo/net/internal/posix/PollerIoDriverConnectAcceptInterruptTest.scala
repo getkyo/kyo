@@ -50,7 +50,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
       * until the test connects one.
       */
     private def listenSocket()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0, "bind failed")
@@ -73,7 +73,7 @@ class PollerIoDriverConnectAcceptInterruptTest extends Test:
 
     /** Connect a fresh non-blocking client to `port`; returns the client fd. The connection makes the server's listen fd accept-ready. */
     private def connectClient(port: Int)(using Frame, kyo.test.AssertScope): Int < Async =
-        val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0, "connect failed"))).map {
             _ =>

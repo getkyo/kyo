@@ -133,7 +133,7 @@ class PosixTransportAcceptEmfileTest extends Test:
                     // One real client connect: the listen fd gets exactly one backlog entry, so it is genuinely read-ready and the poll loop
                     // drives the transport's acceptAll -> acceptNow path against the injected EMFILE.
                     clientFd <-
-                        val fd       = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+                        val fd       = spy.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
                         val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
                         spy.connect(fd, ca, cl).safe.get.map { r =>
                             ca.close()

@@ -51,7 +51,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
       * round and double the request); the blob is sized far larger than any plausible small buffer so EAGAIN is guaranteed.
       */
     private def smallBufferedPair(sndBuf: Int, rcvBuf: Int)(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -68,7 +68,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+            val client = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             // Small SO_SNDBUF on the client so its send buffer fills fast too.
             setIntSockOpt(client, PosixConstants.SO_SNDBUF, sndBuf)
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
@@ -79,7 +79,7 @@ class PollerIoDriverWriteBackpressureTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
                     // Also set SO_RCVBUF directly on the accepted socket to be robust across kernels that do not inherit it.
                     setIntSockOpt(accepted, PosixConstants.SO_RCVBUF, rcvBuf)

@@ -131,7 +131,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
 
     /** Build a connected, non-blocking loopback socket pair via `real`; returns (clientFd, acceptedFd). Mirrors StartTlsUpgradeTest. */
     private def loopbackPair(real: SocketBindings)(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = real.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server = real.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(real.bind(server, a, l).value == 0)
@@ -146,7 +146,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = real.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+            val client   = real.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(real.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -155,7 +155,7 @@ class StartTlsUpgradeCloseRaceTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    real.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
+                    real.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
                     val shim = Ffi.load[PosixShimBindings]
                     assert(shim.kyo_posix_set_nonblocking(client) == 0, "set client non-blocking")

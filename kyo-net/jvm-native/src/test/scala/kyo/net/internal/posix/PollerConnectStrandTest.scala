@@ -34,7 +34,7 @@ class PollerConnectStrandTest extends Test:
         val driver   = TestDrivers.forBackend(backend, pollerFd, sockets)
         discard(driver.start())
 
-        val server   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (ba, bl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
         assert(sockets.bind(server, ba, bl).value == 0, "bind failed")
         ba.close()
@@ -61,7 +61,7 @@ class PollerConnectStrandTest extends Test:
                 val a = sockets.acceptNow(server, addr, alen)
                 if a.value >= 0 then
                     discard(accepted.incrementAndGet())
-                    discard(sockets.close(a.value.toInt).poll())
+                    discard(sockets.close(a.value).poll())
                 // else EAGAIN/EWOULDBLOCK: nothing pending right now; spin (test scaffolding, bounded by acceptStop).
             end while
             addr.close()
@@ -77,7 +77,7 @@ class PollerConnectStrandTest extends Test:
 
         def oneConnect(using Frame): Boolean < (Async & Abort[Closed]) =
             Sync.defer {
-                val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+                val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
                 assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking failed")
                 val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
                 val rc       = sockets.connect(client, ca, cl).safe.get

@@ -36,7 +36,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
 
     private def ep(using AllowUnsafe): EpollBindings = Ffi.load[EpollBindings]
 
-    def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value.toInt
+    def create()(using AllowUnsafe): Int = ep.epoll_create1(0).value
 
     // `id` (the owning handle id) is encoded into the high 32 bits of the epoll_event.data u64 (the fd takes the low 32) so a stale event for a
     // closed-and-recycled fd is detectable on epoll: epoll auto-removes a closed fd from its set, but an event already dequeued by epoll_wait into
@@ -97,9 +97,9 @@ private[net] object EpollPollerBackend extends PollerBackend:
             // issue the MOD (epoll_ctl(MOD) re-evaluates readiness and re-queues a currently-ready fd even for an unchanged mask).
             val prevEtInterest = prevUnion | PosixConstants.EPOLLET | PosixConstants.EPOLLRDHUP
             if etInterest == prevEtInterest && !reReport then 0
-            else ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value.toInt
+            else ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value
             end if
-        else added.value.toInt
+        else added.value
         end if
     end arm
 
@@ -124,12 +124,12 @@ private[net] object EpollPollerBackend extends PollerBackend:
         val efd = ep.eventfd(0, PosixConstants.EFD_NONBLOCK | PosixConstants.EFD_CLOEXEC)
         if efd.value < 0 then false
         else
-            scratch.wakeFd = efd.value.toInt
+            scratch.wakeFd = efd.value
             scratch.wakeDrainBuf = Buffer.alloc[Byte](8) // eventfd counter is a uint64
             val armBuf = Buffer.alloc[Byte](EpollEvent.size)
             scratch.wakeArmBuf = armBuf // owned by registerWake/close only; reused for the (single) wake registration
             EpollEvent.encode(armBuf, 0, EpollEvent(PosixConstants.EPOLLIN, efd.value))
-            val rc = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, efd.value.toInt, armBuf)
+            val rc = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_ADD, efd.value, armBuf)
             rc.value >= 0
         end if
     end registerWake
@@ -189,7 +189,7 @@ private[net] object EpollPollerBackend extends PollerBackend:
       * and `EPOLLRDHUP` (peer half-close, can co-occur with `EPOLLIN` when bytes are buffered before EOF) to eof.
       */
     private def decodeReady(outcome: Ffi.Outcome[Int], scratch: PollScratch)(using AllowUnsafe): Int =
-        val raw   = outcome.value.toInt
+        val raw   = outcome.value
         val n     = if raw <= 0 then 0 else raw
         val fds   = scratch.fds
         val flags = scratch.flags

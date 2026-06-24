@@ -1437,7 +1437,7 @@ final private[net] class PollerIoDriver private[posix] (
         @scala.annotation.tailrec
         def loop(attempt: Int): Ffi.Outcome[Long] =
             val r = sockets.recvNow(fd, buf, len, flags)
-            if r.value.toInt < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries then loop(attempt + 1)
+            if r.value < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries then loop(attempt + 1)
             else r
         end loop
         loop(0)
@@ -1451,7 +1451,7 @@ final private[net] class PollerIoDriver private[posix] (
         @scala.annotation.tailrec
         def loop(attempt: Int): Ffi.Outcome[Long] =
             val r = sockets.sendNow(fd, buf, len, flags)
-            if r.value.toInt < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries then loop(attempt + 1)
+            if r.value < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries then loop(attempt + 1)
             else r
         end loop
         loop(0)
@@ -1469,7 +1469,7 @@ final private[net] class PollerIoDriver private[posix] (
         @scala.annotation.tailrec
         def loop(attempt: Int): Maybe[Ffi.Outcome[Long]] =
             takeNow(sockets.send(fd, buf, len, flags)) match
-                case Present(r) if r.value.toInt < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries =>
+                case Present(r) if r.value < 0 && r.errorCode == PosixConstants.EINTR && attempt < maxTransientIoRetries =>
                     loop(attempt + 1)
                 case other => other
         loop(0)

@@ -25,7 +25,7 @@ class PollerBackendTest extends Test:
 
     /** Build a connected loopback socket pair and return (clientFd, acceptedFd). `connect`/`accept`/`close` are `@Ffi.blocking`. */
     private def loopbackPair()(using Frame, kyo.test.AssertScope): (Int, Int) < Async =
-        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(fail("encode failed"))
         Sync.ensure(Sync.defer(a.close())) {
             assert(sock.bind(server, a, l).value == 0)
@@ -40,7 +40,7 @@ class PollerBackendTest extends Test:
                 finally
                     out.close()
                     ol.close()
-            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+            val client   = sock.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(fail("encode failed"))
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sock.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -49,7 +49,7 @@ class PollerBackendTest extends Test:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sock.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
+                    sock.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
                     sock.close(server).safe.get.map(_ => (client, accepted))
                 }

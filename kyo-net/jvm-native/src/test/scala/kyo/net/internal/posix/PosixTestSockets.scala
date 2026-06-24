@@ -38,7 +38,7 @@ object PosixTestSockets:
       */
     def loopbackPair()(using Frame, AllowUnsafe): (Int, Int) < Async =
         val sockets = sock
-        val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
         Sync.ensure(Sync.defer(a.close())) {
             assert(sockets.bind(server, a, l).value == 0)
@@ -53,7 +53,7 @@ object PosixTestSockets:
                 finally
                     out.close()
                     ol.close()
-            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -62,7 +62,7 @@ object PosixTestSockets:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
+                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
                     val shim = Ffi.load[PosixShimBindings]
                     assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
@@ -79,7 +79,7 @@ object PosixTestSockets:
       * StartTlsUpgradeCloseRaceTest.scala line 201.
       */
     def loopbackPair(sockets: SocketBindings)(using Frame, AllowUnsafe): (Int, Int) < Async =
-        val server = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
         Sync.ensure(Sync.defer(a.close())) {
             assert(sockets.bind(server, a, l).value == 0)
@@ -94,7 +94,7 @@ object PosixTestSockets:
                 finally
                     out.close()
                     ol.close()
-            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+            val client   = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
             val connected =
                 Sync.ensure(Sync.defer(ca.close()))(sockets.connect(client, ca, cl).safe.get.map(r => assert(r.value == 0)))
@@ -103,7 +103,7 @@ object PosixTestSockets:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
+                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
                     val shim = Ffi.load[PosixShimBindings]
                     assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
@@ -124,7 +124,7 @@ object PosixTestSockets:
         val noLen   = Buffer.alloc[Int](1)
         noLen.set(0, SockAddr.inet4Size)
         Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-            sockets.accept(serverFd, noAddr, noLen).safe.get.map(_.value.toInt)
+            sockets.accept(serverFd, noAddr, noLen).safe.get.map(_.value)
         }
     end acceptOne
 
@@ -137,7 +137,7 @@ object PosixTestSockets:
       */
     def smallBufferedPair(sndBuf: Int, rcvBuf: Int)(using Frame, AllowUnsafe): (Int, Int) < Async =
         val sockets = sock
-        val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val server  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val (a, l)  = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", 0).getOrElse(???)
         Sync.ensure(Sync.defer(a.close())) {
             assert(sockets.bind(server, a, l).value == 0)
@@ -153,7 +153,7 @@ object PosixTestSockets:
                 finally
                     out.close()
                     ol.close()
-            val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+            val client = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
             setIntSockOpt(client, PosixConstants.SO_SNDBUF, sndBuf)
             val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, "127.0.0.1", port).getOrElse(???)
             val connected =
@@ -163,7 +163,7 @@ object PosixTestSockets:
                 val noLen  = Buffer.alloc[Int](1)
                 noLen.set(0, SockAddr.inet4Size)
                 Sync.ensure(Sync.defer { noAddr.close(); noLen.close() }) {
-                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value.toInt)
+                    sockets.accept(server, noAddr, noLen).safe.get.map(_.value)
                 }.map { accepted =>
                     setIntSockOpt(accepted, PosixConstants.SO_RCVBUF, rcvBuf)
                     val shim = Ffi.load[PosixShimBindings]
@@ -335,7 +335,7 @@ object PosixTestSockets:
       */
     def connectInFlight()(using Frame, AllowUnsafe): InFlightConnect < Async =
         val sockets = sock
-        val client  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value.toInt
+        val client  = sockets.socket(PosixConstants.AF_INET, PosixConstants.SOCK_STREAM, 0).value
         val shim    = Ffi.load[PosixShimBindings]
         assert(shim.kyo_posix_set_nonblocking(client) == 0, "set_nonblocking(client) failed")
         val (ca, cl) = SockAddr.encodeInet4(PosixConstants.AF_INET, BlackHoleHost, BlackHolePort).getOrElse(???)

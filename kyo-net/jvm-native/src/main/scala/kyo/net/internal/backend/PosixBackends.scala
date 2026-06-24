@@ -33,7 +33,7 @@ private[net] object EpollBackend extends PosixIoBackend:
     def isAvailable(using AllowUnsafe): Boolean =
         PosixConstants.isLinux && probe {
             val ep = Ffi.load[EpollBindings]
-            val fd = ep.epoll_create1(0).value.toInt
+            val fd = ep.epoll_create1(0).value
             if fd >= 0 then
                 discard(Ffi.load[SocketBindings].close(fd))
                 true
@@ -50,7 +50,7 @@ private[net] object KqueueBackend extends PosixIoBackend:
     def isAvailable(using AllowUnsafe): Boolean =
         PosixConstants.isMacOrBsd && probe {
             val kq = Ffi.load[KqueueBindings]
-            val fd = kq.kqueue().value.toInt
+            val fd = kq.kqueue().value
             if fd >= 0 then
                 discard(Ffi.load[SocketBindings].close(fd))
                 true
