@@ -883,7 +883,7 @@ private val diag =
 diag.close()
 ```
 
-A dumper runs on the reporter's thread, concurrently with the component it inspects, so it must read state best-effort (a stale or partial snapshot is acceptable) and must never block. The posix network drivers register their pending-operation tables and poll/reap liveness counters this way.
+A dumper runs on the reporter's thread, concurrently with the component it inspects, so it must read state best-effort (a stale or partial snapshot is acceptable) and must never block. An I/O driver, for example, can register its pending-operation tables and poll/reap liveness counters this way.
 
 ### Exception and Failure Assertions
 

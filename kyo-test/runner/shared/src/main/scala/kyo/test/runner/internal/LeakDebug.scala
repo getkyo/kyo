@@ -13,7 +13,7 @@ import kyo.*
   * a time across the whole process, and (2) lets the JVM runner register a [[leafProbe]] that snapshots open descriptors around each leaf and
   * records `inode -> leaf` for the final report. Off by default, so a normal parallel run pays nothing.
   */
-object LeakDebug:
+private[runner] object LeakDebug:
 
     /** True when leak-debug mode is requested via the environment variable or system property. Read once at class init (the flag is set before
       * the JVM starts), so it is a stable `val` usable from the process-global [[LeafPool.globalK]].
