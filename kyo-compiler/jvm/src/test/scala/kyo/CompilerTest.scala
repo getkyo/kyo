@@ -1,14 +1,12 @@
 package kyo
 
-import upickle.default.*
-
 class CompilerTest extends kyo.test.Test[Any]:
 
-    "result ADTs round-trip through the upickle AsMessage codec with CanEqual" in {
+    "result ADTs round-trip through the AsMessage codec with CanEqual" in {
         import Compiler.*
 
-        def roundTrip[T: ReadWriter](value: T): T =
-            readBinary[T](writeBinary[T](value))
+        def roundTrip[T: Schema](value: T): T =
+            MsgPack.decode[T](MsgPack.encode(value)).getOrThrow
 
         val span   = Span(0, 10)
         val spanRt = roundTrip(span)
@@ -96,9 +94,8 @@ class CompilerTest extends kyo.test.Test[Any]:
     }
 
     "no cancel/spawn/local member and lsp4j surface type rejects (compile-fail)" in {
-        // Unsafe: null.asInstanceOf used for compile-time type witnesses only; these vals are never
-        // dereferenced at runtime because typeCheckFailure evaluates its argument at compile time
-        // via typeCheckErrors, not at execution time.
+        // Unsafe: null.asInstanceOf is used only for compile-time type witnesses. These vals are never
+        // dereferenced: typeCheckFailure evaluates its argument at compile time, not at execution time.
         val pool: Compiler.Pool = null.asInstanceOf[Compiler.Pool]
         val c: Compiler         = null.asInstanceOf[Compiler]
         val uri: Compiler.Uri   = Compiler.Uri("Main.scala")

@@ -130,3 +130,26 @@ runs:
       with:
         jvm: corretto:25
         apps: sbt
+
+    # The staged libaeron tree is gitignored, so every leg that compiles the kyo-aeron C shim has to
+    # build it. That includes the JVM leg, which runs the shared ffiGenerate step even though its
+    # runtime backend is the pure-Java io.aeron client.
+    - name: Prepare libaeron
+      if: ${{ inputs.target == 'JVM' || inputs.target == 'Native' || inputs.target == 'JS' || inputs.target == 'Wasm' }}
+      shell: bash
+      run: |
+        case "${{ inputs.os }}" in
+          linux-x64)   OS_ARCH=linux-x86_64 ;;
+          linux-arm64) OS_ARCH=linux-aarch64 ;;
+          macos-arm64) OS_ARCH=darwin-aarch64 ;;
+          *) echo "libaeron not staged for ${{ inputs.os }} (unsupported os-arch); skipping" && exit 0 ;;
+        esac
+        if [[ "${{ inputs.os }}" == linux-* ]]; then
+          command -v cmake >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 cmake; }
+          # The Aeron driver links -luuid on Linux, and the package providing the libuuid.so link
+          # target is not preinstalled. macOS gets uuid from libSystem.
+          dpkg -s uuid-dev >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y -o Acquire::Retries=3 uuid-dev; }
+        else
+          command -v cmake >/dev/null 2>&1 || brew install cmake
+        fi
+        bash kyo-aeron/scripts/build-aeron.sh "$OS_ARCH"

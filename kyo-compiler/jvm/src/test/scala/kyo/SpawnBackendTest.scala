@@ -8,7 +8,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
     override def timeout = 300.seconds
 
     /** Every entry on the test JVM's classpath, as `Path`s. A spawned worker's `-cp` is built from the
-      * config classpath, so it must carry the kyo.internal.CompilerWorker class, kyo-aeron, and the presentation
+      * config classpath, so it must carry kyo.internal.CompilerWorker, kyo-aeron, and the presentation
       * compiler; the full test classpath supplies all three.
       */
     private def fullClasspath: Chunk[Path] =
@@ -22,7 +22,7 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         )
 
     /** A real forked-worker Config: the full test classpath as both the worker's runtime classpath and
-      * the pc's target classpath, the own scala version, and `isolate = true`. `scalacOptions`
+      * the pc's target classpath, its own Scala version, and `isolate = true`. `scalacOptions`
       * distinguishes otherwise-equal configs (a distinct config routes to a distinct worker session).
       */
     private def spawnConfig(scalacOptions: Chunk[String] = Chunk.empty): Compiler.Config =
@@ -110,15 +110,14 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
                                 case _                           => Exchange.Message.Skip
                     )
                     // A throwaway child process supplies a real Process handle; this leaf drives `run`
-                    // through a controlled in-memory Exchange (not a real aeron session), so the aeron
-                    // client is unused (passed null) and teardown is exchange.close plus a direct
-                    // process kill, never SpawnBackend.close.
+                    // through a controlled in-memory Exchange (not a real aeron session), so aeron is
+                    // unused (passed null) and teardown is exchange.close plus a direct process kill.
                     proc <- Abort.run[CommandException](Command(javaBin, "-version").spawnUnscoped).map {
                         case Result.Success(p) => p
                         case Result.Failure(e) => Abort.panic(e)
                         case Result.Panic(t)   => Abort.panic(t)
                     }
-                    backend = new SpawnBackend(proc, null, exchange)
+                    backend = new SpawnBackend(proc, null.asInstanceOf[AeronClient], exchange)
                     uri     = Compiler.Uri("Interrupt.scala")
 
                     // op1 registers (id 0) and parks: no response for id 0 is ever fed.
@@ -247,15 +246,14 @@ class SpawnBackendTest extends kyo.test.Test[Any]:
         withDriver { driver =>
             for
                 // Capture THIS init's worker process via the onSpawn seam (fired once the interrupt-safe
-                // kill is armed, just before the readiness probe), so the assertion targets exactly the
-                // worker this test spawns rather than the noisy global worker count.
+                // kill is armed, just before the readiness probe), targeting this test's own worker.
                 spawned <- Sync.defer(new java.util.concurrent.atomic.AtomicReference[Maybe[Process]](Absent))
                 fiber <- Fiber.initUnscoped(
                     Abort.run[CompilerException](SpawnBackend.init(spawnConfig(), driver, 7, p => spawned.set(Present(p))))
                 )
-                // The worker JVM has spawned but cannot answer the probe for seconds, so once the process
-                // is captured the init fiber is parked in the readiness probe and has NOT completed.
-                // Interrupting now lands squarely mid-probe (no fixed sleep that a fast boot could outrun).
+                // The worker JVM has spawned but cannot answer the probe for seconds, so once captured the
+                // init fiber is parked in the readiness probe, not yet completed. Interrupting now lands
+                // squarely mid-probe, with no fixed sleep that a fast boot could outrun.
                 captured <- pollUntil(500, 10.millis)(Sync.defer(spawned.get().isDefined))
                 _       = assert(captured, "the worker process must spawn before the readiness probe completes")
                 process = spawned.get().get

@@ -1,7 +1,5 @@
 package kyo
 
-import upickle.default.*
-
 /** The typed failure on every [[Compiler]] op's `Abort` row, a flat hierarchy in package `kyo`
   * modeled on kyo-http `HttpException`.
   *
@@ -13,7 +11,7 @@ import upickle.default.*
   * discriminate precisely.
   *
   * Serializable via the hand-written [[Compiler.AsMessage]] codec in the companion: a `KyoException`
-  * carries a `Frame` and so cannot auto-derive a `ReadWriter`. The live `Throwable` cause survives
+  * carries a `Frame` and so cannot auto-derive a `Schema`. The live `Throwable` cause survives
   * in-process; over the worker IPC wire the codec carries the rendered stack and rebuilds a cause from
   * it (the operation leaf that crosses the wire is [[CompilerExecutionException]]).
   */
@@ -68,32 +66,29 @@ object CompilerException:
       */
     given CanEqual[CompilerException, CompilerException] = CanEqual.canEqualAny
 
-    /** The wire codec. A `KyoException` carries a `Frame` and cannot auto-derive a `ReadWriter`, so this
+    /** The wire codec. A `KyoException` carries a `Frame` and cannot auto-derive a `Schema`, so this
       * serializes the leaf tag plus its typed fields (a `Throwable` cause as its rendered stack, a
       * `Duration` as nanos) and rebuilds with `Frame.internal`, the rendered stack becoming the cause.
       */
     given Compiler.AsMessage[CompilerException] =
-        summon[ReadWriter[(String, String, String, Long)]].bimap[CompilerException](
-            {
-                case CompilerStartException(scalaVersion, cause)         => ("start", scalaVersion, renderCause(cause), 0L)
-                case CompilerWorkerSpawnException(scalaVersion, cause)   => ("spawn", scalaVersion, renderCause(cause), 0L)
-                case CompilerWorkerReadyException(scalaVersion, timeout) => ("ready", scalaVersion, "", timeout.toNanos)
-                case CompilerExecutionException(cause)                   => ("exec", "", renderCause(cause), 0L)
-                case CompilerTransportException(cause)                   => ("transport", "", renderCause(cause), 0L)
-                case CompilerUnresponsiveException(timeout)              => ("unresponsive", "", "", timeout.toNanos)
-                case CompilerClosedException()                           => ("closed", "", "", 0L)
-            },
-            {
-                case ("start", scalaVersion, cause, _) => CompilerStartException(scalaVersion, restore(cause))(using Frame.internal)
-                case ("spawn", scalaVersion, cause, _) => CompilerWorkerSpawnException(scalaVersion, restore(cause))(using Frame.internal)
-                case ("ready", scalaVersion, _, nanos) =>
-                    CompilerWorkerReadyException(scalaVersion, Duration.fromNanos(nanos))(using Frame.internal)
-                case ("exec", _, cause, _)         => CompilerExecutionException(restore(cause))(using Frame.internal)
-                case ("transport", _, cause, _)    => CompilerTransportException(restore(cause))(using Frame.internal)
-                case ("unresponsive", _, _, nanos) => CompilerUnresponsiveException(Duration.fromNanos(nanos))(using Frame.internal)
-                case _                             => CompilerClosedException()(using Frame.internal)
-            }
-        )
+        summon[Schema[(String, String, String, Long)]].transform[CompilerException] {
+            case ("start", scalaVersion, cause, _) => CompilerStartException(scalaVersion, restore(cause))(using Frame.internal)
+            case ("spawn", scalaVersion, cause, _) => CompilerWorkerSpawnException(scalaVersion, restore(cause))(using Frame.internal)
+            case ("ready", scalaVersion, _, nanos) =>
+                CompilerWorkerReadyException(scalaVersion, Duration.fromNanos(nanos))(using Frame.internal)
+            case ("exec", _, cause, _)         => CompilerExecutionException(restore(cause))(using Frame.internal)
+            case ("transport", _, cause, _)    => CompilerTransportException(restore(cause))(using Frame.internal)
+            case ("unresponsive", _, _, nanos) => CompilerUnresponsiveException(Duration.fromNanos(nanos))(using Frame.internal)
+            case _                             => CompilerClosedException()(using Frame.internal)
+        } {
+            case CompilerStartException(scalaVersion, cause)         => ("start", scalaVersion, renderCause(cause), 0L)
+            case CompilerWorkerSpawnException(scalaVersion, cause)   => ("spawn", scalaVersion, renderCause(cause), 0L)
+            case CompilerWorkerReadyException(scalaVersion, timeout) => ("ready", scalaVersion, "", timeout.toNanos)
+            case CompilerExecutionException(cause)                   => ("exec", "", renderCause(cause), 0L)
+            case CompilerTransportException(cause)                   => ("transport", "", renderCause(cause), 0L)
+            case CompilerUnresponsiveException(timeout)              => ("unresponsive", "", "", timeout.toNanos)
+            case CompilerClosedException()                           => ("closed", "", "", 0L)
+        }
 
     private def renderCause(cause: String | Throwable): String = cause match
         case t: Throwable =>

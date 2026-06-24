@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.internal.CompilerPool
-import upickle.default.*
 
 /** A warm, 1:1-per-config presentation-compiler handle.
   *
@@ -23,7 +22,7 @@ import upickle.default.*
   * Local) or in a forked worker JVM (Spawn, any version, hard-killable), chosen internally by the
   * pool from `Config.isolate` and the version-match rule. The caller never names a backend.
   *
-  * Every result type derives [[Compiler.AsMessage]] (the upickle wire codec) so it is serializable
+  * Every result type derives [[Compiler.AsMessage]] (the kyo-schema wire codec) so it is serializable
   * for the worker IPC wire and reusable for the LSP wire; the codec is the same one kyo-aeron's
   * `Topic` carries, so a result type rides the aeron transport directly.
   *
@@ -154,28 +153,21 @@ object Compiler:
         isolate: Maybe[Boolean] = Absent
     ) derives CanEqual
 
-    /** The upickle wire-codec alias (mirrors kyo-aeron's `Topic.AsMessage`). A type deriving
-      * `AsMessage` carries a upickle `ReadWriter`, so it rides the kyo-aeron `Topic` transport
-      * directly.
+    /** The wire-codec alias (mirrors kyo-aeron's message requirement). A type deriving `AsMessage`
+      * carries a kyo-schema `Schema`, so it rides the kyo-aeron `Topic` transport directly.
       */
-    type AsMessage[A] = ReadWriter[A]
+    type AsMessage[A] = Schema[A]
 
     /** A neutral, offset-based file identity. Opaque over String so the surface stays free of
-      * java.net.URI / lsp4j coupling; it IS a String on the wire. The `given ReadWriter[Uri]`
-      * (over the String form, via bimap) keeps `Uri` opaque-over-String through serialization.
+      * java.net.URI / lsp4j coupling; it IS a String on the wire. The `given Schema[Uri]` (over the
+      * String form, via `transform`) keeps `Uri` opaque-over-String through serialization.
       */
     opaque type Uri = String
     object Uri:
         def apply(value: String): Uri             = value
         extension (uri: Uri) def asString: String = uri
-        given ReadWriter[Uri]                     = summon[ReadWriter[String]].bimap[Uri](_.asString, Uri.apply)
+        given Schema[Uri]                         = summon[Schema[String]].transform[Uri](Uri.apply)(_.asString)
     end Uri
-
-    given [A: ReadWriter]: ReadWriter[Maybe[A]] =
-        summon[ReadWriter[Option[A]]].bimap[Maybe[A]](
-            m => m.toOption,
-            opt => Maybe.fromOption(opt)
-        )
 
     /** An offset span [start, end) in UTF-16 code units. */
     final case class Span(start: Int, end: Int) derives CanEqual, Compiler.AsMessage
