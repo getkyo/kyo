@@ -187,10 +187,15 @@ class JsonRpcHandlerTest extends JsonRpcTest:
         }
     }
 
-    "callerRegistry drain on close fails pending calls" in {
-        // The handler blocks on a never-completed gate so the call stays in-flight (registered) until the
-        // Scope closes endpointA. assertEventually on the registry being populated replaces a fixed sleep:
-        // it guarantees the call has registered before Scope.run exits and the close drains the registry.
+    // One drain-on-close run: a handler blocks on a never-completed gate so the call stays in-flight
+    // (registered in endpointA's callerRegistry) until the Scope closes endpointA. assertEventually on the
+    // registry being populated replaces a fixed sleep: it guarantees the call has registered before Scope.run
+    // exits and the close drains the registry. Returns the captured call result for the caller to classify.
+    private def drainOnClosePending(using
+        Frame,
+        kyo.test.AssertScope
+    )
+        : Maybe[Result[JsonRpcError | Closed, AddResp]] < (Async & Scope) =
         Fiber.Promise.init[Unit, Abort[Closed]].map { gate =>
             val addOnB = JsonRpcRoute.request[AddReq, AddResp]("add") {
                 (req, _) => gate.get.andThen(AddResp(req.a + req.b))
@@ -214,22 +219,33 @@ class JsonRpcHandlerTest extends JsonRpcTest:
                         }
                     }.andThen {
                         assertEventually(Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger).isDefined)).andThen {
-                            Sync.defer {
-                                resultRef.get()(using AllowUnsafe.embrace.danger) match
-                                    case Present(Result.Failure(e: JsonRpcError)) =>
-                                        assert(e.code == -32603, s"expected internalError code -32603, got ${e.code}")
-                                    case Present(Result.Success(v)) =>
-                                        fail(s"expected JsonRpcError internalError after close, got $v")
-                                    case Present(Result.Failure(other)) =>
-                                        fail(s"expected JsonRpcError but got: $other")
-                                    case Present(Result.Panic(t)) =>
-                                        fail(s"unexpected panic: $t")
-                                    case Absent =>
-                                        fail("no result captured")
-                            }
+                            Sync.defer(resultRef.get()(using AllowUnsafe.embrace.danger))
                         }
                     }
                 }
+            }
+        }
+    end drainOnClosePending
+
+    "callerRegistry drain on close fails pending calls" in {
+        // A call already registered when the endpoint closes must drain as a JsonRpcError (internalError
+        // -32603), never the raw Closed the Exchange surfaces on its clean-stream-end path. Two completions
+        // race on close (the finalizer drain vs the Exchange reader reacting to transport close); the
+        // finalizer must win. The leak only surfaces under scheduler contention, so the scenario runs
+        // concurrently many times rather than once: a single run passes ~99% of the time and flakes in CI.
+        val iterations  = 2000
+        val concurrency = 64
+        Async.foreach(1 to iterations, concurrency)(_ => Scope.run(drainOnClosePending)).map { captured =>
+            val drainedAsError =
+                captured.count { case Present(Result.Failure(e: JsonRpcError)) => e.code == -32603; case _ => false }
+            val leakedClosed = captured.count { case Present(Result.Failure(_: Closed)) => true; case _ => false }
+            val succeeded    = captured.count { case Present(Result.Success(_)) => true; case _ => false }
+            Sync.defer {
+                assert(
+                    drainedAsError == iterations,
+                    s"drain-on-close over $iterations iterations: drainedAsError=$drainedAsError " +
+                        s"leakedClosed=$leakedClosed succeeded=$succeeded (every call must drain as JsonRpcError -32603)"
+                )
             }
         }
     }

@@ -76,11 +76,11 @@ jobs:
       # build.sbt Test/javaOptions), and SBT_TASK_LIMIT=1 keeps compile and test from overlapping, so a low
       # floor lets G1 release the driver's compile heap back to the box during the test phase, leaving room
       # for the forks. Re-add a per-os ceiling override here if a memory-constrained arch is re-enabled.
-      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
-      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JAVA_OPTS: '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
+      JVM_OPTS:  '-Xmx12G -Xss10M -XX:+UseG1GC -XX:+UseCompactObjectHeaders -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8'
 
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
@@ -92,7 +92,7 @@ jobs:
 
       # kyo-browser auto-downloads `chrome-headless-shell` (~120 MB) on first launch and caches it under the
       # platform's user cache dir; the setup action restores it. The action also installs Node, the native
-      # libraries, and podman conditionally on the target and os, and provisions corretto:24 + sbt.
+      # libraries, and podman conditionally on the target and os, and provisions corretto:25 + sbt.
 
       - name: ${{ inputs.mode }} ${{ matrix.target }} (${{ inputs.os }})
         shell: bash

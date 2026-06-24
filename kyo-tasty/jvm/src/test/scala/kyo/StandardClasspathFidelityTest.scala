@@ -8,8 +8,15 @@ import kyo.internal.TestClasspaths2
   */
 class StandardClasspathFidelityTest extends kyo.test.Test[Any]:
 
-    // The "JPMS module count" leaf walks java.base via jrt:/ (the shared platform-module load), which on a cold,
-    // contended CI run can exceed the default per-test timeout. Budget the suite like the other jrt:/ suites.
+    // Each of these four leaves cold-inits the standard 81k-symbol classpath (one also walks java.base via
+    // jrt:/). A single leaf is about a second uncontended, but by default the four run concurrently, and on a
+    // contended CI box (4 vCPUs, two parallel forks) that pile-up of concurrent decodes starves every leaf
+    // past the timeout. The leaves also share the jar reader pool (computeIfAbsent) and the jrt:/ singleton, so
+    // concurrency serializes them on those too. It is not heap pressure (peak is about 1.6GB against the 5GB
+    // fork cap). Run the leaves sequentially so each gets full CPU and no shared-resource contention.
+    override def config = super.config.sequential
+
+    // jrt:/ cold loads can still be slow on a contended runner; keep a generous per-leaf budget.
     override def timeout = Duration.fromJava(java.time.Duration.ofMinutes(3))
 
     "allSymbols.count(isGiven) ~= 570 on standard classpath" in {

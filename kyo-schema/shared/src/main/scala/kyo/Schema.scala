@@ -65,7 +65,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     private[kyo] val checks: Seq[A => Seq[ValidationFailedException]] = Seq.empty,
     private[kyo] val documentation: Maybe[String] = Maybe.empty,
     private[kyo] val fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
-    private[kyo] val discriminatorField: Maybe[String] = Maybe.empty
+    private[kyo] val discriminatorField: Maybe[String] = Maybe.empty,
+    @publicInBinary private[kyo] val variantNaming: Schema.VariantNaming = Schema.VariantNaming()
 ):
 
     /** The structural representation type. Set by factory/transforms. */
@@ -112,14 +113,14 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     @publicInBinary private[kyo] val hasTransforms: Boolean =
         droppedFields.nonEmpty || renamedFields.nonEmpty ||
-            computedFields.nonEmpty || discriminatorField.isDefined
+            computedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty
 
     /** Read-side transform flag: discriminator / rename / drop (computed fields are write-only). Marked
       * `@publicInBinary` so `Schema.init`'s inline `serializeRead` can branch on it from a user
       * `derives Schema` site without an inaccessible `private[kyo]` reference.
       */
     @publicInBinary private[kyo] val hasReadTransforms: Boolean =
-        droppedFields.nonEmpty || renamedFields.nonEmpty || discriminatorField.isDefined
+        droppedFields.nonEmpty || renamedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty
 
     /** Pre-built root navigator for focus lambda resolution.
       *
@@ -307,6 +308,144 @@ abstract class Schema[A] @publicInBinary private[kyo] (
             discriminatorField = Maybe(fieldName)
         )
     end discriminator
+
+    /** Maps Scala sealed-trait variant names to wire discriminator values.
+      *
+      * Each pair is `(scalaVariantName, wireName)`. Under `.discriminator(field)`, the
+      * wire string written for a variant becomes its mapped name, and decode reverse-maps
+      * the wire string back to the Scala variant before dispatch. Explicit pairs here
+      * override any `renameAllVariants` convention for the same variant. A wire name
+      * targeted by two distinct variants is rejected with `VariantNameCollisionException`
+      * at this call. Each referenced Scala variant name is validated against the type's
+      * derived variant set; an unknown name raises `UnknownVariantException` at this call,
+      * mirroring field `rename`'s from-must-exist guarantee. Without a `.discriminator(field)`
+      * this configuration has no effect: the default wrapper-object format keeps the Scala
+      * variant names.
+      *
+      * {{{
+      * val s = Schema[Shape].discriminator("type").variantNames("Circle" -> "circle")
+      * // Json.encode(Circle(5.0)) == """{"type":"circle","radius":5.0}"""
+      * }}}
+      */
+    def variantNames(mappings: (String, String)*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val pairs = Chunk.from(mappings)
+        val known = Schema.variantScalaNames(structure)
+        Schema.checkVariantNamesExist(known, pairs.map(_._1))
+        val merged = Schema.mergeVariantPairs(variantNaming.variantPairs, pairs)
+        Schema.checkVariantTargets(merged)
+        Schema.copyWith(this)(
+            variantNaming = variantNaming.copy(variantPairs = merged)
+        )
+    end variantNames
+
+    /** Derives every variant's wire name from its Scala name by a case convention.
+      *
+      * Applies under `.discriminator(field)`. Explicit `variantNames` pairs override the
+      * convention per variant. If the convention maps two variants to one wire name,
+      * `VariantNameCollisionException` is raised at the first encode/decode. Without a
+      * discriminator this configuration has no effect. Any previously registered variant
+      * aliases are checked against the new convention-derived primaries at this call;
+      * an alias that collides with a convention-derived primary raises
+      * `VariantNameCollisionException`.
+      *
+      * {{{
+      * val s = Schema[Shape].discriminator("type").renameAllVariants(Schema.NameCase.SnakeCase)
+      * }}}
+      */
+    def renameAllVariants(nameCase: Schema.NameCase)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val updatedNaming   = variantNaming.copy(variantCase = Maybe(nameCase))
+        val newEffectiveSet = Schema.effectiveVariantWires(structure, updatedNaming).toSet
+        Schema.checkVariantAliases(newEffectiveSet, variantNaming.variantAliases)
+        Schema.copyWith(this)(
+            variantNaming = updatedNaming
+        )
+    end renameAllVariants
+
+    /** Accepts alternate wire discriminator values for a variant on decode.
+      *
+      * `variantWireName` is the variant's effective wire name (after any `variantNames` /
+      * `renameAllVariants`); `aliases` are additional strings decode resolves to that same
+      * variant. Encode always emits the primary wire name. `variantWireName` is validated
+      * to resolve to a known variant; an unresolvable name raises `UnknownVariantException`
+      * at this call. An alias that collides with another variant's primary or alias is
+      * rejected with `VariantNameCollisionException` at this call. Requires a discriminator
+      * to have any effect.
+      *
+      * {{{
+      * val s = Schema[Shape].discriminator("type").variantNames("Circle" -> "circle")
+      *     .variantAlias("circle", "round", "disc")
+      * }}}
+      */
+    def variantAlias(variantWireName: String, aliases: String*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val wires = Schema.effectiveVariantWires(structure, variantNaming)
+        Schema.checkVariantWireExists(wires, variantWireName)
+        val added        = Chunk.from(aliases).map(a => (a, variantWireName))
+        val merged       = variantNaming.variantAliases ++ added
+        val effectiveSet = wires.toSet
+        Schema.checkVariantAliases(effectiveSet, merged)
+        Schema.copyWith(this)(
+            variantNaming = variantNaming.copy(variantAliases = merged)
+        )
+    end variantAlias
+
+    /** Derives every field's wire name from its Scala name by a case convention.
+      *
+      * Serialization-only: does NOT change `Focused` (unlike `rename`). Explicit per-field
+      * `rename` overrides the convention. A convention that maps two fields to one wire
+      * name raises `FieldNameCollisionException` at the first encode/decode. An alias
+      * already registered whose target collides with a convention-derived primary wire name
+      * raises `FieldNameCollisionException` at this call.
+      *
+      * {{{
+      * val s = Schema[Account].renameAllFields(Schema.NameCase.SnakeCase)
+      * // Json.encode(Account("a","b")) == """{"first_name":"a","last_name":"b"}"""
+      * }}}
+      */
+    def renameAllFields(nameCase: Schema.NameCase)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val updatedNaming = variantNaming.copy(fieldCase = Maybe(nameCase))
+        val newPrimaries  = Schema.effectiveFieldWireNames(sourceFields, renamedFields, updatedNaming)
+        Schema.checkFieldAliases(Chunk.empty, variantNaming.fieldAliases, newPrimaries)
+        Schema.copyWith(this)(
+            variantNaming = updatedNaming
+        )
+    end renameAllFields
+
+    /** Accepts alternate wire names for a field on decode (string form).
+      *
+      * `fieldWireName` is the field's effective wire name; `aliases` are accepted on
+      * decode and resolve to the same field. Encode always emits the primary. Collisions
+      * raise `FieldNameCollisionException` at this call.
+      *
+      * {{{
+      * val s = Schema[Account].alias("first_name", "fname")
+      * }}}
+      */
+    def alias(fieldWireName: String, aliases: String*)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val added     = Chunk.from(aliases).map(a => (a, fieldWireName))
+        val merged    = variantNaming.fieldAliases ++ added
+        val primaries = Schema.effectiveFieldWireNames(sourceFields, renamedFields, variantNaming)
+        Schema.checkFieldAliases(variantNaming.fieldAliases, merged, primaries)
+        Schema.copyWith(this)(
+            variantNaming = variantNaming.copy(fieldAliases = merged)
+        )
+    end alias
+
+    /** Field-alias overload identifying the field by a Focus lambda.
+      *
+      * Lambda form of `alias(fieldWireName, ...)`. The field is identified by the lambda
+      * (IDE autocompletion); the alias is registered against the field's Scala name and
+      * accepted on decode. Aliases are accepted on decode; Focused unchanged.
+      *
+      * {{{
+      * val s = Schema[Account].alias(_.firstName)("first_name", "fname")
+      * }}}
+      */
+    inline def alias[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(
+        aliases: String*
+    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val navigated = focus(rootSelect)
+        alias(navigated.segments.last, aliases*)
+    end alias
 
     /** Sets per-field documentation using a focus lambda to identify the field.
       *
@@ -1024,6 +1163,7 @@ object Schema:
         documentation: Maybe[String] = Maybe.empty,
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
+        variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
@@ -1043,7 +1183,8 @@ object Schema:
             checks,
             documentation,
             fieldIdOverrides,
-            discriminatorField
+            discriminatorField,
+            variantNaming
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
@@ -1083,6 +1224,7 @@ object Schema:
         documentation: Maybe[String] = Maybe.empty,
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
+        variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
@@ -1107,6 +1249,7 @@ object Schema:
             documentation = documentation,
             fieldIdOverrides = fieldIdOverrides,
             discriminatorField = discriminatorField,
+            variantNaming = variantNaming,
             structure = structure
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
@@ -1154,6 +1297,166 @@ object Schema:
         final case class UniqueItems(segments: Seq[String])                            extends Constraint
 
     end Constraint
+
+    /** Case conventions for `renameAllVariants` / `renameAllFields`.
+      *
+      * A closed enumeration of the five serde-parity name styles. Tokenization is
+      * acronym-aware: an uppercase run is one word, so `HTTPServer` under `SnakeCase`
+      * becomes `http_server` and `DList` under `CamelCase` becomes `dList`. An acronym
+      * whose original casing must survive a camel or Pascal target (a trailing `userID`)
+      * is served by an explicit `variantNames` / `alias` override.
+      */
+    sealed abstract class NameCase derives CanEqual
+    object NameCase:
+        case object CamelCase          extends NameCase // firstName
+        case object SnakeCase          extends NameCase // first_name
+        case object KebabCase          extends NameCase // first-name
+        case object PascalCase         extends NameCase // FirstName
+        case object ScreamingSnakeCase extends NameCase // FIRST_NAME
+    end NameCase
+
+    /** Inspectable storage for the serde-parity naming configuration of a schema.
+      *
+      * Carries the four naming axes plus the two decode-alias maps as ordered `Chunk`
+      * pairs (insertion order preserved for deterministic collision messages), mirroring
+      * the existing `renamedFields: Chunk[(String, String)]` transform slot. A separate
+      * slot from `renamedFields` so variant/field wire-casing never corrupts a field
+      * `rename` chain. Empty by default, contributing nothing to the serialization hot
+      * path.
+      */
+    private[kyo] case class VariantNaming(
+        variantPairs: Chunk[(String, String)] = Chunk.empty,
+        variantCase: Maybe[NameCase] = Maybe.empty,
+        fieldCase: Maybe[NameCase] = Maybe.empty,
+        variantAliases: Chunk[(String, String)] = Chunk.empty,
+        fieldAliases: Chunk[(String, String)] = Chunk.empty
+    ) derives CanEqual:
+        def isEmpty: Boolean =
+            variantPairs.isEmpty && variantCase.isEmpty && fieldCase.isEmpty &&
+                variantAliases.isEmpty && fieldAliases.isEmpty
+        def nonEmpty: Boolean = !isEmpty
+    end VariantNaming
+
+    /** Merges new explicit variant pairs over existing ones, last-write-wins per Scala
+      * source name (a later `variantNames("X" -> ...)` re-targets X), preserving order.
+      */
+    private[kyo] def mergeVariantPairs(
+        existing: Chunk[(String, String)],
+        added: Chunk[(String, String)]
+    ): Chunk[(String, String)] =
+        val addedSources = added.map(_._1).toSet
+        existing.filterNot((s, _) => addedSources.contains(s)) ++ added
+    end mergeVariantPairs
+
+    /** Raises `VariantNameCollisionException` if two distinct Scala variants target one
+      * wire name. The sorted colliding source-name `Seq` rides the exception.
+      */
+    private[kyo] def checkVariantTargets(pairs: Chunk[(String, String)])(using Frame): Unit =
+        val byWire = pairs.groupBy(_._2)
+        byWire.foreach { (wire, group) =>
+            val sources = group.map(_._1).distinct
+            if sources.size > 1 then
+                throw VariantNameCollisionException(wire, Chunk.from(sources.toSeq.sorted))
+        }
+    end checkVariantTargets
+
+    /** Raises `VariantNameCollisionException` if a variant alias duplicates an effective
+      * primary wire name (from explicit pairs, convention, or raw Scala name) or another alias.
+      * `effectivePrimaries` is the full set of effective wire names as computed by
+      * `effectiveVariantWires`, so convention-derived primaries are included.
+      */
+    private[kyo] def checkVariantAliases(
+        effectivePrimaries: Set[String],
+        aliases: Chunk[(String, String)]
+    )(using Frame): Unit =
+        val byAlias = aliases.groupBy(_._1)
+        byAlias.foreach { (alias, group) =>
+            val targets = group.map(_._2).distinct
+            if effectivePrimaries.contains(alias) || targets.size > 1 then
+                throw VariantNameCollisionException(alias, Chunk.from((alias +: targets).distinct.sorted))
+        }
+    end checkVariantAliases
+
+    /** Raises `FieldNameCollisionException` if a field alias duplicates another field's
+      * wire name or another alias target.
+      */
+    private[kyo] def checkFieldAliases(
+        existing: Chunk[(String, String)],
+        merged: Chunk[(String, String)],
+        primaries: Set[String]
+    )(using Frame): Unit =
+        val byAlias = merged.groupBy(_._1)
+        byAlias.foreach { (alias, group) =>
+            val targets = group.map(_._2).distinct
+            if primaries.contains(alias) || targets.size > 1 then
+                throw FieldNameCollisionException(alias, Chunk.from((alias +: targets).distinct.sorted))
+        }
+    end checkFieldAliases
+
+    /** Computes the effective wire name for every source field, accounting for the
+      * explicit rename chain and the field-case convention. Used by `alias` to build
+      * the primaries set for collision detection.
+      */
+    private[kyo] def effectiveFieldWireNames(
+        sourceFields: Seq[Field[?, ?]],
+        renamedFields: Chunk[(String, String)],
+        naming: VariantNaming
+    ): Set[String] =
+        val renameMap    = renamedFields.toMap
+        val conventionFn = naming.fieldCase.map(nc => internal.NameCaseConversion.convert(nc))
+        @scala.annotation.tailrec
+        def resolveRename(name: String): String =
+            renameMap.get(name) match
+                case Some(next) => resolveRename(next)
+                case None       => name
+        sourceFields.map { sf =>
+            val renamed = resolveRename(sf.name)
+            if renamed != sf.name then renamed
+            else conventionFn.map(fn => fn(sf.name)).getOrElse(sf.name)
+        }.toSet
+    end effectiveFieldWireNames
+
+    /** The Scala variant names derived from a sum type's structure, or empty for a
+      * non-sum (a product schema has no variants to name).
+      */
+    private[kyo] def variantScalaNames(structure: Structure.Type): Chunk[String] =
+        structure match
+            case Structure.Type.Sum(_, _, _, variants, _) => variants.map(_.name)
+            case _                                        => Chunk.empty
+
+    /** The effective wire name of each variant: the explicit pair if present, else the
+      * convention-derived name if a case is set, else the raw Scala name. Mirrors the
+      * encode-side resolution so `variantAlias` validates against the same vocabulary.
+      */
+    private[kyo] def effectiveVariantWires(structure: Structure.Type, naming: VariantNaming): Chunk[String] =
+        val explicit   = naming.variantPairs.toMap
+        val convention = naming.variantCase.map(nc => internal.NameCaseConversion.convert(nc))
+        variantScalaNames(structure).map { scalaName =>
+            explicit.get(scalaName)
+                .orElse(convention.fold(None: Option[String])(fn => Some(fn(scalaName))))
+                .getOrElse(scalaName)
+        }
+    end effectiveVariantWires
+
+    /** Validates that each referenced Scala variant name exists in the derived set,
+      * raising the existing `UnknownVariantException` on the first unknown name. Mirrors
+      * field `rename`'s from-must-exist guarantee for the String-keyed variant methods.
+      */
+    private[kyo] def checkVariantNamesExist(known: Chunk[String], referenced: Chunk[String])(using Frame): Unit =
+        val knownSet = known.toSet
+        referenced.foreach { name =>
+            if !knownSet.contains(name) then
+                throw UnknownVariantException(Seq.empty, name)
+        }
+    end checkVariantNamesExist
+
+    /** Validates that a variant wire name resolves to a known variant's effective wire
+      * name, raising `UnknownVariantException` when it does not.
+      */
+    private[kyo] def checkVariantWireExists(effectiveWires: Chunk[String], wireName: String)(using Frame): Unit =
+        if !effectiveWires.contains(wireName) then
+            throw UnknownVariantException(Seq.empty, wireName)
+    end checkVariantWireExists
 
     // --- Primitive Schema givens ---
 
@@ -2040,28 +2343,40 @@ object Schema:
         constraints: Seq[Constraint] = Seq.empty,
         fieldIds: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
+        variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
-        Schema.init[A](
-            writeFn = writeFn,
-            readFn = readFn,
-            getterFn = getterFn,
-            setterFn = setterFn,
-            segments = segments,
-            examples = examples,
-            fieldDocs = fieldDocs,
-            fieldDeprecated = fieldDeprecated,
-            constraints = constraints,
-            droppedFields = droppedFields,
-            renamedFields = renamedFields,
-            computedFields = computedFields,
-            sourceFields = sourceFields,
-            checks = checks,
-            documentation = doc,
-            fieldIdOverrides = fieldIds,
-            discriminatorField = discriminatorField,
-            structure = structure
-        ).asInstanceOf[Schema[A] { type Focused = E }]
+        lazy val _structure = structure
+        new Schema[A](
+            segments,
+            examples,
+            fieldDocs,
+            fieldDeprecated,
+            constraints,
+            droppedFields,
+            renamedFields,
+            computedFields,
+            sourceFields,
+            checks,
+            doc,
+            fieldIds,
+            discriminatorField,
+            variantNaming
+        ):
+            type Focused = E
+            @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
+                if hasTransforms then transformedWrite(value, writer)
+                else writeFn(value, writer)
+            @publicInBinary def serializeRead(reader: Reader): A =
+                if hasReadTransforms then transformedRead(reader)
+                else readFn(reader)
+            @publicInBinary override def rawSerializeWrite(value: A, writer: Writer): Unit = writeFn(value, writer)
+            @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
+            @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
+            @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
+            override def structure: Structure.Type                                         = _structure
+        end new
+    end createWithFocused
 
     /** Copies `self` into a new `Schema[A]` carrying its codec, getter/setter and structure, with the
       * given metadata fields overridden (each defaults to `self`'s current value). Centralizes the
@@ -2084,6 +2399,7 @@ object Schema:
         constraints: Seq[Constraint] = self.constraints,
         fieldIds: Map[Seq[String], Int] = self.fieldIdOverrides,
         discriminatorField: Maybe[String] = self.discriminatorField,
+        variantNaming: Schema.VariantNaming = self.variantNaming,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
         createWithFocused[A, self.Focused](
@@ -2104,6 +2420,7 @@ object Schema:
             constraints = constraints,
             fieldIds = fieldIds,
             discriminatorField = discriminatorField,
+            variantNaming = variantNaming,
             structure = structure
         )
 

@@ -166,7 +166,7 @@ object Yaml:
         end DocumentMode
 
         /** Default YAML reader configuration: YAML 1.2, one document, and standard safety limits. */
-        val Default: ReaderConfig = ReaderConfig()
+        lazy val Default: ReaderConfig = ReaderConfig()
 
         /** Contextual default reader configuration used by the single-argument decode helpers. */
         given ReaderConfig = Default
@@ -356,7 +356,7 @@ object Yaml:
             )
 
         /** Concrete default writer profile. */
-        val Default: WriterConfig = Readable
+        lazy val Default: WriterConfig = Readable
 
         /** Contextual default writer configuration used by single-argument encode helpers. */
         given WriterConfig = Default

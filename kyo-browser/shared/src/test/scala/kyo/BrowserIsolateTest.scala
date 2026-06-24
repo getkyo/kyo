@@ -6,7 +6,11 @@ import kyo.internal.CdpTypes.*
 
 class BrowserIsolateTest extends BrowserTest:
 
-    override def timeout = 90.seconds
+    // withFork/withNewTab clone a tab: a dozen-plus CDP round-trips plus a navigation and a snapshot
+    // restore. On a saturated CI box (4 vCPUs shared by two test forks and chrome-headless-shell) that can
+    // outrun a tight 90s budget, the same CI-contention latency the download suite already budgets for. This
+    // is a wait budget, not a perf assertion; the leaf assertions still fail fast on a real regression.
+    override def timeout = 180.seconds
 
     // ---- withNewTab ----
 

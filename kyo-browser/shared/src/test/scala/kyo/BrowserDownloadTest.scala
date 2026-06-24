@@ -220,9 +220,19 @@ class BrowserDownloadTest extends BrowserTest:
     // terminal completed") holds. If a future Chrome batches the body into a single completed event,
     // weaken to "at least one Progress at all".
     "onDownload emits at least one Progress before the WillBegin's guid sees state=completed (1 MB body)" in {
-        val bigBody = Span.fromUnsafe(new Array[Byte](1024 * 1024)) // 1 MB of zeros
-        val handler = HttpRoute.getRaw("/big").response(_.bodyBinary).handler { _ =>
-            HttpResponse.ok(bigBody).addHeader("Content-Type", "application/octet-stream")
+        // Throttle the 1 MB body into 64 KB chunks spread over ~1.6s. A buffered 1 MB response over
+        // loopback finishes faster than Chromium's download-progress tick, so only the terminal
+        // "completed" event fires and the "at least one prior Progress" assertion below races (it failed
+        // on Native CI). Streaming the body slowly guarantees at least one in-progress tick.
+        val chunkBytes = Span.fromUnsafe(new Array[Byte](64 * 1024)) // 64 KB
+        val bodyStream: Stream[Span[Byte], Async] = Stream[Span[Byte], Async] {
+            Loop(0) { i =>
+                if i >= 16 then Loop.done(())
+                else Async.delay(100.millis)(Emit.valueWith(Chunk(chunkBytes))(Loop.continue(i + 1)))
+            }
+        }
+        val handler = HttpRoute.getRaw("/big").response(_.bodyStream).handler { _ =>
+            HttpResponse.ok.addField("body", bodyStream).addHeader("Content-Type", "application/octet-stream")
         }
         withLocalhostServer(handler) { (host, port) =>
             withBrowser {

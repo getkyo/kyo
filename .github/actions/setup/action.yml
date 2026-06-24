@@ -93,16 +93,24 @@ runs:
         fi
         export XDG_RUNTIME_DIR="/run/user/$uid"
         mkdir -p "$XDG_RUNTIME_DIR/podman"
-        nohup podman system service --time=0 \
-          "unix://$XDG_RUNTIME_DIR/podman/podman.sock" \
-          > /tmp/podman.log 2>&1 &
-        for _ in $(seq 1 10); do
-          [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ] && break
-          sleep 1
-        done
-        if [ ! -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; then
-          echo "podman API socket did not come up within 10s" >&2
+        sock="$XDG_RUNTIME_DIR/podman/podman.sock"
+        # The rootless podman API socket can take well over 10s to appear on a loaded runner. Retry the
+        # service start a few times, each with a generous wait, instead of failing on the first slow start.
+        up=""
+        for attempt in 1 2 3; do
+          pkill -u "$uid" -f "podman system service" 2>/dev/null || true
+          rm -f "$sock"
+          nohup podman system service --time=0 "unix://$sock" > /tmp/podman.log 2>&1 &
+          for _ in $(seq 1 30); do
+            [ -S "$sock" ] && { up=1; break; }
+            sleep 1
+          done
+          [ -n "$up" ] && break
+          echo "podman API socket did not come up within 30s (attempt $attempt of 3)" >&2
           cat /tmp/podman.log >&2
+        done
+        if [ -z "$up" ]; then
+          echo "podman API socket did not come up after 3 attempts" >&2
           exit 1
         fi
         echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
@@ -112,7 +120,7 @@ runs:
 
     - uses: coursier/setup-action@v3.0.0
       with:
-        jvm: corretto:24
+        jvm: corretto:25
         apps: sbt
 
     # Build and stage the vendored BoringSSL static archives (libssl.a, libcrypto.a) for the runner's

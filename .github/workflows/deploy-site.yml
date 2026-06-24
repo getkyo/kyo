@@ -31,19 +31,19 @@ jobs:
       JAVA_OPTS: -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
       JVM_OPTS:  -Xms3G -Xmx4G -Xss10M -XX:MaxMetaspaceSize=512M
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
         with:
           fetch-depth: 0
       - uses: coursier/cache-action@v8.1.1
       - uses: coursier/setup-action@v3.0.0
         with:
-          jvm: corretto:24
+          jvm: corretto:25
           apps: sbt
       - name: Link the browser bundle (fullLinkJS)
         run: sbt 'kyo-website-bundleJS/Compile/fullLinkJS'
       - name: Render and assemble the site from the current repo
         run: sbt "kyo-websiteJVM/run --out $GITHUB_WORKSPACE/site --repo-root $GITHUB_WORKSPACE"
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
   deploy:
@@ -54,7 +54,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 # Action version pins (@v3/@v4, checkout @v6.0.2, coursier versions) mirror release.yml lines 25 to
 # 37 and the verified upload-pages-artifact + deploy-pages pair. The render is FORWARD-ONLY: WebsiteMain
 # reads the LIVE root README `## Modules` table and each live kyo-*/README.md (WebsiteContent.fromRepo

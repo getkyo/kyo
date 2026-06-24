@@ -104,6 +104,16 @@ Global / concurrentRestrictions := {
     )
 }
 
+// java.lang.foreign (the Foreign Function and Memory API) is final in JDK 22, so modules that use it
+// cannot target Java 17. They override the project-wide `-release 17` (added by kyo-settings) with
+// `-release 25` (current LTS). Because `-release 25` requires a JDK >= 25 to compile, the whole build
+// requires JDK 25 (see the Global/onLoad guard and the CI setup action). Modules that do not use the
+// API keep `-release 17`.
+lazy val foreignRelease = Seq(
+    scalacOptions --= scalacOptionTokens(Set(ScalacOptions.release("17"))).value,
+    scalacOptions ++= scalacOptionTokens(Set(ScalacOptions.release("25"))).value
+)
+
 lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
@@ -121,6 +131,10 @@ lazy val `kyo-settings` = Seq(
     Test / testOptions += Tests.Argument(TestFrameworks.ScalaTest, "-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    // Compact object headers (JEP 519, a product flag in JDK 25 which the build requires) shrink the
+    // per-object header from 12-16 to 8 bytes. The test forks allocate heavily (kyo-tasty decodes 80k
+    // symbols), so this cuts heap pressure where the forks run closest to their cap.
+    Test / javaOptions += "-XX:+UseCompactObjectHeaders",
     // Forked test JVMs otherwise inherit no -Xmx and fall back to 25% of RAM (4GB on the 16GB CI
     // runners), too little for the heavy classpath-loading suites (kyo-tasty loads 80k-symbol
     // classpaths under globalK-way leaf concurrency). Pin an explicit fork heap on CI; with the
@@ -155,9 +169,11 @@ Global / onLoad := {
 
     val javaVersion  = System.getProperty("java.version")
     val majorVersion = javaVersion.split("\\.")(0).toInt
-    if (majorVersion < 21) {
+    // The foreign-API modules (kyo-data, kyo-ffi, kyo-offheap, kyo-tasty) compile at -release 25, which
+    // requires a JDK >= 25; the rest of the build stays at -release 17. So the whole build needs JDK 25.
+    if (majorVersion < 25) {
         throw new IllegalStateException(
-            s"Java version $javaVersion is not supported. Please use Java 21 or higher."
+            s"Java version $javaVersion is not supported. Please use Java 25 (LTS) or higher."
         )
     }
 
@@ -563,6 +579,7 @@ lazy val `kyo-data` =
         .withKyoTest
         .settings(
             `kyo-settings`,
+            foreignRelease,
             libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.6",
             libraryDependencies += "dev.zio"     %%% "izumi-reflect" % "3.0.9" % Test
         )
@@ -660,10 +677,10 @@ lazy val `kyo-offheap` =
         .in(file("kyo-offheap"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`)
+        .settings(`kyo-settings`, foreignRelease)
         .jvmSettings(mimaCheck(false))
         .jvmConfigure(_.settings(
-            doctestScalacOptions := Seq("-release", "22")
+            doctestScalacOptions := Seq("-release", "25")
         ))
         .nativeSettings(
             `native-settings`,
@@ -676,9 +693,10 @@ lazy val `kyo-ffi` =
         .in(file("kyo-ffi"))
         .dependsOn(`kyo-core`)
         .withKyoTest
-        .settings(`kyo-settings`)
+        .settings(`kyo-settings`, foreignRelease)
         .jvmSettings(
             mimaCheck(false),
+            doctestScalacOptions := Seq("-release", "25"),
             Test / javaOptions += "--enable-native-access=ALL-UNNAMED",
             // Hint to module-path consumers that this JAR uses java.lang.foreign.
             Compile / packageBin / packageOptions +=
@@ -707,6 +725,7 @@ lazy val `kyo-ffi-it` =
         .withKyoTest
         .settings(
             `kyo-settings`,
+            foreignRelease,
             publish / skip := true,
             // In-repo bootstrap: hand the plugin the codegen project's own classpath so a cold
             // `kyo-ffi-it/test` builds the codegen first and generates the impls directly, with no
@@ -824,6 +843,7 @@ lazy val `kyo-ffi-codegen` =
         .dependsOn(`kyo-ffi`.jvm % Test)
         .settings(
             `kyo-settings`,
+            foreignRelease,
             libraryDependencies += "org.scala-lang" %% "scala3-tasty-inspector" % scalaVersion.value,
             libraryDependencies += "org.scala-lang" %% "scala3-compiler"        % scalaVersion.value % Test,
             // kyo-test framework wiring (the JVM-only equivalent of .withKyoTest, which only applies to crossProjects).
@@ -939,6 +959,7 @@ lazy val `kyo-ffi-bench` =
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
+            foreignRelease,
             publish / skip := true,
             Compile / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
             Test / javaOptions ++= Seq("--enable-native-access=ALL-UNNAMED"),
@@ -1000,6 +1021,7 @@ lazy val `kyo-tasty` =
         .withKyoTest
         .settings(
             `kyo-settings`,
+            foreignRelease,
             doctestPredef := Seq("import kyo.*", "import kyo.Tasty.*")
         )
         .jvmSettings(
