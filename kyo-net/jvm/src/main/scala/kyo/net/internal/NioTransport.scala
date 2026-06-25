@@ -654,26 +654,31 @@ final private[kyo] class NioTransport private (
                 case e: Exception =>
                     connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
         else if hs eq SSLEngineResult.HandshakeStatus.NEED_TASK then
-            // Unsafe: Fiber.Unsafe.init spawns the delegated-task runner carrier. SSLEngine delegated
-            // tasks are synchronous Runnables (no < Async); the thunk is plain Scala, so Fiber.Unsafe.init
-            // is correct. onComplete re-enters driveHandshake once all tasks have completed.
-            val taskFiber = Fiber.Unsafe.init {
-                @tailrec def runTasks(): Unit =
-                    val task = engine.getDelegatedTask
-                    if task != null then
-                        task.run()
-                        runTasks()
-                end runTasks
-                runTasks()
-            }
-            taskFiber.onComplete { _ =>
+            // Run the SSLEngine's delegated tasks INLINE, then re-enter the handshake directly. The delegated tasks are synchronous Runnables
+            // (CPU-bound key-exchange crypto, not blocking I/O), so running them on the current carrier is correct and brief. The earlier design
+            // spawned a Fiber per NEED_TASK and resumed via onComplete; that made each handshake depend on that fiber being scheduled and its
+            // onComplete firing, and under high concurrency a handshake could stall indefinitely at NEED_TASK when that did not happen. Running
+            // inline removes the extra fiber and the scheduling dependency.
+            try
+                var task = engine.getDelegatedTask
+                while task != null do
+                    task.run()
+                    task = engine.getDelegatedTask
+                end while
                 driveHandshake(handle, tlsState, host, port, connectPromise)
-            }
+            catch
+                case e: Exception =>
+                    connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
         else // FINISHED or NOT_HANDSHAKING
             Log.live.unsafe.debug(s"NioTransport TLS handshake complete channel=${handle.channel.hashCode()}")
             engine.setEnableSessionCreation(false) // disable renegotiation
             // Switch handle to TLS mode: driver will now unwrap/wrap inline
             handle.tls = Present(tlsState)
+            // Clear the upgrade gate now that the handshake is done: the gate (readPumpMayRearm == !upgrading) exists only to stop the OLD plaintext
+            // ReadPump from re-arming the shared pending-read slot DURING the upgrade. The NEW TLS connection wired by completeConnect reuses this
+            // handle, so leaving upgrading set would permanently block its ReadPump from re-arming after its first read, hanging any multi-record
+            // (multi-read) TLS transfer. A no-op for a plain connect(tls) handshake, where upgrading was never set.
+            handle.upgrading = false
             completeConnect(handle, connectPromise)
         end if
     end driveHandshake
@@ -981,6 +986,9 @@ final private[kyo] class NioTransport private (
             // Unsafe: NioTransport only creates Connection[NioHandle] instances, so this downcast is safe.
             val nioConn = conn.asInstanceOf[Connection[NioHandle]]
             val handle  = nioConn.handle
+            // Mark the handle upgrading BEFORE detach so the plaintext ReadPump stops re-arming reads (readPumpMayRearm), preventing a pump re-arm
+            // from orphaning the handshake's read promise on the shared pendingReadPromise slot.
+            handle.upgrading = true
             // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT closing
             // it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the channel would leak
             // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new

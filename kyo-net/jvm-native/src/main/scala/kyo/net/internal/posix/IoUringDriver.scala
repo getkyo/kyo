@@ -1014,18 +1014,19 @@ final private[net] class IoUringDriver private[posix] (
         end if
     end teardownRing
 
-    // Unsafe: Fiber.Unsafe.init spawns the reap-loop carrier without re-entering the effect system. On JVM/Native the @Ffi.blocking
-    // wait fiber completes synchronously and the while loop body runs inline, without growing the stack. On JS the wait fiber is
-    // genuinely pending; we exit the while loop, register an onComplete callback, and re-enter via a fresh Fiber.Unsafe.init from the
-    // libuv event loop (fresh stack frame, no stack growth). The onComplete path is NOT taken on JVM/Native because done() is always
-    // true: this avoids the StackOverflowError that naive self-recursive onComplete would cause (IOPromise.eval fires onComplete inline
-    // when the fiber is already done; it is NOT a trampoline).
+    // The reap loop runs on a DEDICATED daemon thread, NOT a kyo scheduler carrier. It is a non-preemptible, non-suspending loop (a plain while
+    // over the @Ffi.blocking submit-and-wait, which on JVM/Native completes inline), so on a carrier it PINS that carrier: the scheduler's
+    // doPreempt cannot reclaim a loop with no fiber safepoints, and under CPU contention a fiber continuation completed inline from the loop (a
+    // ReadPump byte delivery waking a parked take) can be routed back onto the pinned carrier by the scheduler's fallback and STRAND there, hanging
+    // the connection. A dedicated thread keeps the loop off the carrier pool, so every fiber it completes is scheduled (Worker.current() == null)
+    // onto a real carrier and nothing strands. The thread is a daemon, so it never blocks a clean JVM exit and is exempt from the non-daemon-thread
+    // leak check; it exits when close() sets closedFlag and wakes the reap. (JS/WASM use a separate driver and are unaffected.)
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Mark BEFORE spawning the carrier: a close() racing start observes started=true and defers teardown to the reap loop, which (once
+        // Mark BEFORE spawning the loop: a close() racing start observes started=true and defers teardown to the reap loop, which (once
         // spawned) sees closedFlag set, runs zero iterations, and tears the ring down itself. started.set happens-before the spawn.
         started.set(true)
-        // When this driver belongs to the process-shared default transport, spawn the carrier through a named wrapper the kyo-test leak check
-        // allowlists (the singleton is never closed by design); an owned transport keeps the plain reapLoop frame so a real leak still trips.
+        // The process-shared default transport registers a diagnostics snapshot of its by-design process-lifetime loop (the singleton is never
+        // closed); read on the construction thread before the spawn.
         if kyo.net.internal.ProcessSharedTransport.isBuilding then
             discard(kyo.internal.Diagnostics.register("IoUringDriver@" + java.lang.System.identityHashCode(this)) { () =>
                 val pend = new StringBuilder
@@ -1043,15 +1044,25 @@ final private[net] class IoUringDriver private[posix] (
                 s"closed=${closedFlag.get()} reapExited=${reapExited.get()} reapCycles=$diagReapCycles " +
                     s"pending(${pending.size})=[$pend] inFlight=[$infl] closeAfterDrain(${closeAfterDrain.size})=[$cad] stalledRaw=${stalledRaw.size}"
             })
-            Fiber.Unsafe.init { processSharedTransportReapLoop() }
-        else Fiber.Unsafe.init { reapLoop() }
         end if
+        val donePromise = Promise.Unsafe.init[Unit, Any]()
+        val thread =
+            new Thread(
+                () =>
+                    try
+                        reapLoop()
+                        donePromise.completeDiscard(Result.succeed(()))
+                    catch
+                        case t: Throwable =>
+                            if !closedFlag.get() then Log.live.unsafe.error(s"$label reap loop crashed", t)
+                            donePromise.completeDiscard(Result.panic(t))
+                ,
+                s"$label-reap-loop"
+            )
+        thread.setDaemon(true)
+        thread.start()
+        donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
-
-    /** Carrier wrapper used only when this driver belongs to the process-shared default transport ([[kyo.net.NetPlatform.transport]]), so the
-      * leak check can allowlist exactly that by-design process-lifetime carrier. Owned transports spawn [[reapLoop]] directly.
-      */
-    private def processSharedTransportReapLoop()(using AllowUnsafe, Frame): Unit = reapLoop()
 
     private val ReapTimeoutNs =
         100_000_000L // 100ms bounded fallback (only used when the wake eventfd is unavailable); otherwise the wait is indefinite
@@ -1178,16 +1189,17 @@ final private[net] class IoUringDriver private[posix] (
             // we park every op is genuinely in flight and a real CQE (or the wake eventfd) returns the wait. io_uring_submit submits the whole SQ
             // ring (the wake POLL_ADD included), so the park is never entered with an unsubmitted op outstanding.
             flushSubmits()
-            // Indefinite when the wake watch is armed AND no op is parked on a full submission queue (woken by a real CQE or by the wake eventfd,
-            // like NIO's select() + wakeup()). When ops ARE parked in stalledRaw / stalledSubmits, the fused enter that submits this turn frees SQ
-            // slots, but reArmStalled re-arms the parked ops only AFTER the wait returns; an indefinite wait whose sole submitted op is the
-            // non-firing wake POLL_ADD would then never return to re-arm them (a deadlock the depth-1 SQ-full test reproduces). So bound the wait
-            // while anything is parked, so the re-arm retries each turn until a freed slot takes it. The bounded park is also the fallback when the
-            // wake is unavailable.
-            val hasStalled = !stalledRaw.isEmpty || !stalledSubmits.isEmpty
-            val timeout    = if wakePollArmed && !hasStalled then -1L else ReapTimeoutNs
+            // Always a BOUNDED park (ReapTimeoutNs), never indefinite. The wake eventfd still returns the park EARLY for prompt response to a
+            // cross-carrier submission, but the bounded timeout is the LIVENESS FLOOR. An indefinite park (the old `wakePollArmed && !hasStalled`
+            // case) relied on the wake multishot POLL_ADD's CQE always arriving; under sustained concurrent load a dropped or stale wake CQE (e.g. a
+            // CQ-overflow that loses the POLL's `!more`, leaving wakePollArmed stale while the poll is actually disarmed) then stranded the reap
+            // forever -- it never drained the engine queue again, hanging every connection whose recv/send arm sat there (the .times(100)
+            // io_uring/boringssl hang: all carriers idle, the reap parked in submit_and_wait, the take never completed). Bounding the wait recovers
+            // any lost wake within ReapTimeoutNs, the same robustness the readiness pollers get from their bounded poll(..., 100, ...): the wake is a
+            // prompt-response optimization, not a correctness dependency. reArmStalled still retries parked SQ-full ops each turn.
+            val timeout = ReapTimeoutNs
             val waitFiber =
-                uring.kyo_uring_submit_and_wait_timeout(ring, cqePtr, timeout) // indefinite (wake-armed, nothing parked) or bounded park
+                uring.kyo_uring_submit_and_wait_timeout(ring, cqePtr, timeout) // bounded park; the wake eventfd returns it early
             if waitFiber.done() then
                 // JVM/Native inline-completion path: extract result and continue the while loop without growing the stack.
                 // rc is a raw signed Int; isTimeout operates on the raw negative -ETIME (a POSIX-clamped -1 would lose the errno identity).
@@ -1383,53 +1395,55 @@ final private[net] class IoUringDriver private[posix] (
                                     val staging = recvStagingFor(h)
                                     deferredDecrement = true
                                     submitEngineOp { () =>
-                                      try
-                                        val plain = feedAndDecrypt(engine, staging, res, h)
-                                        // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): feedAndDecrypt calls
-                                        // handle.requestClose() on a fatal TLS record (readPlain == -2). The io_uring read CQE holds no dispatch
-                                        // guard, so requestClose runs immediately; the handle is closing or already closed. Failing the read
-                                        // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned / endDispatch
-                                        // does when the dispatch guard observes the close bit.
-                                        if h.isClosing() then
-                                            promise.completeDiscard(Result.fail(Closed(
-                                                label,
-                                                summon[Frame],
-                                                s"fatal TLS record fd=${h.readFd}"
-                                            )))
-                                        else if plain.length > 0 then
-                                            promise.completeDiscard(Result.succeed(Span.fromUnsafe(plain)))
-                                            // Flush any ciphertext the read produced (e.g. a TLS 1.3 KeyUpdate response queued by the engine
-                                            // during the decode). drainReadProducedCiphertext (inside feedAndDecrypt) appended it to
-                                            // pendingCipher; flushTls submits a send SQE for the unsent region so it reaches the peer.
-                                            // This mirrors the poller's writableArmed / armWritableForFlush machinery that drains the tail
-                                            // after every write engine op. No flush is submitted when pendingCipher is empty (the common path
-                                            // for reads that produce no outbound ciphertext) or when a send is already in flight.
-                                            flushTls(h)
-                                        else if h.peerCleanClose then
-                                            // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the
-                                            // ReadPump tears down, rather than re-arming for ciphertext the peer will never send. closeReason then
-                                            // reports CleanClose, not Truncated. Mirrors the poller's dispatchReadTls clean-close branch.
-                                            promise.completeDiscard(Result.succeed(Span.empty[Byte]))
-                                        else
-                                            // Only handshake / partial-record bytes consumed: submit another recv on the same promise rather than
-                                            // signalling EOF, mirroring the poller's rearmOwned. Then flush any read-produced ciphertext so a
-                                            // KeyUpdate response is not held until the next app-data write.
-                                            awaitRead(h, promise)
-                                            flushTls(h)
-                                        end if
-                                      catch
-                                          // A TLS engine op threw a fatal alert (JDK SSLEngine.unwrap raises SSLHandshakeException on a received
-                                          // fatal alert, which is NOT the readPlain==-2 return the isClosing branch above handles). drainEngineOps
-                                          // would otherwise swallow it and strand this read promise (a silent hang); fail the read so the connection
-                                          // tears down. The deferred in-flight decrement is a separate queued op, so it still runs after this.
-                                          case e: Throwable =>
-                                              Log.live.unsafe.warn(s"$label TLS engine read failed fd=${h.readFd}, closing connection: ${e.getMessage}")
-                                              promise.completeDiscard(Result.fail(Closed(
-                                                  label,
-                                                  summon[Frame],
-                                                  s"TLS engine read failed fd=${h.readFd}: ${e.getMessage}"
-                                              )))
-                                      end try
+                                        try
+                                            val plain = feedAndDecrypt(engine, staging, res, h)
+                                            // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): feedAndDecrypt calls
+                                            // handle.requestClose() on a fatal TLS record (readPlain == -2). The io_uring read CQE holds no dispatch
+                                            // guard, so requestClose runs immediately; the handle is closing or already closed. Failing the read
+                                            // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned / endDispatch
+                                            // does when the dispatch guard observes the close bit.
+                                            if h.isClosing() then
+                                                promise.completeDiscard(Result.fail(Closed(
+                                                    label,
+                                                    summon[Frame],
+                                                    s"fatal TLS record fd=${h.readFd}"
+                                                )))
+                                            else if plain.length > 0 then
+                                                promise.completeDiscard(Result.succeed(Span.fromUnsafe(plain)))
+                                                // Flush any ciphertext the read produced (e.g. a TLS 1.3 KeyUpdate response queued by the engine
+                                                // during the decode). drainReadProducedCiphertext (inside feedAndDecrypt) appended it to
+                                                // pendingCipher; flushTls submits a send SQE for the unsent region so it reaches the peer.
+                                                // This mirrors the poller's writableArmed / armWritableForFlush machinery that drains the tail
+                                                // after every write engine op. No flush is submitted when pendingCipher is empty (the common path
+                                                // for reads that produce no outbound ciphertext) or when a send is already in flight.
+                                                flushTls(h)
+                                            else if h.peerCleanClose then
+                                                // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the
+                                                // ReadPump tears down, rather than re-arming for ciphertext the peer will never send. closeReason then
+                                                // reports CleanClose, not Truncated. Mirrors the poller's dispatchReadTls clean-close branch.
+                                                promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                                            else
+                                                // Only handshake / partial-record bytes consumed: submit another recv on the same promise rather than
+                                                // signalling EOF, mirroring the poller's rearmOwned. Then flush any read-produced ciphertext so a
+                                                // KeyUpdate response is not held until the next app-data write.
+                                                awaitRead(h, promise)
+                                                flushTls(h)
+                                            end if
+                                        catch
+                                            // A TLS engine op threw a fatal alert (JDK SSLEngine.unwrap raises SSLHandshakeException on a received
+                                            // fatal alert, which is NOT the readPlain==-2 return the isClosing branch above handles). drainEngineOps
+                                            // would otherwise swallow it and strand this read promise (a silent hang); fail the read so the connection
+                                            // tears down. The deferred in-flight decrement is a separate queued op, so it still runs after this.
+                                            case e: Throwable =>
+                                                Log.live.unsafe.warn(
+                                                    s"$label TLS engine read failed fd=${h.readFd}, closing connection: ${e.getMessage}"
+                                                )
+                                                promise.completeDiscard(Result.fail(Closed(
+                                                    label,
+                                                    summon[Frame],
+                                                    s"TLS engine read failed fd=${h.readFd}: ${e.getMessage}"
+                                                )))
+                                        end try
                                     }
                                 case Absent =>
                                     val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res) // right-sized copy out

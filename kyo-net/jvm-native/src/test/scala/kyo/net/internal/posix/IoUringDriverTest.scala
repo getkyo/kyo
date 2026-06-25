@@ -331,27 +331,29 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "the reap wait blocks indefinitely when the wake is armed, not on a polling timeout" in {
+        "the reap wait uses a bounded liveness-floor timeout, woken early by the wake" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
-                // The driver creates a real wake eventfd and arms a multishot IORING_OP_POLL_ADD on it, so the reap wait blocks INDEFINITELY for
-                // the next CQE (returned by real I/O or by the wake eventfd, like NIO's selector.select() + wakeup()) instead of polling a bounded
-                // timeout to discover cross-carrier submissions, which head-of-line-blocked them behind the wait under load. firstWait fires inside
-                // the spy once the first reap wait is entered; inspect the timeout it passed to the real submit_and_wait: negative == indefinite.
+                // The reap wait is ALWAYS bounded (ReapTimeoutNs = 100ms), never indefinite. The driver still creates a real wake eventfd and arms a
+                // multishot IORING_OP_POLL_ADD on it, so a cross-carrier submission returns the wait EARLY for prompt response; the bounded timeout is
+                // the LIVENESS FLOOR that recovers a dropped or stale wake CQE within 100ms. An indefinite wait relied on the wake CQE always
+                // arriving; under sustained load a lost wake stranded the reap forever (the .times(100) io_uring/boringssl hang). 100ms is a bounded
+                // park (like the readiness pollers' poll(..., 100, ...)), not a busy-poll spin. firstWait fires once the first reap wait is entered;
+                // inspect the timeout it passed to the real submit_and_wait.
                 recording.firstWait.safe.get.map { _ =>
                     val t = recording.lastWaitTimeoutNs
-                    assert(t < 0L, s"reap wait must be indefinite (negative timeout) when the wake is armed, got $t ns")
+                    assert(t == 100000000L, s"reap wait must use the bounded 100ms liveness-floor timeout (ReapTimeoutNs), got $t ns")
                 }
             }.map(_ => succeed)
         }
 
-        "a cross-carrier submitEngineOp wakes the indefinitely-parked reap loop, which keeps running across wakes" in {
+        "a cross-carrier submitEngineOp runs on the reap loop, which keeps running across wakes" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
-                // With an indefinite reap wait there is no timeout turn: the ONLY thing that returns the parked wait is a CQE. A cross-carrier
-                // submitEngineOp writes the wake eventfd, whose armed multishot poll fires a CQE that returns the wait so the loop drains and runs
-                // the op. Each op completing therefore proves the wake delivered end to end (real eventfd, real ring, no mock); running a SECOND op
-                // after the first proves the loop re-parked and kept running across wakes (the resilience the old empty-timeout-turn test covered).
+                // A cross-carrier submitEngineOp enqueues the op and writes the wake eventfd, whose armed multishot poll fires a CQE that returns the
+                // parked reap wait so the loop drains the engine queue and runs the op (real eventfd, real ring, no mock). The op completing proves
+                // the cross-carrier handoff works end to end; running a SECOND op after the first proves the loop re-parked and kept running across
+                // wakes (the resilience the old empty-timeout-turn test covered).
                 recording.firstWait.safe.get.flatMap { _ =>
                     val ran1 = Promise.Unsafe.init[Unit, Abort[Closed]]()
                     drv.submitEngineOp(() => ran1.completeDiscard(Result.succeed(())))
@@ -372,7 +374,7 @@ class IoUringDriverTest extends Test:
                     val payload = Span.fromUnsafe(Array.tabulate[Byte](8)(i => i.toByte))
                     val reaped  = recording.awaitReap()
                     // Observe the per-write buffer OPEN while its send SQE is prepped-but-unsubmitted, deterministically and without any
-                    // dependency on reap-loop latency. The reap wait now blocks indefinitely and is woken promptly by a submission, so a flush
+                    // dependency on reap-loop latency. The reap wait blocks on a bounded timeout and is woken promptly by a submission, so a flush
                     // op queued ahead of a single pin would be prepped AND its send SQE submitted + reaped before the test could observe the
                     // in-flight window. Two pins close that race: pin1 blocks the carrier FIRST, so the write's flush op (and pin2) queue behind
                     // a blocked carrier; releasing gate1 then runs the flush (prep the send SQE + record the per-write buffer) and parks at pin2

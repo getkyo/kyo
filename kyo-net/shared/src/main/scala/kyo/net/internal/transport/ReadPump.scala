@@ -84,8 +84,13 @@ final private[kyo] class ReadPump[Handle](
         end match
 
     private def requestNextRead()(using AllowUnsafe, Frame): Unit =
-        discard(becomeAvailable())
-        driver.awaitRead(handle, self)
+        if driver.readPumpMayRearm(handle) then
+            discard(becomeAvailable())
+            driver.awaitRead(handle, self)
+        // else: a STARTTLS upgrade has taken over this handle (driver.readPumpMayRearm == false). Stop re-arming WITHOUT tearing down: the upgrade
+        // reuses the same fd and drives its own reads, and a pump re-arm here would race the handshake for the handle's single pending-read slot and
+        // orphan the handshake's read promise. The pump's already-in-flight read (if any) was failed by detachForUpgrade.
+        end if
     end requestNextRead
 
     private def teardown()(using AllowUnsafe, Frame): Unit =

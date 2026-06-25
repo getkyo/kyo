@@ -224,22 +224,21 @@ final private[net] class PollerIoDriver private[posix] (
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}"
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Unsafe: Fiber.Unsafe.init spawns the poll-loop carrier without re-entering the effect system. The while loop is
-        // the JVM/Native inline-completion path: backend.poll returns a Fiber.Unsafe that is already done(), so we extract events via
-        // poll() and loop without growing the stack (the while replaces @tailrec since the JS branch cannot be in tail position).
-        // On JS the @Ffi.blocking fiber is genuinely pending; we exit the while loop, register an onComplete callback, and re-enter via
-        // a fresh Fiber.Unsafe.init from the libuv event loop (fresh stack frame, no stack growth). The onComplete path is NOT taken on
-        // JVM/Native because done() is always true: this avoids the StackOverflowError that naive self-recursive onComplete would cause
-        // (IOPromise.eval fires onComplete INLINE when the fiber is already done; it is NOT a trampoline).
+        // The poll loop runs on a DEDICATED daemon thread, NOT a kyo scheduler carrier. It is a non-preemptible, non-suspending loop (a plain
+        // while over backend.poll; on JVM/Native the @Ffi.blocking wait fiber completes inline), so on a carrier it PINS that carrier: the
+        // scheduler's doPreempt cannot reclaim a loop with no fiber safepoints, and under CPU contention a fiber continuation completed inline from
+        // the loop (a ReadPump byte delivery waking a parked take) can be routed back onto the pinned carrier by the scheduler's fallback and STRAND
+        // there, hanging the connection. A dedicated thread keeps the loop off the carrier pool, so every fiber it completes is scheduled
+        // (Worker.current() == null) onto a real carrier and nothing strands. The thread is a daemon, so it never blocks a clean JVM exit and is
+        // exempt from the non-daemon-thread leak check; it exits when close() sets closedFlag and wakes the poll (bounded by the poll timeout
+        // otherwise). The returned Fiber.Unsafe completes when the loop thread exits. (JS/WASM use a separate driver and are unaffected.)
         started.set(true)
         // Arm the poll-loop wakeup (epoll eventfd / kqueue EVFILT_USER) so submitChange can make a parked poll return promptly instead of waiting
         // out the bounded park. Best-effort: if it fails to arm, the driver still drains every cycle via the bounded park, only losing the
         // prompt-wake latency improvement. Armed before the loop starts so the very first submitted change can wake it.
         wakeArmed.set(backend.registerWake(pollerFd, pollScratch))
-        // When this driver belongs to the process-shared default transport, spawn the carrier through a named wrapper the kyo-test leak check
-        // allowlists: that singleton is never closed by design, so its idle head-of-line-blocked carrier is expected infra, not a leak. An owned
-        // transport keeps the plain pollLoop frame, so a leaked owned transport still trips the check. The flag is read here on the construction
-        // thread, before the spawn; the body then runs on a worker carrying the chosen frame.
+        // The process-shared default transport registers a diagnostics snapshot of its by-design process-lifetime loop (the singleton is never
+        // closed); read on the construction thread before the spawn.
         if kyo.net.internal.ProcessSharedTransport.isBuilding then
             discard(kyo.internal.Diagnostics.register("PollerIoDriver@" + java.lang.System.identityHashCode(this)) { () =>
                 val reads = new StringBuilder
@@ -251,15 +250,25 @@ final private[net] class PollerIoDriver private[posix] (
                 s"closed=${closedFlag.get()} pollCycles=$diagPollCycles activeFds=${activeFds.size} " +
                     s"pendingReads=[$reads] pendingWritables=[$writes] pendingAccepts=[$accepts]"
             })
-            Fiber.Unsafe.init { processSharedTransportPollLoop() }
-        else Fiber.Unsafe.init { pollLoop() }
         end if
+        val donePromise = Promise.Unsafe.init[Unit, Any]()
+        val thread =
+            new Thread(
+                () =>
+                    try
+                        pollLoop()
+                        donePromise.completeDiscard(Result.succeed(()))
+                    catch
+                        case t: Throwable =>
+                            if !closedFlag.get() then Log.live.unsafe.error(s"$label poll loop crashed", t)
+                            donePromise.completeDiscard(Result.panic(t))
+                ,
+                s"$label-poll-loop"
+            )
+        thread.setDaemon(true)
+        thread.start()
+        donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
-
-    /** Carrier wrapper used only when this driver belongs to the process-shared default transport ([[kyo.net.NetPlatform.transport]]), so the
-      * leak check can allowlist exactly that by-design process-lifetime carrier. Owned transports spawn [[pollLoop]] directly.
-      */
-    private def processSharedTransportPollLoop()(using AllowUnsafe, Frame): Unit = pollLoop()
 
     /** Free the per-driver poll scratch exactly once. Called by the poll loop carrier at its terminal exit (the loop ran and its last poll has
       * completed, so the buffer is provably not in use) and by close()'s never-started path (the loop never ran). The CAS makes it idempotent
@@ -1332,59 +1341,64 @@ final private[net] class PollerIoDriver private[posix] (
             // submitEngineOp enqueue, the same mechanism as writableArmed. The at-most-one-in-flight guarantee ensures the next
             // recvNow write cannot happen before this feedCiphertext completes.
             submitEngineOp { () =>
-              try
-                var plain   = feedAndDecrypt(engine, staging, n, handle)
-                var eof     = false
-                var errno   = 0
-                var drained = false
-                // Partial-record drain (edge-triggered): if the engine consumed ciphertext but produced no plaintext, a TLS record is split
-                // across recv boundaries and the remaining ciphertext may ALREADY be in the kernel with no new readiness edge to come. Under
-                // EPOLLET the ONLY definitive "socket empty" signal is an explicit EAGAIN: a short recv (fewer bytes than the buffer) does NOT
-                // prove the socket drained, because back-to-back ciphertext keeps arriving and more may already be queued. So recv+feed until the
-                // engine yields plaintext, the socket reports EAGAIN, or the peer closes, rather than inferring emptiness from a short recv and
-                // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
-                // transfer strands on the poller under load.
-                while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && !drained do
-                    val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
-                    val rN = r.value.toInt
-                    if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle)
-                    else if rN == 0 then eof = true
-                    else if isWouldBlock(r.errorCode) then drained = true
-                    else errno = r.errorCode
+                try
+                    var plain   = feedAndDecrypt(engine, staging, n, handle)
+                    var eof     = false
+                    var errno   = 0
+                    var drained = false
+                    // Partial-record drain (edge-triggered): if the engine consumed ciphertext but produced no plaintext, a TLS record is split
+                    // across recv boundaries and the remaining ciphertext may ALREADY be in the kernel with no new readiness edge to come. Under
+                    // EPOLLET the ONLY definitive "socket empty" signal is an explicit EAGAIN: a short recv (fewer bytes than the buffer) does NOT
+                    // prove the socket drained, because back-to-back ciphertext keeps arriving and more may already be queued. So recv+feed until the
+                    // engine yields plaintext, the socket reports EAGAIN, or the peer closes, rather than inferring emptiness from a short recv and
+                    // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
+                    // transfer strands on the poller under load.
+                    while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && !drained do
+                        val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
+                        val rN = r.value.toInt
+                        if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle)
+                        else if rN == 0 then eof = true
+                        else if isWouldBlock(r.errorCode) then drained = true
+                        else errno = r.errorCode
+                        end if
+                    end while
+                    // More ciphertext may remain in the kernel UNLESS the socket is confirmed empty (EAGAIN observed), the stream ended (EOF), the
+                    // peer closed cleanly, or the recv errored. After delivering plaintext the socket is NOT confirmed empty (the loop stops the
+                    // moment plaintext appears, before the next recv), so the consumer-paced drain must re-dispatch to pull the rest; under EPOLLET no
+                    // fresh edge fires while the fd was still readable. A spurious re-dispatch (no actual bytes) hits EAGAIN and re-arms harmlessly.
+                    handle.readMightHaveMore = !drained && !eof && errno == 0 && !handle.peerCleanClose
+                    if plain.length > 0 then
+                        finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(plain)))
+                    else if handle.peerCleanClose then
+                        // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the ReadPump tears down,
+                        // rather than re-arming for ciphertext the peer will never send. closeReason then reports CleanClose, not Truncated.
+                        finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                    else if eof then
+                        // A bare FIN arrived mid-record (no close_notify): record the truncation and surface EOF.
+                        handle.peerEof = true
+                        finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                    else if errno != 0 then
+                        finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"recv failed fd=$fd errno=$errno")))
+                    else
+                        // Only handshake/partial-record bytes consumed and the socket is drained (EAGAIN): wait for more ciphertext on the next edge.
+                        rearmOwned(fd, handle, promise)
                     end if
-                end while
-                // More ciphertext may remain in the kernel UNLESS the socket is confirmed empty (EAGAIN observed), the stream ended (EOF), the
-                // peer closed cleanly, or the recv errored. After delivering plaintext the socket is NOT confirmed empty (the loop stops the
-                // moment plaintext appears, before the next recv), so the consumer-paced drain must re-dispatch to pull the rest; under EPOLLET no
-                // fresh edge fires while the fd was still readable. A spurious re-dispatch (no actual bytes) hits EAGAIN and re-arms harmlessly.
-                handle.readMightHaveMore = !drained && !eof && errno == 0 && !handle.peerCleanClose
-                if plain.length > 0 then
-                    finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(plain)))
-                else if handle.peerCleanClose then
-                    // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the ReadPump tears down,
-                    // rather than re-arming for ciphertext the peer will never send. closeReason then reports CleanClose, not Truncated.
-                    finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
-                else if eof then
-                    // A bare FIN arrived mid-record (no close_notify): record the truncation and surface EOF.
-                    handle.peerEof = true
-                    finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
-                else if errno != 0 then
-                    finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"recv failed fd=$fd errno=$errno")))
-                else
-                    // Only handshake/partial-record bytes consumed and the socket is drained (EAGAIN): wait for more ciphertext on the next edge.
-                    rearmOwned(fd, handle, promise)
-                end if
-              catch
-                  // A TLS engine op threw, almost always a fatal alert surfaced by the engine (feedAndDecrypt -> JdkSslEngine.readPlain ->
-                  // SSLEngine.unwrap raising SSLHandshakeException, e.g. a peer's certificate_required). drainEngineOps deliberately catches
-                  // a throwing op to keep the FIFO worker draining for other connections, with the contract "the throwing op's own promise
-                  // handling is its concern" -- but this op held a pending read promise, so a bare escape strands it (the connection's read
-                  // never completes -> a silent hang to the leaf timeout). Honor that contract: fail the read promise so the connection tears
-                  // down with the engine error instead of hanging. finishDispatch has not run on this path (the throw precedes every branch).
-                  case e: Throwable =>
-                      Log.live.unsafe.warn(s"$label TLS engine read failed fd=$fd, closing connection: ${e.getMessage}")
-                      finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"TLS engine read failed fd=$fd: ${e.getMessage}")))
-              end try
+                catch
+                    // A TLS engine op threw, almost always a fatal alert surfaced by the engine (feedAndDecrypt -> JdkSslEngine.readPlain ->
+                    // SSLEngine.unwrap raising SSLHandshakeException, e.g. a peer's certificate_required). drainEngineOps deliberately catches
+                    // a throwing op to keep the FIFO worker draining for other connections, with the contract "the throwing op's own promise
+                    // handling is its concern" -- but this op held a pending read promise, so a bare escape strands it (the connection's read
+                    // never completes -> a silent hang to the leaf timeout). Honor that contract: fail the read promise so the connection tears
+                    // down with the engine error instead of hanging. finishDispatch has not run on this path (the throw precedes every branch).
+                    case e: Throwable =>
+                        Log.live.unsafe.warn(s"$label TLS engine read failed fd=$fd, closing connection: ${e.getMessage}")
+                        finishDispatch(
+                            fd,
+                            handle,
+                            promise,
+                            Result.fail(Closed(label, summon[Frame], s"TLS engine read failed fd=$fd: ${e.getMessage}"))
+                        )
+                end try
             }
         else if n == 0 then
             // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered EOF first): record
@@ -1397,20 +1411,25 @@ final private[net] class PollerIoDriver private[posix] (
             handle.readMightHaveMore = false
             // Socket buffer empty: check for already-buffered plaintext first (via the engine FIFO), then re-arm if none.
             submitEngineOp { () =>
-              try
-                if engine.hasBufferedPlaintext then
-                    val buffered = engine.readBuffered()
-                    if buffered.nonEmpty then finishDispatch(fd, handle, promise, Result.succeed(buffered))
+                try
+                    if engine.hasBufferedPlaintext then
+                        val buffered = engine.readBuffered()
+                        if buffered.nonEmpty then finishDispatch(fd, handle, promise, Result.succeed(buffered))
+                        else rearmOwned(fd, handle, promise)
+                        end if
                     else rearmOwned(fd, handle, promise)
                     end if
-                else rearmOwned(fd, handle, promise)
-                end if
-              catch
-                  // A buffered-plaintext engine op threw (a fatal alert in the buffered records); fail the read promise rather than letting
-                  // the throw escape drainEngineOps and strand the connection (see the dispatchReadTls feed op above for the full rationale).
-                  case e: Throwable =>
-                      finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"TLS engine read failed fd=$fd: ${e.getMessage}")))
-              end try
+                catch
+                    // A buffered-plaintext engine op threw (a fatal alert in the buffered records); fail the read promise rather than letting
+                    // the throw escape drainEngineOps and strand the connection (see the dispatchReadTls feed op above for the full rationale).
+                    case e: Throwable =>
+                        finishDispatch(
+                            fd,
+                            handle,
+                            promise,
+                            Result.fail(Closed(label, summon[Frame], s"TLS engine read failed fd=$fd: ${e.getMessage}"))
+                        )
+                end try
             }
         else
             handle.readMightHaveMore = false

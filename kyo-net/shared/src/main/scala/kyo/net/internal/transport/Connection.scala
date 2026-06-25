@@ -137,9 +137,10 @@ final private[kyo] class Connection[Handle] private (
             // These are raw network bytes (TLS ciphertext) that the handshake engine needs.
             val buffered = inbound.close()
             discard(outbound.close())
-            // Cancel pending I/O promises (causes pumps to see failure and exit teardown).
-            // Intentionally does NOT call driver.closeHandle so the channel stays open.
-            driver.cancel(handle)
+            // Fail pending I/O promises (causes pumps to see failure and exit teardown). Routed through driver.detachForUpgrade rather than
+            // driver.cancel so a driver can keep its transport registration for the upgrade: the NIO driver keeps the SelectionKey (avoiding a
+            // cancel+re-register race), while other drivers fall back to cancel. Intentionally does NOT call driver.closeHandle so the fd stays open.
+            driver.detachForUpgrade(handle)
             buffered.map(Chunk.from(_))
         else Absent
         end if

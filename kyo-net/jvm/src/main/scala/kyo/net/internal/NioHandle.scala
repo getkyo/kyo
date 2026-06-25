@@ -23,6 +23,10 @@ final private[kyo] class NioHandle private (
 ):
     val readBuffer: ByteBuffer                                                  = ByteBuffer.allocateDirect(readBufferSize)
     @volatile var pendingReadPromise: Promise.Unsafe[Span[Byte], Abort[Closed]] = scala.compiletime.uninitialized
+    // Set true at the start of a STARTTLS upgrade (before detachForUpgrade), so the plaintext ReadPump stops re-arming reads on this handle and
+    // cannot orphan the handshake's read promise on the shared pendingReadPromise slot (see NioIoDriver.readPumpMayRearm). Cleared when the
+    // handshake completes (driveHandshake), so the upgraded TLS connection's ReadPump can re-arm reads for multi-record transfers.
+    @volatile var upgrading: Boolean = false
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */

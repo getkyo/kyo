@@ -106,41 +106,36 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     end opsToString
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
-        // Unsafe: Fiber.Unsafe.init spawns the NIO event-loop carrier without re-entering the effect system.
-        // The @tailrec poll loop is plain Scala (closedFlag.get() and pollOnce() are both synchronous);
-        // no < Async computation is inside the thunk, so Fiber.Unsafe.init is correct here.
-        // When this driver belongs to the process-shared default transport, run the carrier through a named loop the kyo-test leak check
-        // allowlists (the singleton is never closed by design, so its idle carrier is expected infra); an owned transport keeps the plain
-        // loop so a leaked owned transport still trips the check. See kyo.net.internal.ProcessSharedTransport.
-        val fiber =
-            if ProcessSharedTransport.isBuilding then
-                Fiber.Unsafe.init {
-                    @tailrec def processSharedTransportNioLoop(): Unit =
-                        if !closedFlag.get() && pollOnce() then processSharedTransportNioLoop()
-                    processSharedTransportNioLoop()
-                }
-            else
-                Fiber.Unsafe.init {
-                    @tailrec def loop(): Unit =
-                        if !closedFlag.get() && pollOnce() then loop()
-                    loop()
-                }
-
-        fiber.onComplete { result =>
-            result match
-                case Result.Success(_) =>
-                    if closedFlag.get() then
-                        Log.live.unsafe.info(s"$label event loop exited cleanly")
-                    else
-                        Log.live.unsafe.warn(s"$label event loop exited unexpectedly")
-                case Result.Failure(e) =>
-                    Log.live.unsafe.error(s"$label event loop failed: $e")
-                case Result.Panic(t) =>
-                    if !closedFlag.get() then
-                        Log.live.unsafe.error(s"$label event loop crashed", t)
-        }
-
-        fiber
+        // The NIO selector loop runs on a DEDICATED daemon thread, NOT a kyo scheduler carrier. `selector.select()` is a blocking JVM syscall and
+        // the loop also drives jdk SSLEngine handshakes inline (CPU-bound), so running it on a carrier PINS that carrier with a non-preemptible,
+        // non-suspending task: the scheduler cannot reclaim it, and a fiber continuation completed inline from the loop (a ReadPump byte delivery
+        // that wakes a parked take) can be routed back onto the pinned carrier by the scheduler's fallback and STRAND there, hanging the connection
+        // under CPU contention (few carriers). A dedicated thread keeps the loop off the carrier pool entirely: every fiber the loop completes is
+        // scheduled through the external-submit path (Worker.current() == null) onto a real carrier, so nothing strands. The thread is a daemon, so
+        // it never blocks a clean JVM exit and is exempt from the non-daemon-thread leak check; it exits when close() sets closedFlag and closes the
+        // selector (which unblocks an in-flight select() and is observed at the next loop check, bounded by SelectTimeoutMs). The returned
+        // Fiber.Unsafe completes when the loop thread exits.
+        val donePromise = Promise.Unsafe.init[Unit, Any]()
+        val thread =
+            new Thread(
+                () =>
+                    try
+                        @tailrec def loop(): Unit =
+                            if !closedFlag.get() && pollOnce() then loop()
+                        loop()
+                        if closedFlag.get() then Log.live.unsafe.debug(s"$label event loop exited cleanly")
+                        else Log.live.unsafe.warn(s"$label event loop exited unexpectedly")
+                        donePromise.completeDiscard(Result.succeed(()))
+                    catch
+                        case t: Throwable =>
+                            if !closedFlag.get() then Log.live.unsafe.error(s"$label event loop crashed", t)
+                            donePromise.completeDiscard(Result.panic(t))
+                ,
+                s"$label-select-loop"
+            )
+        thread.setDaemon(true)
+        thread.start()
+        donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
 
     def awaitRead(handle: NioHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
@@ -327,6 +322,35 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         cleanupPending(handle)
     end cancel
 
+    /** STARTTLS detach that KEEPS the channel's SelectionKey. The same channel is re-driven as a TLS handshake immediately after, so instead of
+      * cancelling the key (which marks it for removal at the next select() and makes the subsequent channel.register throw CancelledKeyException
+      * and defer, opening the no-live-key window a concurrent handshake arm fails on), this resets the key's interest to 0 and keeps it. The
+      * handshake then re-arms OP_READ/OP_WRITE on the SAME live key via registerInterest, with no re-registration race. Pending plaintext promises
+      * are still failed (cleanupPending) so the plaintext pumps tear down, exactly as cancel does.
+      */
+    override def detachForUpgrade(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
+        try
+            val key = handle.channel.keyFor(selector)
+            if (key ne null) && key.isValid then
+                discard(key.interestOps(0))
+                if wakeupPending.compareAndSet(false, true) then
+                    discard(selector.wakeup())
+            end if
+        catch
+            case _: CancelledKeyException => ()
+        end try
+        cleanupPending(handle)
+    end detachForUpgrade
+
+    /** Forbid the plaintext ReadPump from re-arming once a STARTTLS upgrade has begun on this handle. The pump and the handshake share the single
+      * `pendingReadPromise` slot; without this gate a pump re-arm (`awaitRead(handle, self)`) can land AFTER the handshake armed its own read
+      * promise, overwriting the slot so the poll carrier completes the pump and orphans the handshake's promise (which then never completes -> the
+      * handshake hangs forever). `handle.upgrading` is set before `detachForUpgrade`, so a pump re-arm after that point is dropped here; the pump's
+      * already-in-flight read is failed by detachForUpgrade's cleanupPending. The handshake arms reads directly (not through the pump) and is
+      * unaffected.
+      */
+    override def readPumpMayRearm(handle: NioHandle)(using AllowUnsafe): Boolean = !handle.upgrading
+
     def closeHandle(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
         Log.live.unsafe.debug(s"$label closeHandle ${handleLabel(handle)}")
         cleanupPending(handle)
@@ -512,29 +536,64 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         catch
             case _: CancelledKeyException => false
 
+    /** Re-assert each pending op's interest bit on its channel's key, deriving from the pending-op maps (the source of truth, the same maps
+      * rebuildSelector reconstructs from). Add-only: a fired op clears its own bit in dispatchReadyKeys, so this only restores a bit that a
+      * cross-carrier interestOps race or a coalesced/lost wakeup dropped while the op is still pending. Poll-carrier-only (called from pollOnce).
+      */
+    private def reassertPendingInterest()(using AllowUnsafe): Unit =
+        reassertOp(pendingReads.keySet().iterator(), SelectionKey.OP_READ)
+        reassertOp(pendingWritables.keySet().iterator(), SelectionKey.OP_WRITE)
+        reassertOp(pendingConnects.keySet().iterator(), SelectionKey.OP_CONNECT)
+    end reassertPendingInterest
+
+    private def reassertOp(it: java.util.Iterator[SocketChannel], op: Int)(using AllowUnsafe): Unit =
+        while it.hasNext do
+            val ch  = it.next()
+            val key = ch.keyFor(selector)
+            if (key ne null) && key.isValid then
+                try
+                    val cur = key.interestOps()
+                    if (cur & op) == 0 then discard(key.interestOps(cur | op))
+                catch case _: CancelledKeyException => ()
+            end if
+        end while
+    end reassertOp
+
     private def pollOnce()(using AllowUnsafe): Boolean =
         try
-            val n = selector.select()
-            // Post-select re-check: clear the pending flag now that select() has returned. Any interest
-            // registration that set the flag while select() was returning is already reflected in the
-            // ready-key set this cycle; the next select() will pick up any newly added interest.
+            val t0 = java.lang.System.nanoTime()
+            // Bounded select (not blocking-forever): the loop wakes at least every SelectTimeoutMs to re-assert armed interest from the pending-op
+            // maps, so a lost wakeup or a cross-carrier interest-clear cannot strand an armed read/write indefinitely. A bounded park, not a spin.
+            val n = selector.select(NioIoDriver.SelectTimeoutMs)
+            // Post-select re-check: clear the pending flag now that select() has returned.
             discard(wakeupPending.compareAndSet(true, false))
             // Drain deferred registrations now that select() has flushed the selector's cancelled-key set: any
             // channel whose register() raced a lingering cancelled key (the STARTTLS upgrade re-registration) can
             // now be registered cleanly. Done before key dispatch so a freshly registered channel can have its
             // interest armed (awaitX) and reported on the next cycle.
             drainPendingRegistrations()
+            // Re-assert armed interest from the pending-op maps (the source of truth): restores any OP_READ/OP_WRITE/OP_CONNECT bit dropped by a
+            // cross-carrier interestOps race (a dispatch-clear racing an arm) or a coalesced/lost wakeup. This is what makes the bounded select
+            // liveness-preserving: an armed op whose interest bit was lost is re-armed within one cycle instead of stranding the connection.
+            reassertPendingInterest()
             if n > 0 then
                 zeroKeyReturns = 0
                 given Frame = Frame.internal
                 Log.live.unsafe.debug(s"$label select returned $n ready keys")
                 dispatchReadyKeys()
             else
-                zeroKeyReturns += 1
-                if shouldRebuild(zeroKeyReturns) then
-                    given Frame = Frame.internal
-                    Log.live.unsafe.debug(s"$label selector spin detected ($zeroKeyReturns zero-key returns), rebuilding selector")
-                    rebuildSelector()
+                // Distinguish a genuine selector spin (immediate zero-key return) from a normal idle bounded-timeout return: only an immediate
+                // zero-return counts toward the spin-rebuild heuristic; an idle timeout (~SelectTimeoutMs elapsed) is expected and resets it.
+                val elapsedMs = (java.lang.System.nanoTime() - t0) / 1000000L
+                if elapsedMs < NioIoDriver.SelectTimeoutMs / 2 then
+                    zeroKeyReturns += 1
+                    if shouldRebuild(zeroKeyReturns) then
+                        given Frame = Frame.internal
+                        Log.live.unsafe.debug(s"$label selector spin detected ($zeroKeyReturns zero-key returns), rebuilding selector")
+                        rebuildSelector()
+                    end if
+                else
+                    zeroKeyReturns = 0
                 end if
             end if
             true
@@ -826,6 +885,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
         handle: NioHandle
     )(using AllowUnsafe): Unit =
+        given Frame = Frame.internal
         try
             // Reuse handle's buffer
             val buf = handle.readBuffer
@@ -835,7 +895,6 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                 buf.flip()
                 val arr = new Array[Byte](n)
                 buf.get(arr)
-                given Frame = Frame.internal
                 Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} bytes=$n")
                 promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
             else if n < 0 then
@@ -851,6 +910,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         catch
             case _: IOException =>
                 promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+        end try
     end dispatchReadPlain
 
     private def dispatchReadTls(
@@ -1030,6 +1090,13 @@ private[kyo] object NioIoDriver:
 
     /** Number of consecutive zero-key `select()` returns that trigger a selector rebuild. */
     private[net] val SelectorRebuildThreshold: Int = 512
+
+    /** Bounded `select(timeout)` budget for the poll loop (milliseconds). The loop wakes at least this often to re-assert armed interest from the
+      * pending-op maps, so a lost wakeup or a cross-carrier interest-clear can never strand an armed read/write indefinitely (the liveness the
+      * readiness pollers get from their bounded `poll(..., 100, ...)`). A bounded park, not a busy-spin: it blocks in `select` and returns early on
+      * any event.
+      */
+    private[net] val SelectTimeoutMs: Long = 100L
 
     /** Factory for `NioIoDriver`. Opens a fresh `Selector` for each driver instance. */
     def init()(using AllowUnsafe): NioIoDriver =

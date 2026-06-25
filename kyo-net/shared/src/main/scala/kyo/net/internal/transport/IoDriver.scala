@@ -71,6 +71,23 @@ abstract private[kyo] class IoDriver[Handle]:
     /** Cancel pending read/write requests for handle. Completes pending promises with Closed. */
     def cancel(handle: Handle)(using AllowUnsafe, Frame): Unit
 
+    /** Detach `handle` for a STARTTLS upgrade: fail its pending plaintext read/write promises so the plaintext pumps tear down, while the SAME
+      * connection is about to be re-driven as a TLS handshake over the same fd. The default is [[cancel]]: drivers whose handshake re-establishes
+      * its own I/O registration need no special handling (io_uring re-arms via SQEs; the readiness pollers re-register synchronously). The NIO
+      * driver overrides this to KEEP the channel's `SelectionKey` (resetting interest to 0) instead of cancelling it. Cancelling marks the key for
+      * removal at the next `select()`, and `channel.register` before that async flush throws `CancelledKeyException` and defers, opening a window
+      * where a concurrent handshake read-arm finds the channel with no live key and spuriously fails the handshake (the STARTTLS-under-concurrency
+      * flake). Keeping the key removes that window entirely.
+      */
+    def detachForUpgrade(handle: Handle)(using AllowUnsafe, Frame): Unit =
+        cancel(handle)
+
+    /** Whether the plaintext [[ReadPump]] may re-arm a read on this handle. Default true. A driver returns false once a STARTTLS upgrade has begun
+      * on the handle so the pump stops re-arming and cannot race the handshake for the handle's read registration (the NIO driver shares a single
+      * pending-read slot between the pump and the handshake; an unfettered pump re-arm there orphans the handshake's read promise and hangs it).
+      */
+    def readPumpMayRearm(handle: Handle)(using AllowUnsafe): Boolean = true
+
     /** Tear down a listener: cancel its pending accept and close its listen fd via `closeFd`, sequenced so that no accept registration for
       * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers, where `cancel` clears the accept state
       * synchronously) cancels and then closes the fd immediately, today's behavior. The io_uring driver overrides this to run the whole
