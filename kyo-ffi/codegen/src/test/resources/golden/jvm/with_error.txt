@@ -12,7 +12,7 @@ import kyo.ffi.internal.{AbiCheck, NativeLoader, Scratch, Layouts, StructAbiChec
 final class WithErrorBindingsImpl extends WithErrorBindings:
     import WithErrorBindingsImpl.*
 
-    def failable(x: Int)(using kyo.AllowUnsafe): Ffi.WithError[Int] =
+    def failable(x: Int)(using kyo.AllowUnsafe): Ffi.Outcome[Int] =
         val __kyoScratch$ = Scratch.currentFor("kyo.example.WithErrorBindings", Scratch.configuredSize)
         val __kyoMark$ = __kyoScratch$.mark()
         try
@@ -20,7 +20,7 @@ final class WithErrorBindingsImpl extends WithErrorBindings:
             val retVal: Int = failableMH.invokeExact(errnoSeg, x)
             val __errno = errnoSeg.get(JAVA_INT, 0L)
             val __kyoResult = retVal
-            new Ffi.WithError(__kyoResult, __errno)
+            Ffi.Outcome.fromValueErrno(__kyoResult.toLong, __errno)
         finally __kyoScratch$.reset(__kyoMark$)
 end WithErrorBindingsImpl
 

@@ -205,6 +205,25 @@ object Codec:
         def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]
 
+        /** Whether this writer can express a top-level non-object value: a top-level array, a bare
+          * top-level scalar, or a top-level null. Self-describing codecs (Json, Yaml, Ion, MsgPack)
+          * return true; a field-number-driven binary codec (Protobuf) cannot express these shapes and
+          * leaves the default false, so the engine raises a typed error before writing rather than
+          * emitting an invalid stream. Positive opt-in: a writer must declare the capability to gain it.
+          *
+          * Override this in a custom codec whose format can carry a top-level array, scalar, or null to
+          * make the Tuple, TupleFlat, and Untagged sum representations available with that codec.
+          */
+        def canWriteTopLevelNonObject: Boolean = false
+
+        /** The public codec name, used in user-facing error messages such as [[RepresentationUnsupportedException]].
+          *
+          * Each concrete writer overrides this with the name of the codec the user selected (e.g. "Protobuf", "Json"),
+          * not the writer's internal class name. A custom codec should override this so its error messages name the
+          * codec the user selected rather than the writer's class name.
+          */
+        def codecName: String = getClass.getSimpleName
+
         /** Materialize the output as a String. Default delegates to `result()` + UTF-8 decode; codecs with char-native or ASCII-fast paths
           * should override to skip intermediate copies.
           */

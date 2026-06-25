@@ -974,11 +974,18 @@ import scala.quoted.*
             ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
         }
 
+        val variantDecodersExpr: Expr[Chunk[kyo.Codec.Reader => Any]] =
+            val perVariant: List[Expr[kyo.Codec.Reader => Any]] = (0 until n).toList.map { idx =>
+                '{ (r: kyo.Codec.Reader) => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead(r) }
+            }
+            '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perVariant) }*)) }
+        end variantDecodersExpr
         val selfRhs: Expr[Schema[A]] = '{
             Schema.init[A](
                 writeFn = (v, w) => ${ writeBody('v, 'w) },
                 readFn = r => ${ readBody('r) },
                 sourceFields = $sourceFields,
+                variantDecoders = $variantDecodersExpr,
                 structure = ${ structureExpr }
             )
         }

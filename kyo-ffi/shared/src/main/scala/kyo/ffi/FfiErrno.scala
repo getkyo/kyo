@@ -2,7 +2,7 @@ package kyo.ffi
 
 /** Exception representing a C errno error.
   *
-  * User code can throw this when inspecting [[Ffi.WithError.errorCode]] and deciding an errno value constitutes a failure. The `apply`
+  * User code can throw this when inspecting [[Ffi.Outcome.errorCode]] and deciding an errno value constitutes a failure. The `apply`
   * factory method formats a human-readable message with binding and method context.
   *
   * @param errorCode

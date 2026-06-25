@@ -5,6 +5,7 @@ import java.nio.file.Paths
 import java.util.concurrent.locks.LockSupport
 import kyo.Chunk
 import kyo.Maybe
+import kyo.discard
 import kyo.scheduler.Scheduler
 import scala.jdk.CollectionConverters.*
 
@@ -25,15 +26,19 @@ import scala.jdk.CollectionConverters.*
 private[runner] object LeakCheck:
 
     /** Built-in allowlist patterns applied by [[detect]] in addition to each suite's `RunConfig.leakCheckAllowlist`, for process-lifetime infra
-      * that legitimately outlives every test in the fork.
+      * that legitimately outlives every test in the fork. Both entries name a process-shared I/O carrier that is never closed by design and so
+      * is a busy scheduler fiber at every net/http-using module's end-of-run check; the union covers both the current and the migrated network
+      * stack, so neither is reported as a leak.
       *
-      * `NioIoDriver` is allowlisted pending the network stack rewrite. kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`)
-      * is a lazy singleton whose `NioIoDriver` runs a selector event loop on a scheduler fiber for the JVM's lifetime, and nothing ever closes
-      * the shared transport, so the fiber is parked in `select()` at every http-using module's end-of-run check. It is intentional infra, not a
-      * leak; excusing it here covers every http-touching test module in one place. The entry is removed once the network stack gives the driver
-      * a proper lifecycle (or moves its loop off the scheduler).
+      * `NioIoDriver` matches kyo-http's process-wide IO transport (`HttpPlatformTransport.transport`), a lazy singleton whose `NioIoDriver` runs
+      * a selector event loop on a scheduler fiber for the JVM's lifetime.
+      *
+      * `processSharedTransport` matches the I/O carrier of kyo-net's process-shared default transport (`kyo.net.NetPlatform.transport`): a lazy
+      * singleton shared across every client and server in the process and never closed by design. The kyo-net drivers route ONLY this singleton's
+      * carrier through a `processSharedTransport*` frame (see `kyo.net.internal.ProcessSharedTransport`); an owned, per-config transport keeps its
+      * plain `pollLoop`/`reapLoop` frame, so a genuinely leaked owned transport is still reported rather than masked by a broad driver-name match.
       */
-    val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver")
+    val defaultAllowlist: Chunk[String] = Chunk("NioIoDriver", "processSharedTransport")
 
     /** The set of open file descriptors, each as its `/proc/self/fd` symlink target (`socket:[inode]`, `pipe:[inode]`, a file path, a `.jar`,
       * ...). `Absent` on a platform without `/proc/self/fd` (macOS, Windows), where the descriptor probe is a no-op. The descriptor that the
@@ -275,6 +280,30 @@ private[runner] object LeakCheck:
             scan("/proc/net/tcp").orElse(scan("/proc/net/tcp6")).getOrElse("")
     end describeSocket
 
+    /** Leak-debug attribution: descriptor target -> the leaf path that first left it open. Populated only in leak-debug mode (see
+      * [[LeakDebug]]), where leaves run serially and the runner's per-leaf probe records each leaf's surviving descriptors here; joined into the
+      * leak report by [[originOf]]. Empty (and never read) in a normal parallel run.
+      */
+    private val fdOrigins = new java.util.concurrent.ConcurrentHashMap[String, String]()
+
+    /** Record, against `leafPath`, every descriptor open after the leaf body that was not open before it (excluding benign descriptors). First
+      * writer wins, so the leaf that introduced a descriptor owns it. Called by the runner's per-leaf probe in leak-debug mode only.
+      */
+    def recordLeafOrigins(leafPath: String, before: Set[String], after: Set[String]): Unit =
+        after.foreach { target =>
+            if !before.contains(target) && !benignFd(target) then discard(fdOrigins.putIfAbsent(target, leafPath))
+        }
+    end recordLeafOrigins
+
+    /** The leak-debug attribution suffix for a leaked target: ` (opened by test: <leaf>)` when leak-debug mode recorded an origin, else "".
+      * A normal (non-debug) run records nothing, so this is always "" there and the report is unchanged.
+      */
+    def originOf(target: String): String =
+        fdOrigins.get(target) match
+            case null => ""
+            case leaf => s" (opened by test: $leaf)"
+    end originOf
+
     /** Process-global resource snapshot taken once at runner construction, before any suite runs, and diffed at `done()`. Captures the open
       * descriptor targets and the set of live non-daemon threads so the JVM's own startup infrastructure (the `main` thread, the ForkMain
       * reader and socket) is excluded from the diff.
@@ -348,7 +377,7 @@ private[runner] object LeakCheck:
                         val second     = leaksNow()
                         val persistent = first.filter(second.contains)
                         if persistent.nonEmpty then
-                            val described = persistent.map(t => t + describeSocket(t))
+                            val described = persistent.map(t => t + describeSocket(t) + originOf(t))
                             findings += s"file-descriptor leak (${persistent.size}): ${described.mkString("; ")}"
                     end if
                 case Maybe.Absent => () // /proc/self/fd unavailable: descriptor probe is a no-op on this platform.
@@ -366,8 +395,9 @@ private[runner] object LeakCheck:
     final class Detected(report: String)
         extends RuntimeException(
             s"kyo-test leak check failed:$report\n\nThese resources outlived the test run; a leaked fiber, thread, or descriptor means a " +
-                "test (or the code under test) did not release a resource. Disable for a suite with " +
-                "`override def config = super.config.leakCheck(false)`, or excuse one expected resource with " +
+                "test (or the code under test) did not release a resource. To attribute each leaked descriptor to the test that opened it, " +
+                "re-run with KYO_TEST_LEAK_DEBUG=1 (runs leaves serially and appends `opened by test: <leaf>` to each descriptor). Disable " +
+                "for a suite with `override def config = super.config.leakCheck(false)`, or excuse one expected resource with " +
                 "`super.config.leakCheckAllowlist(\"<stack-or-target-substring>\")`."
         )
 

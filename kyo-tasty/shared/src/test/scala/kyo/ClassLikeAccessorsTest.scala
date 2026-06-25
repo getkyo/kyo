@@ -431,7 +431,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
 
     "prior-flag-predicates-still-work-on-classlike: flag predicates on Class/Trait return expected values" in {
         val classFlags = Tasty.Flags(Tasty.Flag.Final, Tasty.Flag.Case)
-        val classSym = Tasty.Symbol.Class(
+        val classSym: Tasty.Symbol = Tasty.Symbol.Class(
             SymbolId(1),
             Tasty.Name("CaseFoo"),
             classFlags,
@@ -447,7 +447,7 @@ class ClassLikeAccessorsTest extends kyo.test.Test[Any]:
             Chunk.empty
         )
         val traitFlags = Tasty.Flags(Tasty.Flag.Abstract, Tasty.Flag.Sealed)
-        val traitSym = Tasty.Symbol.Trait(
+        val traitSym: Tasty.Symbol = Tasty.Symbol.Trait(
             SymbolId(2),
             Tasty.Name("SealedTrait"),
             traitFlags,

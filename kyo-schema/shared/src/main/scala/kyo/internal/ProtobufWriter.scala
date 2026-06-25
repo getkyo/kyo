@@ -18,6 +18,8 @@ import scala.annotation.tailrec
   */
 final class ProtobufWriter extends Writer:
 
+    override def codecName: String = "Protobuf"
+
     // Wire type constants
     private val Varint          = 0
     private val Fixed64         = 1

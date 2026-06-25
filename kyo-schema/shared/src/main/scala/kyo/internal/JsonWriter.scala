@@ -18,6 +18,9 @@ final class JsonWriter private (
     private var needsComma: Array[Long]
 ) extends Writer:
 
+    override def canWriteTopLevelNonObject: Boolean = true
+    override def codecName: String                  = "Json"
+
     private inline def getFlag(d: Int): Boolean = (needsComma(d >> 6) & (1L << (d & 63))) != 0L
     private inline def setFlag(d: Int): Unit    = needsComma(d >> 6) |= (1L << (d & 63))
     private inline def clearFlag(d: Int): Unit  = needsComma(d >> 6) &= ~(1L << (d & 63))

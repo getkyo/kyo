@@ -5,8 +5,9 @@ import kyo.ffi.FfiErrno
 
 /** Cross-platform errno-capture spec.
   *
-  * `kyoItAlwaysFail` sets `errno = EINVAL` (22) and returns `-1`. The method declares `WithError[Int]` so the caller can inspect both the
-  * return value and the captured error code.
+  * `kyoItAlwaysFail` sets `errno = EINVAL` (22) and returns `-1`. The method declares `Ffi.Outcome[Int]` so the caller can inspect both the
+  * return value and the captured error code. The `Int` width is load-bearing: it makes the C `int` return read at `JAVA_INT`, so the
+  * negative `-1` sign-extends and `.value == -1L` rather than reading `4294967295` from a zero-extended `JAVA_LONG`.
   *
   * `kyoItClearErrno` sets `errno = 0` and returns `1`. The method declares a plain `Int` return, since errno = 0, no `FfiErrno` is thrown.
   *
@@ -14,7 +15,7 @@ import kyo.ffi.FfiErrno
   */
 class ItErrnoTest extends ItTestBase:
 
-    "kyoItAlwaysFail (WithError return)" - {
+    "kyoItAlwaysFail (Outcome return)" - {
         "returns -1 with errorCode 22 (EINVAL)" in {
             val b = Ffi.load[ItErrnoBindings]
             val r = b.kyoItAlwaysFail()

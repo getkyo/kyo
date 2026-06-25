@@ -112,7 +112,7 @@ object Log extends kyo.internal.LogPlatformSpecific:
         case silent extends Level(60)
     end Level
 
-    val live: Log = Log(Unsafe.ConsoleLogger("kyo.logs", Level.warn))
+    val live: Log = Log(Unsafe.AsyncUnsafe(Unsafe.ConsoleLogger("kyo.logs", Level.warn)))
 
     private val local = Local.init(live)
 
@@ -274,6 +274,8 @@ object Log extends kyo.internal.LogPlatformSpecific:
             // The direct unsafe tier (Log.live.unsafe.trace, ...) bypasses emitAt, so it gates here
             // and stamps with the ambient clock's now: a synchronous direct call's emission time is
             // the current instant, and reading the ambient clock keeps Clock time-control in reach.
+            // ConsoleLogger is the terminal synchronous sink: it writes inline here and in emit. The
+            // async front for the process-shared logger is AsyncUnsafe below, which wraps a ConsoleLogger.
             inline def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if Level.trace.enabled(level) then writeLine(Level.trace, frame, msg, Absent, stamp)
             inline def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
@@ -309,6 +311,53 @@ object Log extends kyo.internal.LogPlatformSpecific:
                 t.foreach(_.printStackTrace(stream))
             end writeLine
         end ConsoleLogger
+
+        /** Async front for the process-shared unsafe logger (Log.live.unsafe). Its direct tier hands each event
+          * to the async dispatcher (Log.emit) instead of writing inline, so the unsafe API is non-blocking and
+          * does not perturb timing in unsafe code (the println happens on the drain). The wrapped `underlying`
+          * stays the terminal synchronous sink: emit delegates to underlying.emit and never re-dispatches, so
+          * when this is itself an event's sink (the safe path's emitAt sets sink = this) the drain writes
+          * exactly once with no recursion. Stamping reads the ambient clock so timestamps honor Clock
+          * time-control, the same motivated evalOrThrow ConsoleLogger.stamp uses. Raw ConsoleLogger stays
+          * synchronous; only the process-shared logger is wrapped, so the direct ConsoleLogger format/routing
+          * tests remain synchronous.
+          */
+        final case class AsyncUnsafe(underlying: Log.Unsafe) extends Log.Unsafe:
+            def level: Level                       = underlying.level
+            def name: String                       = underlying.name
+            def withName(name: String): Log.Unsafe = AsyncUnsafe(underlying.withName(name))
+
+            // Terminal sink role: delegate to the synchronous underlying and NEVER re-dispatch (no recursion).
+            override def emit(event: Log.Event)(using AllowUnsafe): Unit = underlying.emit(event)
+
+            inline def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.trace.enabled(level) then Log.emit(Log.Event(Level.trace, this, msg, Absent, frame, stamp))
+            inline def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.trace.enabled(level) then Log.emit(Log.Event(Level.trace, this, msg, Present(t), frame, stamp))
+
+            inline def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.debug.enabled(level) then Log.emit(Log.Event(Level.debug, this, msg, Absent, frame, stamp))
+            inline def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.debug.enabled(level) then Log.emit(Log.Event(Level.debug, this, msg, Present(t), frame, stamp))
+
+            inline def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.info.enabled(level) then Log.emit(Log.Event(Level.info, this, msg, Absent, frame, stamp))
+            inline def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.info.enabled(level) then Log.emit(Log.Event(Level.info, this, msg, Present(t), frame, stamp))
+
+            inline def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.warn.enabled(level) then Log.emit(Log.Event(Level.warn, this, msg, Absent, frame, stamp))
+            inline def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.warn.enabled(level) then Log.emit(Log.Event(Level.warn, this, msg, Present(t), frame, stamp))
+
+            inline def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.error.enabled(level) then Log.emit(Log.Event(Level.error, this, msg, Absent, frame, stamp))
+            inline def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if Level.error.enabled(level) then Log.emit(Log.Event(Level.error, this, msg, Present(t), frame, stamp))
+
+            private def stamp(using Frame, AllowUnsafe): Instant =
+                Sync.Unsafe.evalOrThrow(Clock.nowWith(now => now))
+        end AsyncUnsafe
     end Unsafe
 
     private inline def enqueue(

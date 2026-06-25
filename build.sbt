@@ -7,14 +7,14 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version    = "3.8.3"
-val scala3LTSVersion = "3.3.7"
+val scala3Version    = "3.8.4"
+val scala3LTSVersion = "3.3.8"
 val scala213Version  = "2.13.18"
 
-val zioVersion       = "2.1.24"
+val zioVersion       = "2.1.26"
 val catsVersion      = "3.7.0"
-val oxVersion        = "1.0.4"
-val scalaTestVersion = "3.2.19"
+val oxVersion        = "1.0.5"
+val scalaTestVersion = "3.2.20"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
@@ -280,6 +280,7 @@ lazy val kyoJVM: Project = project
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
         `kyo-mcp`.jvm,
+        `kyo-lsp`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -348,6 +349,7 @@ lazy val kyoJS = project
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
         `kyo-mcp`.js,
+        `kyo-lsp`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
@@ -396,6 +398,7 @@ lazy val kyoNative = project
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
         `kyo-mcp`.native,
+        `kyo-lsp`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -449,6 +452,7 @@ lazy val kyoWasm = project
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
         `kyo-mcp`.wasm,
+        `kyo-lsp`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
@@ -528,8 +532,8 @@ lazy val `kyo-scheduler-pekko` =
         .in(file("kyo-scheduler-pekko"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.4.0",
-            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.4.0"          % Test,
+            libraryDependencies += "org.apache.pekko" %%% "pekko-actor"   % "1.6.0",
+            libraryDependencies += "org.apache.pekko" %%% "pekko-testkit" % "1.6.0"          % Test,
             libraryDependencies += "org.scalatest"    %%% "scalatest"     % scalaTestVersion % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -596,7 +600,7 @@ lazy val `kyo-kernel` =
         .in(file("kyo-kernel"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.javassist" % "javassist" % "3.30.2-GA" % Test,
+            libraryDependencies += "org.javassist" % "javassist" % "3.32.0-GA" % Test,
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -615,7 +619,7 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC46" % Test,
+            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC47" % Test,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -975,7 +979,7 @@ lazy val `kyo-direct` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.3.2",
+            libraryDependencies += "io.github.dotty-cps-async" %%% "dotty-cps-async" % "1.3.3",
             Test / sourceGenerators += TestVariant.generate.taskValue
         )
         .jvmSettings(mimaCheck(false))
@@ -1030,6 +1034,10 @@ lazy val `kyo-tasty` =
             // StackOverflowError under scoverage instrumentation.
             coverageMinimumStmtTotal := 75.3,
             coverageFailOnMinimum    := true,
+            // FROZEN: do not bump as part of routine dependency upgrades. The tasty-query oracle
+            // and the real-world fixture jars below are a deliberate spread of versions chosen to
+            // exercise TASTy decoding across compiler releases; changing them alters test-coverage
+            // intent rather than upgrading a dependency.
             // Differential testing against tasty-query 1.7.0. JVM-only because
             // tasty-query's ClasspathLoaders requires java.nio.
             libraryDependencies += "ch.epfl.scala" %% "tasty-query" % "1.7.0" % Test,
@@ -1082,8 +1090,8 @@ lazy val `kyo-logging-slf4j` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.17",
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.32" % Test
+            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.18",
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.35" % Test
         )
         .jvmSettings(mimaCheck(false))
 
@@ -1172,8 +1180,8 @@ lazy val `kyo-aeron` =
                 "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
             ),
             libraryDependencies ++= Seq(
-                "io.aeron"     % "aeron-driver" % "1.50.2",
-                "io.aeron"     % "aeron-client" % "1.50.2",
+                "io.aeron"     % "aeron-driver" % "1.51.0",
+                "io.aeron"     % "aeron-client" % "1.51.0",
                 "com.lihaoyi" %% "upickle"      % "4.4.3"
             )
         )
@@ -1262,6 +1270,18 @@ lazy val `kyo-mcp` =
         .wasmSettings(`wasm-settings`)
         .jsSettings(`js-settings`)
 
+lazy val `kyo-lsp` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-lsp"))
+        .withKyoTest
+        .dependsOn(`kyo-jsonrpc`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .wasmSettings(`wasm-settings`)
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
         .crossType(CrossType.Pure)
@@ -1273,8 +1293,8 @@ lazy val `kyo-caliban` =
         .withKyoTest
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.1.0",
-            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided"
+            libraryDependencies += "com.github.ghostdogpr"                 %% "caliban"               % "3.1.2",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.38.16" % "provided"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -1450,7 +1470,7 @@ lazy val `kyo-compat-ce` =
             publish / skip                          := scalaVersion.value != scala3LTSVersion,
             scalacOptions += "-Xmax-inlines:1024",
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
-            libraryDependencies += "co.fs2"        %%% "fs2-core"    % "3.12.2",
+            libraryDependencies += "co.fs2"        %%% "fs2-core"    % "3.13.0",
             Test / unmanagedSourceDirectories += {
                 (ThisBuild / baseDirectory).value / "kyo-compat" / "test" / "shared" / "src" / "test" / "scala"
             },
@@ -1819,12 +1839,12 @@ lazy val `kyo-ui` =
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
         .wasmSettings(
             `wasm-settings`,
-            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0"
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1"
         )
 
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
@@ -1847,7 +1867,7 @@ lazy val `kyo-website` =
             // The exclude on sourcecode resolves the _2.13 vs _3 cross-version conflict that arises
             // because scalameta_3 transitively pulls in trees_2.13 -> common_2.13 -> sourcecode_2.13
             // while the rest of the project uses sourcecode_3.
-            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.13.4")
+            libraryDependencies += ("org.scalameta" %% "scalameta" % "4.17.0")
                 .exclude("com.lihaoyi", "sourcecode_2.13")
         )
         .jsSettings(
@@ -1944,27 +1964,27 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"        %% "cats-effect"         % catsVersion,
             libraryDependencies += "org.typelevel"        %% "log4cats-core"       % "2.8.0",
             libraryDependencies += "org.typelevel"        %% "log4cats-slf4j"      % "2.8.0",
-            libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.6.0",
+            libraryDependencies += "org.typelevel"        %% "cats-mtl"            % "1.7.0",
             libraryDependencies += "io.github.timwspence" %% "cats-stm"            % "0.13.5",
             libraryDependencies += "com.47deg"            %% "fetch"               % "3.2.1",
             libraryDependencies += "dev.zio"              %% "zio-logging"         % "2.5.3",
             libraryDependencies += "dev.zio"              %% "zio-logging-slf4j2"  % "2.5.3",
             libraryDependencies += "dev.zio"              %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"              %% "zio-concurrent"      % zioVersion,
-            libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.7",
+            libraryDependencies += "dev.zio"              %% "zio-query"           % "0.7.8",
             libraryDependencies += "dev.zio"              %% "zio-parser"          % "0.1.11",
-            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC45",
-            libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.12.2",
-            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M44",
-            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M44",
-            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M44",
-            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.8.0",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.7",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.7",
+            libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC47",
+            libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.13.0",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "1.0.0-M46",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-server" % "1.0.0-M46",
+            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "1.0.0-M46",
+            libraryDependencies += "dev.zio"              %% "zio-http"            % "3.11.2",
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.1.3",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.1.3",
             // JSON serialization benchmarks
-            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.28.2",
-            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.28.2" % "provided",
-            libraryDependencies += "dev.zio"                               %% "zio-json"              % "0.7.45",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core"   % "2.38.16",
+            libraryDependencies += "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.38.16" % "provided",
+            libraryDependencies += "dev.zio"                               %% "zio-json"              % "0.9.2",
             libraryDependencies += "io.circe"                              %% "circe-core"            % "0.14.15",
             libraryDependencies += "io.circe"                              %% "circe-generic"         % "0.14.15",
             libraryDependencies += "io.circe"                              %% "circe-parser"          % "0.14.15",
@@ -2066,7 +2086,7 @@ lazy val `native-settings` = Seq(
     bspEnabled                                        := false,
     Test / testForkedParallel                         := false,
     Test / envVars += "SCALANATIVE_THREAD_STACK_SIZE" -> "33554432",
-    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.6.0"
+    libraryDependencies += "io.github.cquiroz"       %%% "scala-java-time" % "2.7.0"
 )
 
 lazy val `js-settings` = Seq(
@@ -2075,7 +2095,7 @@ lazy val `js-settings` = Seq(
     bspEnabled                                  := false,
     Test / parallelExecution                    := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0"
 )
 
 // WASM rows are Scala.js compilations: same scala-java-time stand-in for the JDK time APIs,
@@ -2095,7 +2115,7 @@ lazy val `wasm-settings` = Seq(
             "--experimental-wasm-exnref"
         ))
     ),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.7.0"
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
@@ -2174,7 +2194,7 @@ lazy val `kyo-compat-plugin` = (project in file("kyo-compat/plugin"))
         // platform-deps shim. Pinned to the same versions as kyo's own
         // project/plugins.sbt so the runtime sbt classloader resolves
         // exactly one copy of each.
-        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.10.1"),
+        addSbtPlugin("com.eed3si9n"       % "sbt-projectmatrix"             % "0.11.0"),
         addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject"      % "1.3.2"),
         addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2"),
         scriptedLaunchOpts := Seq(

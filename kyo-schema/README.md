@@ -129,6 +129,19 @@ Json.encode[Shape](Rectangle(3.0, 4.0))
 
 On decode, the key determines which subtype to construct. This format is self-describing and works without configuration.
 
+Sealed traits support six wire representations, selected by a builder on the schema. The default is wrapper-object; the rest are opt-in:
+
+| Representation | Builder | Wire shape for `Circle(10.0)` |
+|---|---|---|
+| Wrapper-object (default) | (none) | `{"Circle":{"radius":10.0}}` |
+| Flat discriminator | `.discriminator("type")` | `{"type":"Circle","radius":10.0}` |
+| Adjacent | `.adjacent("type","content")` | `{"type":"Circle","content":{"radius":10.0}}` |
+| Tuple (tagged) | `.tupleTagged` | `["Circle",{"radius":10.0}]` |
+| Tuple (flat) | `.tupleFlat` | `["Circle",10.0]` |
+| Untagged | `.untagged` | `{"radius":10.0}` |
+
+The tagged representations (`.discriminator`, `.adjacent`, `.tupleTagged`, `.tupleFlat`) route the tag through the variant-naming layer below, so `renameAllVariants`, `variantNames`, and `variantAlias` all apply to the emitted tag. `.untagged` carries no tag, so variant naming and aliases do not apply to it.
+
 For a flat encoding with a type discriminator field, use `schema.discriminator`:
 
 ```scala
@@ -168,6 +181,67 @@ Json.decode[Node]("""{"kind":"dlist","head_ref":"h1"}""")
 The case engine is acronym-aware: an uppercase run is one word. `DList` tokenizes as `D` + `List`, giving `d_list` under `SnakeCase`. The `Paragraph` variant needs no explicit mapping; `renameAllVariants(SnakeCase)` gives `paragraph`. The `variantAlias` call registers `dlist` as a decode-only alias for the variant whose primary wire name is `d_list`. A typo'd Scala variant name passed to `variantNames` raises `UnknownVariantException` at config time.
 
 Variant naming applies only under `.discriminator(...)`. Without a discriminator the configuration has no effect and the default wrapper-object format is used.
+
+**Adjacent** keeps the tag and payload in separate, named keys of one object. The payload is always an object, even for a single-field variant:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].adjacent("type", "content")
+
+Json.encode[Shape](Circle(10.0))
+// {"type":"Circle","content":{"radius":10.0}}
+```
+
+**Tuple (tagged)** encodes the sum as a two-element array: tag at index 0, payload object at index 1:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].tupleTagged
+
+Json.encode[Shape](Circle(10.0))
+// ["Circle",{"radius":10.0}]
+```
+
+**Tuple (flat)** encodes the sum as an array: tag at index 0, then each payload field value in declaration order. Use this representation when the variant type has only scalar fields and you want the most compact array form:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].tupleFlat
+
+Json.encode[Shape](Rectangle(3.0, 4.0))
+// ["Rectangle",3.0,4.0]
+```
+
+A record-typed field nests as one element rather than being deep-flattened: a variant like `Group(bounds: Rectangle)` encodes as `["Group",{"width":3.0,"height":4.0}]`, keeping the inner record whole.
+
+**Untagged** emits only the variant payload, with no tag or wrapper. On decode, each variant is attempted in declaration order and the first clean parse wins:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].untagged
+
+Json.encode[Shape](Circle(10.0))
+// {"radius":10.0}
+
+Json.decode[Shape]("""{"width":3.0,"height":4.0}""")
+// Result.Success(Rectangle(3.0, 4.0))
+```
+
+Because there is no tag, variants whose fields overlap are resolved by declaration order: the first variant whose fields all match wins. When no variant matches, decode returns `Result.Failure(NoVariantMatchException(...))` listing the variants that were attempted.
+
+The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`) require a self-describing codec. Encoding through Protobuf raises `RepresentationUnsupportedException` before any bytes are written. Wrapper-object, flat-discriminator, and adjacent all work on Protobuf.
 
 Missing fields with default values are filled in automatically, which is useful for configuration types and backward-compatible evolution:
 
@@ -514,6 +588,8 @@ val proto = Protobuf.protoSchema[User]
 The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
 
 A few shapes that proto3 cannot express raise `IllegalArgumentException` at encode or `protoSchema` time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
+
+Protobuf supports the wrapper-object, flat-discriminator, and adjacent sum representations. The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`) need a self-describing codec; encoding one through Protobuf raises `RepresentationUnsupportedException` before any bytes are written.
 
 ### MsgPack
 
@@ -1300,11 +1376,14 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | Exception | Raised when |
 |-----------|-------------|
 | `MissingFieldException` | a required field is absent on decode |
+| `MissingTagKeyException` | an `.adjacent` decode input lacks the configured tag key |
 | `TypeMismatchException` | a runtime value is the wrong shape for the schema |
 | `UnknownVariantException` | a sum-type discriminator names an undefined variant, or a `variantNames`/`variantAlias` call references an unknown Scala variant name |
 | `VariantNameCollisionException` | two variants (or a variant and an alias) map to the same wire discriminator value |
 | `FieldNameCollisionException` | two fields (or a field and an alias) map to the same wire name |
+| `NoVariantMatchException` | an `.untagged` decode matches no variant (lists the attempted variants) |
 | `ParseException` | raw input cannot be parsed by the codec |
+| `RepresentationUnsupportedException` | a `.tupleTagged`, `.tupleFlat`, or `.untagged` representation is encoded through a codec that cannot express it (Protobuf) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
 | `RangeException` | a numeric value overflows the target type |

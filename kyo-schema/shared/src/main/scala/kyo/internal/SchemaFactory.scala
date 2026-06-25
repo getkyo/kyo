@@ -78,7 +78,9 @@ private[kyo] object SchemaFactory:
             doc = source.documentation,
             fieldIds = updatedFieldIds,
             discriminatorField = source.discriminatorField,
-            variantNaming = source.variantNaming
+            variantNaming = source.variantNaming,
+            representation = source.representation,
+            variantDecoders = source.variantDecoders
         )
     end createFrom
 
