@@ -20,6 +20,8 @@ object SVNDupB:
 
 case class SVNAccount(firstName: String, lastName: String) derives CanEqual, Schema
 
+case class OmitRenameCase(items: Chunk[Int], name: String) derives CanEqual, Schema
+
 // Field collision fixture: aB -> "a_b" and a_B -> "a_b" under SnakeCase.
 // Both fields produce identical snake_case tokens so applyFieldConvention raises FieldNameCollisionException.
 case class SVNClash(aB: String, a_B: String) derives CanEqual, Schema
@@ -445,6 +447,22 @@ class SchemaNamingTest extends kyo.test.Test[Any]:
         val r2     = schema.decodeString[Json]("""{"g":"ada","lastName":"lovelace"}""")
         assert(r1 == Result.succeed(SVNAccount("ada", "lovelace")))
         assert(r2 == Result.succeed(SVNAccount("ada", "lovelace")))
+    }
+
+    "omit composes with renameAllFields: empty field absent, retained field snake_cased" in {
+        val schema     = Schema[OmitRenameCase].omitEmptyCollections.renameAllFields(Schema.NameCase.SnakeCase)
+        val emptyValue = OmitRenameCase(Chunk.empty, "x")
+        val out        = schema.encodeString[Json](emptyValue)
+        assert(!out.contains("\"items\""), s"source name items must be absent: $out")
+        assert(!out.contains("\"Items\""), s"capitalized items must be absent: $out")
+        assert(!out.contains("[]"), s"empty array must not appear: $out")
+        assert(out.contains("\"name\""), s"name key must be present (already snake_case): $out")
+        assert(out.contains("\"x\""), s"name value must be present: $out")
+
+        val nonEmptyValue = OmitRenameCase(Chunk(1, 2, 3), "y")
+        val out2          = schema.encodeString[Json](nonEmptyValue)
+        assert(out2.contains("\"items\""), s"non-empty items must appear under its snake_case wire name: $out2")
+        assert(out2.contains("\"y\""), s"name value y must be present: $out2")
     }
 
 end SchemaNamingTest

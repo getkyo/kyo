@@ -51,6 +51,23 @@ case class UnknownVariantException(path: Seq[String], variantName: String)(using
     )
     with DecodeException derives CanEqual
 
+/** Thrown when an input field is not recognized during decoding.
+  *
+  * Raised by schemas configured to reject unknown input fields. The path identifies the decoded
+  * object whose field set was checked, and `fieldName` is the unmatched wire field encountered in
+  * the input.
+  *
+  * This is decode-only. It is not a `NavigationException`, since the failure is not caused by
+  * user code navigating to a missing schema path. It reports malformed input against the configured
+  * read policy.
+  */
+case class UnknownFieldException(path: Seq[String], fieldName: String)(using Frame)
+    extends SchemaException(
+        s"Unknown field '$fieldName'" + SchemaException.pathSuffix(path) +
+            ". Remove this field from the input, or decode with a schema that does not configure denyUnknownFields."
+    )
+    with DecodeException derives CanEqual
+
 /** Thrown when an untagged sum decode matches no variant.
   *
   * Carries the wire names of the variants attempted, in declaration order. Surfaces as a
@@ -60,6 +77,16 @@ case class NoVariantMatchException(path: Seq[String], variants: Chunk[String])(u
     extends SchemaException(
         s"No variant matched the untagged input" + SchemaException.pathSuffix(path) +
             s". Attempted ${variants.size} variants: ${variants.mkString(", ")}. Ensure the input matches one of the declared variants."
+    )
+    with DecodeException derives CanEqual
+
+/** Thrown when an untagged union decode matches more than one member under the `Strict` ambiguity
+  * policy. Carries the matched member wire names. Surfaces as a `Result.Failure` on decode.
+  */
+case class AmbiguousVariantMatchException(path: Seq[String], matched: Chunk[String])(using Frame)
+    extends SchemaException(
+        s"Multiple union members matched the untagged input" + SchemaException.pathSuffix(path) +
+            s". Matched ${matched.size} members: ${matched.mkString(", ")}. Configure unionAmbiguity(FirstMatch) to resolve by declared order, or tag the union with a representation."
     )
     with DecodeException derives CanEqual
 
@@ -170,7 +197,16 @@ case class SchemaNotSerializableException(detail: String)(using Frame)
   */
 case class RepresentationUnsupportedException(codec: String, representation: String)(using Frame)
     extends SchemaException(
-        s"Codec '$codec' cannot express the '$representation' sum representation. Use a self-describing codec (Json, Yaml, Ion, MsgPack) or a different representation."
+        s"Codec '$codec' cannot express the '$representation' sum representation. Use a self-describing codec (such as: Json, Yaml, Ion, MsgPack) or a different representation."
+    )
+    with TransformException derives CanEqual
+
+/** Thrown when a representation chain (`representations` / `orElseRepresentation`) contains a
+  * duplicate entry. Raised at the builder call site, before any encode, never silently normalized.
+  */
+case class DuplicateRepresentationException(chain: Chunk[Schema.UnionRepresentation])(using Frame)
+    extends SchemaException(
+        s"Representation chain contains a duplicate entry: ${chain.mkString(", ")}. Each chain entry must be distinct."
     )
     with TransformException derives CanEqual
 

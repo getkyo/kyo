@@ -140,6 +140,24 @@ Sealed traits support six wire representations, selected by a builder on the sch
 | Tuple (flat) | `.tupleFlat` | `["Circle",10.0]` |
 | Untagged | `.untagged` | `{"radius":10.0}` |
 
+**Fallback chains.** A single representation must be expressible by the active codec or encode fails (see the Protobuf constraint below). To let one schema serve both a self-describing codec and Protobuf, declare an ordered fallback chain with `representations`; encode picks the highest-priority entry the codec can express and decode tries the chain in declared order. `orElseRepresentation(fallback)` is the single-fallback shorthand. `External` is always expressible and acts as the implicit chain floor, so it need not be listed explicitly. A chain containing a duplicate entry raises `DuplicateRepresentationException` at the builder call, not at encode time.
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+// tupleFlat where the codec can express a top-level array, else the always-expressible External wrapper
+given Schema[Shape] = Schema[Shape].tupleFlat.orElseRepresentation(Schema.UnionRepresentation.External)
+
+Json.encode[Shape](Rectangle(3.0, 4.0))
+// ["Rectangle",3.0,4.0]
+
+// Protobuf cannot express a top-level array, so it falls back to External
+Protobuf.encode[Shape](Rectangle(3.0, 4.0))
+// Span[Byte] (External wrapper-object form)
+```
+
 The tagged representations (`.discriminator`, `.adjacent`, `.tupleTagged`, `.tupleFlat`) route the tag through the variant-naming layer below, so `renameAllVariants`, `variantNames`, and `variantAlias` all apply to the emitted tag. `.untagged` carries no tag, so variant naming and aliases do not apply to it.
 
 For a flat encoding with a type discriminator field, use `schema.discriminator`:
@@ -241,7 +259,45 @@ Json.decode[Shape]("""{"width":3.0,"height":4.0}""")
 
 Because there is no tag, variants whose fields overlap are resolved by declaration order: the first variant whose fields all match wins. When no variant matches, decode returns `Result.Failure(NoVariantMatchException(...))` listing the variants that were attempted.
 
+Scala 3 type unions derive directly: `Schema[A | B]` is untagged by default, so it encodes the bare member payload and decodes by trying each member in declaration order. A type union has no nominal variant names, so the tagged representations (`discriminator`, `adjacent`) do not apply to it; only the untagged shape is available. When more than one member decodes the same wire value (a JSON number is both an `Int` and a `Long`), the default `Strict` policy fails with `AmbiguousVariantMatchException` listing the matched members rather than picking arbitrarily. Choose `unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)` to resolve a known-ambiguous union by declaration order instead.
+
+```scala
+val s: Schema[Int | Long] = summon[Schema[Int | Long]].unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+given Schema[Int | Long]  = s
+
+Json.decode[Int | Long]("42")
+// Result.Success(42)  (Int wins as first-declared)
+```
+
 The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`) require a self-describing codec. Encoding through Protobuf raises `RepresentationUnsupportedException` before any bytes are written. Wrapper-object, flat-discriminator, and adjacent all work on Protobuf.
+
+**Field presence on the wire.** By default an absent optional encodes as a null-valued key and an empty collection as `[]` or `{}`. To drop a field from the wire, apply an omit policy. `omitNone` and `omitEmptyCollections` are schema-wide. Per field, `omit(_.field)` opens a policy you finish four ways: `.whenNone` (drop an absent optional), `.whenEmpty` (drop an empty collection or map), `.when(predicate)` (drop when a predicate over the field's encoded value returns true), and `.whenDefault` (drop when the value equals the field's compile-time default). A per-field policy shadows the schema-wide one for that field. Only optional and collection/map fields are affected by `whenNone`/`whenEmpty`; `when` and `whenDefault` apply to any field type. An empty product is never dropped. On decode, an omitted field defaults back to `None`, the typed-empty value, or its compile-time default, so the round-trip is preserved.
+
+```scala
+case class Cart(id: Int, items: List[String])
+
+given Schema[Cart] = Schema[Cart].omit(_.items).whenEmpty
+
+Json.encode(Cart(1, Nil))
+// {"id":1}
+
+Json.decode[Cart]("""{"id":1}""")
+// Result.Success(Cart(1, List()))
+```
+
+`when` and `whenDefault` drop a field based on its encoded value rather than its emptiness. `when(predicate)` runs the predicate over the field's materialized `Structure.Value`; `whenDefault` drops the field when its value equals the compile-time default declared in the case class. A field with no compile-time default never omits under `whenDefault`:
+
+```scala
+case class Item(label: String, count: Int = 0)
+
+given Schema[Item] = Schema[Item].omit(_.count).whenDefault
+
+Json.encode(Item("widget", 0))
+// {"label":"widget"}
+
+Json.encode(Item("widget", 5))
+// {"label":"widget","count":5}
+```
 
 Missing fields with default values are filled in automatically, which is useful for configuration types and backward-compatible evolution:
 
@@ -250,6 +306,20 @@ case class Config(host: String, port: Int = 8080, ssl: Boolean = false)
 
 Json.decode[Config]("""{"host":"localhost"}""")
 // Result.Success(Config("localhost", 8080, false))
+```
+
+When a field is absent and has no compile-time default, decode fails with `MissingFieldException`. To supply a fallback at decode time without changing the case class, register one with `default(_.field)(supplier)`. The supplier is by-name, evaluated at most once per decode and only when the field is missing; a present field never runs it. A registered supplier takes precedence over a Scala `=` default, which in turn takes precedence over the field's tag zero value:
+
+```scala
+case class Account(id: Int, name: String)
+
+given Schema[Account] = Schema[Account].default(_.name)("guest")
+
+Json.decode[Account]("""{"id":1}""")
+// Result.Success(Account(1, "guest"))
+
+Json.decode[Account]("""{"id":1,"name":"ada"}""")
+// Result.Success(Account(1, "ada"))
 ```
 
 For raw bytes, `Json.encodeBytes` and `Json.decodeBytes` work with `Span[Byte]` (the immutable byte sequence from `kyo-data`) instead of `String`:
@@ -268,6 +338,20 @@ Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
 Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+
+**Strict decoding.** By default decode ignores input fields the schema does not name, so unknown keys are silently discarded. `denyUnknownFields` flips this: decode rejects the first input field absent from the schema's effective read set with `Result.Failure(UnknownFieldException(...))`. The check runs after field naming, aliases, and schema transforms are applied, so renamed and aliased wire names are accepted while a renamed-away source name is rejected. The policy is read-side only; encode output is unchanged:
+
+```scala
+case class Person(id: Int, name: String)
+
+val strict = Schema[Person].denyUnknownFields
+
+strict.decodeString[Json]("""{"id":1,"name":"Ada"}""")
+// Result.Success(Person(1, "Ada"))
+
+strict.decodeString[Json]("""{"id":1,"name":"Ada","extra":true}""")
+// Result.Failure(UnknownFieldException(...))  (rejects the first unknown field)
+```
 
 ### Ion
 
@@ -1012,6 +1096,25 @@ Each transform has defined behavior on the round-trip:
 - **add**: the computed field appears in encoded output. Decode ignores unknown fields, so the extra field is silently discarded.
 - **select**: equivalent to dropping all fields not named in the selection.
 
+### Per-field wire transforms
+
+`drop`/`rename`/`add` reshape the structural field set. To keep a field but change only how it crosses the wire, use `transformField(_.field)(write)(read)`. It overrides the field's encode and decode functions while preserving the structural type, so navigation, validation, and conversion still see the original Scala field. `transformFieldWrite` and `transformFieldRead` override one direction and preserve any existing override for the other. A later transform for the same field replaces both directions.
+
+```scala
+case class Order(name: String, quantity: Int)
+
+val s = Schema[Order]
+    .transformField(_.quantity)((v, w) => w.string(v.toString))(r => r.string().toInt)
+
+s.encodeString[Json](Order("hat", 42))
+// {"name":"hat","quantity":"42"}
+
+s.decodeString[Json]("""{"name":"hat","quantity":"42"}""")
+// Result.Success(Order("hat", 42))
+```
+
+Per-field transforms compose with the other builders: a `rename` on the same field still applies, and a `default(_.field)(...)` supplies the field when it is absent. Watch the omit case: an `omit(_.field).when(...)` predicate runs over the post-transform `Structure.Value`, so write the predicate against the transformed wire value, not the original Scala field type, or it silently never fires.
+
 ## Type Conversion
 
 `Convert[A, B]` is a one-directional conversion derived at compile time from the field structure of both types. It succeeds when B's fields are a subset of A's (with matching types), or when B has defaults for the missing ones:
@@ -1382,8 +1485,11 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | `VariantNameCollisionException` | two variants (or a variant and an alias) map to the same wire discriminator value |
 | `FieldNameCollisionException` | two fields (or a field and an alias) map to the same wire name |
 | `NoVariantMatchException` | an `.untagged` decode matches no variant (lists the attempted variants) |
+| `UnknownFieldException` | a `denyUnknownFields` decode hits an input field absent from the schema's effective read set (after naming, aliases, and transforms); carries the offending `fieldName` |
 | `ParseException` | raw input cannot be parsed by the codec |
 | `RepresentationUnsupportedException` | a `.tupleTagged`, `.tupleFlat`, or `.untagged` representation is encoded through a codec that cannot express it (Protobuf) |
+| `AmbiguousVariantMatchException` | an untagged or type-union decode under the default `Strict` policy matches more than one member (lists the matched members) |
+| `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the builder call, not at encode time) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
 | `RangeException` | a numeric value overflows the target type |

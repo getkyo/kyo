@@ -229,6 +229,19 @@ object Codec:
           */
         def resultString: String =
             new String(result().toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8)
+
+        /** Projects this writer's serialization capabilities into a descriptor that drives
+          * representation selection for a chain-bearing sum schema. The default body reads the
+          * existing `canWriteTopLevelNonObject` opt-in, so an external codec participates in
+          * selection with no kyo-schema source change.
+          */
+        def capabilities: Codec.Capabilities = Codec.Capabilities(canWriteTopLevelNonObject)
     end Writer
+
+    /** Describes what wire shapes a codec can express, consulted by `Schema.representationFor`
+      * to select the highest-priority representation a chain admits. A single boolean axis today
+      * (`canWriteTopLevelNonObject`); future axes add fields without changing the selection arity.
+      */
+    final case class Capabilities(canWriteTopLevelNonObject: Boolean) derives CanEqual
 
 end Codec
