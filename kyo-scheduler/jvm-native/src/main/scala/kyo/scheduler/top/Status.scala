@@ -65,6 +65,18 @@ case class WorkerStatus(
         )
 }
 
+/** One scheduler worker that holds work (`load > 0`) at the end-of-run leak probe: its mount thread name and the
+  * rendered kyo Trace of the task it is running. `fiberTrace` is the multi-line, newest-first kyo frame render when
+  * the task carries a kyo trace (an IOTask-backed fiber), or "" when it does not (a plain `Task.apply` task, a
+  * scheduler-internal task), in which case the leak report shows only the JVM thread stack for this worker.
+  *
+  * @param mount
+  *   the worker's mount thread name (empty when the worker is momentarily unmounted)
+  * @param fiberTrace
+  *   the rendered kyo Trace, newest-first, or "" when the running task carries no kyo trace
+  */
+case class BusyWorker(mount: String, fiberTrace: String)
+
 case class TaskStatus(
     preempting: Boolean,
     runtime: Int
