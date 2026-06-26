@@ -269,6 +269,10 @@ object ThreeFeedRunBrowserTest:
           |  var ctx = cap.getContext("2d");
           |  function channelName(r, g, b) {
           |    if (r < 40 && g < 40 && b < 40) return "none";
+          |    // Remove the achromatic (white) component so ambient/specular lighting on the cube does not
+          |    // pull a low-luminance hue (blue) toward white; classify the remaining chroma by dominance.
+          |    var m = Math.min(r, g, b);
+          |    r -= m; g -= m; b -= m;
           |    var hi = Math.max(r, g, b);
           |    var rOn = r > hi * 0.55, gOn = g > hi * 0.55, bOn = b > hi * 0.55;
           |    if (rOn && gOn && !bOn) return "yellow";
