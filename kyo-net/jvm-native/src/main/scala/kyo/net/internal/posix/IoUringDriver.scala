@@ -203,6 +203,10 @@ final private[net] class IoUringDriver private[posix] (
     // value when a leaf hangs means the reap loop is dead/stuck; an advancing value means it is live but a pending completion is not delivered.
     @volatile private var diagReapCycles: Long = 0L
 
+    // TEMP DIAG: records why the ring was torn down (external close() vs the reap loop exiting on a submit_and_wait rc), folded into the
+    // "driver closed" Closed message so a failing handshake names the cause with zero hot-path I/O. Remove once the teardown race is fixed.
+    @volatile private var closeReason: String = "none"
+
     // Bound on consecutive `-EINTR` retries for one logical read or send. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal
     // before any byte is transferred completes with `-EINTR` and MUST be retried (no data was moved, the socket is unchanged), exactly as
     // PollerIoDriver retries EINTR in place (commit 5498ada6b) and as the accept path already retries it. The retry is bounded so a pathological
@@ -231,7 +235,7 @@ final private[net] class IoUringDriver private[posix] (
             // on a ring being torn down is a use-after-free (#177), and once closing, the reap-loop exit drains this op and fails the promise. The
             // reap loop's own -EINTR re-submit calls submitRecv directly, already on the reap carrier.
             submitEngineOp { () =>
-                if closedFlag.get() then promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
+                if closedFlag.get() then promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"driver closed [$closeReason]")))
                 else submitRecv(handle, promise, eintrRetries = 0)
             }
         end if
@@ -330,7 +334,7 @@ final private[net] class IoUringDriver private[posix] (
                 register(key, PendingOp.Connect(promise, handle))
                 if closedFlag.get() then
                     unregister(key)
-                    promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
+                    promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"driver closed [$closeReason]")))
                 else
                     uring.kyo_uring_get_sqe(ring) match
                         case Present(sqe) =>
@@ -384,7 +388,7 @@ final private[net] class IoUringDriver private[posix] (
             unregister(key)
             noAddr.close()
             noLen.close()
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
+            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"driver closed [$closeReason]")))
         else if handle.isClosing() then
             // The listener was torn down (closeListener ran requestClose on this carrier before this arm drained): its fd is closed and the
             // number may already name a different socket, so arming would accept on that socket and steal its connections. Reject instead.
@@ -946,6 +950,7 @@ final private[net] class IoUringDriver private[posix] (
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
+            closeReason = "external-close"
             // Wake the reap loop so a wait parked INDEFINITELY on the wake observes closedFlag and tears the ring down promptly; without this an
             // indefinite park would only end on an unrelated CQE. The eventfd write is unconditional, so the close wake always lands. Harmless when
             // no reap loop is parked (never started): the eventfd is closed by teardownRing below, guarded against this write.
@@ -980,7 +985,7 @@ final private[net] class IoUringDriver private[posix] (
       */
     private def teardownRing()(using AllowUnsafe, Frame): Unit =
         if teardownDone.compareAndSet(false, true) then
-            val closed = Closed(label, summon[Frame], "driver closed")
+            val closed = Closed(label, summon[Frame], s"driver closed [$closeReason]")
             // Snapshot the still-pending requested closes before the maps are torn down; force-complete them after the ring exits (below). closeNow
             // removes from pendingCloses, so iterating a copy is race-free.
             val orphanedCloses = new java.util.ArrayList[PosixHandle](pendingCloses.values())
@@ -1206,16 +1211,22 @@ final private[net] class IoUringDriver private[posix] (
                 waitFiber.poll() match
                     case Present(Result.Success(w)) =>
                         val rc = w.eval
-                        if rc != 0 && !isTimeout(rc) then running = false
+                        if rc != 0 && !isTimeout(rc) then
+                            closeReason = s"reap-rc=$rc"
+                            running = false
                         else
                             if rc == 0 then drainReady(cqePtr.get(0))
                             // Re-arm parked ops every turn (a CQE arrived, or -ETIME: an empty turn). The fused submit+wait freed the SQ slots,
                             // so a recv/accept/connect/send parked on SQ-full re-arms now rather than stranding until some other CQE arrives.
                             reArmStalled()
                         end if
-                    case Present(Result.Failure(_)) => running = false
-                    case Present(Result.Panic(_))   => running = false
-                    case Absent                     => ()
+                    case Present(Result.Failure(e)) =>
+                        closeReason = s"reap-fiber-failure=$e"
+                        running = false
+                    case Present(Result.Panic(e)) =>
+                        closeReason = s"reap-fiber-panic=$e"
+                        running = false
+                    case Absent => ()
                 end match
                 if running then running = !closedFlag.get()
             else
