@@ -121,9 +121,18 @@ object Frame:
         end render
     end extension
 
-    implicit inline def derive: Frame = ${ frameImpl(false) }
+    implicit inline def derive: Frame = ${ frameImpl() }
 
-    private[kyo] inline def internal: Frame = ${ frameImpl(true) }
+    // A single shared placeholder Frame for synthesized-frame boundaries where no user frame exists
+    // (kernel-internal suspensions, generated bridges). Every `Frame.internal` reference is this one
+    // instance, so an identity/equality `eq`/`ne` check against the shared placeholder identifies an
+    // internal frame, and the trace ring can skip it without an allocation. (On the JS target `ne` on
+    // a String is a value comparison, not a reference one, but the placeholder content is globally
+    // unique, so the check still identifies exactly this frame.) The string is a valid version-'1'
+    // Frame parseable by every accessor: file/caller/callee/class/snippet are all "<internal>", line
+    // and column are 0, so it renders as "<internal>:0:0" and identifies as internal via its
+    // "<internal>" snippet.
+    private[kyo] val internal: Frame = "1<internal>:0:0|<internal>|<internal>|<internal>|<internal>"
 
     private val allowKyoFileSuffixes = Set("Test.scala", "Spec.scala", "Bench.scala")
 
@@ -149,13 +158,13 @@ object Frame:
                 (content, lines)
     end contentAndLines
 
-    private def frameImpl(internal: Boolean)(using Quotes): Expr[String] =
+    private def frameImpl()(using Quotes): Expr[String] =
         import quotes.reflect.*
 
         val pos      = quotes.reflect.Position.ofMacroExpansion
         val fileName = pos.sourceFile.name
 
-        if !internal && FindEnclosing.isInternal then
+        if FindEnclosing.isInternal then
             report.errorAndAbort(
                 s"""Frame cannot be derived within the kyo package.
                     |
@@ -169,18 +178,16 @@ object Frame:
         end if
 
         val cls    = FindEnclosing(_.isClassDef).map(_.fullName).getOrElse("?")
-        val caller = if internal then "?" else FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
+        val caller = FindEnclosing(_.isDefDef).map(_.name).getOrElse("?")
 
-        // For a non-internal frame, resolve the file's normalized content and line split from
-        // the per-file memo. On a hit (same source-file object) the content is reused without
-        // re-reading it; on a miss the content is read once, normalized, split, and stored.
+        // Resolve the file's normalized content and line split from the per-file memo. On a hit
+        // (same source-file object) the content is reused without re-reading it; on a miss the
+        // content is read once, normalized, split, and stored.
         val (rawContent, lines) =
-            if internal then ("", Array.empty[String])
-            else
-                contentAndLines(
-                    pos.sourceFile.asInstanceOf[AnyRef],
-                    pos.sourceFile.content.getOrElse(report.errorAndAbort("Can't locate source code"))
-                )
+            contentAndLines(
+                pos.sourceFile.asInstanceOf[AnyRef],
+                pos.sourceFile.content.getOrElse(report.errorAndAbort("Can't locate source code"))
+            )
 
         // Callee = syntactic name of the function whose `(using Frame)` parameter the macro is filling.
         // The macro splice always lands at the end of a call expression: either right after the function
@@ -193,40 +200,39 @@ object Frame:
         // unusual whitespace. Operator-named methods (return the operator string like "+", "==",
         // "::") and backticked identifiers (return the content without backticks) are both
         // handled.
-        val callee = if internal then "?" else extractCalleeName(rawContent, pos.end)
+        val callee = extractCalleeName(rawContent, pos.end)
 
         val snippet =
-            if internal then "<internal>"
-            else
-                // Build the marker-inserted snippet from the [startLine-1, endLine+2) line
-                // window of the memoized per-file line array, inserting the marker at the
-                // (endLine, endColumn) point. pos.end always lies within the retained window,
-                // so the marker insertion is exact: the filtered, dedented, newline-joined
-                // window is the snippet.
-                //
-                // pos.endColumn is the 0-based column on pos.endLine where the marker is inserted.
-                // This line/column placement corresponds to the position offset `pos.end` maps to
-                // in the normalized (LF) content: for LF source it produces the same marker
-                // placement as a direct offset-based insertion, and it is also CRLF-correct
-                // because a raw-offset insertion into CRLF source would drift the marker right by
-                // the count of preceding CRs, while the line/column split sidesteps that drift.
-                val markerCol = pos.endColumn
-                val from      = pos.startLine - 1
-                val until     = math.min(pos.endLine + 2, lines.length)
-                val windowBuf = scala.collection.mutable.ArrayBuffer.empty[String]
-                var i         = math.max(0, from)
-                while i < until do
-                    val line =
-                        if i == pos.endLine then
-                            val col = math.min(math.max(0, markerCol), line0Length(lines, i))
-                            lines(i).substring(0, col) + "📍" + lines(i).substring(col)
-                        else lines(i)
-                    if line.exists(_ != ' ') then windowBuf += line
-                    i += 1
-                end while
-                val selected = windowBuf.toSeq
-                val toDrop   = selected.map(_.takeWhile(_ == ' ').length).min
-                selected.map(_.drop(toDrop)).mkString("\n")
+            // Build the marker-inserted snippet from the [startLine-1, endLine+2) line
+            // window of the memoized per-file line array, inserting the marker at the
+            // (endLine, endColumn) point. pos.end always lies within the retained window,
+            // so the marker insertion is exact: the filtered, dedented, newline-joined
+            // window is the snippet.
+            //
+            // pos.endColumn is the 0-based column on pos.endLine where the marker is inserted.
+            // This line/column placement corresponds to the position offset `pos.end` maps to
+            // in the normalized (LF) content: for LF source it produces the same marker
+            // placement as a direct offset-based insertion, and it is also CRLF-correct
+            // because a raw-offset insertion into CRLF source would drift the marker right by
+            // the count of preceding CRs, while the line/column split sidesteps that drift.
+            val markerCol = pos.endColumn
+            val from      = pos.startLine - 1
+            val until     = math.min(pos.endLine + 2, lines.length)
+            val windowBuf = scala.collection.mutable.ArrayBuffer.empty[String]
+            var i         = math.max(0, from)
+            while i < until do
+                val line =
+                    if i == pos.endLine then
+                        val col = math.min(math.max(0, markerCol), line0Length(lines, i))
+                        lines(i).substring(0, col) + "📍" + lines(i).substring(col)
+                    else lines(i)
+                if line.exists(_ != ' ') then windowBuf += line
+                i += 1
+            end while
+            val selected = windowBuf.toSeq
+            val toDrop   = selected.map(_.takeWhile(_ == ' ').length).min
+            selected.map(_.drop(toDrop)).mkString("\n")
+        end snippet
 
         Expr(s"$version$fileName:${pos.startLine + 1}:${pos.startColumn + 1}|$cls|$caller|$callee|$snippet")
     end frameImpl

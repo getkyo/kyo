@@ -562,12 +562,10 @@ object Svg:
     type StopChild = Stop | Reactive[? <: Stop] | Foreach[?, ? <: Stop] | Fragment[? <: Stop]
     // There is no HtmlChild alias: HTML containment is expressed through the AsHtmlChild typeclass.
 
-    private[kyo] def liftSvg(cs: Seq[?]): Chunk[UI] =
+    private[kyo] def liftSvg(cs: Seq[?])(using Frame): Chunk[UI] =
         Chunk.from(cs.map {
-            case s: String => UI.Ast.Text(s)(using
-                    Frame.internal
-                ) // internal frame for the framework's string-to-text lift; no user-visible Frame site
-            case u: UI => u
+            case s: String => UI.Ast.Text(s)
+            case u: UI     => u
         })
 
     // ---- Element case classes: structure ----

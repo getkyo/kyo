@@ -132,34 +132,23 @@ private[runner] object LeakCheck:
         res
     end busyWorkerFrame
 
-    /** The full stack of a worker that currently holds work (`load > 0`), joined into one string, for allowlist matching. The scheduler's
-      * `WorkerStatus.frame` is only the top frame, and the top frame of a blocked fiber is an OS-specific syscall (`EPoll.wait` on Linux,
-      * `KQueue` on macOS); a allowlist needs a stable kyo frame deeper in the stack, so this reads the worker's mount thread's full stack via
-      * `Thread.getAllStackTraces` (keyed by the mount thread name in the status). `Absent` when no worker is busy.
+    /** The JVM stack of the thread named `name`, found via `Thread.getAllStackTraces`, joined into one string.
+      * Keyed by a `BusyWorker.mount` name so the leak dump can show the stack of every busy worker.
+      * `Absent` when no live thread has that name.
       */
-    def busyWorkerStack(): Maybe[String] =
-        val workers              = Scheduler.get.status().workers
-        var i                    = 0
-        var mount: Maybe[String] = Maybe.empty
-        while i < workers.length && mount.isEmpty do
-            val w = workers(i)
-            if (w ne null) && w.load > 0 && (w.mount ne null) && w.mount.nonEmpty then mount = Maybe(w.mount)
-            i += 1
-        end while
-        mount.flatMap { name =>
-            var res: Maybe[String] = Maybe.empty
-            Thread.getAllStackTraces.asScala.foreach { case (t, st) =>
-                if res.isEmpty && t.getName == name then res = Maybe(st.mkString("\n"))
-            }
-            res
+    def stackOfThread(name: String): Maybe[String] =
+        var res: Maybe[String] = Maybe.empty
+        Thread.getAllStackTraces.asScala.foreach { case (t, st) =>
+            if res.isEmpty && t.getName == name then res = Maybe(st.mkString("\n"))
         }
-    end busyWorkerStack
+        res
+    end stackOfThread
 
     /** A thread dump of every thread that is actually doing something at probe time, for an actionable fiber-leak report: each thread whose
-      * state is `RUNNABLE` or whose stack runs kyo code, with its name, state, and stack. Unlike [[busyWorkerStack]] (which sees only scheduler
-      * workers) this also captures NON-worker threads, e.g. a caller stuck mid-`offer` that holds a queue's race-repair counter while a worker
-      * spins in `close()` waiting for it. Idle pool/parked threads with no kyo frame are filtered out to keep the report focused. The leak
-      * check's own thread is excluded.
+      * state is `RUNNABLE` or whose stack runs kyo code, with its name, state, and stack. Unlike the per-busy-worker dump (which is keyed to
+      * the busy scheduler workers' mount threads via [[stackOfThread]]) this also captures NON-worker threads, e.g. a caller stuck mid-`offer`
+      * that holds a queue's race-repair counter while a worker spins in `close()` waiting for it. Idle pool/parked threads with no kyo frame are
+      * filtered out to keep the report focused. The leak check's own thread is excluded.
       */
     def runningThreadsDump(): String =
         val self = Thread.currentThread()
@@ -319,9 +308,10 @@ private[runner] object LeakCheck:
       *
       * Order: the scheduler/fiber probe first (it owns the settle window), then a `System.gc()` plus settle so Cleaner-closed abandoned
       * channels and finished threads drop out before the descriptor and thread diffs (a genuine leak stays referenced and survives the gc, so
-      * this trims false positives without hiding real leaks). The fiber probe matches the allowlist against the busy worker's full stack so an
-      * OS-independent kyo frame can excuse an expected event loop; the descriptor probe enumerates `/proc/self/fd` and reports the exact
-      * leaked targets with no count tolerance.
+      * this trims false positives without hiding real leaks). The fiber probe builds a per-busy-worker dump (each worker's rendered kyo trace,
+      * when its task carries one, plus its JVM thread stack) and matches the allowlist against EITHER the kyo trace or the JVM stack of any busy
+      * worker, so an OS-independent kyo frame or a stable JVM-stack frame can excuse an expected event loop; the descriptor probe enumerates
+      * `/proc/self/fd` and reports the exact leaked targets with no count tolerance.
       */
     def detect(
         baseline: Baseline,
@@ -343,11 +333,21 @@ private[runner] object LeakCheck:
             case IdleResult.Idle => ()
             case IdleResult.Busy(la, frame) =>
                 if checkFibers then
-                    val stack       = busyWorkerStack().getOrElse(frame.getOrElse(""))
-                    val allowlisted = effectiveAllowlist.exists(stack.contains)
+                    val busy = Scheduler.get.busyFiberTraces()
+                    val perWorker =
+                        busy.map { w =>
+                            val header     = s"  worker thread ${w.mount}:"
+                            val kyoSection = if w.fiberTrace.nonEmpty then s"\n    kyo trace:\n${w.fiberTrace}" else ""
+                            val stack = stackOfThread(w.mount).map { st =>
+                                st.linesIterator.take(30).map(f => s"        at $f").mkString("\n")
+                            }.getOrElse("        <stack unavailable>")
+                            s"$header$kyoSection\n    thread stack:\n$stack"
+                        }.mkString("\n")
+                    val matchText   = busy.map(w => w.fiberTrace + "\n" + stackOfThread(w.mount).getOrElse("")).mkString("\n")
+                    val allowlisted = effectiveAllowlist.exists(matchText.contains)
                     if !allowlisted then
                         findings += s"fiber leak: scheduler still busy (loadAvg=$la) after settle; running at ${frame.getOrElse("<unknown frame>")}" +
-                            s"\n    busy worker stack:\n$stack" +
+                            s"\n  per-busy-worker fiber dump:\n$perWorker" +
                             s"\n  all running threads (worker and non-worker) at probe time:${runningThreadsDump()}"
                     end if
         end match

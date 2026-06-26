@@ -83,13 +83,19 @@ class FrameTest extends kyo.test.Test[Any]:
     }
 
     "internal" in {
-        assert(internal.className == "kyo.FrameTest")
-        assert(internal.callerName == "?")
-        assert(internal.position.fileName == "FrameTest.scala")
-        assert(internal.position.lineNumber == 14)
-        assert(internal.position.columnNumber == 20)
+        // Frame.internal is a single shared placeholder, not a per-call-site macro, so every
+        // accessor returns the uniform "<internal>" sentinel rather than this call site's class
+        // or position. Two references to Frame.internal are the same instance.
+        assert(internal.className == "<internal>")
+        assert(internal.callerName == "<internal>")
+        assert(internal.calleeName == "<internal>")
+        assert(internal.position.fileName == "<internal>")
+        assert(internal.position.lineNumber == 0)
+        assert(internal.position.columnNumber == 0)
+        assert(internal.position.show == "<internal>:0:0")
         assert(internal.snippet == "<internal>")
         assert(internal.snippetShort == "<internal>")
+        assert(internal eq Frame.internal)
     }
 
     "calleeName" - {
