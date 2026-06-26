@@ -34,7 +34,7 @@ final private[kyo] class Connection[Handle] private (
     val outbound: Channel.Unsafe[Span[Byte]],
     private val readPump: ReadPump[Handle],
     private val writePump: WritePump[Handle],
-    private val closedFlag: AtomicBoolean.Unsafe,
+    private val state: AtomicRef.Unsafe[ConnectionState],
     private val closeFn: () => Unit
 ) extends kyo.net.Connection
     with kyo.net.Connection.UpgradableConnection:
@@ -90,13 +90,18 @@ final private[kyo] class Connection[Handle] private (
     /** Start the connection. Begins pumping data between socket and channels. */
     private[kyo] def start()(using AllowUnsafe, Frame): Unit =
         Log.live.unsafe.info(s"Connection starting")
-        readPump.start()
-        writePump.start()
+        // Created -> Established: pumps begin I/O. A connection detached or closed before start
+        // (CAS lost) stays in its terminal/Upgrading state and the pumps are not started.
+        if state.compareAndSet(ConnectionState.Created, ConnectionState.Established) then
+            readPump.start()
+            writePump.start()
     end start
 
     /** Check if connection is still open. */
     def isOpen(using AllowUnsafe): Boolean =
-        !closedFlag.get()
+        state.get() match
+            case ConnectionState.Created | ConnectionState.Established | ConnectionState.Upgrading => true
+            case ConnectionState.Closing | ConnectionState.Closed                                  => false
 
     /** Close the connection. Closes channels and handle. Idempotent. */
     def close()(using AllowUnsafe, Frame): Unit = closeFn()
@@ -131,8 +136,13 @@ final private[kyo] class Connection[Handle] private (
       * This method is idempotent. On second call it returns Absent (channel was already closed).
       */
     def detachForUpgrade()(using AllowUnsafe, Frame): Maybe[Chunk[Span[Byte]]] =
-        if closedFlag.compareAndSet(false, true) then
-            // TODO to double check: do we need to close the pumps as well?
+        // Win the detach by CASing Established -> Upgrading: the Upgrading state keeps the fd open and
+        // bars teardown, so the socket can be handed to the TLS upgrade. A second detach, or a detach
+        // after a close already won, loses the CAS and returns Absent (idempotent), so the fd is never
+        // double-handed-off.
+        if state.compareAndSet(ConnectionState.Established, ConnectionState.Upgrading)
+            || state.compareAndSet(ConnectionState.Created, ConnectionState.Upgrading)
+        then
             // Close inbound and capture any bytes the ReadPump already staged but nobody consumed.
             // These are raw network bytes (TLS ciphertext) that the handshake engine needs.
             val buffered = inbound.close()
@@ -157,20 +167,16 @@ private[kyo] object Connection:
         channelCapacity: Int,
         onClose: () => Unit = () => ()
     )(using AllowUnsafe, Frame): Connection[Handle] =
-        val inbound    = Channel.Unsafe.init[Span[Byte]](channelCapacity)
-        val outbound   = Channel.Unsafe.init[Span[Byte]](channelCapacity)
-        val closedFlag = AtomicBoolean.Unsafe.init(false)
-        // Set true only when closeFn itself initiated the close (its closedFlag CAS won). detachForUpgrade shares closedFlag but must NOT close
-        // the handle (it hands the fd to the TLS upgrade), so it leaves this false; a later serverPlain.close() then re-enters closeFn's else
-        // branch, sees closeInitiated == false, and stays a no-op, preserving the detach-keeps-the-fd-open invariant.
-        val closeInitiated = AtomicBoolean.Unsafe.init(false)
-        // Guards the handle teardown (cancel + closeHandle) so it runs exactly once. It is reached only after the WritePump has finished with
-        // the outbound channel (it took the closing-channel's Closed and ran its own teardown, which re-enters closeFn), so the socket fd is
-        // closed only once every queued span has actually been written, not merely taken off the channel.
-        val tornDown = AtomicBoolean.Unsafe.init(false)
-
+        val inbound  = Channel.Unsafe.init[Span[Byte]](channelCapacity)
+        val outbound = Channel.Unsafe.init[Span[Byte]](channelCapacity)
+        val state    = AtomicRef.Unsafe.init[ConnectionState](ConnectionState.Created)
+        // Guards the handle teardown (cancel + closeHandle) so it runs exactly once: the
+        // Closing -> Closed CAS. It is reached only after the WritePump has finished with the
+        // outbound channel (it took the closing-channel's Closed and ran its own teardown, which
+        // re-enters closeFn), so the socket fd is closed only once every queued span has actually
+        // been written, not merely taken off the channel.
         def teardownHandle(): Unit =
-            if tornDown.compareAndSet(false, true) then
+            if state.compareAndSet(ConnectionState.Closing, ConnectionState.Closed) then
                 driver.cancel(handle)
                 driver.closeHandle(handle)
                 // Notify the owning transport that this connection's handle is gone, so it drops the connection from its open-connection
@@ -179,8 +185,13 @@ private[kyo] object Connection:
                 onClose()
 
         val closeFn: () => Unit = () =>
-            if closedFlag.compareAndSet(false, true) then
-                closeInitiated.set(true)
+            // Win the close by CASing a live state -> Closing. Created and Established both go to
+            // Closing (a never-started connection closes too); Upgrading does NOT, since its fd is
+            // owned by the TLS upgrade. A second close loses the CAS and falls to the re-entrant
+            // Closing branch below.
+            if state.compareAndSet(ConnectionState.Established, ConnectionState.Closing)
+                || state.compareAndSet(ConnectionState.Created, ConnectionState.Closing)
+            then
                 // closeAwaitEmpty, not close: a consumer that has not yet drained the bytes the ReadPump staged before EOF can still take them
                 // (takes drain a closing channel until empty), so a close initiated on the read side does not discard buffered inbound bytes as
                 // close()'s dropped backlog would. The handle teardown below does not wait for that drain, so the fd is reclaimed even if the
@@ -202,20 +213,23 @@ private[kyo] object Connection:
                 // the fd while the driver's reap loop is still alive, instead of leaving the teardown to race an async re-entry. When the
                 // outbound has queued writes, the drain fiber is still pending, so the WritePump re-entry below flushes the tail first.
                 if outboundDrained.done() then teardownHandle()
-            else if closeInitiated.get() then
-                // Re-entrant close after closeFn itself initiated the close. The WritePump reached this by taking Closed from the closing
-                // outbound channel after it had nothing left to write (the half-close flush completed), or by its write/writable wait failing
-                // (the peer is gone, or driver.close from the owning Scope failed every pending writable as the safety net). Either way the
-                // outbound side is finished, so tear down the handle. This re-entry, not the drain fiber, is what bounds close(): a half-close
-                // that can drain reaches it after the flush, and a full close whose outbound can never drain reaches it once the peer's RST or
-                // the Scope's driver.close fails the parked writable, so close() never waits forever on an outbound that will not empty.
+            else if state.get() == ConnectionState.Closing then
+                // Re-entrant close after closeFn itself initiated the close (the state is Closing).
+                // The WritePump reached this by taking Closed from the closing outbound channel after
+                // it had nothing left to write (the half-close flush completed), or by its
+                // write/writable wait failing (the peer is gone, or driver.close from the owning Scope
+                // failed every pending writable as the safety net). Either way the outbound side is
+                // finished, so tear down the handle. This re-entry, not the drain fiber, is what bounds
+                // close(): a half-close that can drain reaches it after the flush, and a full close
+                // whose outbound can never drain reaches it once the peer's RST or the Scope's
+                // driver.close fails the parked writable, so close() never waits forever.
                 teardownHandle()
             end if
 
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)
         val writePump = new WritePump(handle, driver, outbound, closeFn)
 
-        new Connection(handle, driver, inbound, outbound, readPump, writePump, closedFlag, closeFn)
+        new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn)
     end init
 
     /** Create a driverless in-memory connection over two pre-existing channels.
