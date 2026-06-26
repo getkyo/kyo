@@ -268,7 +268,8 @@ class JsTransportTlsTest extends Test:
         // the deterministic latch (no sleep waits for the timeout). Before the fix there was no deadline, so the socket lingered and "close"
         // never fired, hanging the test (the symptom of the unreaped stall).
         import AllowUnsafe.embrace.danger
-        val transport = JsTransport.init(poolSize = 1, channelCapacity = 4, handshakeTimeout = 150.millis)
+        val transport =
+            JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = 150.millis)
         for
             listener <- transport.listen("127.0.0.1", 0, 128, serverTlsMaterial) { _ => () }.safe.get
             port                    = listener.port
@@ -285,7 +286,8 @@ class JsTransportTlsTest extends Test:
         // Control arm: the same finite deadline, but a real kyo TLS client completes the handshake well within it. The connection must work
         // normally (echo round-trip), proving the deadline timer is disarmed on a successful handshake and does not reap a healthy connection.
         import AllowUnsafe.embrace.danger
-        val transport = JsTransport.init(poolSize = 1, channelCapacity = 4, handshakeTimeout = 2.seconds)
+        val transport =
+            JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = 2.seconds)
         val clientTls = NetTlsConfig(trustAll = true, sniHostname = Present("localhost"))
         for
             listener <- transport.listen("127.0.0.1", 0, 128, serverTlsMaterial) { serverConn =>
@@ -309,11 +311,12 @@ class JsTransportTlsTest extends Test:
         end for
     }
 
-    "the default (Infinity) handshakeTimeout arms no deadline (a stalled handshake is not reaped)" in {
-        // The default JsTransport (handshakeTimeout = Infinity) must arm no timer: a stalled handshake parks forever and is not reaped. A bounded
+    "a stalled server TLS handshake is not reaped when handshakeTimeout is Infinity" in {
+        // With handshakeTimeout = Infinity the server arms no deadline timer: a stalled handshake parks forever and is not reaped. A bounded
         // observation window (an Async suspension, not a thread block) is the no-reap ceiling; with Infinity the client's "close" must not fire.
         import AllowUnsafe.embrace.danger
-        val transport = JsTransport.init(poolSize = 1, channelCapacity = 4, handshakeTimeout = Duration.Infinity)
+        val transport =
+            JsTransport.init(poolSize = 1, channelCapacity = 4, connectTimeout = Duration.Infinity, handshakeTimeout = Duration.Infinity)
         for
             listener <- transport.listen("127.0.0.1", 0, 128, serverTlsMaterial) { _ => () }.safe.get
             port                    = listener.port
@@ -323,7 +326,7 @@ class JsTransportTlsTest extends Test:
         yield
             destroyClient()
             listener.close()
-            assert(!outcome, "the default Infinity handshakeTimeout must arm no deadline, so a stalled handshake is not reaped")
+            assert(!outcome, "a stalled handshake must not be reaped when handshakeTimeout is Infinity")
         end for
     }
 

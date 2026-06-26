@@ -40,6 +40,7 @@ object TestBackends:
                     JsTransport.init(
                         poolSize = 1,
                         channelCapacity = config.channelCapacity,
+                        connectTimeout = config.connectTimeout,
                         handshakeTimeout = config.handshakeTimeout
                     )(using summon[AllowUnsafe], frame)
             )

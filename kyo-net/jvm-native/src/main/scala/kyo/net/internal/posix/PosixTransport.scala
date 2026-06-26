@@ -348,21 +348,20 @@ final private[net] class PosixTransport private[posix] (
     end connectImpl
 
     /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring the accept-path `armHandshakeDeadline`. When
-      * `config.handshakeTimeout` is finite (and the target is a TCP host:port, not a Unix socket whose `port < 0` has no typed timeout leaf),
+      * `config.connectTimeout` is finite (and the target is a TCP host:port, not a Unix socket whose `port < 0` has no typed timeout leaf),
       * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `promise`
-      * with `NetConnectTimeoutException(host, port, handshakeTimeout)` when the deadline fires. `promise.completeDiscard` completes the promise at
+      * with `NetConnectTimeoutException(host, port, connectTimeout)` when the deadline fires. `promise.completeDiscard` completes the promise at
       * most once, so the deadline and the OS connect outcome are mutually exclusive. This is the close-cause discrimination: the deadline arm is
       * the only producer of the typed timeout leaf, so a deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close
       * (refused/unreachable/errno) surfaces `NetConnectException` through the existing `connectFail` path. When the connect completes first it
-      * disarms the timer by interrupting the timer fiber, so the timer never fires. `Duration.Infinity` (the default) arms no timer and preserves
-      * the caller-composes-via-`Async.timeout` behavior exactly.
+      * disarms the timer by interrupting the timer fiber, so the timer never fires.
       */
     private def armConnectDeadline(
         promise: IOPromise[NetException, NetConnection],
         host: String,
         port: Int
     )(using AllowUnsafe, Frame): Unit =
-        val timeout = config.handshakeTimeout
+        val timeout = config.connectTimeout
         if port >= 0 && timeout.isFinite then
             val timer = Clock.live.unsafe.sleep(timeout)
             timer.onComplete { _ =>
@@ -947,7 +946,7 @@ final private[net] class PosixTransport private[posix] (
       *     deadline fires before the handshake completes, the timer wins the guard and runs `onDeadline` (the connection's fd + engine
       *     teardown), reaping a stalled handshake. When the handshake completes first it wins the guard and interrupts the timer fiber, so the
       *     timer never fires.
-      *   - When `config.handshakeTimeout` is `Duration.Infinity` (the default), NO timer is armed and the guard is a permanently-open gate: the
+      *   - When `config.handshakeTimeout` is `Duration.Infinity`, NO timer is armed and the guard is a permanently-open gate: the
       *     returned `disarm` always returns `true`, so the handshake outcome runs exactly as it did before this deadline existed. No allocation
       *     beyond the gate, no semantic change for existing callers.
       */
@@ -1451,7 +1450,7 @@ final private[net] class PosixTransport private[posix] (
                             drainAllDirect(
                                 handle,
                                 engine,
-                                cont = () => onFailed(""),
+                                cont = () => onFailed("server-fatal-alert"),
                                 onFailed,
                                 onPanic
                             )
@@ -1520,7 +1519,7 @@ final private[net] class PosixTransport private[posix] (
         try
             handle.driver.write(handle, data, offset) match
                 case WriteResult.Done  => cont()
-                case WriteResult.Error => onFailed("")
+                case WriteResult.Error => onFailed("server-send-error")
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
         catch

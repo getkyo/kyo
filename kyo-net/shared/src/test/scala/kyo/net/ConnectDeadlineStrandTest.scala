@@ -6,9 +6,9 @@ import kyo.*
   * `NetConnectTimeoutException` in `TransportHandshakeTimeoutTest`'s rapid stall+reap loop.
   *
   * Drives the FULL public connect path (`NetPlatform.transport(...).connect`), which arms the `Clock`-driven connect deadline
-  * (`config.handshakeTimeout`) racing the OS connect's write-readiness, exactly the path that timed out in the failing test.
+  * (`config.connectTimeout`) racing the OS connect's write-readiness, exactly the path that timed out in the failing test.
   * Connects run SEQUENTIALLY (matching the failing leaf's `Loop`, not a concurrency storm) against one real plaintext listener
-  * that accepts and immediately closes; the connect deadline is the failing leaf's tight `handshakeTimeout`. Every connect MUST
+  * that accepts and immediately closes; the connect deadline is the failing leaf's tight `config.connectTimeout`. Every connect MUST
   * succeed or fail with a NON-timeout cause; a `NetConnectTimeoutException` means the connect's write-readiness was not delivered
   * before the deadline. Observation is non-perturbing: only in-memory counters (timeout count + a latency max/histogram via
   * `System.nanoTime`), NO console logging in any hot path.
@@ -25,7 +25,7 @@ class ConnectDeadlineStrandTest extends Test:
         // under load, so a failure here is a genuinely dropped/never-delivered write-readiness (the lost-wakeup), not a few-ms
         // latency tail against a too-tight bound. (The failing leaf's own 60ms deadline is reproduced by TransportHandshakeTimeoutTest;
         // this guard isolates DELIVERY correctness from deadline tightness, so it is not host-load-flaky.)
-        val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = 2.seconds))
+        val transport = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = 2.seconds))
         transport.listen("127.0.0.1", 0, 128) { conn => conn.close() }.safe.get.map { listener =>
             val timeouts = new java.util.concurrent.atomic.AtomicInteger(0)
             val maxLatNs = new java.util.concurrent.atomic.AtomicLong(0L)

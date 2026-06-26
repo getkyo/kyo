@@ -49,6 +49,7 @@ final private[kyo] class NioTransport private (
     val driver: NioIoDriver,
     private val channelCapacity: Int,
     private val readBufferSize: Int,
+    private val connectTimeout: Duration,
     private val handshakeTimeout: Duration
 ) extends TransportImpl[NioHandle]:
 
@@ -128,7 +129,7 @@ final private[kyo] class NioTransport private (
                 discard(driver.registerChannel(handle))
                 completeConnect(handle, promise)
             else
-                // Connection in progress, wait for writable. Arm the connect-deadline: when handshakeTimeout is finite, a Clock-driven timer
+                // Connection in progress, wait for writable. Arm the connect-deadline: when connectTimeout is finite, a Clock-driven timer
                 // fails `promise` with the typed NetConnectTimeoutException if the OS connect does not complete first. The deadline arm and the
                 // OS outcome race on the same `promise` (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and
                 // an OS-failure close surfaces NetConnectException: the close cause is discriminated by which arm completes `promise` first.
@@ -872,25 +873,24 @@ final private[kyo] class NioTransport private (
             }
     end armHandshakeDeadline
 
-    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring [[armHandshakeDeadline]]. When `handshakeTimeout` is finite,
+    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect, mirroring [[armHandshakeDeadline]]. When `connectTimeout` is finite,
       * schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the clock executor, never a blocked carrier) and fail `connPromise`
-      * with `NetConnectTimeoutException(host, port, handshakeTimeout)` when the deadline fires. `connPromise.completeDiscard` completes the promise
+      * with `NetConnectTimeoutException(host, port, connectTimeout)` when the deadline fires. `connPromise.completeDiscard` completes the promise
       * at most once, so the deadline and the OS connect outcome are mutually exclusive: a deadline that fires after the connect already completed
       * is a no-op, and a connect that completes after the deadline already failed `connPromise` is a no-op. This is the close-cause
       * discrimination: the deadline arm is the only producer of the typed timeout leaf, so a deadline-fired close surfaces
       * `NetConnectTimeoutException` while an OS-failure close (refused/unreachable/reset) surfaces `NetConnectException` through the existing
       * `connectFail` path. When the connect completes first it disarms the timer by interrupting the timer fiber, so the timer never fires.
-      * `Duration.Infinity` (the default) arms no timer and preserves the caller-composes-via-`Async.timeout` behavior exactly.
       */
     private def armConnectDeadline(
         connPromise: IOPromise[NetException, Connection[NioHandle]],
         host: String,
         port: Int
     )(using AllowUnsafe, Frame): Unit =
-        if handshakeTimeout.isFinite then
-            val timer = Clock.live.unsafe.sleep(handshakeTimeout)
+        if connectTimeout.isFinite then
+            val timer = Clock.live.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
-                connPromise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, handshakeTimeout)))
+                connPromise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, connectTimeout)))
             }
             // Disarm: when the connect outcome completes connPromise first, interrupt the timer fiber so it never fires.
             connPromise.onComplete { _ =>
@@ -1033,6 +1033,7 @@ private[kyo] object NioTransport:
     def init(
         channelCapacity: Int,
         readBufferSize: Int,
+        connectTimeout: Duration,
         handshakeTimeout: Duration
     )(using AllowUnsafe, Frame): NioTransport =
         // Build the concrete NioIoDriver via the floor backend (NioBackend is the registry's Nio entry). NioTransport
@@ -1041,7 +1042,7 @@ private[kyo] object NioTransport:
         // IoBackendPlatform.transport, which invokes this init only when the Nio floor is the selected entry.
         val driver = kyo.net.internal.backend.NioBackend.createDriver(kyo.net.TransportConfig.default)
         discard(driver.start())
-        new NioTransport(driver, channelCapacity, readBufferSize, handshakeTimeout)
+        new NioTransport(driver, channelCapacity, readBufferSize, connectTimeout, handshakeTimeout)
     end init
 
     /** Create an SSLContext from NetTlsConfig.

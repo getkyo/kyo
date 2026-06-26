@@ -25,6 +25,7 @@ class NioTransportTest extends Test:
         NioTransport.init(
             channelCapacity = 8,
             readBufferSize = NioHandle.DefaultReadBufferSize,
+            connectTimeout = Duration.Infinity,
             handshakeTimeout = Duration.Infinity
         )
 

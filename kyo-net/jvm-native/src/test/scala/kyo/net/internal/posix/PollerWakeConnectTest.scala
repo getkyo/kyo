@@ -10,7 +10,7 @@ import kyo.net.Test
   * Background: after the FIFO drain was made poll-loop-authoritative (the data-plane lost-wakeup fix), the poll loop became the single drainer
   * of the change FIFO, draining it once per cycle AFTER the bounded `epoll_wait` / `kevent` park. A change submitted while the loop is mid-park
   * (a connect's write-interest arm via `armSocketWritable` -> `submitChange(OpRegisterWrite)`) was not registered with the kernel until the
-  * current park timed out (up to ~100ms, longer under load). A short connect deadline (`config.handshakeTimeout`) then fired before the register
+  * current park timed out (up to ~100ms, longer under load). A short connect deadline (`config.connectTimeout`) then fired before the register
   * landed, failing the connect even though the OS connect completed in microseconds. The fix wakes the poll loop on `submitChange` (epoll
   * eventfd / kqueue EVFILT_USER), so a parked poll returns at once and the change is registered and its readiness delivered promptly.
   *

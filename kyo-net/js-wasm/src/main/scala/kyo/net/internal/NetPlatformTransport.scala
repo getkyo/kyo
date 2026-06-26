@@ -13,6 +13,7 @@ private[kyo] object NetPlatformTransport:
         JsTransport.init(
             poolSize = 1,
             channelCapacity = TransportConfig.default.channelCapacity,
+            connectTimeout = TransportConfig.default.connectTimeout,
             handshakeTimeout = TransportConfig.default.handshakeTimeout
         )
     end transport
@@ -22,6 +23,7 @@ private[kyo] object NetPlatformTransport:
         JsTransport.init(
             poolSize = 1,
             channelCapacity = config.channelCapacity,
+            connectTimeout = config.connectTimeout,
             handshakeTimeout = config.handshakeTimeout
         )
 end NetPlatformTransport

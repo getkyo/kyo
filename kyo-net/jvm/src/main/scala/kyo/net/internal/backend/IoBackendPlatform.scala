@@ -34,6 +34,7 @@ private[net] object IoBackendPlatform:
             NioTransport.init(
                 channelCapacity = config.channelCapacity,
                 readBufferSize = config.readChunkSize,
+                connectTimeout = config.connectTimeout,
                 handshakeTimeout = config.handshakeTimeout
             )
     end NioEntry

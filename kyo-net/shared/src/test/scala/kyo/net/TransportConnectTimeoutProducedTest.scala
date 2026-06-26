@@ -3,7 +3,7 @@ package kyo.net
 import kyo.*
 
 /** The transport PRODUCES the typed [[NetConnectTimeoutException]] on its internal connect-deadline. A client connect whose SYN
-  * goes unanswered (a black-hole endpoint) parks until the transport's finite `handshakeTimeout` fires; the deadline arm fails the connect promise
+  * goes unanswered (a black-hole endpoint) parks until the transport's finite `connectTimeout` fires; the deadline arm fails the connect promise
   * with `NetConnectTimeoutException(host, port, timeout)`, the typed leaf the kyo-http client maps to `HttpConnectTimeoutException`.
   *
   * This is the close-cause discrimination: the deadline arm is the only producer of the timeout leaf, so a deadline-fired close
@@ -11,7 +11,7 @@ import kyo.*
   * producer existed the connect parked indefinitely (or surfaced the generic connect failure), so this FAILs-before / PASSes-after.
   *
   * The deadline is the transport's own Clock-driven timer, NOT a caller-side `Async.timeout` (the distinct property [[TransportConnectDeadlineTest]]
-  * asserts and leaves green). The finite `handshakeTimeout` is the deterministic latch (the black hole never answers, so the deadline always wins);
+  * asserts and leaves green). The finite `connectTimeout` is the deterministic latch (the black hole never answers, so the deadline always wins);
   * a generous outer `Async.timeout` survival window turns a regression (no deadline armed, so the connect hangs) into a failure rather than a hang,
   * never a sleep-as-synchronization.
   *
@@ -31,10 +31,10 @@ class TransportConnectTimeoutProducedTest extends Test:
 
     "a connect that does not complete by its deadline fails with NetConnectTimeoutException".notNative in {
         given Frame = Frame.internal
-        // A finite, short handshakeTimeout arms the transport's internal connect-deadline. The connect to the black hole never completes, so the
+        // A finite, short connectTimeout arms the transport's internal connect-deadline. The connect to the black hole never completes, so the
         // deadline always wins; the produced leaf is the typed NetConnectTimeoutException, NOT the generic NetConnectException.
         val timeout   = 200.millis
-        val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = timeout))
+        val transport = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = timeout))
         Abort.run[Closed | Timeout](
             // A generous survival window: if the deadline were NOT armed (the regression) the connect would hang and this would time out, failing
             // the assertion below rather than hanging the suite. With the deadline armed, the connect fails well within the window.

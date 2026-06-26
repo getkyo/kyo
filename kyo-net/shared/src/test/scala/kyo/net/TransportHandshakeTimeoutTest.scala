@@ -9,9 +9,9 @@ import kyo.net.internal.tls.TlsProviderPlatform
   * each transport directly only because there was no public way to set the deadline.
   *
   * The deadline arms per accepted connection: a plaintext client completes the TCP accept but never sends a ClientHello, so the server
-  * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating; the
-  * default `Duration.Infinity` arms nothing. Reaps and disarms are observed through the public `Connection` surface with generous bounds, never
-  * a sleep-as-synchronization (the one fixed sleep is a past-the-deadline survival window in the disarm leaf, not a settle).
+  * handshake parks; a finite `handshakeTimeout` reaps it (closing the accepted fd), which the client observes as its inbound terminating.
+  * Reaps and disarms are observed through the public `Connection` surface with generous bounds, never a sleep-as-synchronization (the one
+  * fixed sleep is a past-the-deadline survival window in the disarm leaf, not a settle).
   */
 class TransportHandshakeTimeoutTest extends Test:
 
@@ -70,11 +70,11 @@ class TransportHandshakeTimeoutTest extends Test:
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
             val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = 60.millis))
-            // handshakeTimeout currently arms two deadlines from the one config field: the server accept-handshake reap AND an in-flight client
-            // connect deadline. A 60ms reap deadline therefore also caps each client connect at 60ms, and under load the connect-readiness delivery
-            // (poll park / completion drain) can exceed 60ms, firing a spurious NetConnectTimeoutException unrelated to the reap UAF this guard
-            // exercises. The client connect needs no deadline here, so it runs on a separate default-config transport (handshakeTimeout Infinity, no
-            // connect deadline); the server transport keeps the finite 60ms that drives the reap. The reap is still asserted 30 times below.
+            // handshakeTimeout arms ONLY the server accept-handshake reap; client connect is bounded by config.connectTimeout (a separate field).
+            // A 60ms reap deadline is tight enough that under load the loopback connect-readiness delivery can race it and fire a spurious
+            // NetConnectTimeoutException unrelated to the reap UAF this guard exercises. The client transport therefore uses a generous
+            // connectTimeout (the 30s default) so the loopback connect completes well before any connect deadline, while the server transport
+            // keeps the finite 60ms handshakeTimeout that drives the reap. The reap is still asserted 30 times below.
             val clientTransport = NetPlatform.transport(TransportConfig.default)
             transport.listen("127.0.0.1", 0, 64, serverTls) { _ => () }.safe.get.map { listener =>
                 // Each iteration: a plaintext client completes the TCP accept but never sends a ClientHello, so the server handshake parks with an
@@ -148,14 +148,15 @@ class TransportHandshakeTimeoutTest extends Test:
         }
     }
 
-    "the default (Infinity) handshakeTimeout arms no deadline on every backend" in {
+    "a stalled server TLS handshake is not reaped when handshakeTimeout is larger than the observation window" in {
         assumeTls()
         given Frame = Frame.internal
         TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
             val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
-            assert(TransportConfig.default.handshakeTimeout == Duration.Infinity)
-            // No deadline armed: a stalled handshake parks and the server never closes, so the inbound take must NOT complete within the
-            // window. The bounded Async.timeout must expire (Failure), proving no reap. The window is an Async suspension, not a thread block.
+            // The default handshakeTimeout is 30s (finite, but much larger than the 500ms observation window). A stalled handshake will not be
+            // reaped within 500ms, so the inbound take must NOT complete within the window. The bounded Async.timeout must expire (Failure),
+            // proving no early reap. The window is an Async suspension, not a thread block.
+            assert(TransportConfig.default.handshakeTimeout == 30.seconds)
             val transport = NetPlatform.transport(TransportConfig.default)
             transport.listen("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
                 transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
@@ -165,7 +166,33 @@ class TransportHandshakeTimeoutTest extends Test:
                         transport.close()
                         assert(
                             outcome.isFailure,
-                            s"the default Infinity handshakeTimeout must arm no deadline, so a stalled handshake is not reaped, got $outcome"
+                            s"a stalled handshake must not be reaped within 500ms when handshakeTimeout is 30s, got $outcome"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    "a stalled server TLS handshake is not reaped when handshakeTimeout is Infinity (no timer armed)" in {
+        assumeTls()
+        given Frame = Frame.internal
+        TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
+            val serverTls = NetTlsConfig(certChainPath = Present(certPath), privateKeyPath = Present(keyPath))
+            // With handshakeTimeout = Infinity the transport arms NO timer at all: a stalled handshake parks forever and is not reaped. A
+            // bounded observation window (an Async suspension, not a thread block) is the no-reap ceiling; the Async.timeout must expire,
+            // proving the inbound did not complete within the window. This is stronger than a finite-but-large default: it asserts the
+            // Infinity code path arms nothing, not just that a 30s timer does not fire within 500ms.
+            val transport = NetPlatform.transport(TransportConfig.default.copy(handshakeTimeout = Duration.Infinity))
+            transport.listen("127.0.0.1", 0, 16, serverTls) { _ => () }.safe.get.map { listener =>
+                transport.connect("127.0.0.1", listener.port).safe.get.map { client =>
+                    Abort.run[Timeout](Async.timeout(500.millis)(Abort.run[Closed](client.inbound.safe.take))).map { outcome =>
+                        client.close()
+                        listener.close()
+                        transport.close()
+                        assert(
+                            outcome.isFailure,
+                            s"a stalled handshake must not be reaped when handshakeTimeout is Infinity (no timer is armed), got $outcome"
                         )
                     }
                 }

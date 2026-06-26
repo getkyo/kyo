@@ -1,8 +1,6 @@
 package kyo.net
 
-import kyo.Absent
-import kyo.Duration
-import kyo.Maybe
+import kyo.*
 
 /** Low-level transport tuning for the NIO pump-and-parser pipeline used by both client and server.
   *
@@ -21,22 +19,34 @@ import kyo.Maybe
   *   - `soRcvBuf`: when `Present(n)`, sets `SO_RCVBUF` on each socket fd to `n` bytes via `setsockopt`. `Absent` (the default) issues no
   *     `setsockopt` and leaves the kernel's default buffer size unchanged. Applied to both client connect fds and listen accept fds.
   *   - `soSndBuf`: same as `soRcvBuf` for `SO_SNDBUF` (the send buffer). `Absent` (the default) leaves the kernel default unchanged.
+  *   - `connectTimeout`: deadline for a client TCP connect to complete. When finite, the transport arms a `Clock`-driven deadline as the
+  *     connect is issued and fails the connect with `NetConnectTimeoutException` if the OS does not deliver a connect outcome (connected or
+  *     refused) within the deadline. Bounds the client-side connect independently of the server accept handshake. The default `30.seconds`
+  *     arms the slowloris-connect guard by default.
   *   - `handshakeTimeout`: deadline for a server-side accept TLS handshake to complete. A client that finishes the TCP accept and then
   *     stalls the TLS handshake (sends nothing, or a partial ClientHello, and never finishes) would otherwise pin the accepted fd, the TLS
   *     engine, and the per-connection buffers indefinitely (a slowloris handshake-stall denial of service, CWE-400). When this is finite, the
   *     transport arms a `Clock`-driven deadline as each accepted connection begins its handshake and reaps the connection (the same fd +
-  *     engine teardown a failed handshake already runs) if the handshake has not completed by the deadline. The default `Duration.Infinity`
-  *     arms no timer and preserves the original behavior: read, write, idle, and client-side connect/handshake deadlines stay caller-composable
-  *     via `Async.timeout`, which is the only path a caller cannot self-serve being the server accept handshake addressed here.
+  *     engine teardown a failed handshake already runs) if the handshake has not completed by the deadline. The default `30.seconds`
+  *     arms the slowloris guard by default.
   */
 case class TransportConfig(
     channelCapacity: Int,
     readChunkSize: Int,
     ioPoolSize: Int,
+    connectTimeout: Duration,
     handshakeTimeout: Duration,
     soRcvBuf: Maybe[Int] = Absent,
     soSndBuf: Maybe[Int] = Absent
-) derives CanEqual
+) derives CanEqual:
+    require(
+        connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
+        s"connectTimeout must be positive or Infinity: $connectTimeout"
+    )
+    require(
+        handshakeTimeout > Duration.Zero || handshakeTimeout == Duration.Infinity,
+        s"handshakeTimeout must be positive or Infinity: $handshakeTimeout"
+    )
 end TransportConfig
 
 object TransportConfig:
@@ -44,7 +54,8 @@ object TransportConfig:
         channelCapacity = 4,
         readChunkSize = 8192,
         ioPoolSize = Math.max(1, Runtime.getRuntime.availableProcessors() / 2),
-        handshakeTimeout = Duration.Infinity,
+        connectTimeout = 30.seconds,
+        handshakeTimeout = 30.seconds,
         soRcvBuf = Absent,
         soSndBuf = Absent
     )

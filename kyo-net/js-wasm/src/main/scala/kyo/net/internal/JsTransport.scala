@@ -36,6 +36,7 @@ import scala.scalajs.js
 final private[kyo] class JsTransport private (
     val pool: IoDriverPool[JsHandle],
     private val channelCapacity: Int,
+    private val connectTimeout: Duration,
     private val handshakeTimeout: Duration
 ) extends TransportImpl[JsHandle]:
 
@@ -236,7 +237,7 @@ final private[kyo] class JsTransport private (
       *
       * The guard is the single source of truth (rather than relying on interrupting the timer fiber): on JS the timer's continuation always runs
       * on the macrotask scheduler, so a settled guard is what makes it skip the destroy. Called only on the TLS `listen` path and only when
-      * `handshakeTimeout` is finite, so `Duration.Infinity` (the default) arms nothing and preserves the original behavior.
+      * `handshakeTimeout` is finite; `Duration.Infinity` arms nothing.
       */
     private def armServerHandshakeDeadlines(server: js.Dynamic)(using AllowUnsafe, Frame): Unit =
         if handshakeTimeout.isFinite then
@@ -271,24 +272,23 @@ final private[kyo] class JsTransport private (
             ))
     end armServerHandshakeDeadlines
 
-    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect. When `handshakeTimeout` is finite (and the target is a TCP host:port,
+    /** Arm a `Clock`-driven deadline for one in-flight client TCP connect. When `connectTimeout` is finite (and the target is a TCP host:port,
       * not a Unix socket whose `port < 0` has no typed timeout leaf), schedule `Clock.live.unsafe.sleep(d).onComplete(...)` (a timer fiber on the
-      * clock executor, never a blocked carrier) and fail `promise` with `NetConnectTimeoutException(host, port, handshakeTimeout)` when the
+      * clock executor, never a blocked carrier) and fail `promise` with `NetConnectTimeoutException(host, port, connectTimeout)` when the
       * deadline fires. `promise.completeDiscard` completes the promise at most once, so the deadline and the Node connect/error outcome are
       * mutually exclusive. This is the close-cause discrimination: the deadline arm is the only producer of the typed timeout leaf, so a
       * deadline-fired close surfaces `NetConnectTimeoutException` while an OS-failure close surfaces `NetConnectException` through `connectError`.
       * When the connect outcome completes `promise` first it disarms the timer by interrupting the timer fiber, so the timer never fires.
-      * `Duration.Infinity` (the default) arms no timer and preserves the caller-composes-via-`Async.timeout` behavior exactly.
       */
     private def armConnectDeadline(
         promise: IOPromise[NetException, Connection[JsHandle]],
         host: String,
         port: Int
     )(using AllowUnsafe, Frame): Unit =
-        if port >= 0 && handshakeTimeout.isFinite then
-            val timer = Clock.live.unsafe.sleep(handshakeTimeout)
+        if port >= 0 && connectTimeout.isFinite then
+            val timer = Clock.live.unsafe.sleep(connectTimeout)
             timer.onComplete { _ =>
-                promise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, handshakeTimeout)))
+                promise.completeDiscard(Result.fail(NetConnectTimeoutException(host, port, connectTimeout)))
             }
             // Disarm: when the connect outcome completes `promise` first, interrupt the timer fiber so it never fires.
             promise.onComplete { _ =>
@@ -304,7 +304,7 @@ final private[kyo] class JsTransport private (
         val promise = new IOPromise[NetException, Connection[JsHandle]]
         val driver  = pool.next()
 
-        // Arm the connect-deadline: when handshakeTimeout is finite, a Clock-driven timer fails `promise` with the typed
+        // Arm the connect-deadline: when connectTimeout is finite, a Clock-driven timer fails `promise` with the typed
         // NetConnectTimeoutException if the Node socket neither connects nor errors first. The deadline arm and the OS outcome race on the same
         // `promise` (completeDiscard, at most once), so a deadline-fired close surfaces the timeout leaf and an OS-failure close surfaces
         // NetConnectException through `connectError`: the close cause is discriminated by which arm completes `promise` first.
@@ -784,7 +784,10 @@ end JsTransport
 
 /** Factory for `JsTransport`. Creates a pool of `JsIoDriver` instances (usually just one, since JS is single-threaded). */
 private[kyo] object JsTransport:
-    def init(poolSize: Int, channelCapacity: Int, handshakeTimeout: Duration)(using AllowUnsafe, Frame): JsTransport =
+    def init(poolSize: Int, channelCapacity: Int, connectTimeout: Duration, handshakeTimeout: Duration)(using
+        AllowUnsafe,
+        Frame
+    ): JsTransport =
         // Obtain each driver through the capability-probed registry rather than constructing JsIoDriver
         // directly. The JS registry holds only NodeBackend, so the selected driver is the same JsIoDriver used
         // before the registry existed; -Dkyo.net.backend can force/observe the selection.
@@ -794,7 +797,7 @@ private[kyo] object JsTransport:
             )
         val pool = IoDriverPool.init(drivers)
         pool.start()
-        new JsTransport(pool, channelCapacity, handshakeTimeout)
+        new JsTransport(pool, channelCapacity, connectTimeout, handshakeTimeout)
     end init
 end JsTransport
 

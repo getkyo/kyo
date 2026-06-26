@@ -9,8 +9,8 @@ class TransportConfigTest extends Test:
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
         assert(config.ioPoolSize == Math.max(1, Runtime.getRuntime.availableProcessors() / 2))
-        // handshakeTimeout defaults to Infinity: no server accept-handshake deadline is armed, preserving the original behavior.
-        assert(config.handshakeTimeout == Duration.Infinity)
+        assert(config.connectTimeout == 30.seconds)
+        assert(config.handshakeTimeout == 30.seconds)
         succeed
     }
 
@@ -22,10 +22,11 @@ class TransportConfigTest extends Test:
 
     "builder methods produce correct values" in {
         val config = TransportConfig.default
-            .copy(channelCapacity = 8, readChunkSize = 4096, ioPoolSize = 3, handshakeTimeout = 5.seconds)
+            .copy(channelCapacity = 8, readChunkSize = 4096, ioPoolSize = 3, connectTimeout = 5.seconds, handshakeTimeout = 5.seconds)
         assert(config.channelCapacity == 8)
         assert(config.readChunkSize == 4096)
         assert(config.ioPoolSize == 3)
+        assert(config.connectTimeout == 5.seconds)
         assert(config.handshakeTimeout == 5.seconds)
         succeed
     }
@@ -36,6 +37,7 @@ class TransportConfigTest extends Test:
         assert(updated.channelCapacity == 99)
         assert(updated.readChunkSize == base.readChunkSize)
         assert(updated.ioPoolSize == base.ioPoolSize)
+        assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
         succeed
     }
@@ -46,6 +48,7 @@ class TransportConfigTest extends Test:
         assert(updated.readChunkSize == 99)
         assert(updated.channelCapacity == base.channelCapacity)
         assert(updated.ioPoolSize == base.ioPoolSize)
+        assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
         succeed
     }
@@ -56,6 +59,7 @@ class TransportConfigTest extends Test:
         assert(updated.ioPoolSize == 99)
         assert(updated.channelCapacity == base.channelCapacity)
         assert(updated.readChunkSize == base.readChunkSize)
+        assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
         succeed
     }
@@ -67,6 +71,7 @@ class TransportConfigTest extends Test:
         assert(updated.channelCapacity == base.channelCapacity)
         assert(updated.readChunkSize == base.readChunkSize)
         assert(updated.ioPoolSize == base.ioPoolSize)
+        assert(updated.connectTimeout == base.connectTimeout)
         succeed
     }
 
@@ -88,7 +93,22 @@ class TransportConfigTest extends Test:
         assert(updated.channelCapacity == base.channelCapacity)
         assert(updated.readChunkSize == base.readChunkSize)
         assert(updated.ioPoolSize == base.ioPoolSize)
+        assert(updated.connectTimeout == base.connectTimeout)
         assert(updated.handshakeTimeout == base.handshakeTimeout)
+        succeed
+    }
+
+    "default-has-finite-timeouts" in {
+        val config = TransportConfig.default
+        assert(config.connectTimeout == 30.seconds)
+        assert(config.handshakeTimeout == 30.seconds)
+        succeed
+    }
+
+    "connect-and-handshake-are-independent" in {
+        val config = TransportConfig.default.copy(connectTimeout = 2.seconds, handshakeTimeout = 7.seconds)
+        assert(config.connectTimeout == 2.seconds)
+        assert(config.handshakeTimeout == 7.seconds)
         succeed
     }
 
