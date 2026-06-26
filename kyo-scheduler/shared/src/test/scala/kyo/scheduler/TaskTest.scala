@@ -116,4 +116,11 @@ class TaskTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(t.checkShouldPreempt())
         }
     }
+
+    "fiberTrace" - {
+        "Task.fiberTrace default returns empty string" in {
+            val task = Task.apply(() => ())
+            assert(task.fiberTrace() == "")
+        }
+    }
 }

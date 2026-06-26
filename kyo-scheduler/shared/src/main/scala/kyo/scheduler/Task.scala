@@ -28,6 +28,15 @@ trait Task {
       */
     def needsInterrupt(): Boolean = false
 
+    /** The running fiber's logical trace as readable kyo frames, newest-first, or "" when this task carries no kyo trace.
+      *
+      * Read by the scheduler's diagnostic accessor to attribute a still-busy worker at the end-of-run leak probe. The
+      * default is "": a plain task (Task.apply, an admission probe) has no kyo trace, and "" signals the consumer to show
+      * only the JVM thread stack. IOTask overrides this to render its captured trace. The return is a plain String so the
+      * scheduler stays trace-agnostic (no kyo-kernel dependency); the read is best-effort and never throws.
+      */
+    private[scheduler] def fiberTrace(): String = ""
+
     private[scheduler] def runtime(): Int =
         state.runtime
 

@@ -41,6 +41,17 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
     final override def needsInterrupt(): Boolean =
         !isPending()
 
+    final override def fiberTrace(): String =
+        val snapshot = trace
+        if snapshot eq null then ""
+        else
+            try Trace.render(snapshot)
+            // Contain ANY throw (not just NonFatal): a diagnostic cross-thread read of a mutable trace
+            // buffer must never escape to the leak-probe thread; any failure falls back to the JVM stack.
+            catch case _: Throwable => ""
+        end if
+    end fiberTrace
+
     // Bumps the interrupt epoch and wakes the BlockingMonitor AFTER the promise CAS, so the
     // worker rebuild and monitor scan it triggers already see needsInterrupt() and the runtime
     // reset. The pre-CAS preInterrupt hook would let a worker spend its one gated rebuild

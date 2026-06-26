@@ -723,23 +723,30 @@ class FiberTest extends kyo.test.Test[Any]:
                 }
 
                 "Trace.saved captures frames from a running computation" in {
-                    // Spawning from inside run{} means the Safepoint has accumulated frames.
-                    // When trace.index > 0, the exception thrown by the carrier is enriched
-                    // with Kyo frame elements (format: "snippet @ className" in the class-name field).
-                    val carrier = Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
-                    Abort.run[Any](carrier.safe.get).map {
-                        case Result.Panic(ex) =>
-                            val frames = ex.getStackTrace
-                            assert(frames.nonEmpty)
-                            // Kyo frames use the format "snippet @ className" in the declaring-class field
-                            // (from Trace.Owner.enrich); their presence proves Trace.saved() captured frames.
-                            val hasKyoFrame = frames.exists(_.getClassName.contains("@"))
-                            assert(
-                                hasKyoFrame,
-                                s"Expected enriched Kyo frames in stack trace but found: ${frames.take(3).mkString(", ")}"
-                            )
-                        case other =>
-                            fail(s"expected Panic, got $other")
+                    // Spawning from inside a running effect chain means the Safepoint has accumulated the
+                    // chain's own user frames. Trace.saved() snapshots them, and the exception thrown by
+                    // the carrier is enriched with those Kyo frame elements (format "snippet @ className"
+                    // in the class-name field). The spawn must follow at least one user-framed effect step,
+                    // since only those steps push frames; a spawn at the very start of the body would see an
+                    // empty trace (the internal placeholder frame is never pushed).
+                    Sync.defer(1).map(_ => 2).map { _ =>
+                        Fiber.Unsafe.init { throw new RuntimeException("trace-test") }: Fiber.Unsafe[Int, Any]
+                    }.map { carrier =>
+                        Abort.run[Any](carrier.safe.get).map {
+                            case Result.Panic(ex) =>
+                                val frames = ex.getStackTrace
+                                assert(frames.nonEmpty)
+                                // Kyo frames use the format "snippet @ className" in the declaring-class field
+                                // (from Trace.Owner.enrich); their presence proves Trace.saved() captured the
+                                // running chain's frames.
+                                val hasKyoFrame = frames.exists(_.getClassName.contains("@"))
+                                assert(
+                                    hasKyoFrame,
+                                    s"Expected enriched Kyo frames in stack trace but found: ${frames.take(3).mkString(", ")}"
+                                )
+                            case other =>
+                                fail(s"expected Panic, got $other")
+                        }
                     }
                 }
 

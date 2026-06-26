@@ -101,6 +101,48 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "busyFiberTraces" - {
+        "returns empty when the scheduler is idle" in withScheduler { scheduler =>
+            eventually(assert(scheduler.loadAvg() == 0))
+            assert(scheduler.busyFiberTraces().isEmpty)
+        }
+
+        "covers all busy workers, not first-only" in withScheduler { scheduler =>
+            val n   = 3
+            val cdl = new CountDownLatch(1)
+            val tasks = List.fill(n)(TestTask(_run = () => {
+                cdl.await()
+                Task.Done
+            }))
+            tasks.foreach(scheduler.schedule)
+            eventually(assert(scheduler.busyFiberTraces().size >= n))
+            val result = scheduler.busyFiberTraces()
+            assert(result.size >= n)
+            assert(result.forall(_.mount.nonEmpty))
+            assert(result.map(_.mount).distinct.size == result.size)
+            assert(result.forall(_.fiberTrace == ""))
+            cdl.countDown()
+            eventually(assert(scheduler.loadAvg() == 0))
+        }
+
+        "is total under concurrent worker mutation" in withScheduler { scheduler =>
+            val cdl = new CountDownLatch(1)
+            val task = TestTask(_run = () => {
+                cdl.await()
+                Task.Done
+            })
+            scheduler.schedule(task)
+            eventually(assert(scheduler.busyFiberTraces().nonEmpty))
+            // Release the latch so the worker completes and nulls currentTask concurrently with the probe loop below,
+            // exercising the busy -> idle transition the accessor must read without throwing.
+            cdl.countDown()
+            val results = (1 to 100).map(_ => scheduler.busyFiberTraces())
+            assert(results.forall(_ != null))
+            assert(results.forall(_.forall(_.mount != null)))
+            eventually(assert(scheduler.loadAvg() == 0))
+        }
+    }
+
     private def withScheduler[A](testCode: Scheduler => A): A = {
         val scheduler = new Scheduler(TestExecutors.cached, TestExecutors.scheduled)
         try testCode(scheduler)
