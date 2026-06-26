@@ -67,14 +67,15 @@ object FeedProve extends ClientDemoApp:
       *
       * `Three.Feed.serverSignal(colorId, palette.head)` declares the fed signal; running it inside the
       * `Three.Feed.run` WebSocket session registers a feed observer for `colorId`, so each set on the
-      * returned ref is pushed over the WS. A server-side background fiber (a `Fiber.initUnscoped` engine)
-      * advances the palette index every ~1s and sets the signal, driving the color steps. The tree
-      * carries `< Async` because the engine fiber is forked with `Fiber.initUnscoped`.
+      * returned ref is pushed over the WS. A server-side background fiber advances the palette index
+      * every ~1s and sets the signal, driving the color steps. The driver is forked with the scoped
+      * `Fiber.init`, so it binds to the connection Scope and is interrupted on disconnect (no leaked
+      * fiber); the tree carries `< (Async & Scope)` because of that scoped fork.
       */
-    private def ui(using Frame): UI < Async =
+    private def ui(using Frame): UI < (Async & Scope) =
         for
             color <- Three.Feed.serverSignal[Int](FeedProveScene.colorId, FeedProveScene.palette.head)
-            _     <- Fiber.initUnscoped(cyclePalette(color))
+            _     <- Fiber.init(cyclePalette(color))
         yield UI.host("canvas").id("app")
 
     /** The server-driven palette cycler: every [[serverStepMs]]ms it advances an index and sets the fed

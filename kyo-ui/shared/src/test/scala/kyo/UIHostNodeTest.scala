@@ -5,12 +5,12 @@ import kyo.internal.HostPayload
 import kyo.internal.HtmlOp
 import kyo.internal.HtmlRenderer
 
-/** Tests for the host-node cross-platform bridge: tag rendering, non-void shape, HtmlContent child
-  * acceptance, `mount = Absent` default, attr propagation, and const (no Bound.Ref) classification.
-  * All tests call `HtmlRenderer.render` synchronously with no browser or DOM; they run on JVM, JS,
-  * Native, and Wasm.
+/** Tests for the host-node cross-platform bridge (`UI.Ast.HostNode` in `UI.scala`): tag rendering,
+  * non-void shape, HtmlContent child acceptance, `mount = Absent` default, attr propagation, and const
+  * (no Bound.Ref) classification. All tests call `HtmlRenderer.render` synchronously with no browser or
+  * DOM; they run on JVM, JS, Native, and Wasm.
   */
-class HostNodeTest extends kyo.test.Test[Any]:
+class UIHostNodeTest extends kyo.test.Test[Any]:
 
     "host renders a canvas element with data-kyo-path" in {
         for html <- HtmlRenderer.render(UI.div(UI.host()), Seq.empty)
@@ -72,4 +72,4 @@ class HostNodeTest extends kyo.test.Test[Any]:
         assert(op == op2)
     }
 
-end HostNodeTest
+end UIHostNodeTest

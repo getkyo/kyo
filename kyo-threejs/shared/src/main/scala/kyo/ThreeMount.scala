@@ -157,8 +157,15 @@ object ThreeMount:
                     val h  = if ch > 0 then ch else canvasDyn.height.asInstanceOf[Double]
                     if w > 0 && h > 0 then
                         val _ = renderer.setSize(w, h, false)
-                        cam.aspect = w / h
-                        val _ = cam.updateProjectionMatrix()
+                        // Aspect-correction applies only to a perspective camera; an orthographic embed
+                        // camera has no `aspect`, so the write would be an ineffective property set and
+                        // updateProjectionMatrix would recompute an unchanged frustum. Guard on `aspect`
+                        // being a number (present only on PerspectiveCamera). An orthographic embed keeps
+                        // its symmetric frustum and is not aspect-corrected to a non-square host canvas.
+                        if js.typeOf(cam.aspect) == "number" then
+                            cam.aspect = w / h
+                            val _ = cam.updateProjectionMatrix()
+                        end if
                     end if
                 }
                 _        <- ThreeMount.subscribeRegions(mounted)

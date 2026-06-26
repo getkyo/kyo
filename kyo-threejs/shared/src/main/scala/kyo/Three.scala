@@ -830,7 +830,9 @@ object Three:
           * the inbound `AppEvent`'s `Json.encode`d string, decodes it
           * with the handler's own `Schema[A]` and runs the user's handler. The closure captures `A`/
           * `Schema[A]`, so the registry stays homogeneous with no existential leaking; a decode failure is a
-          * log-and-skip (the fire-and-forget back-channel policy), never a thrown frame.
+          * log-and-skip (the fire-and-forget back-channel policy). Decoding and routing never throw a frame;
+          * the user handler then runs inline in the session loop, so a handler that panics tears the session
+          * down, as a panicking DOM-event handler does.
           */
         final private[kyo] case class AppEventHandler(
             eventId: String,
@@ -999,7 +1001,10 @@ object Three:
           *
           * Like [[serverSignal]] the capability is established once at `run`; the handler is not threaded
           * through a signature. A decode failure or an event for an unregistered id is a server-side
-          * log-and-skip, never a thrown frame (the fire-and-forget policy).
+          * log-and-skip (the fire-and-forget policy): decoding and routing never throw a frame. The handler
+          * itself runs inline in the session message loop, so a well-behaved handler that returns normally
+          * never throws a frame, but a handler that panics tears the session down (exactly as a panicking
+          * DOM-event handler does).
           */
         def onAppEvent[A: Schema](id: String)(handler: A => Unit < Async)(using Frame): Unit < Sync =
             registryLocal.use {
@@ -1033,16 +1038,25 @@ object Three:
           * connection Scope and are interrupted on disconnect (no leaked fiber). The server never builds
           * the 3D scene graph; it learns only the fed ids.
           *
+          * The builder's row is `(Async & Scope)`: it is evaluated under the connection Scope, so a
+          * server-timer driver feeding a `serverSignal` (a background loop the user forks with
+          * `Fiber.init`) binds to that same Scope and is interrupted on disconnect alongside the
+          * observers, leaking no fiber. A plain `UI < Async` builder still conforms. On the SSR page GET
+          * the builder runs under its own short-lived Scope, so any such driver is torn down once the
+          * page body is rendered.
+          *
           * Construction is `< Sync` (the per-connection observers fork at WebSocket-connect time under
           * the connection Scope, matching the `UI.runHandlers` substrate).
           */
-        def run(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using
+        def run(basePath: String, head: UI.PageHead)(ui: => UI < (Async & Scope))(using
             Frame
         ): Seq[HttpHandler[?, ?, ?]] < Sync =
             Sync.defer {
                 val base = kyo.internal.UIServer.normalizePath(basePath)
                 Seq(
-                    kyo.internal.UIServer.pageHandler(basePath, head)(Sync.defer(ui)),
+                    // The SSR page render only needs the produced tree; discharge the builder's Scope so a
+                    // forked driver is torn down once the body is rendered (no per-GET fiber leak).
+                    kyo.internal.UIServer.pageHandler(basePath, head)(Scope.run(Sync.defer(ui))),
                     feedWsRoute(base, Sync.defer(ui))
                 )
             }
@@ -1055,7 +1069,7 @@ object Three:
           * `HostUpdate` whenever it emits; an inbound app event runs its handler (which typically sets a fed
           * signal, feeding the result back over the same WS). All fibers tear down on disconnect.
           */
-        private def feedWsRoute(base: String, ui: => UI < Async)(using Frame): HttpHandler[Any, Any, Nothing] =
+        private def feedWsRoute(base: String, ui: => UI < (Async & Scope))(using Frame): HttpHandler[Any, Any, Nothing] =
             HttpHandler.webSocket(s"$base/_kyo/ws") { (_, ws) =>
                 FeedRegistry.init.map { registry =>
                     registryLocal.let(Present(registry)) {
@@ -1064,9 +1078,24 @@ object Three:
                                 Kyo.foreachDiscard(entries) { entry =>
                                     // Fork each observer under the session Scope: Fiber.init registers an
                                     // interrupt on Scope close, so a disconnect tears every feed fiber down.
-                                    Fiber.init(entry.observe(payload =>
-                                        kyo.internal.UIServer.emitHostUpdate(ws, Seq(entry.id), payload)
-                                    )).unit
+                                    // The body is wrapped in Abort.run[Throwable] so a non-Closed panic in the
+                                    // observe loop is logged rather than lost (matching every sibling forked
+                                    // fiber); an Interrupted is the normal Scope-close signal, not an error.
+                                    Fiber.init {
+                                        Abort.run[Throwable] {
+                                            entry.observe(payload =>
+                                                kyo.internal.UIServer.emitHostUpdate(ws, Seq(entry.id), payload)
+                                            )
+                                        }.map { result =>
+                                            result.fold(
+                                                _ => (): Unit < Sync,
+                                                err => Log.error(s"Three.Feed observer for '${entry.id}' failed: ${err.getMessage}"),
+                                                panic =>
+                                                    if panic.isInstanceOf[Interrupted] then (): Unit < Sync
+                                                    else Log.error(s"Three.Feed observer for '${entry.id}' panicked", panic)
+                                            )
+                                        }
+                                    }.unit
                                 }
                             }
                         } { (eventId, encoded) =>

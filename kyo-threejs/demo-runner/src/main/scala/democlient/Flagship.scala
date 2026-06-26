@@ -71,17 +71,18 @@ object Flagship extends ClientDemoApp:
       * click-driven scale feed, and `Three.Feed.onAppEvent(eventId)` registers the handler that advances
       * the scale signal one level per inbound click `Bump`, wrapping at the end. Running these inside the
       * `Three.Feed.run` WebSocket session registers a feed observer per id, so each set on a returned ref is
-      * pushed over the WS. The tree carries `< Async` because the palette cycler is forked with
-      * `Fiber.initUnscoped`.
+      * pushed over the WS. The palette cycler is forked with the scoped `Fiber.init`, so it binds to the
+      * connection Scope and is interrupted on disconnect (no leaked fiber); the tree carries
+      * `< (Async & Scope)` because of that scoped fork.
       */
-    private def ui(using Frame): UI < Async =
+    private def ui(using Frame): UI < (Async & Scope) =
         for
             color <- Three.Feed.serverSignal[Int](FlagshipScene.colorId, FlagshipScene.palette.head)
             scale <- Three.Feed.serverSignal[Int](FlagshipScene.scaleId, FlagshipScene.scaleLevels.head)
             _ <- Three.Feed.onAppEvent[FlagshipScene.Bump](FlagshipScene.eventId) { _ =>
                 scale.updateAndGet(advanceScale).unit
             }
-            _ <- Fiber.initUnscoped(cyclePalette(color))
+            _ <- Fiber.init(cyclePalette(color))
         yield UI.host("canvas").id("app").style(_.width(900.px).height(600.px))
 
     /** Advances the scale level one step in [[FlagshipScene.scaleLevels]], wrapping at the end, so each

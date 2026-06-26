@@ -57,7 +57,12 @@ private[kyo] object UIServer:
     // handler by eventId (the kyo-threejs feed runner reads the per-session app-event registry). The
     // default router is a no-op (the plain server-push path has no app-event handlers). The router runs
     // under the session, so a handler that reflects into a fed signal feeds back over the same WS.
-    private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < Async)(
+    //
+    // The builder's row is `(Async & Scope)`: it is evaluated inside this session `Scope.run`, so a
+    // server-timer driver the builder forks with `Fiber.init` (e.g. a feed cycler) binds to the session
+    // Scope and is interrupted on disconnect alongside the reactive subscription. A plain `UI < Async`
+    // builder still conforms (Async is a subset of Async & Scope).
+    private[kyo] def serveSession(ws: HttpWebSocket, ui: => UI < (Async & Scope))(
         afterTree: UI => Unit < (Async & Scope)
     )(
         appEvent: (String, String) => Unit < Async

@@ -156,12 +156,13 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
 
     /** The page body the island mounts into, plus the server-owned fed color signal and its cycler. The
       * `serverSignal` registration inside the `run` WS session is what wires the feed; a server-side
-      * background fiber advances the palette index every ~1s and sets the signal.
+      * background fiber advances the palette index every ~1s and sets the signal. The driver is forked
+      * with the scoped `Fiber.init`, so it binds to the connection Scope and tears down on disconnect.
       */
-    private def ui(using Frame): UI < Async =
+    private def ui(using Frame): UI < (Async & Scope) =
         for
             color <- Three.Feed.serverSignal[Int](FeedProveScene.colorId, FeedProveScene.palette.head)
-            _     <- Fiber.initUnscoped(cyclePalette(color))
+            _     <- Fiber.init(cyclePalette(color))
         yield UI.host("canvas").id("app")
 
     private def cyclePalette(color: SignalRef[Int])(using Frame): Unit < Async =
