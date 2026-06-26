@@ -35,6 +35,7 @@ import kyo.test.runner.ConsoleReporter
 import kyo.test.runner.internal.Glob
 import kyo.test.runner.internal.Instantiate
 import kyo.test.runner.internal.LeafPool
+import kyo.test.runner.internal.LeakDebug
 import kyo.test.runner.internal.Randomize
 import scala.concurrent.Future
 
@@ -153,15 +154,23 @@ object TestRunner:
                                 case _ => rawBuilder
                         val leafInfo = LeafInfo(suiteInfo.name, path, builder.tags)
                         val cursor   = cursorMap.getOrElse(path, Chunk.empty)
-                        Sync.defer(reporter.onLeafStart(leafInfo)).andThen(
+                        Sync.defer {
+                            reporter.onLeafStart(leafInfo)
+                            // Leak-debug attribution: snapshot the open descriptors before the leaf body and get the after-leaf finalizer. A
+                            // no-op (single shared closure) unless leak-debug mode installed a probe, so the normal path is untouched.
+                            LeakDebug.beginLeaf(path)
+                        }.map { probeFinish =>
                             withHeartbeat(leafInfo, effectiveConfig.heartbeatInterval, reporter)(
                                 runLeaf(suite, cursor, path, builder, hasFocus, effectiveConfig.failOnNoAssertion)
-                            )
-                        ).map { entries =>
-                            entries.headMaybe match
-                                case Maybe.Present((_, result)) => reporter.onLeafComplete(leafInfo, result)
-                                case Maybe.Absent               => ()
-                            entries
+                            ).map { entries =>
+                                // Run after the leaf body (which includes the leaf's Scope.run, so the leaf's own finalizers have already run):
+                                // any descriptor still open here that the leaf opened is the leaf's leak, recorded against this leaf path.
+                                probeFinish()
+                                entries.headMaybe match
+                                    case Maybe.Present((_, result)) => reporter.onLeafComplete(leafInfo, result)
+                                    case Maybe.Absent               => ()
+                                entries
+                            }
                         }
                     end leafComp
 
@@ -203,7 +212,17 @@ object TestRunner:
                                 )
                             )
                         }
-                        val sr = SuiteReport(suiteInfo.name, leaf ++ synthetic, duration)
+                        val sr = SuiteReport(
+                            suiteInfo.name,
+                            leaf ++ synthetic,
+                            duration,
+                            leakCheck = effectiveConfig.leakCheck,
+                            leakCheckSockets = effectiveConfig.leakCheckSockets,
+                            leakCheckFileDescriptors = effectiveConfig.leakCheckFileDescriptors,
+                            leakCheckThreads = effectiveConfig.leakCheckThreads,
+                            leakCheckFibers = effectiveConfig.leakCheckFibers,
+                            leakCheckAllowlist = effectiveConfig.leakCheckAllowlist
+                        )
                         reporter.onSuiteComplete(suiteInfo, sr)
                         val report = TestReport(Chunk(sr))
                         reporter.onRunComplete(report)
@@ -215,10 +234,10 @@ object TestRunner:
         // failed Kyo value. A Panic is logged (never swallowed) and recorded as a failure.
         Abort.run[Throwable](pipeline).map {
             case Result.Success(report) => report
-            case Result.Failure(t)      => constructorFailureReport(suiteInfo, reporter, t)
+            case Result.Failure(t)      => constructorFailureReport(suiteInfo, reporter, effectiveConfig, t)
             case panic: Result.Panic =>
                 java.lang.System.err.println(s"[kyo-test] unexpected panic during run: ${panic.exception}")
-                constructorFailureReport(suiteInfo, reporter, panic.exception)
+                constructorFailureReport(suiteInfo, reporter, effectiveConfig, panic.exception)
         }
     end runReport
 
@@ -522,11 +541,17 @@ object TestRunner:
 
     // ── Constructor failure ─────────────────────────────────────────────────────────────────────
 
-    private def constructorFailureReport(suiteInfo: SuiteInfo, reporter: TestReporter, t: Throwable): TestReport =
+    private def constructorFailureReport(suiteInfo: SuiteInfo, reporter: TestReporter, config: RunConfig, t: Throwable): TestReport =
         val sr = SuiteReport(
             suiteInfo.name,
             Chunk((Chunk("<constructor>"), TestResult.Failed(t.toString, Maybe(t), Duration.Zero))),
-            Duration.Zero
+            Duration.Zero,
+            leakCheck = config.leakCheck,
+            leakCheckSockets = config.leakCheckSockets,
+            leakCheckFileDescriptors = config.leakCheckFileDescriptors,
+            leakCheckThreads = config.leakCheckThreads,
+            leakCheckFibers = config.leakCheckFibers,
+            leakCheckAllowlist = config.leakCheckAllowlist
         )
         reporter.onSuiteComplete(suiteInfo, sr)
         val report = TestReport(Chunk(sr))

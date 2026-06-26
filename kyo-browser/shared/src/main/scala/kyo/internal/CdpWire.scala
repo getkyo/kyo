@@ -8,9 +8,8 @@ import kyo.*
   * an [[IllegalArgumentException]]) into a typed [[BrowserDecodingException]] keyed by the originating CDP `method`, so the malformed-wire
   * path stays inside the typed-error channel rather than escaping as a thrown exception.
   *
-  * The helpers live in `kyo.internal` next to the rest of the wire-translation utilities ([[CdpEvalEnvelope]], [[CdpEvalDecoder]],
-  * [[CdpClient]]). Exposed as `private[kyo]` so unit tests in `kyo` and `kyo.internal` can exercise the translation without round-tripping
-  * through a live CDP connection.
+  * The helpers live in `kyo.internal` next to the rest of the wire-translation utilities ([[CdpEvalDecoder]]). Exposed as `private[kyo]`
+  * so unit tests in `kyo` and `kyo.internal` can exercise the translation without round-tripping through a live CDP connection.
   */
 private[kyo] object CdpBase64Decode:
 
@@ -61,87 +60,12 @@ private[kyo] object ExceptionDetailsFormat:
 
 end ExceptionDetailsFormat
 
-/** Shared `Runtime.evaluate` envelope decoder used by the call sites that consume an [[EvalResult]] reply: the cookie-banner probe, the
-  * checked eval path, the unchecked eval path, and the mutation-settlement reader. Decodes a [[CdpReply]] envelope from the whole wire and
-  * surfaces typed CDP errors / decode failures via [[BrowserProtocolErrorException]].
-  */
-private[kyo] object CdpEvalEnvelope:
-
-    def decodeEvalEnvelope[A, S](wire: String, tag: String)(
-        onValue: EvalResult => A < (Abort[BrowserReadException] & S)
-    )(using Frame): A < (Abort[BrowserReadException] & S) =
-        Json.decode[CdpReply[EvalResult]](wire) match
-            case Result.Success(reply) =>
-                reply.error match
-                    case Present(err) =>
-                        Abort.fail(BrowserProtocolErrorException(
-                            CdpBackend.RuntimeEvaluateMethod,
-                            s"$tag CDP error: code=${err.code} message=${err.message}"
-                        ))
-                    case Absent =>
-                        reply.result match
-                            case Present(env) => onValue(env)
-                            case Absent =>
-                                Abort.fail(BrowserProtocolErrorException(
-                                    CdpBackend.RuntimeEvaluateMethod,
-                                    s"$tag reply has neither result nor error: $wire"
-                                ))
-            case Result.Failure(err) =>
-                Abort.fail(BrowserProtocolErrorException(
-                    CdpBackend.RuntimeEvaluateMethod,
-                    s"$tag wire decode failed: ${err.getMessage}"
-                ))
-            case Result.Panic(t) =>
-                Abort.fail(BrowserProtocolErrorException(
-                    CdpBackend.RuntimeEvaluateMethod,
-                    s"$tag wire decode panicked: ${t.getMessage}"
-                ))
-    end decodeEvalEnvelope
-
-end CdpEvalEnvelope
-
 /** Eval-result post-processing helpers shared by `BrowserEval.evalJs`, `BrowserEval.evalJsChecked`, `Browser.tryAcceptCookies`,
   * `NavigationWatcher.waitForLoad`, and the inlined `evalJsOn` call sites in `BrowserSnapshot` / `BrowserTabSetup`.
   *
-  * Pure JSON-shape transforms over CDP `Runtime.evaluate` responses; no `Browser` effect coupling.
+  * Pure projections over the typed CDP `Runtime.evaluate` [[EvalResult]]; no `Browser` effect coupling.
   */
 private[kyo] object CdpEvalDecoder:
-
-    /** Detects a CDP `Runtime.evaluate` error response indicating the result value cannot be serialised; currently emitted for `Symbol`
-      * results (where `returnByValue=true` cannot capture an opaque primitive). Treated as a documented CDP limitation: callers receive an
-      * empty string rather than an `Abort`, mirroring the semantics for an `undefined` result.
-      */
-    private[kyo] def isUnreturnableValueError(rawJson: String)(using Frame): Boolean =
-        Json.decode[CdpReply[EvalResult]](rawJson) match
-            case Result.Success(reply) =>
-                reply.error match
-                    case Present(err) => err.message.contains("Object couldn't be returned by value")
-                    case Absent       => false
-            case _ => false
-
-    /** Parse a raw JSON string and extract the eval value from it.
-      *
-      * Invariant: an `exceptionDetails` payload from `Runtime.evaluate` must surface as a typed `Abort` failure, never as `""`. The JS
-      * expressions in this file are constructed by the library (not user input), so a thrown exception indicates a syntactic defect in an
-      * internal JS template (e.g. an un-escaped quote in a string interpolation). Degrading silently to `""` would let that defect
-      * masquerade as "element not found" at the call site, hiding the real bug from tests and demos.
-      *
-      * JSON parse failures (malformed CDP envelope) still degrade to ""; they are a distinct class of failure that callers already handle
-      * via downstream checks, and promoting them would cascade into unrelated Abort types.
-      */
-    private[kyo] def parseAndExtractEvalValue(resultJson: String)(using Frame): String < Abort[BrowserReadException] =
-        if isUnreturnableValueError(resultJson) then ""
-        else
-            CdpEvalEnvelope.decodeEvalEnvelope(resultJson, "eval") { env =>
-                env.exceptionDetails match
-                    case Present(ex) =>
-                        Abort.fail(
-                            BrowserProtocolErrorException.internalEvalFailed(ExceptionDetailsFormat.format(ex))
-                        )
-                    case Absent => extractEvalValue(env)
-            }
-        end if
-    end parseAndExtractEvalValue
 
     /** Extracts the evaluated value from a typed `Runtime.evaluate` envelope.
       *
@@ -156,6 +80,16 @@ private[kyo] object CdpEvalDecoder:
       */
     private[kyo] def extractEvalValue(env: EvalResult)(using Frame): String < Abort[BrowserReadException] =
         extractRemoteObjectValue(env.result)
+
+    /** Projects a typed `Runtime.evaluate` [[EvalResult]] to its string value, raising
+      * [[BrowserProtocolErrorException]] when the eval reported `exceptionDetails`. The engine decodes the
+      * reply to a typed [[EvalResult]] via its schema, so there is no JSON re-parse.
+      */
+    private[kyo] def extractValueOrFail(env: EvalResult)(using Frame): String < Abort[BrowserReadException] =
+        env.exceptionDetails match
+            case Present(ex) =>
+                Abort.fail(BrowserProtocolErrorException.internalEvalFailed(ExceptionDetailsFormat.format(ex)))
+            case Absent => extractEvalValue(env)
 
     private def extractRemoteObjectValue(ro: RemoteObject): String =
         ro match

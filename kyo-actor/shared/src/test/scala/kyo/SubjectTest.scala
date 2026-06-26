@@ -156,6 +156,75 @@ class SubjectTest extends kyo.test.Test[Any]:
         }
     }
 
+    "Subject.init with Hub" - {
+        "publishes messages to hub listeners" in {
+            for
+                hub      <- Hub.init[Int]
+                listener <- hub.listen
+                subject = Subject.init(hub)
+                _ <- subject.send(1)
+                _ <- subject.send(2)
+                a <- listener.take
+                b <- listener.take
+            yield assert(a == 1 && b == 2)
+        }
+        "trySend offers without blocking and returns true when accepted" in {
+            for
+                hub      <- Hub.init[Int]
+                listener <- hub.listen
+                subject = Subject.init(hub)
+                accepted <- subject.trySend(1)
+                v        <- listener.take
+            yield assert(accepted && v == 1)
+        }
+        "trySend fails with Closed after the hub is closed" in {
+            for
+                hub <- Hub.init[Int]
+                subject = Subject.init(hub)
+                _      <- hub.close
+                result <- Abort.run[Closed](subject.trySend(1))
+            yield assert(result.isFailure)
+        }
+        "send fails with Closed after the hub is closed" in {
+            for
+                hub <- Hub.init[Int]
+                subject = Subject.init(hub)
+                _      <- hub.close
+                result <- Abort.run[Closed](subject.send(1))
+            yield assert(result.isFailure)
+        }
+    }
+
+    "Subject.contramap" - {
+        "adapts the message type via the mapping function" in {
+            for
+                chan <- Channel.init[Int](4)
+                base    = Subject.init(chan)
+                strings = base.contramap[String](_.length)
+                _ <- strings.send("hello")
+                v <- chan.take
+            yield assert(v == 5)
+        }
+        "composes with an actor subject" in {
+            for
+                sum   <- AtomicInt.init(0)
+                actor <- Actor.run(Actor.receiveMax[Int](1)(sum.addAndGet(_).unit))
+                sink = actor.subject.contramap[String](_.length)
+                _ <- sink.send("abcd")
+                _ <- actor.await
+                v <- sum.get
+            yield assert(v == 4)
+        }
+        "adapts trySend as well as send" in {
+            for
+                chan <- Channel.init[Int](4)
+                strings = Subject.init(chan).contramap[String](_.length)
+                accepted <- strings.trySend("hey")
+                v        <- chan.take
+            yield assert(accepted && v == 3)
+        }
+    }
+
     "Multiple Subjects" - {
         "can coordinate between different subject implementations" in {
             for

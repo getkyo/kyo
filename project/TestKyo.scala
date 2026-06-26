@@ -1,6 +1,12 @@
+import java.io.File
 import sbt.*
 import sbt.Keys.*
 import sbt.internal.BuildDependencies
+import sbt.internal.util.FilePosition
+import sbt.internal.util.LinePosition
+import sbt.internal.util.LineRange
+import sbt.internal.util.RangePosition
+import sbt.internal.util.SourcePosition
 import scala.sys.process.*
 
 /** Unified test command for CI and local use.
@@ -13,6 +19,10 @@ import scala.sys.process.*
 object TestKyo {
 
     private val platformNames = Set("JVM", "JS", "Native", "Wasm")
+
+    // Root aggregate projects: testing one runs every leaf via aggregation, so the diff
+    // and full-run paths both exclude them and treat any change scoped to one as "run all".
+    private val aggregateProjects = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
 
     private def log(msg: String): Unit = println(s"[testKyo] $msg")
 
@@ -113,12 +123,10 @@ object TestKyo {
         val structure = extracted.structure
         val allRefs   = structure.allProjectRefs
 
-        // Exclude aggregate projects
-        val excluded = Set("kyoJVM", "kyoJS", "kyoNative", "kyoWasm")
         val testable = allRefs.filter { ref =>
             val name        = ref.project
             val versions    = (ref / crossScalaVersions).get(structure.data).getOrElse(Nil)
-            val isAggregate = excluded.contains(name)
+            val isAggregate = aggregateProjects.contains(name)
             val platformMatch = if (isAggregate) false
             else platform match {
                 case Some(p) => matchesPlatform(name, p)
@@ -141,8 +149,10 @@ object TestKyo {
     }
 
     // --- Diff test mode ---
-    // If build/CI config changed (build.sbt, project/*, .github/*), run all modules.
-    // Otherwise, run only affected modules + their transitive dependents.
+    // If the meta-build changed (project/*, .github/*), run all modules. A build.sbt change is
+    // attributed to the specific projects whose settings, or whose `lazy val` blocks, cover the
+    // changed lines (see buildSbtAffectedProjects), widening to all only when a changed line cannot
+    // be pinned to a project. Otherwise, run only affected modules + their transitive dependents.
 
     private def runDiff(
         state: State,
@@ -154,15 +164,15 @@ object TestKyo {
     ): State = {
         val changedFiles = diffFiles(baseRef)
         if (changedFiles.isEmpty) {
-            log(s"no changed files vs $baseRef — skipping tests")
+            log(s"no changed files vs $baseRef, skipping tests")
             return state
         }
 
         log(s"${changedFiles.size} changed files vs $baseRef:")
         changedFiles.foreach(f => log(s"  $f"))
 
-        if (buildConfigChanged(changedFiles)) {
-            log("build/CI config changed — running all modules")
+        if (metaBuildChanged(changedFiles)) {
+            log("meta-build changed (project/ or .github/), running all modules")
             return runAll(state, platform, scalaVersion, isDryRun, phase)
         }
 
@@ -172,14 +182,23 @@ object TestKyo {
         val allNames  = allRefs.map(_.project).toSet
         val bd        = extracted.get(buildDependencies)
 
-        val directlyChanged = changedFiles.flatMap(fileToProjects(_, allNames)).toSet
+        // A build.sbt change maps to the projects whose settings changed; None means a changed
+        // line could not be attributed to specific projects, so fall back to running all modules.
+        val buildSbtProjects: Set[String] =
+            if (!changedFiles.contains("build.sbt")) Set.empty
+            else buildSbtAffectedProjects(extracted, baseRef) match {
+                case Some(names) => names
+                case None        => return runAll(state, platform, scalaVersion, isDryRun, phase)
+            }
+
+        val directlyChanged = (changedFiles.flatMap(fileToProjects(_, allNames)) ++ buildSbtProjects).toSet
         val filtered = platform match {
             case Some(p) => directlyChanged.filter(matchesPlatform(_, p))
             case None    => directlyChanged
         }
 
         if (filtered.isEmpty) {
-            log("no affected projects found — skipping tests")
+            log("no affected projects found, skipping tests")
             return state
         }
 
@@ -201,7 +220,7 @@ object TestKyo {
         }
 
         if (toTest.isEmpty) {
-            log("no testable affected projects found — skipping tests")
+            log("no testable affected projects found, skipping tests")
             state
         } else {
             val sorted = toTest.toSeq.sorted
@@ -267,12 +286,223 @@ object TestKyo {
                 Seq.empty
         }
 
-    private def buildConfigChanged(files: Seq[String]): Boolean =
-        files.exists { f =>
-            f == "build.sbt" ||
-            f.startsWith("project/") ||
-            f.startsWith(".github/")
+    // project/ (the meta-build, plugins, this command) and .github/ (CI workflows) are genuinely
+    // global: a change there can alter how every module builds, so run all. A build.sbt change is
+    // handled separately by buildSbtAffectedProjects, which pins it to the projects that changed.
+    private def metaBuildChanged(files: Seq[String]): Boolean =
+        files.exists(f => f.startsWith("project/") || f.startsWith(".github/"))
+
+    /** New-side line numbers changed in build.sbt vs baseRef, or None when the change cannot be
+      * attributed from the new file alone. None covers a pure deletion (the removed setting has no
+      * new-side line to map) and a git/parse failure; both widen to running all modules.
+      */
+    private def changedBuildSbtLines(baseRef: String): Option[Set[Int]] =
+        try {
+            val diff = Seq("git", "diff", "--unified=0", baseRef, "--", "build.sbt").!!
+            // Hunk header: @@ -oldStart[,oldCount] +newStart[,newCount] @@ [context]
+            val hunk        = """@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@""".r
+            val lines       = scala.collection.mutable.Set.empty[Int]
+            var hasDeletion = false
+            diff.linesIterator.foreach { line =>
+                hunk.findFirstMatchIn(line).foreach { m =>
+                    val start = m.group(1).toInt
+                    val count = Option(m.group(2)).map(_.toInt).getOrElse(1)
+                    if (count == 0) hasDeletion = true
+                    else lines ++= (start until start + count)
+                }
+            }
+            if (hasDeletion || lines.isEmpty) None else Some(lines.toSet)
+        } catch {
+            case e: Exception =>
+                log(s"Failed to diff build.sbt: ${e.getMessage}")
+                None
         }
+
+    /** Projects affected by the build.sbt change, or None to run all modules.
+      *
+      * sbt tracks every setting's definition position (file:line) and its resolved project scope,
+      * the same data `inspect` surfaces as "Defined at:". For each changed build.sbt line, this maps
+      * the settings defined there to their project(s) and returns the union. A setting written in a
+      * shared val (e.g. `kyo-settings`) is replicated once per applying project, each copy scoped to
+      * that project, so a change to such a line attributes to exactly the projects that apply it.
+      *
+      * Lines that no setting position covers (a `.dependsOn`/`.crossType`/comment inside a module's
+      * block, a new module's `lazy val` block, an aggregate-registration line) are handed to
+      * attributeUncoveredBuildSbtLines, which attributes them from build.sbt's block structure. The
+      * union of both passes is returned.
+      *
+      * Returns None (run all modules) whenever a changed line cannot be pinned to specific projects:
+      * it maps to a Global/ThisBuild/root-aggregate setting, a deletion, or a line neither pass can
+      * attribute (a top-level val/import, a non-project shared val, an existing module's aggregate
+      * registration). This keeps the narrowing conservative: it never under-tests a real build change.
+      */
+    private def buildSbtAffectedProjects(extracted: Extracted, baseRef: String): Option[Set[String]] =
+        try {
+            val structure    = extracted.structure
+            val buildSbtFile = new File(new File(extracted.currentRef.build), "build.sbt").getCanonicalFile
+
+            // The lines this position covers, but only if it is in the top-level build.sbt. Positions
+            // render the canonical absolute path, so match by canonical file, not a bare name.
+            def coveredLines(pos: SourcePosition): Set[Int] = pos match {
+                case fp: FilePosition if new File(fp.path).getCanonicalFile == buildSbtFile =>
+                    fp match {
+                        case RangePosition(_, LineRange(start, end)) => (start to end).toSet
+                        case LinePosition(_, line)                   => Set(line)
+                        case _                                       => Set(fp.startLine)
+                    }
+                case _ => Set.empty
+            }
+
+            changedBuildSbtLines(baseRef) match {
+                case None =>
+                    log("build.sbt change includes deletions or is unparseable, running all modules")
+                    None
+                case Some(changedLines) =>
+                    var sawGlobal = false
+                    val names     = scala.collection.mutable.Set.empty[String]
+                    val covered   = scala.collection.mutable.Set.empty[Int]
+                    structure.settings.foreach { s =>
+                        val hit = coveredLines(s.pos).intersect(changedLines)
+                        if (hit.nonEmpty) {
+                            covered ++= hit
+                            s.key.scope.project match {
+                                case Select(ref: ProjectRef) if !aggregateProjects.contains(ref.project) =>
+                                    names += ref.project
+                                case _ =>
+                                    // ThisBuild / Global / root-aggregate / unresolved: affects all.
+                                    sawGlobal = true
+                            }
+                        }
+                    }
+                    if (sawGlobal) {
+                        log("build.sbt change touches a Global/ThisBuild/root setting, running all modules")
+                        None
+                    } else {
+                        val uncovered = changedLines -- covered
+                        val allNames  = structure.allProjectRefs.map(_.project).toSet
+                        attributeUncoveredBuildSbtLines(uncovered, buildSbtFile, baseRef, allNames) match {
+                            case None => None // logged inside
+                            case Some(extra) =>
+                                val all = (names ++ extra).toSet
+                                log(s"build.sbt change attributed to: ${all.toSeq.sorted.mkString(", ")}")
+                                Some(all)
+                        }
+                    }
+            }
+        } catch {
+            case e: Exception =>
+                log(s"build.sbt attribution failed (${e.getMessage}), running all modules")
+                None
+        }
+
+    /** Attribute the changed build.sbt lines that no sbt setting position covers (a module's
+      * `lazy val` block body, an aggregate-registration line) to their project(s), or None to run
+      * all modules. sbt tracks a setting's position but not a project's definition block, so a
+      * module configured purely through shared setting vals (`kyo-settings`, `mimaCheck(...)`) has
+      * no per-project setting position in its own block; build.sbt's own structure is the reliable
+      * signal. Every top-level definition starts at column 0, so a changed line's owning module is
+      * the nearest column-0 `lazy val` above it.
+      *
+      *   - owner is a real (non-aggregate) module: attribute to it. A `.dependsOn`, a setting, a
+      *     comment, a platform-list edit inside a module's block affects only that module (the
+      *     existing machinery then adds its transitive dependents), new or existing alike.
+      *   - owner is a root aggregate (`kyoJVM`/...): benign only if the line registers a brand-NEW
+      *     module (`kyo-mcp`.jvm,). A registration or `inProjects` exclusion of an EXISTING module,
+      *     or any other aggregate setting, runs all. Newness is what tells an `.aggregate(+new)`
+      *     line from an `inProjects(+existing)` line: they are otherwise identical in shape.
+      *   - owner is a non-project val/def/import, a top-level comment, or a global: runs all.
+      */
+    private def attributeUncoveredBuildSbtLines(
+        uncovered: Set[Int],
+        buildSbtFile: File,
+        baseRef: String,
+        allNames: Set[String]
+    ): Option[Set[String]] = {
+        if (uncovered.isEmpty) return Some(Set.empty)
+        val buildLines = IO.readLines(buildSbtFile).toIndexedSeq
+
+        def isCol0(l: String): Boolean = l.nonEmpty && !l.charAt(0).isWhitespace
+        val headerRe                   = """^lazy val (?:`([^`]+)`|([A-Za-z0-9_]+))""".r
+        def headerName(l: String): Option[String] =
+            if (l.startsWith("lazy val ")) headerRe.findFirstMatchIn(l).map(m => Option(m.group(1)).getOrElse(m.group(2)))
+            else None
+
+        // Project names (a `lazy val` whose block builds a crossProject or a project) in a build.sbt.
+        val crossRe = """crossProject\(""".r
+        val projRe  = """=\s*\(?\s*project\b""".r
+        def projectNames(text: IndexedSeq[String]): Set[String] = {
+            val ns = scala.collection.mutable.Set.empty[String]
+            var i  = 0
+            while (i < text.length) {
+                headerName(text(i)) match {
+                    case Some(name) =>
+                        var j  = i + 1
+                        val sb = new StringBuilder(text(i))
+                        while (j < text.length && !isCol0(text(j))) { sb.append('\n').append(text(j)); j += 1 }
+                        val block = sb.toString
+                        if (crossRe.findFirstIn(block).isDefined || projRe.findFirstIn(block).isDefined) ns += name
+                        i = j
+                    case None => i += 1
+                }
+            }
+            ns.toSet
+        }
+
+        // A module is "new" if its `lazy val` exists now but not at baseRef. Used only to gate the
+        // aggregate-registration branch (see scaladoc), where shape alone cannot tell new from old.
+        val baseLines =
+            scala.util.Try(Seq("git", "show", s"$baseRef:build.sbt").!!.linesIterator.toIndexedSeq).getOrElse(IndexedSeq.empty)
+        if (baseLines.isEmpty) {
+            log(s"could not read build.sbt at $baseRef, running all modules")
+            return None
+        }
+        val newNames = projectNames(buildLines) -- projectNames(baseLines)
+
+        def resolve(name: String): Set[String] = {
+            val cross = Seq("JVM", "JS", "Native", "Wasm").map(name + _).filter(allNames.contains)
+            if (cross.nonEmpty) cross.toSet
+            else if (allNames.contains(name)) Set(name)
+            else Set.empty
+        }
+
+        // The nearest column-0 line at or above n: Some(name) if it is a `lazy val`, else None.
+        def ownerLazyVal(n: Int): Option[String] = {
+            var i = n
+            while (i >= 1) {
+                val l = buildLines(i - 1)
+                if (isCol0(l)) return headerName(l)
+                i -= 1
+            }
+            None
+        }
+
+        val regLineRe = """^\s*`?([A-Za-z0-9_.-]+)`?\.(jvm|js|native|wasm)\s*,?\s*$""".r
+        val accSuffix = Map("jvm" -> "JVM", "js" -> "JS", "native" -> "Native", "wasm" -> "Wasm")
+
+        val names = scala.collection.mutable.Set.empty[String]
+        val it    = uncovered.iterator
+        while (it.hasNext) {
+            val ln    = it.next()
+            val owner = ownerLazyVal(ln)
+            val owned = owner.map(resolve).getOrElse(Set.empty)
+            if (owned.nonEmpty && !owned.subsetOf(aggregateProjects))
+                names ++= owned
+            else if (owned.nonEmpty)
+                buildLines(ln - 1) match {
+                    case regLineRe(modName, acc)
+                        if newNames.contains(modName) && resolve(modName).contains(modName + accSuffix(acc)) =>
+                        names += modName + accSuffix(acc)
+                    case _ =>
+                        log(s"build.sbt line $ln registers/changes an existing module in an aggregate, running all modules")
+                        return None
+                }
+            else {
+                log(s"build.sbt line $ln is not inside a module block (val/def/import/global), running all modules")
+                return None
+            }
+        }
+        Some(names.toSet)
+    }
 
     private def transitiveDependents(
         allRefs: Seq[ProjectRef],

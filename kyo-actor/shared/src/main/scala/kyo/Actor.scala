@@ -1,6 +1,7 @@
 package kyo
 
 import java.io.IOException
+import java.util.concurrent.CopyOnWriteArraySet
 import kyo.*
 import kyo.Actor.Subject
 import kyo.kernel.ArrowEffect
@@ -46,7 +47,11 @@ import scala.annotation.nowarn
   * @tparam B
   *   The type of result this actor produces upon completion
   */
-sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abort[Closed | E]]):
+sealed abstract class Actor[+E, A, B](
+    _subject: Subject[A],
+    _fiber: Fiber[B, Abort[Closed | E]],
+    _pending: Actor.PendingReplies
+):
 
     /** Returns the message subject interface for sending messages to this actor.
       *
@@ -57,7 +62,52 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abo
       */
     def subject: Subject[A] = _subject
 
-    export _subject.*
+    export _subject.send
+    export _subject.trySend
+
+    /** Sends a request and awaits the reply, completing even if the actor terminates first.
+      *
+      * Unlike the bare `Subject.ask`, this surfaces the actor's failure `E` or a panic when the actor ends before replying, instead of
+      * collapsing to `Closed`. The caller is never stranded.
+      */
+    def ask[C](f: Subject[C] => A)(using frame: Frame): C < (Async & Abort[Closed | E]) =
+        Promise.init[C, Abort[Closed]].map { reply =>
+            _pending.awaitReply[C, E](reply, _subject.send(f(Subject.init(reply.asInstanceOf[Promise[C, Any]])))) {
+                // The actor ended before replying (the sweep failed our reply with Closed): surface its
+                // terminal outcome via a non-blocking poll of the actor fiber, which registers no interrupts
+                // and so leaves the actor fiber untouched. An interruption (scope close / mailbox close)
+                // reads as Closed from the caller's perspective; a genuine handler panic stays a panic.
+                _fiber.poll.map {
+                    case Present(Result.Success(_)) | Absent   => Abort.fail(Closed("Actor", frame))
+                    case Present(Result.Failure(e))            => Abort.fail(e)
+                    case Present(Result.Panic(_: Interrupted)) => Abort.fail(Closed("Actor", frame))
+                    case Present(Result.Panic(ex))             => Abort.panic(ex)
+                }
+            }
+        }
+
+    /** Sends a request to a [[respond]] actor and awaits the reply, strand-safe via the lifecycle-aware [[ask]].
+      *
+      * Available only when the actor's message type `A` is an `Ask[Req, Resp]` envelope, witnessed by the `A =:= Actor.Ask[Req, Resp]`
+      * evidence. It builds the envelope, wiring the framework's reply `Subject`, and delegates to the member `ask`. For
+      * manually-constructed envelopes or non-`respond` actors, use the `ask` overload taking a `Subject[C] => A` builder directly.
+      *
+      * @param request
+      *   The request payload to send to the actor
+      * @tparam Req
+      *   The request payload type sent to the actor
+      * @tparam Resp
+      *   The response type returned by the actor
+      */
+    def ask[Req, Resp](request: Req)(using frame: Frame, ev: A =:= Actor.Ask[Req, Resp]): Resp < (Async & Abort[Closed | E]) =
+        ask[Resp](replyTo => ev.flip(Actor.Ask(request, replyTo)))
+
+    /** The number of in-flight `ask` replies currently registered with this actor.
+      *
+      * Exposed for tests: it must be bounded by concurrent in-flight asks and must drop back to zero once they resolve, never growing with
+      * the actor's lifetime.
+      */
+    private[kyo] def pendingReplies: Int = _pending.size
 
     /** Returns the fiber executing this actor's message processing.
       *
@@ -71,8 +121,10 @@ sealed abstract class Actor[+E, A, B](_subject: Subject[A], _fiber: Fiber[B, Abo
 
     /** Retrieves the final result of this actor.
       *
-      * Waits for the actor to complete processing all messages and return its final value. Will fail with error E if an unhandled error
-      * occurs during message processing, or with Closed if the actor is closed prematurely.
+      * Waits for the actor to complete processing all messages and return its final value. Closing the mailbox signals end-of-stream to the
+      * receive loop, so a behavior that consumes to end-of-stream (the receive combinators) completes with its final value B. Fails with error
+      * E if an unhandled error occurs during message processing, or with Closed if the actor is closed while its behavior is mid-message and
+      * does not resolve to a final value.
       *
       * @return
       *   The actor's final result of type B
@@ -95,9 +147,85 @@ end Actor
 
 object Actor:
 
+    /** Per-actor registry of in-flight `ask` reply promises, used to keep `ask` strand-safe without leaking.
+      *
+      * Each `ask` registers its own reply promise here before awaiting and removes it once the reply resolves (the recipient replied, the
+      * actor terminated, or the caller was interrupted), so the set is bounded by concurrently in-flight asks and never grows with the
+      * actor's lifetime. A single termination sweep (installed once on the consumer fiber, not per ask) fails every still-registered reply
+      * with `Closed` so no caller is stranded when the actor ends without replying. Completion is first-wins: a reply already completed by
+      * the recipient ignores the sweep, and a reply the sweep fails ignores a late recipient.
+      *
+      * The `terminated` flag closes the add-after-termination race. A reply registered after the sweep snapshot would otherwise never be
+      * failed: `Subject.ask` enqueues the request before this registry is even consulted, so a request can be accepted, the actor can
+      * terminate and sweep, and only then does the reply get registered. The flag, set before the sweep iterates, lets such a late
+      * registration fail its own reply immediately. Either the sweep sees the freshly added reply, or the registration self-fails.
+      */
+    final private[kyo] class PendingReplies:
+        private val waiters = new CopyOnWriteArraySet[Promise[Any, Abort[Closed]]]
+        // Unsafe: a plain synchronous flag, read/written from the Sync-only termination callback that
+        // cannot suspend. Mirrors Channel's internal AtomicBoolean.Unsafe flags; no effect is observable.
+        private val terminated: AtomicBoolean.Unsafe =
+            import AllowUnsafe.embrace.danger
+            AtomicBoolean.Unsafe.init(false)
+
+        def size: Int = waiters.size
+
+        /** Fails every still-registered reply with `Closed`. Called once when the actor's consumer fiber ends. */
+        def terminate(using frame: Frame)(using AllowUnsafe): Unit =
+            terminated.set(true)
+            // Unsafe: runs inside the fiber's Sync-only onComplete callback, which cannot suspend; each
+            // completeDiscard is idempotent (first-wins) and the COWArraySet snapshot (toArray) is safe to iterate.
+            val snapshot = waiters.toArray()
+            var i        = 0
+            while i < snapshot.length do
+                // toArray erases element type; cast is safe given waiters' declared type
+                snapshot(i).asInstanceOf[Promise[Any, Abort[Closed]]].unsafe.completeDiscard(Result.fail(Closed("Actor", frame)))
+                i += 1
+            end while
+        end terminate
+
+        /** Awaits a reply, completing even if the actor terminates first, with no per-ask accumulation.
+          *
+          * Registers the reply promise, runs `send`, then awaits `reply`. The termination sweep fails any still-registered reply with
+          * `Closed`, so `reply.get` resolves whether the recipient replied or the actor ended first; `onTerminated` then interprets the
+          * `Closed` (the bare subject collapses to `Closed`; `Actor.ask` refines to `E`/panic via the actor fiber). The reply is removed
+          * from the registry when the await resolves, success or failure.
+          *
+          * @param reply
+          *   The reply promise the recipient completes; the sweep fails it with `Closed` if the actor ends first
+          * @param send
+          *   The send action that enqueues the request; run after the reply is registered
+          * @param onTerminated
+          *   The continuation invoked when the actor ends before the reply arrives
+          */
+        def awaitReply[C, E](reply: Promise[C, Abort[Closed]], send: => Unit < (Async & Abort[Closed]))(
+            onTerminated: => C < (Async & Abort[Closed | E])
+        )(using frame: Frame): C < (Async & Abort[Closed | E]) =
+            val entry = reply.asInstanceOf[Promise[Any, Abort[Closed]]]
+            val register: Unit < Sync =
+                Sync.Unsafe.defer {
+                    discard(waiters.add(entry))
+                    // Close the add-after-termination race: if the sweep already set the flag, fail our own
+                    // reply so the terminated branch fires instead of awaiting a reply that never comes.
+                    // Either the sweep sees this freshly added reply, or we self-fail. completeDiscard is
+                    // first-wins, so a recipient that already replied is unaffected.
+                    if terminated.get() then entry.unsafe.completeDiscard(Result.fail(Closed("Actor", frame)))
+                    else ()
+                }
+            val awaited: C < (Async & Abort[Closed | E]) =
+                Sync.ensure(Sync.defer(discard(waiters.remove(entry)))) {
+                    // The sweep (or self-fail) turns a missing reply into a `Closed` failure on the reply
+                    // promise; route only that `Closed` to `onTerminated`, leaving a caller interrupt
+                    // (a panic) to propagate untouched.
+                    Abort.recover[Closed](_ => onTerminated)(reply.get)
+                }
+            register.andThen(send).andThen(awaited)
+        end awaitReply
+    end PendingReplies
+
     /** Default mailbox capacity for actors.
       *
-      * This value can be configured through the system property "kyo.actor.capacity.default". If not specified, it defaults to 100
+      * This value can be configured through the system property "kyo.actor.capacity.default". If not specified, it defaults to 128
       * messages.
       */
     val defaultCapacity =
@@ -167,6 +295,104 @@ object Actor:
       */
     def reenqueue[A](msg: A)(using Frame, Tag[Subject[A]]): Unit < Context[A] =
         Env.use[Subject[A]](_.send(msg))
+
+    /** Subscribes the current actor to a Hub, funneling each published event into the actor's own mailbox.
+      *
+      * Uses the default listener buffer size (`Hub.DefaultBufferSize`) and accepts all events. Delegates to the canonical
+      * `subscribe(hub, bufferSize, filter)(adapt)`, which describes the pump mechanics and the single-consumer guarantee.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E])(adapt: E => A): Unit < Context[A] =
+        subscribe(hub, Hub.DefaultBufferSize, (_: E) => true)(adapt)
+
+    /** Subscribes the current actor to a Hub with a custom listener buffer size.
+      *
+      * Behaves identically to `subscribe(hub)(adapt)` but creates the listener with the given `bufferSize` instead of the default.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param bufferSize
+      *   The capacity of the listener's private buffer
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E], bufferSize: Int)(adapt: E => A): Unit < Context[A] =
+        subscribe(hub, bufferSize, (_: E) => true)(adapt)
+
+    /** Subscribes the current actor to a Hub, delivering only events that satisfy `filter`.
+      *
+      * Behaves identically to `subscribe(hub)(adapt)` but creates the listener with a filter predicate applied at the hub level, so
+      * non-matching events are discarded before reaching the listener's buffer. Note: when `E` is `Int`, `subscribe(hub, n)` selects the
+      * `bufferSize` overload, so pass the filter as a lambda to reach this one.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param filter
+      *   Predicate applied to each hub event; only matching events are forwarded
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using Frame, Tag[Subject[A]])[E](hub: Hub[E], filter: E => Boolean)(adapt: E => A): Unit < Context[A] =
+        subscribe(hub, Hub.DefaultBufferSize, filter)(adapt)
+
+    /** Subscribes the current actor to a Hub with a custom buffer size and filter predicate.
+      *
+      * This is the canonical overload: all other `subscribe` variants delegate here. A Scope-managed listener is created with `bufferSize`
+      * and `filter`; an enqueue-only pump fiber forwards each matching event, mapped through `adapt`, into the actor via its subject. The
+      * pump is a producer only: the actor keeps a single consumer, so serialized mailbox processing is unchanged. The pump stops when the
+      * hub/listener or the actor's mailbox closes.
+      *
+      * @param hub
+      *   The Hub to subscribe to
+      * @param bufferSize
+      *   The capacity of the listener's private buffer
+      * @param filter
+      *   Predicate applied to each hub event; only matching events are forwarded
+      * @param adapt
+      *   Maps a hub event to the actor's message type
+      * @tparam A
+      *   The actor's message type
+      * @tparam E
+      *   The hub's event type
+      */
+    def subscribe[A](using
+        Frame,
+        Tag[Subject[A]]
+    )[E](hub: Hub[E], bufferSize: Int, filter: E => Boolean)(adapt: E => A): Unit < Context[A] =
+        for
+            self     <- Actor.self[A]
+            listener <- hub.listen(bufferSize, filter)
+            _ <- Fiber.init {
+                Loop.foreach {
+                    Abort.run[Closed](listener.take).map {
+                        case Result.Success(event) =>
+                            Abort.run[Closed](self.send(adapt(event))).map {
+                                case Result.Success(_) => Loop.continue
+                                case Result.Failure(_) => Loop.done      // mailbox closed: stop cleanly
+                                case Result.Panic(e)   => Abort.panic(e) // surface real failures
+                            }
+                        case Result.Failure(_) => Loop.done      // hub/listener closed: stop cleanly
+                        case Result.Panic(e)   => Abort.panic(e) // surface real failures
+                    }
+                }
+            }
+        yield ()
 
     /** Receives and processes a single message from the actor's mailbox.
       *
@@ -367,6 +593,68 @@ object Actor:
             }
         }
 
+    /** Envelope for a framework-owned request/reply actor created with [[respond]].
+      *
+      * @param request
+      *   The request payload
+      * @param replyTo
+      *   The reply Subject the framework sends the handler's result to
+      */
+    final case class Ask[Req, Resp](request: Req, replyTo: Subject[Resp])
+
+    /** Runs the actor as a uniform request/reply function `Req => Resp`.
+      *
+      * The framework sends the handler's returned value as the reply, so a forgotten reply cannot strand a caller. The actor processes one
+      * request at a time in FIFO order. A handler failure of type E or a panic terminates the actor; an in-flight caller observes it through
+      * the lifecycle-aware [[Actor.ask]]. Model expected per-request errors in `Resp` (for example a `Result`) rather than aborting.
+      *
+      * @param handler
+      *   Produces the reply for each request
+      * @tparam Req
+      *   The request type
+      * @tparam Resp
+      *   The single reply type for the whole actor
+      */
+    def respond[Req, Resp](using
+        Frame
+    )[S](handler: Req => Resp < S)(
+        using Tag[Poll[Ask[Req, Resp]]]
+    ): Unit < (Context[Ask[Req, Resp]] & S) =
+        receiveLoop[Ask[Req, Resp]](msg => handler(msg.request).map(resp => msg.replyTo.send(resp).andThen(Loop.continue)))
+
+    /** Runs the actor as a stateful request/reply loop, threading `State` across requests.
+      *
+      * The stateful analogue of [[respond]]: the handler receives each request with the current state and returns the reply plus the next
+      * state; the framework sends the reply (so it cannot be forgotten) and continues with the next state. This gives the request/reply loop
+      * local state and access to effects between requests without reaching for `Var`. The actor processes one request at a time in FIFO order
+      * and runs until its mailbox closes. For early termination or to observe a final result, use [[receiveLoop]] with a manual reply via the
+      * request's `replyTo`. A handler failure of type E or a panic terminates the actor; an in-flight caller observes it through the
+      * lifecycle-aware [[Actor.ask]]. Model expected per-request errors in `Resp` (for example a `Result`) rather than aborting.
+      *
+      * @param state
+      *   The initial state value to use for the first request
+      * @param handler
+      *   Produces the reply and the next state for each request from the request payload and the current state
+      * @tparam Req
+      *   The request type
+      * @tparam Resp
+      *   The single reply type for the whole actor
+      * @tparam State
+      *   The type of state threaded between requests
+      * @return
+      *   The final threaded `State`, the state after the last processed request, yielded when the mailbox closes
+      */
+    def respondLoop[Req, Resp, State](using
+        Frame
+    )[S](state: State)(
+        handler: (Req, State) => (Resp, State) < S
+    )(using Tag[Poll[Ask[Req, Resp]]]): State < (Context[Ask[Req, Resp]] & S) =
+        receiveLoop[Ask[Req, Resp]](state) { (msg, st) =>
+            handler(msg.request, st).map { case (resp, next) =>
+                msg.replyTo.send(resp).andThen(Loop.continue(next))
+            }
+        }
+
     /** Creates and starts a new actor with default capacity from a message processing behavior.
       *
       * This is a convenience method that calls `run(defaultCapacity)(behavior)`. It creates an actor with the default mailbox capacity as
@@ -439,17 +727,39 @@ object Actor:
             mailbox <-
                 // Create a bounded channel to serve as the actor's mailbox
                 Channel.init[A](capacity, Access.MultiProducerSingleConsumer)
+            pending <-
+                // Per-actor registry of in-flight ask reply promises; entries are removed as each ask resolves
+                // so the set is bounded by concurrent in-flight asks, never by the actor's lifetime. Suspended
+                // because PendingReplies holds mutable state (a CopyOnWriteArraySet and an AtomicBoolean).
+                Sync.defer(new PendingReplies)
             _subject =
                 // Create the actor's message interface (Subject)
-                // Messages sent through this subject are queued in the mailbox
-                Subject.init(mailbox)
+                // Messages sent through this subject are queued in the mailbox; the termination sweep fails
+                // any outstanding reply with Closed, so an ask caller is never stranded
+                new Subject[A]:
+                    def send(message: A)(using Frame): Unit < (Async & Abort[Closed])      = mailbox.put(message)
+                    def trySend(message: A)(using Frame): Boolean < (Sync & Abort[Closed]) = mailbox.offer(message)
+                    override private[kyo] def awaitReply[C](reply: Promise[C, Any])(using frame: Frame): C < (Async & Abort[Closed]) =
+                        // Subject.ask has already sent, so no send action here. The bare subject contract only
+                        // distinguishes "replied" from "recipient closed": the sweep failing our reply (the
+                        // onTerminated branch) reads as Closed.
+                        pending.awaitReply[C, Closed](reply.asInstanceOf[Promise[C, Abort[Closed]]], Kyo.unit) {
+                            Abort.fail(Closed("Actor", frame))
+                        }
             _consumer <-
                 Loop(behavior) { b =>
                     Poll.runFirst(b).map {
                         case Left(r) =>
                             Loop.done(r)
                         case Right(cont) =>
-                            mailbox.take.map(v => Loop.continue(cont(Maybe(v))))
+                            // A graceful mailbox close signals end-of-stream: feed Absent so the behavior's poll
+                            // resolves to its natural completion (the loop combinators yield their final state),
+                            // rather than aborting the actor with Closed. A present message continues the loop.
+                            Abort.run[Closed](mailbox.take).map {
+                                case Result.Success(v) => Loop.continue(cont(Maybe(v)))
+                                case Result.Failure(_) => Loop.continue(cont(Absent))
+                                case Result.Panic(e)   => Abort.panic(e)
+                            }
                     }
                 }.handle(
                     Sync.ensure(mailbox.close), // Ensure mailbox cleanup by closing it when the actor completes or fails
@@ -457,7 +767,11 @@ object Actor:
                     Scope.run,                  // Close used resources
                     Fiber.init                  // Start the actor's processing loop in an async context
                 )
-        yield new Actor[E, A, B](_subject, _consumer):
+            _ <-
+                // Single termination hook (installed once, not per ask): sweep the pending registry so every
+                // outstanding ask completes when the actor's consumer fiber ends.
+                _consumer.onComplete(_ => Sync.Unsafe.defer(pending.terminate))
+        yield new Actor[E, A, B](_subject, _consumer, pending):
             def close(using Frame) = mailbox.close
 
     /** Interface for sending messages to a recipient.
@@ -500,6 +814,14 @@ object Actor:
           */
         def trySend(message: A)(using Frame): Boolean < (Sync & Abort[Closed])
 
+        /** Awaits the reply for an `ask`. Default: wait for the reply promise.
+          *
+          * The actor mailbox subject overrides this to also complete when the actor terminates without replying, so a caller is never
+          * stranded. A bare sink (channel, queue, hub, promise, custom) has no recipient-terminated signal, so the default simply waits.
+          */
+        private[kyo] def awaitReply[B](reply: Promise[B, Any])(using Frame): B < (Async & Abort[Closed]) =
+            reply.get
+
         /** Sends a message and waits for a response.
           *
           * This method implements the request-response pattern by automatically creating a temporary reply channel. It's useful when you
@@ -523,11 +845,26 @@ object Actor:
           *   The response of type B
           */
         def ask[B](f: Subject[B] => A)(using Frame): B < (Async & Abort[Closed]) =
-            for
-                promise <- Promise.init[B, Any]
-                _       <- send(f(Subject.init(promise)))
-                result  <- promise.get
-            yield result
+            Promise.init[B, Any].map(promise => send(f(Subject.init(promise))).andThen(awaitReply(promise)))
+
+        /** Adapts this sink to accept a different message type.
+          *
+          * `Subject` is a write-only sink, so it is contravariant in its message type: `contramap` adapts the input through `f`. There is no
+          * lawful `map`, because producing a sink that accepts `B` would require `B => A`, not `A => B` (`send` returns no value to map over).
+          *
+          * The result is a send-only view: `ask` on it uses the default reply-wait, not a lifecycle-aware one, so use the original handle
+          * when you need a strand-safe `ask`.
+          *
+          * @param f
+          *   Maps a `B` to this sink's message type `A`
+          * @tparam B
+          *   The message type of the adapted sink
+          */
+        def contramap[B](f: B => A): Subject[B] =
+            Subject.init(
+                send = b => this.send(f(b)),
+                trySend = b => this.trySend(f(b))
+            )
 
     end Subject
 
@@ -611,6 +948,24 @@ object Actor:
             init(
                 send = queue.add,
                 trySend = queue.add(_).andThen(true)
+            )
+
+        /** Creates a Subject that publishes received messages to a Hub.
+          *
+          * The `send` operation uses the Hub's blocking `put`, while `trySend` uses the non-blocking `offer`. This is the publish side of
+          * actor pub/sub: any number of listeners created with `hub.listen` observe each published message.
+          *
+          * @param hub
+          *   The Hub to publish messages to
+          * @tparam A
+          *   The type of messages this Subject can receive
+          * @return
+          *   A Subject[A] that publishes received messages to the Hub
+          */
+        def init[A](hub: Hub[A]): Subject[A] =
+            init(
+                send = hub.put,
+                trySend = hub.offer
             )
 
         /** Creates a custom Subject by directly specifying its send and trySend behaviors.

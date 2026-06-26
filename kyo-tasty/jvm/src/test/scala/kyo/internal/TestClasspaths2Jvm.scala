@@ -29,6 +29,8 @@ private[kyo] object TestClasspaths2Jvm:
         val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
             def level: Log.Level                                                       = Log.Level.warn
+            def name: String                                                           = "kyo.tasty.test"
+            def withName(n: String): Log.Unsafe                                        = this
             def trace(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
             def trace(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
             def debug(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
@@ -53,6 +55,8 @@ private[kyo] object TestClasspaths2Jvm:
         val bufRef = AtomicRef.Unsafe.init(Chunk.empty[String])
         val sinkLogger: Log.Unsafe = new Log.Unsafe:
             def level: Log.Level                                                       = Log.Level.warn
+            def name: String                                                           = "kyo.tasty.test"
+            def withName(n: String): Log.Unsafe                                        = this
             def trace(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()
             def trace(msg: => String, t: => Throwable)(using Frame, AllowUnsafe): Unit = ()
             def debug(msg: => String)(using Frame, AllowUnsafe): Unit                  = ()

@@ -11,7 +11,7 @@ import kyo.ffi.codegen.model.*
 /** Byte-exact snapshot test for the three platform emitters.
   *
   * Approach: a curated list of hand-written [[TraitSpec]] fixtures exercises the emission shapes that matter (primitive return, struct
-  * return, borrowed string, borrowed buffer, multi-value, callbacks, variadic, enum, handle, union, WithError). For each fixture we run
+  * return, borrowed string, borrowed buffer, multi-value, callbacks, variadic, enum, handle, union, Outcome). For each fixture we run
   * each emitter and compare the output against a captured golden file under `src/test/resources/golden/<platform>/<fixture>.txt`.
   *
   * Workflow:
@@ -145,7 +145,7 @@ class EmitterGoldenTest extends kyo.test.Test[Any]:
         )
     )
 
-    /** WithError: plain primitive wrapped in errno capture. */
+    /** Outcome: plain primitive packed into an errno-aware carrier. */
     private val specWithError: TraitSpec = mkTrait(
         "WithErrorBindings",
         "kyo_we",
@@ -195,11 +195,11 @@ class EmitterGoldenTest extends kyo.test.Test[Any]:
         )
     )
 
-    /** Blocking + WithError: `long recv(int fd, Buffer[Byte] buf, int len)` annotated `@Ffi.blocking`.
+    /** Blocking + Outcome: `long recv(int fd, Buffer[Byte] buf, int len)` annotated `@Ffi.blocking`.
       *
       * Exercises the `A < kyo.Async` signature plus the per-backend fiber-suspending body: a `kyo.Sync.defer` block
-      * on JVM/Native and the koffi `.async` + `Promise` bridge on JS. `WithError[Long]` additionally covers errno
-      * capture inside the async completion callback.
+      * on JVM/Native and the koffi `.async` + `Promise` bridge on JS. An errno-aware `Outcome` return additionally covers
+      * errno capture inside the async completion callback.
       */
     private val specBlocking: TraitSpec = mkTrait(
         "BlockingBindings",

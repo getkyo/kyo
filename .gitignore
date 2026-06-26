@@ -19,6 +19,5 @@ jmh-result.json
 *.gpg
 test-output
 .DS_Store
-.jvmopts
 # Screencast frame captures from the demo runners.
 runs/

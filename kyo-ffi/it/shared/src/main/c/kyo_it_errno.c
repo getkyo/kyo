@@ -4,8 +4,8 @@
 /* Bundled errno surface.
  *
  * Provides a function that unconditionally sets errno = EINVAL (22) and
- * returns -1. The binding declares `WithError[Int]` so the generated impl
- * captures errno into the returned `WithError` wrapper via Panama's
+ * returns -1. The binding declares `Ffi.Outcome[Int]` so the generated impl
+ * captures errno into the returned `Ffi.Outcome[Int]` via Panama's
  * `captureCallState("errno")` on JVM, Scala Native's `errno` binding on
  * Native, and koffi's errno capture on JS. After the call the spec
  * asserts both the return value and the captured error code.

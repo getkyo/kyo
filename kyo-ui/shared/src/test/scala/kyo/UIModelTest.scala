@@ -52,8 +52,8 @@ class UIModelTest extends kyo.test.Test[Any]:
             assert(Textarea().isInstanceOf[Focusable])
             assert(Select().isInstanceOf[Focusable])
             assert(Anchor().isInstanceOf[Focusable])
-            assert(!Div().isInstanceOf[Focusable])
-            assert(!SpanElement().isInstanceOf[Focusable])
+            assert(!(Div(): Element).isInstanceOf[Focusable])
+            assert(!(SpanElement(): Element).isInstanceOf[Focusable])
         }
 
         "HasDisabled elements" in {
@@ -61,27 +61,27 @@ class UIModelTest extends kyo.test.Test[Any]:
             assert(Input().isInstanceOf[HasDisabled])
             assert(Textarea().isInstanceOf[HasDisabled])
             assert(Select().isInstanceOf[HasDisabled])
-            assert(!Anchor().isInstanceOf[HasDisabled])
-            assert(!Div().isInstanceOf[HasDisabled])
+            assert(!(Anchor(): Element).isInstanceOf[HasDisabled])
+            assert(!(Div(): Element).isInstanceOf[HasDisabled])
         }
 
         "TextInput elements" in {
             assert(Input().isInstanceOf[TextInput])
             assert(Textarea().isInstanceOf[TextInput])
-            assert(!Button().isInstanceOf[TextInput])
-            assert(!Select().isInstanceOf[TextInput])
+            assert(!(Button(): Element).isInstanceOf[TextInput])
+            assert(!(Select(): Element).isInstanceOf[TextInput])
         }
 
         "Activatable elements" in {
             assert(Button().isInstanceOf[Activatable])
             assert(Anchor().isInstanceOf[Activatable])
-            assert(!Input().isInstanceOf[Activatable])
+            assert(!(Input(): Element).isInstanceOf[Activatable])
         }
 
         "Clickable elements" in {
             assert(Button().isInstanceOf[Clickable])
             assert(Anchor().isInstanceOf[Clickable])
-            assert(!Input().isInstanceOf[Clickable])
+            assert(!(Input(): Element).isInstanceOf[Clickable])
         }
     }
 

@@ -19,7 +19,7 @@ import kyo.*
 final private[kyo] class BrowserTab(
     val targetId: TargetId,
     val sessionId: SessionId,
-    val client: CdpClient,
+    val backend: CdpBackend,
     val browserContextId: Maybe[String],
     val frameContexts: AtomicRef[Dict[FrameId, ExecutionContextId]],
     val rootFrameId: AtomicRef[Maybe[FrameId]],
@@ -29,11 +29,11 @@ final private[kyo] class BrowserTab(
     val emulationOverride: AtomicRef[Maybe[BrowserTab.EmulatedMediaState]],
     val downloadPolicy: AtomicRef[Maybe[(Browser.DownloadBehavior, Maybe[String])]]
 ):
-    /** Session-scoped CDP client. Every interaction path issues CDP commands against this tab's specific session; capturing the
-      * `client.withSession(sessionId)` pair once eliminates the `tab.client.withSession(tab.sessionId)` boilerplate that otherwise repeats
+    /** Session-scoped CDP backend. Every interaction path issues CDP commands against this tab's specific session; capturing the
+      * `backend.withSession(sessionId)` pair once eliminates the `tab.backend.withSession(tab.sessionId)` boilerplate that otherwise repeats
       * at every CDP call site.
       */
-    val session: CdpClient = client.withSession(sessionId)
+    val session: CdpBackend = backend.withSession(sessionId)
 end BrowserTab
 
 /** Companion for [[BrowserTab]], holding nested types shared across the internal module. */
@@ -78,7 +78,7 @@ private[kyo] object BrowserTabSetup:
     private[kyo] def mkBrowserTab(
         targetId: TargetId,
         sessionId: SessionId,
-        client: CdpClient,
+        backend: CdpBackend,
         browserContextId: Maybe[String]
     )(using Frame): BrowserTab < Sync =
         for
@@ -92,7 +92,7 @@ private[kyo] object BrowserTabSetup:
         yield new BrowserTab(
             targetId,
             sessionId,
-            client,
+            backend,
             browserContextId,
             frameCtx,
             rootRef,
@@ -118,8 +118,8 @@ private[kyo] object BrowserTabSetup:
             if ev.method == "Runtime.executionContextCreated" || ev.method == "Runtime.executionContextDestroyed" then
                 updateFrameContexts(tab, ev)
             else Kyo.unit
-        tab.client.frameEventDispatchers.updateAndGet(_.update(key, handler)).andThen(
-            Scope.ensure(tab.client.frameEventDispatchers.updateAndGet(_.remove(key)).unit)
+        tab.backend.frameEventDispatchers.updateAndGet(_.update(key, handler)).andThen(
+            Scope.ensure(tab.backend.frameEventDispatchers.updateAndGet(_.remove(key)).unit)
         )
     end installFrameContextTracker
 
@@ -131,36 +131,23 @@ private[kyo] object BrowserTabSetup:
       */
     private[kyo] def updateFrameContexts(tab: BrowserTab, ev: CdpEvent)(using Frame): Unit < Sync =
         ev match
-            case CdpEvent.Generic(method, wire, _) =>
-                if method == "Runtime.executionContextCreated" then
-                    Json.decode[CdpEventParams[ExecutionContextCreatedParams]](wire) match
-                        case Result.Success(env) =>
-                            val ctx = env.params.context
-                            if ctx.auxData.isDefault && ctx.auxData.frameId.nonEmpty then
-                                tab.frameContexts
-                                    .updateAndGet(_.update(FrameId(ctx.auxData.frameId), ExecutionContextId(ctx.id)))
-                                    .unit
-                            else Kyo.unit
-                            end if
-                        case other =>
-                            Log.warn(
-                                s"BrowserTabSetup: unexpected wire shape decoding ExecutionContextCreatedParams: $other; raw=$wire"
-                            )
-                    end match
-                else if method == "Runtime.executionContextDestroyed" then
-                    Json.decode[CdpEventParams[ExecutionContextDestroyedParams]](wire) match
-                        case Result.Success(env) =>
-                            val cid = ExecutionContextId(env.params.executionContextId)
-                            tab.frameContexts.updateAndGet { m =>
-                                m.filter((_, v) => v != cid)
-                            }.unit
-                        case other =>
-                            Log.warn(
-                                s"BrowserTabSetup: unexpected wire shape decoding ExecutionContextDestroyedParams: $other; raw=$wire"
-                            )
-                    end match
-                else Kyo.unit
-                end if
+            case CdpEvent.Generic(_, params, _) =>
+                params match
+                    case created: ExecutionContextCreatedParams =>
+                        val ctx = created.context
+                        if ctx.auxData.isDefault && ctx.auxData.frameId.nonEmpty then
+                            tab.frameContexts
+                                .updateAndGet(_.update(FrameId(ctx.auxData.frameId), ExecutionContextId(ctx.id)))
+                                .unit
+                        else Kyo.unit
+                        end if
+                    case destroyed: ExecutionContextDestroyedParams =>
+                        val cid = ExecutionContextId(destroyed.executionContextId)
+                        tab.frameContexts.updateAndGet { m =>
+                            m.filter((_, v) => v != cid)
+                        }.unit
+                    case _ => Kyo.unit
+                end match
 
     /** Stashes the root frame id from a one-shot `Page.getFrameTree` round-trip.
       *
@@ -221,7 +208,7 @@ private[kyo] object BrowserTabSetup:
             register.andThen(CdpBackend.runtimeEvaluate(
                 tab.session,
                 EvalParams(consoleCaptureJs)
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue).unit)
+            ).map(CdpEvalDecoder.extractValueOrFail).unit)
         }
     end installConsoleCapture
 
@@ -241,7 +228,7 @@ private[kyo] object BrowserTabSetup:
             register.andThen(CdpBackend.runtimeEvaluate(
                 tab.session,
                 EvalParams(BrowserNetworkTracker.responseTrackerScript)
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue).unit)
+            ).map(CdpEvalDecoder.extractValueOrFail).unit)
         }
     end installResponseTracker
 
@@ -250,20 +237,20 @@ private[kyo] object BrowserTabSetup:
       * Returns the fully-initialised [[BrowserTab]]. The caller is responsible for binding it to the `Env[BrowserTab]` effect (via
       * `Env.run(tab)(v)`). The `Scope` effect covers context disposal on scope exit.
       */
-    private[kyo] def attachAndSetupTab(client: CdpClient)(using Frame): BrowserTab < (Async & Scope & Abort[BrowserReadException]) =
+    private[kyo] def attachAndSetupTab(backend: CdpBackend)(using Frame): BrowserTab < (Async & Scope & Abort[BrowserReadException]) =
         for
             // Create an isolated browser context. Disposing the context on scope exit cleans up service workers,
             // downloads, storage, and renderer state that plain Target.closeTarget leaves behind.
-            ctx <- CdpBackend.createBrowserContext(client)
+            ctx <- CdpBackend.createBrowserContext(backend)
             _ <- Scope.ensure(
-                client.sendUnit("Target.disposeBrowserContext", DisposeBrowserContextParams(ctx.browserContextId))
+                CdpBackend.disposeBrowserContext(backend, DisposeBrowserContextParams(ctx.browserContextId))
             )
-            created  <- CdpBackend.createTarget(client, CreateTargetParams("about:blank", Present(ctx.browserContextId)))
-            attached <- CdpBackend.attachToTarget(client, AttachParams(created.targetId, flatten = true))
+            created  <- CdpBackend.createTarget(backend, CreateTargetParams("about:blank", Present(ctx.browserContextId)))
+            attached <- CdpBackend.attachToTarget(backend, AttachParams(created.targetId, flatten = true))
             tab <- mkBrowserTab(
                 TargetId(created.targetId),
                 SessionId(attached.sessionId),
-                client,
+                backend,
                 Present(ctx.browserContextId)
             )
             // Install the frame-context tracker BEFORE Runtime.enable so executionContextCreated events
@@ -281,14 +268,14 @@ private[kyo] object BrowserTabSetup:
       * headless / background tabs suppress those events and framework listeners (kyo-ui, React onFocus, etc.) silently miss user-flow
       * events.
       */
-    private[kyo] def enableDomains(sender: CdpSender)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
+    private[kyo] def enableDomains(sender: CdpBackend)(using Frame): Unit < (Async & Abort[BrowserReadException]) =
         Async.zip(
-            sender.send("Page.enable").unit,
-            sender.send("Runtime.enable").unit,
-            sender.send("DOM.enable").unit,
-            sender.send("Network.enable").unit
+            sender.sendUnit[CdpNoParams]("Page.enable", CdpNoParams()),
+            sender.sendUnit[CdpNoParams]("Runtime.enable", CdpNoParams()),
+            sender.sendUnit[CdpNoParams]("DOM.enable", CdpNoParams()),
+            sender.sendUnit[CdpNoParams]("Network.enable", CdpNoParams())
         ).andThen {
-            sender.send("Emulation.setFocusEmulationEnabled", FocusEmulationParams(true)).unit
+            sender.sendUnit[FocusEmulationParams]("Emulation.setFocusEmulationEnabled", FocusEmulationParams(true))
         }
 
     /** Creates a child tab from a parent **inside a newly-minted browser context**, registered for cleanup in Scope.
@@ -302,16 +289,16 @@ private[kyo] object BrowserTabSetup:
       */
     private[kyo] def createChildTab(parent: BrowserTab)(using Frame): BrowserTab < (Async & Scope & Abort[BrowserReadException]) =
         for
-            ctx <- CdpBackend.createBrowserContext(parent.client)
+            ctx <- CdpBackend.createBrowserContext(parent.backend)
             _ <- Scope.ensure(
-                CdpBackend.disposeBrowserContext(parent.client, DisposeBrowserContextParams(ctx.browserContextId))
+                CdpBackend.disposeBrowserContext(parent.backend, DisposeBrowserContextParams(ctx.browserContextId))
             )
-            created  <- CdpBackend.createTarget(parent.client, CreateTargetParams("about:blank", Present(ctx.browserContextId)))
-            attached <- CdpBackend.attachToTarget(parent.client, AttachParams(created.targetId, flatten = true))
+            created  <- CdpBackend.createTarget(parent.backend, CreateTargetParams("about:blank", Present(ctx.browserContextId)))
+            attached <- CdpBackend.attachToTarget(parent.backend, AttachParams(created.targetId, flatten = true))
             tab <- mkBrowserTab(
                 TargetId(created.targetId),
                 SessionId(attached.sessionId),
-                parent.client,
+                parent.backend,
                 Present(ctx.browserContextId)
             )
             _ <- installFrameContextTracker(tab)

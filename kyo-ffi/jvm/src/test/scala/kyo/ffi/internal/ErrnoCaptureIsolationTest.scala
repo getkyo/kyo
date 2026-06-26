@@ -9,7 +9,7 @@ import kyo.ffi.Test
 /** Pins the per-thread isolation underlying errno capture on JVM.
   *
   * Panama captures errno into a segment allocated from the per-thread [[Scratch]]; each thread therefore owns an independent capture site
-  * backing `WithError[A]`. This test pins that invariant by asserting two threads obtain distinct [[Scratch]] instances, a process-global
+  * backing [[kyo.ffi.Ffi.Outcome]]. This test pins that invariant by asserting two threads obtain distinct [[Scratch]] instances, a process-global
   * regression would collapse them to one and race the capture. Upgrade to direct errno assertions when a public test helper surfaces the
   * captured value.
   */

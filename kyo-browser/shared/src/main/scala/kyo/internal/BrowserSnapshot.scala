@@ -118,7 +118,7 @@ private[kyo] object BrowserSnapshot:
             envelopeJson <- CdpBackend.runtimeEvaluate(
                 tab.session,
                 EvalParams(captureScript)
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue)
+            ).map(CdpEvalDecoder.extractValueOrFail)
             envelope      <- decodeSnapshotEnvelope(envelopeJson)
             cookiesResult <- CdpBackend.getCookies(tab.session)
             cookies = Chunk.from(cookiesResult.cookies.map(CookieWire.toCookie)): Chunk[Browser.Cookie]
@@ -135,7 +135,7 @@ private[kyo] object BrowserSnapshot:
         )
 
     /** Decodes the snapshot envelope, surfacing wire-shape drift as a typed [[BrowserConnectionException]]. Mirrors the
-      * `NavigationWatcher.decodeSettleState` / `CdpEvalEnvelope.decodeEvalEnvelope` pattern.
+      * `NavigationWatcher.decodeSettleState` pattern.
       */
     private[internal] def decodeSnapshotEnvelope(json: String)(using Frame): SnapshotEnvelope < Abort[BrowserReadException] =
         Json.decode[SnapshotEnvelope](json) match
@@ -168,12 +168,12 @@ private[kyo] object BrowserSnapshot:
                         const el = document.querySelector('$escaped');
                         if (el) el.focus();
                     })()""")
-                ).map(CdpEvalDecoder.parseAndExtractEvalValue)
+                ).map(CdpEvalDecoder.extractValueOrFail)
             else
                 CdpBackend.runtimeEvaluate(
                     tab.session,
                     EvalParams("void 0")
-                ).map(CdpEvalDecoder.parseAndExtractEvalValue)
+                ).map(CdpEvalDecoder.extractValueOrFail)
         def restoreCursor: Unit < (Async & Abort[BrowserReadException]) =
             if snapshot.cursorPosition.nonEmpty && snapshot.focusedSelector.nonEmpty then
                 val escapedSelector = JsStringUtil.escapeJsString(snapshot.focusedSelector)
@@ -187,12 +187,12 @@ private[kyo] object BrowserSnapshot:
                             el.setSelectionRange(parseInt(parts[0]), parseInt(parts[1]));
                         }
                     })()""")
-                ).map(CdpEvalDecoder.parseAndExtractEvalValue).unit
+                ).map(CdpEvalDecoder.extractValueOrFail).unit
             else
                 CdpBackend.runtimeEvaluate(
                     tab.session,
                     EvalParams("void 0")
-                ).map(CdpEvalDecoder.parseAndExtractEvalValue).unit
+                ).map(CdpEvalDecoder.extractValueOrFail).unit
         for
             _ <- navigate
             _ <- restoreStorage(tab, snapshot.localStorage, snapshot.sessionStorage)
@@ -201,7 +201,7 @@ private[kyo] object BrowserSnapshot:
             _ <- CdpBackend.runtimeEvaluate(
                 tab.session,
                 EvalParams(s"window.scrollTo(${snapshot.scrollX}, ${snapshot.scrollY})")
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue)
+            ).map(CdpEvalDecoder.extractValueOrFail)
             _ <- restoreFocus
             _ <- restoreCursor
         yield ()
@@ -229,11 +229,11 @@ private[kyo] object BrowserSnapshot:
         CdpBackend.runtimeEvaluate(
             tab.session,
             EvalParams(restoreOne("localStorage", localJs))
-        ).map(CdpEvalDecoder.parseAndExtractEvalValue).andThen {
+        ).map(CdpEvalDecoder.extractValueOrFail).andThen {
             CdpBackend.runtimeEvaluate(
                 tab.session,
                 EvalParams(restoreOne("sessionStorage", sessionJs))
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue).unit
+            ).map(CdpEvalDecoder.extractValueOrFail).unit
         }
     end restoreStorage
 
@@ -275,7 +275,7 @@ private[kyo] object BrowserSnapshot:
                 });
                 return 'ok';
             })()""")
-            ).map(CdpEvalDecoder.parseAndExtractEvalValue).unit
+            ).map(CdpEvalDecoder.extractValueOrFail).unit
         end if
     end restoreFormFields
 

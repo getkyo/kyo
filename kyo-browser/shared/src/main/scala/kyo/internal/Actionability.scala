@@ -68,12 +68,12 @@ private[kyo] object Actionability:
                 Browser.activeIFrameLocal.use(active => active.map(_.executionContextId)).map { ctx =>
                     val ctxOpt = ctx.map(c => CdpTypes.ExecutionContextId.value(c))
                     Browser.use { tab =>
-                        CdpBackend.runtimeEvaluate(
-                            tab.session,
-                            EvalParams(js, returnByValue = true, awaitPromise = true, contextId = ctxOpt)
-                        )
-                            .map(BrowserEval.translateContextDestroyed)
-                            .map(rawJson => parseResult(rawJson, ref))
+                        CdpBackend.recoverContextDestroyed {
+                            tab.session.send[EvalParams, ActionabilityResponse](
+                                CdpBackend.RuntimeEvaluateMethod,
+                                EvalParams(js, returnByValue = true, awaitPromise = true, contextId = ctxOpt)
+                            )
+                        }.map(resp => parseResult(resp, ref))
                     }
                 }
         }
@@ -268,50 +268,24 @@ private[kyo] object Actionability:
         })()"""
     end buildJs
 
-    /** Parses the CDP `Runtime.evaluate` response.
+    /** Parses the typed CDP `Runtime.evaluate` [[ActionabilityResponse]].
       *
-      * A `Result.Success` envelope with `exceptionDetails` Present, or a missing `result.value`, surfaces as `Result.Failure(NotAttached)`,
-      * the conservative actionability outcome that downstream callers already expect.
+      * A response with `exceptionDetails` Present, or a missing `result.value`, surfaces as `Result.Failure(NotAttached)`, the conservative
+      * actionability outcome that downstream callers already expect.
       *
-      * Wire-shape drift (decode failure or panic) is surfaced as a typed `Abort.fail(BrowserProtocolErrorException("Actionability", ...))`
-      * so the retry loop short-circuits on a structurally broken JS template instead of silently looping until exhaustion. This mirrors the
-      * wire-drift handling in `MutationSettlement.extractStringValue` and `NavigationWatcher.decodeSettleState`.
+      * The engine decodes the reply through `Schema[ActionabilityResponse]` and Aborts on a CDP error or wire-shape drift before this method
+      * runs, so there is no `CdpReply` unwrap, no `reply.error` branch, and no decode-failure branch here.
       */
     private[kyo] def parseResult(
-        rawJson: String,
+        resp: ActionabilityResponse,
         ref: NodeRef
     )(using Frame): Result[Reason, ActionableRef] < (Sync & Abort[BrowserReadException]) =
-        // The dispatcher hands the whole CDP wire; the typed `ActionabilityResponse` lives at
-        // `wire.result` (the CdpReply envelope's `result` field).
-        Json.decode[CdpReply[ActionabilityResponse]](rawJson) match
-            case Result.Success(reply) =>
-                reply.result match
-                    case Present(env) =>
-                        env.exceptionDetails match
-                            case Present(_) => Result.Failure(Reason.NotAttached)
-                            case Absent =>
-                                (env.result.flatMap(_.value): @unchecked) match
-                                    case Present(v) => decodeValue(v, ref)
-                                    case Absent     => Result.Failure(Reason.NotAttached)
-                    case Absent =>
-                        reply.error match
-                            case Present(err) =>
-                                Abort.fail(BrowserProtocolErrorException("Actionability", s"CDP error: ${err.message}"))
-                            case Absent =>
-                                Abort.fail(BrowserProtocolErrorException(
-                                    "Actionability",
-                                    s"reply has neither result nor error: $rawJson"
-                                ))
-            case Result.Failure(err) =>
-                Abort.fail(BrowserProtocolErrorException(
-                    "Actionability",
-                    s"wire decode failed: ${err.getMessage}; raw=$rawJson"
-                ))
-            case Result.Panic(t) =>
-                Abort.fail(BrowserProtocolErrorException(
-                    "Actionability",
-                    s"wire decode panicked: ${t.getMessage}; raw=$rawJson"
-                ))
+        resp.exceptionDetails match
+            case Present(_) => Result.Failure(Reason.NotAttached)
+            case Absent =>
+                (resp.result.flatMap(_.value): @unchecked) match
+                    case Present(v) => decodeValue(v, ref)
+                    case Absent     => Result.Failure(Reason.NotAttached)
 
     private[kyo] def decodeValue(v: ActionabilityValue, ref: NodeRef)(using
         Frame

@@ -6,7 +6,11 @@ import kyo.internal.CdpTypes.*
 
 class BrowserIsolateTest extends BrowserTest:
 
-    override def timeout = 90.seconds
+    // withFork/withNewTab clone a tab: a dozen-plus CDP round-trips plus a navigation and a snapshot
+    // restore. On a saturated CI box (4 vCPUs shared by two test forks and chrome-headless-shell) that can
+    // outrun a tight 90s budget, the same CI-contention latency the download suite already budgets for. This
+    // is a wait budget, not a perf assertion; the leaf assertions still fail fast on a real regression.
+    override def timeout = 180.seconds
 
     // ---- withNewTab ----
 
@@ -235,7 +239,7 @@ class BrowserIsolateTest extends BrowserTest:
         withBrowser {
             Browser.use { parent =>
                 // Snapshot CDP target IDs before opening the child tab.
-                CdpBackend.getTargets(parent.client).map { before =>
+                CdpBackend.getTargets(parent.backend).map { before =>
                     val beforeIds = before.targetInfos.map(_.targetId).toSet
                     // Wrap `withNewTab` in a nested `Scope.run` so that the `Scope.ensure(closeTarget)` registered by
                     // `withNewTab` actually fires when *this* block exits; rather than being deferred to the outer
@@ -245,7 +249,7 @@ class BrowserIsolateTest extends BrowserTest:
                         Browser.withNewTab {
                             Browser.use { child =>
                                 // Snapshot inside the scope: child target ID must be present in the live target list.
-                                CdpBackend.getTargets(parent.client).map { during =>
+                                CdpBackend.getTargets(parent.backend).map { during =>
                                     val duringIds = during.targetInfos.map(_.targetId).toSet
                                     val childId   = child.targetId.value
                                     assert(
@@ -265,7 +269,7 @@ class BrowserIsolateTest extends BrowserTest:
                         // Chrome's `Target.closeTarget` is asynchronous from the page lifecycle's perspective, so
                         // poll briefly: a real cleanup-leak shows as the target staying in the list past the budget.
                         Retry[BrowserConnectionException](Schedule.fixed(50.millis).take(20)) {
-                            CdpBackend.getTargets(parent.client).map { after =>
+                            CdpBackend.getTargets(parent.backend).map { after =>
                                 val afterIds = after.targetInfos.map(_.targetId).toSet
                                 if afterIds.contains(childId) then
                                     Abort.fail[BrowserConnectionException](
@@ -278,7 +282,7 @@ class BrowserIsolateTest extends BrowserTest:
                                 end if
                             }
                         }.map { _ =>
-                            CdpBackend.getTargets(parent.client).map { after =>
+                            CdpBackend.getTargets(parent.backend).map { after =>
                                 val afterIds = after.targetInfos.map(_.targetId).toSet
                                 assert(
                                     !afterIds.contains(childId),
@@ -694,7 +698,7 @@ class BrowserIsolateTest extends BrowserTest:
                     tab = new BrowserTab(
                         TargetId("t-test"),
                         SessionId("s-test"),
-                        parent.client,
+                        parent.backend,
                         Absent,
                         fctx,
                         root,
@@ -900,11 +904,11 @@ class BrowserIsolateTest extends BrowserTest:
         val p = page("<html><head><title>InterruptTest</title></head><body>InterruptTest</body></html>")
         // Capture the shared Chrome's wsUrl so both the outer scope (used to observe targets) and the inner
         // timed-out Browser.run attach to the SAME Chrome process via separate connections.
-        type E = BrowserReadException | Timeout
+        type E = BrowserReadException | BrowserSetupException | Timeout
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Browser.run(wsUrl) {
                 Browser.use { parent =>
-                    val client = parent.client
+                    val client = parent.backend
                     Browser.goto(p).andThen(CdpBackend.getTargets(client)).map { before =>
                         val beforeIds = before.targetInfos.map(_.targetId).toSet
                         // The timeout interrupts withFork mid-flight; the inner Browser.run's Scope.run (and
@@ -1213,7 +1217,7 @@ class BrowserIsolateTest extends BrowserTest:
         withBrowser {
             Browser.goto(p).map { _ =>
                 Browser.use { parent =>
-                    val client = parent.client
+                    val client = parent.backend
                     CdpBackend.getTargets(client).map { before =>
                         val beforeIds = before.targetInfos.map(_.targetId).toSet
                         Browser.isolate.clone.use {
@@ -1269,11 +1273,11 @@ class BrowserIsolateTest extends BrowserTest:
     // CdpBackend.getTargets and assert the forked tab's targetId is gone.
     "isolate.fresh.use cleanup runs when outer scope is interrupted" in {
         val p = page("<html><head><title>InterruptFresh</title></head><body>X</body></html>")
-        type E = BrowserReadException | Timeout
+        type E = BrowserReadException | BrowserSetupException | Timeout
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Browser.run(wsUrl) {
                 Browser.use { parent =>
-                    val client = parent.client
+                    val client = parent.backend
                     Browser.goto(p).andThen(CdpBackend.getTargets(client)).map { before =>
                         val beforeIds = before.targetInfos.map(_.targetId).toSet
                         val timedOutWork: Unit < (Async & Abort[E]) =
@@ -1322,11 +1326,11 @@ class BrowserIsolateTest extends BrowserTest:
     // snapshot-restore Scope also propagates interruption to its finalizers.
     "isolate.clone.use cleanup runs when outer scope is interrupted" in {
         val p = page("<html><head><title>InterruptClone</title></head><body>X</body></html>")
-        type E = BrowserReadException | Timeout
+        type E = BrowserReadException | BrowserSetupException | Timeout
         kyo.internal.SharedChrome.init.map { wsUrl =>
             Browser.run(wsUrl) {
                 Browser.use { parent =>
-                    val client = parent.client
+                    val client = parent.backend
                     Browser.goto(p).andThen(CdpBackend.getTargets(client)).map { before =>
                         val beforeIds = before.targetInfos.map(_.targetId).toSet
                         val timedOutWork: Unit < (Async & Abort[E]) =

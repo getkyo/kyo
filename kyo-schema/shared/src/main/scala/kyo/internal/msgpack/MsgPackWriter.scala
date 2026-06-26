@@ -20,6 +20,10 @@ import scala.annotation.tailrec
   * hash.
   */
 final class MsgPackWriter(config: MsgPack.Config) extends Writer:
+
+    override def canWriteTopLevelNonObject: Boolean = true
+    override def codecName: String                  = "MsgPack"
+
     import MsgPackFormat.*
 
     private val root = new ByteArrayOutputStream(256)

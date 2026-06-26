@@ -321,14 +321,14 @@ trait FastOpBindings extends Ffi:
     def fastOp(x: Int)(using AllowUnsafe): Int // errno not checked
 ```
 
-To receive both the return value and the error code, wrap the return type in `Ffi.WithError[A]`. The errno is captured via platform-specific mechanisms (Panama `captureCallState("errno")` on JVM, `errno.h` on Native, `koffi.errno()` on JS):
+**Outcome return (user handles errno):** Declare the return type as `Ffi.Outcome[A]`, a zero-allocation opaque carrier that packs the return value and the error code into a single `Long`. The phantom `A` is the C return width (`Int` or `Long`) the codegen reads to pick the descriptor layout. The errno is captured via platform-specific mechanisms (Panama `captureCallState("errno")` on JVM, `errno.h` on Native, `koffi.errno()` on JS):
 
 ```scala doctest:scope=isolated
 import kyo.*
 import kyo.ffi.*
 
 trait RiskyBindings extends Ffi:
-    def riskyOp(x: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def riskyOp(x: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 object RiskyBindings extends Ffi.Config(library = "math")
 
 val risky = Ffi.load[RiskyBindings]
@@ -336,18 +336,18 @@ val r     = risky.riskyOp(42)
 if r.errorCode != 0 then
     handleError(r.errorCode)
 else
-    useValue(r.value)
+    useValue(r.value) // .value is Int for Outcome[Int], Long for Outcome[Long]
 end if
 ```
 
-`WithError` captures the error code but never raises on its own. When a non-zero `errorCode` constitutes a failure, throw `FfiErrno`: its `apply(errorCode, binding, method)` factory builds a message naming the binding and method:
+`Outcome` captures the error code but never raises on its own. When a non-zero `errorCode` constitutes a failure, throw `FfiErrno`: its `apply(errorCode, binding, method)` factory builds a message naming the binding and method:
 
 ```scala doctest:scope=isolated
 import kyo.*
 import kyo.ffi.*
 
 trait RiskyBindings extends Ffi:
-    def riskyOp(x: Int)(using AllowUnsafe): Ffi.WithError[Int]
+    def riskyOp(x: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 object RiskyBindings extends Ffi.Config(library = "math")
 
 val risky = Ffi.load[RiskyBindings]
@@ -355,7 +355,7 @@ val res   = risky.riskyOp(7)
 if res.errorCode != 0 then
     throw FfiErrno(res.errorCode, "RiskyBindings", "riskyOp")
 else
-    useValue(res.value)
+    useValue(res.value) // .value is Int for Outcome[Int], Long for Outcome[Long]
 end if
 ```
 
@@ -1098,7 +1098,7 @@ The generated code is on disk, navigable in IDEs, and shows up in stack traces.
 
 **Memory model.** `Buffer[A]` and `Handle[A]` are backed by `UnsafeBuffer` from kyo-data, an abstract class with platform subclasses: `JvmUnsafeBuffer` wrapping `MemorySegment`, `NativeUnsafeBuffer` wrapping `Ptr[Byte]`, and `JsUnsafeBuffer` wrapping a `Uint8Array` + `DataView` pair. This foundation is shared with kyo-offheap's `Memory[A]`. String parameters are encoded into a per-thread scratch arena (auto-growing from 64 KiB to 4 MiB) and freed when the call returns; array parameters are zero-copy for non-blocking calls and copied to scratch for blocking calls.
 
-**Error types at a glance.** `FfiLoadError` (and its `LibraryNotFound` / `AbiMismatch` / `Unsupported` / `ImplNotFound` leaves) is the catch surface for `Ffi.load`; `FfiNullPointer` is thrown when a bare `Handle[A]` receives NULL; `FfiErrno` is the errno exception you throw after inspecting `WithError.errorCode`; `FfiMalformedResult` is thrown by returned-struct readers on an unterminated `char*`; `BorrowRevoked` is thrown under checked-borrow mode; `FfiLoadError.Unsupported` is raised on an unsupported variadic runtime type. `FfiInternalError` is a should-not-happen internal-invariant diagnostic (a checked cast site); it names the binding and method but prompts no user action.
+**Error types at a glance.** `FfiLoadError` (and its `LibraryNotFound` / `AbiMismatch` / `Unsupported` / `ImplNotFound` leaves) is the catch surface for `Ffi.load`; `FfiNullPointer` is thrown when a bare `Handle[A]` receives NULL; `FfiErrno` is the errno exception you throw after inspecting `Outcome.errorCode`; `FfiMalformedResult` is thrown by returned-struct readers on an unterminated `char*`; `BorrowRevoked` is thrown under checked-borrow mode; `FfiLoadError.Unsupported` is raised on an unsupported variadic runtime type. `FfiInternalError` is a should-not-happen internal-invariant diagnostic (a checked cast site); it names the binding and method but prompts no user action.
 
 ### Performance tips
 

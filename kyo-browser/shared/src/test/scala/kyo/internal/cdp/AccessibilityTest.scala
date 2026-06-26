@@ -1,7 +1,7 @@
 package kyo.internal.cdp
 
 import kyo.*
-import kyo.internal.CdpClient
+import kyo.internal.CdpBackend
 import kyo.internal.SharedChrome
 import kyo.internal.cdp.Accessibility
 
@@ -268,7 +268,7 @@ class AccessibilityTest extends kyo.BrowserTest:
             val html = page("<button id='ok'>OK</button>")
             Browser.goto(html).andThen {
                 Browser.use { tab =>
-                    val s = tab.client.withSession(tab.sessionId)
+                    val s = tab.session
                     Accessibility.getFullAXTree(s).map { nodes =>
                         assert(nodes.nonEmpty, s"expected a non-empty AX tree but got $nodes")
                     }
@@ -282,7 +282,7 @@ class AccessibilityTest extends kyo.BrowserTest:
             val html = page("<button id='ok' disabled aria-label='OK'>OK</button>")
             Browser.goto(html).andThen {
                 Browser.use { tab =>
-                    val s = tab.client.withSession(tab.sessionId)
+                    val s = tab.session
                     Accessibility.getFullAXTree(s).map { nodes =>
                         val button = nodes.find(n => n.role == "button")
                         assert(button.isDefined, s"expected a button AX node but got roles=${nodes.map(_.role).distinct}")
@@ -302,7 +302,7 @@ class AccessibilityTest extends kyo.BrowserTest:
     "getFullAXTree propagates BrowserConnectionException via typed Abort on a closed client" in {
         SharedChrome.init.map { wsUrl =>
             for
-                client <- CdpClient.initUnscoped(wsUrl, Browser.LaunchConfig.default)
+                client <- CdpBackend.initUnscoped(wsUrl, Browser.LaunchConfig.default)
                 _      <- client.close(30.seconds)
                 result <- Abort.run[BrowserConnectionException](Accessibility.getFullAXTree(client))
             yield result match

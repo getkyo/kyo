@@ -527,12 +527,14 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                 val params   = paramEithers.collect { case Right(p) => p }
                 val blocking = dd.symbol.hasAnnotation(blockingSym)
                 val byValue  = dd.symbol.hasAnnotation(byValueSym)
-                // A `@Ffi.blocking` method declares its return as `Fiber.Unsafe[WithError[A], Any]` (or
+                // A `@Ffi.blocking` method declares its return as `Fiber.Unsafe[Ffi.Outcome[A], Any]` (or
                 // `Fiber.Unsafe[A, Any]`): the binding layer is the unsafe tier, so the blocking downcall is surfaced as
                 // an already-completed (JVM/Native) or callback-resolved (JS) `Fiber.Unsafe`, not a bare value or a
-                // `< Async` computation. Strip the `Fiber.Unsafe[_, _]` wrapper first (→ `WithError[A]`), then strip
-                // `WithError` (→ `A`) so the marshalling shape is the bare inner type. A non-blocking method declares a
-                // plain value (optionally `WithError[A]`) with no `Fiber.Unsafe` wrapper.
+                // `< Async` computation. Strip the `Fiber.Unsafe[_, _]` wrapper first, then read an `Ffi.Outcome[A]`
+                // return's type argument `A` as the marshalling shape: `A` is the C return width, so it drives the
+                // function descriptor's return layout (`Outcome[Int]` -> `JAVA_INT`, `Outcome[Long]` -> `JAVA_LONG`),
+                // and the C return value is sign-extended into the packed `Long` at the correct width. A non-blocking
+                // method declares a plain value (optionally `Ffi.Outcome[A]`) with no `Fiber.Unsafe` wrapper.
                 val rawRetType = dd.returnTpt.tpe
                 val isFiber    = isFiberUnsafeType(rawRetType)
                 // Enforce the `@Ffi.blocking` contract: the method MUST declare `(using AllowUnsafe)` and a
@@ -559,9 +561,11 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                 blockingErr match
                     case Some(err) => Left(err)
                     case None =>
-                        val fiberInner   = if isFiber then unwrapFiberUnsafeType(rawRetType) else rawRetType
-                        val isWithError  = isWithErrorType(fiberInner)
-                        val innerRetType = if isWithError then unwrapWithErrorType(fiberInner) else fiberInner
+                        val fiberInner = if isFiber then unwrapFiberUnsafeType(rawRetType) else rawRetType
+                        val isOutcome  = isOutcomeType(fiberInner)
+                        val innerRetType =
+                            if isOutcome then unwrapOutcomeType(fiberInner)
+                            else fiberInner
                         extractReturnShape(innerRetType, path, line, dd.symbol, scalaName, params, byValue).map { shape =>
                             val hasGuard = params.exists(p => p.tpe == fm.TypeRef.GuardT)
                             val hasFn    = params.exists(p => p.tpe.isInstanceOf[fm.TypeRef.FnPtrT])
@@ -580,7 +584,7 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                                 hasArrayParam = hasArrayP,
                                 callbackKind = callback,
                                 hasVarargs = varargsTail.isDefined,
-                                withError = isWithError
+                                withError = isOutcome
                             )
                         }
                 end match
@@ -750,26 +754,25 @@ final private[codegen] class FfiInspector(collector: TastyExtractor) extends Ins
                 case _ =>
                     false
 
-        /** Check if a type is `Ffi.WithError[A]`, a final class wrapper for errno-aware returns. Must check the NON-dealiased type to
-          * catch it before the inner type is resolved. Uses fully-qualified symbol name matching.
+        /** Check if a type is `Ffi.Outcome[A]`, the opaque Long errno-aware return type. Must check the NON-dealiased type since Outcome is
+          * opaque (dealiases to Long). Uses fully-qualified symbol name matching; on the applied `Outcome[A]` the type symbol resolves to
+          * the `Outcome` constructor, so the same FQN comparison matches.
           */
-        private def isWithErrorType(tpe: TypeRepr): Boolean =
-            tpe match
-                case AppliedType(tc, _) =>
-                    val n = tc.typeSymbol.fullName
-                    n == "kyo.ffi.Ffi.WithError" || n == "kyo.ffi.Ffi$.WithError"
-                case _ =>
-                    false
+        private def isOutcomeType(tpe: TypeRepr): Boolean =
+            val n = tpe.typeSymbol.fullName
+            n == "kyo.ffi.Ffi.Outcome" || n == "kyo.ffi.Ffi$.Outcome"
 
-        /** Extract the inner type `A` from `WithError[A]`. Assumes [[isWithErrorType]] was already checked. */
-        private def unwrapWithErrorType(tpe: TypeRepr): TypeRepr =
+        /** Extract the C-return-width type argument `A` from `Outcome[A]`. Assumes [[isOutcomeType]] was already checked. The argument is
+          * the width the descriptor reads (`Int` -> `JAVA_INT`, `Long` -> `JAVA_LONG`).
+          */
+        private def unwrapOutcomeType(tpe: TypeRepr): TypeRepr =
             tpe match
                 case AppliedType(_, List(inner)) => inner
                 case _                           => tpe
 
         /** Check if a type is `kyo.Fiber.Unsafe[A, S]`, the opaque fiber-handle type a `@Ffi.blocking` method declares as its return.
           * Match the NON-dealiased applied type by fully-qualified constructor name (the opaque type erases under dealias), the same
-          * FQCN-matching style used for the opaque `Handle` / `Borrowed` / `WithError` / `Maybe` wrappers above. `Fiber` is a top-level
+          * FQCN-matching style used for the opaque `Handle` / `Borrowed` / `Maybe` wrappers above. `Fiber` is a top-level
           * object, so the compiler wraps it in a synthetic `Fiber$package` and TASTy surfaces the constructor symbol as
           * `kyo.Fiber$package$.Fiber$.Unsafe` (module segments carry a trailing `$`). We canonicalise by stripping the synthetic
           * `$package` segment and every trailing `$` and compare against the clean `kyo.Fiber.Unsafe`, so the check is robust to which

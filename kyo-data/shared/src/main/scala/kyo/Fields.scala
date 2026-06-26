@@ -180,7 +180,7 @@ object Fields:
       * def field[N <: String & Singleton : Precise](name: N): Def[In & N ~ Int]
       * }}}
       */
-    private object Pin:
+    object Pin:
         opaque type Pin[+N <: String] = Unit
         given [N <: String]: Pin[N] = ()
     end Pin

@@ -84,7 +84,8 @@ private[kyo] object CdpTypes:
                     case "mouseMoved"    => Moved
                     case "mousePressed"  => Pressed
                     case "mouseReleased" => Released
-                    case other           => throw UnknownVariantException(Seq("MouseEventType"), other)(using r.frame)
+                    case other           => throw UnknownVariantException(Seq("MouseEventType"), other)(using r.frame),
+            structure = Structure.Type.Open(Tag[MouseEventType].asInstanceOf[Tag[Any]])
         )
     end MouseEventType
 
@@ -106,7 +107,8 @@ private[kyo] object CdpTypes:
                 r.string() match
                     case "keyDown" => Down
                     case "keyUp"   => Up
-                    case other     => throw UnknownVariantException(Seq("KeyEventType"), other)(using r.frame)
+                    case other     => throw UnknownVariantException(Seq("KeyEventType"), other)(using r.frame),
+            structure = Structure.Type.Open(Tag[KeyEventType].asInstanceOf[Tag[Any]])
         )
     end KeyEventType
 
@@ -517,3 +519,52 @@ final private[kyo] case class MockResponseEnvelope(status: Int, body: String, he
 
 /** Single `(name, value)` entry inside [[MockResponseEnvelope.headers]]. */
 final private[kyo] case class MockHeader(name: String, value: String) derives Schema
+
+// --- Browser.getVersion probe types (CdpBackend.initUnscoped connect-probe) ---
+
+/** Params for the `Browser.getVersion` CDP probe call. No fields: the command takes no parameters. */
+final private[kyo] case class BrowserGetVersionParams() derives Schema
+
+/** Result of the `Browser.getVersion` CDP probe call. Fields match the CDP spec's `Browser.getVersion` response. */
+final private[kyo] case class BrowserVersionResult(
+    protocolVersion: String,
+    product: String,
+    revision: String,
+    userAgent: String,
+    jsVersion: String
+) derives Schema
+
+// --- CDP wire param types ---
+
+/** Empty params object: encodes as `{}` on the wire. Used by CDP methods that take no params. */
+final private[kyo] case class CdpNoParams() derives Schema
+
+/** Typed envelope for decoding a CDP response. Decoding either yields `result` (success) or `error` (CDP
+  * rejection); a payload with neither is wire-shape drift.
+  */
+final private[kyo] case class CdpReply[A](
+    result: Maybe[A] = Absent,
+    error: Maybe[CdpError] = Absent
+) derives Schema
+
+/** Wire shape for the `Page.javascriptDialogOpening` event's `params` field. Only the fields the dialog recorder and auto-handler need are
+  * declared; CDP-emitted fields outside this set are tolerated by the permissive decoder.
+  */
+final private[kyo] case class JavascriptDialogOpeningParams(
+    url: String = "",
+    message: String = "",
+    `type`: String = "",
+    defaultPrompt: Maybe[String] = Absent
+) derives Schema
+
+sealed private[kyo] trait CdpEvent
+private[kyo] object CdpEvent:
+    /** Carries a CDP notification's already-decoded typed Wire (`params`) through the per-session dispatcher. The notification handlers
+      * decode the wire once via `JsonRpcRoute.notification[Wire]`; consumers pattern-match `params` on the Wire type rather than re-decoding
+      * a JSON string. `Matchable` is the upper bound that still permits the consumer-side type match.
+      */
+    final case class Generic(method: String, params: Matchable, sessionId: Maybe[CdpTypes.SessionId] = Absent) extends CdpEvent
+end CdpEvent
+
+/** CDP error from error responses. */
+final private[kyo] case class CdpError(code: Int, message: String) derives Schema, CanEqual

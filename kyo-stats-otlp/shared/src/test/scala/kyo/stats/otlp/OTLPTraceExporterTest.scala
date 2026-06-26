@@ -9,6 +9,11 @@ import kyo.stats.internal.UnsafeTraceSpan
 
 class OTLPTraceExporterTest extends kyo.test.Test[Any]:
 
+    // Socket-only opt-out: this suite runs an HttpServer/HttpClient on the NIO transport, whose closed-channel fd
+    // close is deferred to the idle selector's next select() (an opaque socket:[inode] no allowlist matches), the
+    // same transport-deferred reason as BaseHttpTest. Thread, fiber, and file-descriptor detection stay on.
+    override def config = super.config.leakCheckSockets(false)
+
     import AllowUnsafe.embrace.danger
 
     private def now() = java.time.Instant.now()
@@ -209,7 +214,11 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
 
     "flush" - {
 
-        "recursive flush drains all spans at exact batch boundary".onlyJvm in {
+        // The eager batch-size trigger wakes the background export loop while spans are still being queued, so the direct
+        // flush below runs concurrently with the loop. The guaranteed invariant is delivery, not a fixed request split:
+        // every queued span is exported exactly once in requests no larger than the batch size. Asserting an exact 3+3
+        // split is racy because the loop can drain a partial batch mid-enqueue.
+        "recursive flush drains every queued span exactly once".onlyJvm in {
             Clock.withTimeControl { control =>
                 for
                     traceCh <- Channel.init[ExportTraceRequest](10)
@@ -220,21 +229,29 @@ class OTLPTraceExporterTest extends kyo.test.Test[Any]:
                     }
                     (_, metricHandler) = defaultHandlers
                     server <- HttpServer.init(0, "localhost")(traceHandler, metricHandler)
-                    // batchSize=3, queue 6 spans → flush should recurse once (3+3)
                     config   = exporterTestConfig(server.port, queueSize = 100, batchSize = 3)
                     exporter = OTLPTraceExporter.init(config)
                     _ <- control.advance(100.millis)
                     _ = (1 to 6).foreach { i =>
                         exporter.startSpan(List("test"), s"batch-span-$i", now()).end(now())
                     }
-                    _    <- exporter.flush(config)
-                    req1 <- traceCh.take
-                    req2 <- traceCh.take
+                    _ <- exporter.flush(config)
+                    requests <- Loop[Chunk[ExportTraceRequest], Chunk[ExportTraceRequest], Async & Abort[Closed]](Chunk.empty) { acc =>
+                        val seen = acc.foldLeft(0)(_ + _.resourceSpans.head.scopeSpans.head.spans.size)
+                        if seen >= 6 then Loop.done(acc)
+                        else traceCh.take.map(req => Loop.continue(acc.appended(req)))
+                    }
                 yield
-                    val spans1 = req1.resourceSpans.head.scopeSpans.head.spans
-                    val spans2 = req2.resourceSpans.head.scopeSpans.head.spans
-                    assert(spans1.size == 3, s"First batch should have 3 spans, got ${spans1.size}")
-                    assert(spans2.size == 3, s"Second batch should have 3 spans, got ${spans2.size}")
+                    val batches = requests.map(_.resourceSpans.head.scopeSpans.head.spans)
+                    val names   = batches.flatMap(_.map(_.name)).toList.sorted
+                    assert(
+                        batches.forall(_.size <= 3),
+                        s"each export request should hold at most batchSize=3 spans, got sizes ${batches.map(_.size).toList}"
+                    )
+                    assert(
+                        names == (1 to 6).map(i => s"batch-span-$i").toList.sorted,
+                        s"all 6 spans should be exported exactly once, got $names"
+                    )
             }
         }
     }

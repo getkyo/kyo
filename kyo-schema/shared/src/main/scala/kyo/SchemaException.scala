@@ -37,12 +37,42 @@ case class TypeMismatchException(path: Seq[String], expected: String, actual: St
     ) + s": expected $expected but got $actual. Check the input value matches the expected type.")
     with DecodeException with NavigationException derives CanEqual
 
-/** Thrown when a discriminator value names a variant that is not defined in the sealed type. */
+/** Thrown when a variant name is not defined in the sealed type.
+  *
+  * Raised at decode time when the discriminator value does not match any known variant, and at config time when a
+  * `variantNames` or `variantAlias` call references an unknown Scala variant name.
+  */
 case class UnknownVariantException(path: Seq[String], variantName: String)(using Frame)
-    extends SchemaException(s"Unknown variant '$variantName'" + SchemaException.pathSuffix(
-        path
-    ) + ". Check that the discriminator value matches one of the defined case class or object variants.")
+    extends SchemaException(
+        s"Unknown variant '$variantName'" + SchemaException.pathSuffix(path) + (
+            if path.isEmpty then ". Check that the Scala variant name is one of the defined case class or object variants."
+            else ". Check that the discriminator value matches one of the defined case class or object variants."
+        )
+    )
     with DecodeException derives CanEqual
+
+/** Thrown when an untagged sum decode matches no variant.
+  *
+  * Carries the wire names of the variants attempted, in declaration order. Surfaces as a
+  * `Result.Failure` on the decode path.
+  */
+case class NoVariantMatchException(path: Seq[String], variants: Chunk[String])(using Frame)
+    extends SchemaException(
+        s"No variant matched the untagged input" + SchemaException.pathSuffix(path) +
+            s". Attempted ${variants.size} variants: ${variants.mkString(", ")}. Ensure the input matches one of the declared variants."
+    )
+    with DecodeException derives CanEqual
+
+/** Thrown when an adjacently-tagged sum decode input is missing the configured tag key.
+  *
+  * Surfaces as a `Result.Failure` on the decode path.
+  */
+case class MissingTagKeyException(path: Seq[String], tagKey: String)(using Frame)
+    extends SchemaException(
+        s"Missing adjacent tag key '$tagKey'" + SchemaException.pathSuffix(path) +
+            ". Add the tag key to the input or check the adjacent representation configuration."
+    )
+    with DecodeException with NavigationException derives CanEqual
 
 /** Thrown when raw input cannot be parsed into the target type.
   *
@@ -100,6 +130,20 @@ case class TransformFailedException(detail: String)(using Frame)
     extends SchemaException(s"Transform failed: $detail")
     with TransformException derives CanEqual
 
+/** Thrown when two variants (or a variant and an alias) map to the same wire discriminator value. */
+case class VariantNameCollisionException(wireName: String, variants: Chunk[String])(using Frame)
+    extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${variants.size} variants: ${variants.mkString(", ")}. Give each variant a distinct wire name."
+    )
+    with TransformException derives CanEqual
+
+/** Thrown when two fields (or a field and an alias) map to the same wire name. */
+case class FieldNameCollisionException(wireName: String, fields: Chunk[String])(using Frame)
+    extends SchemaException(
+        s"Wire name '$wireName' is targeted by ${fields.size} fields: ${fields.mkString(", ")}. Give each field a distinct wire name."
+    )
+    with TransformException derives CanEqual
+
 // --- Navigation ---
 
 /** Thrown when a path segment does not exist in the target Structure.Value tree. */
@@ -116,6 +160,17 @@ case class PathNotFoundException(path: Seq[String], segment: String)(using Frame
 case class SchemaNotSerializableException(detail: String)(using Frame)
     extends SchemaException(
         s"Schema cannot serialize: $detail. Ensure the type is a case class or sealed trait with serialization support, or provide a custom Schema with writeTo/readFrom."
+    )
+    with TransformException derives CanEqual
+
+/** Thrown when a representation requiring a wire shape the active codec cannot express is used to
+  * encode through that codec (a top-level array or bare top-level scalar on a non-self-describing
+  * binary codec such as Protobuf). Raised before any bytes are written, never a silently-wrong
+  * encoding.
+  */
+case class RepresentationUnsupportedException(codec: String, representation: String)(using Frame)
+    extends SchemaException(
+        s"Codec '$codec' cannot express the '$representation' sum representation. Use a self-describing codec (Json, Yaml, Ion, MsgPack) or a different representation."
     )
     with TransformException derives CanEqual
 

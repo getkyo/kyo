@@ -147,9 +147,20 @@ final class ConsoleReporter(
         end match
     end onLeafComplete
 
+    // Hang diagnostics: the first time any leaf is detected STUCK, capture a one-shot thread dump (real on JVM, a
+    // placeholder off-JVM where no portable all-thread capture exists) plus every registered
+    // `kyo.internal.Diagnostics` snapshot, so a rare hang is root-caused from a single occurrence. Once per run (a
+    // hang usually has one cause).
+    private val hangDumpEmitted = new java.util.concurrent.atomic.AtomicBoolean(false)
+
     override def onLeafHeartbeat(info: LeafInfo, elapsed: Duration): Unit =
+        if hangDumpEmitted.compareAndSet(false, true) then
+            val header = "kyo-test hang diagnostics on STUCK leaf: " + renderPath(info.path) + "\n"
+            out.println(header + kyo.test.runner.internal.ThreadDump.render() + "\n" + kyo.internal.Diagnostics.dumpAll() + "\n")
+        end if
         if verbosity != Verbosity.Quiet then
             out.println(color(s"${indent(info.path)}[STUCK] ${renderPath(info.path)}  ${durationSuffix(elapsed)}", _.yellow))
+    end onLeafHeartbeat
 
     override def onSuiteComplete(info: SuiteInfo, report: SuiteReport): Unit =
         val passedCount   = report.leafResults.count(_._2.isInstanceOf[TestResult.Passed])

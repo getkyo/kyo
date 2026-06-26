@@ -680,7 +680,7 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
         }
 
         // -----------------------------------------------------------------
-        // WithError[A] return type: end-to-end
+        // Outcome return type: end-to-end
         // -----------------------------------------------------------------
 
         "extracts WithErrorBindings and produces withError = true for riskyOp, false for safeOp" in {
@@ -694,13 +694,15 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
             )
             val riskyMethod = spec.methods.find(_.scalaName == "riskyOp").getOrElse(fail("riskyOp method not found"))
             assert(riskyMethod.withError == true)
+            // riskyOp returns Ffi.Outcome[Int], so the inspector reads the [Int] width argument as the marshalling shape:
+            // the descriptor reads the C return at JAVA_INT and the Int is sign-extended into the packed Long.
             assert(riskyMethod.returnShape == ReturnShape.Primitive(TypeRef.IntT))
 
             val safeMethod = spec.methods.find(_.scalaName == "safeOp").getOrElse(fail("safeOp method not found"))
             assert(safeMethod.withError == false)
         }
 
-        "WithError[Int] emits errno capture in generated JVM code" in {
+        "WithErrorBindings emits errno capture in generated JVM code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-jvm")
@@ -709,15 +711,15 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 fail("WithErrorBindingsImpl.scala not generated")
             )
             val content = Files.readString(generated)
-            assert(content.contains("new Ffi.WithError("))
+            assert(content.contains("Ffi.Outcome.fromValueErrno("))
             assert(content.contains("errnoSeg"))
-            assert(content.contains("Ffi.WithError[Int]"))
-            // The safeOp method should NOT have WithError in its return type.
+            assert(content.contains(": Ffi.Outcome[Int] ="))
+            // The safeOp method should NOT have Outcome in its return type.
             val safeDefLine = content.linesIterator.find(_.contains("def safeOp")).getOrElse(fail("safeOp def not found"))
-            assert(!safeDefLine.contains("WithError"))
+            assert(!safeDefLine.contains("Outcome"))
         }
 
-        "WithError[Int] emits errno capture in generated Native code" in {
+        "WithErrorBindings emits errno capture in generated Native code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-native")
@@ -726,12 +728,12 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 fail("WithErrorBindingsImpl.scala not generated")
             )
             val content = Files.readString(generated)
-            assert(content.contains("new Ffi.WithError("))
+            assert(content.contains("Ffi.Outcome.fromValueErrno("))
             assert(content.contains("__errno"))
-            assert(content.contains("Ffi.WithError[Int]"))
+            assert(content.contains(": Ffi.Outcome[Int] ="))
         }
 
-        "WithError[Int] emits errno capture in generated JS code" in {
+        "WithErrorBindings emits errno capture in generated JS code" in {
             val tasty = findTastyFiles(testClassesDir, _ == "WithErrorBindings.tasty")
             assert(tasty.nonEmpty)
             val out    = Files.createTempDirectory("kyo-ffi-gen-witherror-js")
@@ -740,9 +742,9 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 fail("WithErrorBindingsImpl.scala not generated")
             )
             val content = Files.readString(generated)
-            assert(content.contains("new Ffi.WithError("))
+            assert(content.contains("Ffi.Outcome.fromValueErrno("))
             assert(content.contains("KoffiFacade.errno()"))
-            assert(content.contains("Ffi.WithError[Int]"))
+            assert(content.contains(": Ffi.Outcome[Int] ="))
         }
 
         "plain return in WithErrorBindings does NOT include errno capture for safeOp" in {
@@ -754,10 +756,10 @@ class FfiGeneratorTest extends kyo.test.Test[Any]:
                 fail("WithErrorBindingsImpl.scala not generated")
             )
             val content = Files.readString(generated)
-            // Split content by method to verify safeOp specifically has no WithError
+            // Split content by method to verify safeOp specifically has no Outcome
             val safeDefLine = content.linesIterator.find(_.contains("def safeOp")).getOrElse(fail("safeOp def not found"))
             assert(safeDefLine.contains(": Int ="))
-            assert(!safeDefLine.contains("WithError"))
+            assert(!safeDefLine.contains("Outcome"))
         }
 
         // -----------------------------------------------------------------

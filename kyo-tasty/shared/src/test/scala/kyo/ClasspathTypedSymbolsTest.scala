@@ -58,7 +58,7 @@ class ClasspathTypedSymbolsTest extends kyo.test.Test[Any]:
         ).map {
             case Result.Success(Maybe.Present(symbol)) =>
                 assert(
-                    symbol.isInstanceOf[Tasty.Symbol.Object] || symbol.isInstanceOf[Tasty.Symbol.Class],
+                    (symbol: Tasty.Symbol).isInstanceOf[Tasty.Symbol.Object] || (symbol: Tasty.Symbol).isInstanceOf[Tasty.Symbol.Class],
                     s"Expected Symbol.Object or Symbol.Class for object but got ${symbol.getClass.getSimpleName}"
                 )
                 succeed
