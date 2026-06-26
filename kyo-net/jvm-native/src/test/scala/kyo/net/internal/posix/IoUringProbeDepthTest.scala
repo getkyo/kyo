@@ -10,11 +10,10 @@ import kyo.net.TransportConfig
 /** The io_uring availability probe is invoked at the production queue depth `max(256, ioPoolSize * 64)`, not the old hardcoded 256.
   *
   * `IoUringBackend.isAvailable` now computes `depth = max(256, TransportConfig.default.ioPoolSize * 64)` and passes it to
-  * `kyo_uring_probe_available(depth)`, so the probe exercises the same ring size the driver actually builds. The real constrained-ring behavior
-  * (a sandbox that accepts a small ring but rejects the production one) is the native-Linux CI leg (Q-007). The deterministic local unit asserted
-  * here is the depth-threading: a capturing `IoUringBindings` records the depth argument, and invoking the probe through it with the backend's
-  * formula records exactly that value. Before the fix the probe took no depth at all (the signature was `kyo_uring_probe_available()`), so the
-  * production depth could never reach the queue init.
+  * `kyo_uring_probe_available(depth)`, so the probe exercises the same ring size the driver actually builds. The deterministic local unit
+  * asserted here is the depth-threading: a capturing `IoUringBindings` records the depth argument, and invoking the probe through it with the
+  * backend's formula records exactly that value. Before the fix the probe took no depth at all (the signature was
+  * `kyo_uring_probe_available()`), so the production depth could never reach the queue init.
   */
 class IoUringProbeDepthTest extends Test:
 

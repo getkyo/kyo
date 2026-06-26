@@ -14,7 +14,7 @@ import kyo.net.internal.transport.WriteResult
   *
   * The setup puts a TLS handle into backpressure: the real engine emits ciphertext that the (full) real socket buffer cannot accept, so
   * [[PollerIoDriver.flushPending]] EAGAINs with bytes still in `pendingCipher` and [[PollerIoDriver.armWritableForFlush]] parks on writability
-  * with `writableArmed == true`. A close fired in that state must:
+  * with `flushReArmPending == true`. A close fired in that state must:
   *   - free the engine EXACTLY once (not zero, not twice), counted via a [[RecordingTlsEngine]] over a real engine;
   *   - clear the pending-cipher state (`pendingCipher` Absent, `pendingCipherSent` 0);
   *   - never use the engine after `free()` (no UAF), even though a writable re-submit and the close run on different carriers;
@@ -123,15 +123,15 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         _ <- backend.registeredWrite(writeFd).safe.get
                         // Barrier: the write's engine op (including its endWrite, which releases the guard) has fully completed.
                         _ <- fifoBarrier(driver).safe.get
-                        // The flush must be PARKED on writability before the close. `writableArmed` is not a single stable sample here: the
+                        // The flush must be PARKED on writability before the close. `flushReArmPending` is not a single stable sample here: the
                         // 600 KB tail over the 4096-byte send buffer parks on the first EAGAIN (registerWrite #1, the latch above), but the kernel
                         // then drains a few KB of the loopback into the peer's recv buffer (the peer never reads, but the recv buffer absorbs a
-                        // bounded amount), firing the EPOLLOUT edge that clears `writableArmed` and re-submits the flush. The re-flush sends more,
-                        // EAGAINs again, and re-arms (`writableArmed` true again). `writableArmed` therefore toggles false<->true through that bounded
+                        // bounded amount), firing the EPOLLOUT edge that clears `flushReArmPending` and re-submits the flush. The re-flush sends more,
+                        // EAGAINs again, and re-arms (`flushReArmPending` true again). `flushReArmPending` therefore toggles false<->true through that bounded
                         // churn before the buffers fill and it settles stably true. Sample it as an eventual condition, not a single instant, so a
                         // transient mid-churn false does not flake the precondition; a genuinely lost re-arm (the real-bug shape) keeps it false and
                         // surfaces as the per-test timeout.
-                        _ <- assertEventually(Sync.defer(handle.writableArmed))
+                        _ <- assertEventually(Sync.defer(handle.flushReArmPending))
                         _ = assert(handle.pendingCipher.exists(_.size > handle.pendingCipherSent), "pendingCipher must hold unsent bytes")
                         // Close while the flush is parked. requestClose defers the free to endWrite; two fifoBarriers prove it ran (the close
                         // submits the deferred free op, which a barrier behind it completes after).
@@ -146,7 +146,7 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         PosixTestSockets.closePeerForEof(spy, peerFd)
                         discard(assert(engine.freeCount.get() == 1, s"engine must be freed exactly once, was ${engine.freeCount.get()}"))
                         discard(assert(!engine.usedAfterFree.get(), "no engine method may run after free"))
-                        discard(assert(!handle.writableArmed, "the writable Failure branch must clear writableArmed"))
+                        discard(assert(!handle.flushReArmPending, "the writable Failure branch must clear flushReArmPending"))
                         discard(assert(handle.pendingCipher.isEmpty, "pendingCipher must be cleared by the close"))
                         discard(assert(handle.pendingCipherSent == 0, "pendingCipherSent must be reset by the close"))
                         discard(assert(handle.tls.isEmpty, "the engine slot must be cleared once freed"))
@@ -196,11 +196,11 @@ class CloseDuringBackpressuredFlushTest extends Test:
                         _ = assert(w == WriteResult.Done, s"backpressured write should return Done, got $w")
                         _ <- backend.registeredWrite(writeFd).safe.get
                         _ <- fifoBarrier(driver).safe.get
-                        // The flush must be PARKED on writability before the close hook is installed. As in the first leaf, `writableArmed` toggles
+                        // The flush must be PARKED on writability before the close hook is installed. As in the first leaf, `flushReArmPending` toggles
                         // through a bounded not-writable->writable churn (the kernel drains a few KB of the loopback into the peer's recv buffer,
                         // firing the EPOLLOUT edge that clears the arm and re-submits the flush) before settling stably true once the buffers fill, so
                         // it is sampled as an eventual condition rather than a single instant. A genuinely lost re-arm keeps it false and times out.
-                        _ <- assertEventually(Sync.defer(handle.writableArmed))
+                        _ <- assertEventually(Sync.defer(handle.flushReArmPending))
                         // Install the close hook NOW (the initial flush has armed): it fires on the first send of the re-flush.
                         _ = spy.onSend = () =>
                             if closeFired.compareAndSet(false, true) then

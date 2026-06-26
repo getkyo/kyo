@@ -304,7 +304,7 @@ final private[net] class IoUringDriver private[posix] (
             // hold the promise on the handle; the CQE re-flush path (onTlsSendComplete / onRawSendComplete) completes it via releaseBackpressureWaiter
             // once the tail falls below the low-water mark. An in-flight send is guaranteed: the tail only reaches the high-water mark through a write
             // whose flush submitted a send SQE (or coalesced behind one), and that SQE's reap re-flushes and re-checks the waiter.
-            handle.backpressureWaiter = Present((promise, summon[Frame]))
+            handle.backpressurePromise = promise
             // Double-check on the FIFO worker: a CQE re-flush may have drained the tail below the low-water mark between the check above and this
             // registration (the reap runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
             // consistent tail snapshot (no race with onTlsSendComplete) and completes the just-registered waiter if the drain already happened, so
@@ -613,7 +613,7 @@ final private[net] class IoUringDriver private[posix] (
       * pinned `Buffer` and handed to a single send SQE; the partial-send re-flush happens when that SQE's CQE is reaped ([[onTlsSendComplete]]).
       *
       * The [[PosixHandle.sendInFlight]] guard is what keeps the asynchronous send correct: it is the completion-driver twin of the poller's
-      * `writableArmed` coalesce. If a send is already in flight this returns immediately WITHOUT submitting; the freshly-encrypted ciphertext a
+      * `flushReArmPending` coalesce. If a send is already in flight this returns immediately WITHOUT submitting; the freshly-encrypted ciphertext a
       * concurrent `writeTls` appended stays in `pendingCipher`, and the in-flight send's `onTlsSendComplete` re-flushes it (so a second back-to-back
       * write never re-sends the first write's still-unacknowledged region). When it does submit it sets the guard; the reap clears it. If the SQ is
       * full no SQE was submitted, so the guard stays clear and the buffer is released; the remainder stays pending for a later flush (the next write,
@@ -796,8 +796,9 @@ final private[net] class IoUringDriver private[posix] (
         }
         // Fail any WritePump promise parked at the write-backpressure high-water bound. It is held on the handle (a tail-bound park, not a pending
         // SQE), so it is not in `pending`; releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        handle.backpressureWaiter.foreach { case (p, _) => p.completeDiscard(Result.fail(closed)) }
-        handle.backpressureWaiter = Absent
+        val bp = handle.backpressurePromise
+        if bp.asInstanceOf[AnyRef] ne null then bp.completeDiscard(Result.fail(closed))
+        handle.backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
     end cancel
 
     /** Listener teardown, sequenced on the reap carrier so a queued accept arm can never outlive the listen fd (the ghost-accept hazard the
@@ -1424,7 +1425,7 @@ final private[net] class IoUringDriver private[posix] (
                                                 // Flush any ciphertext the read produced (e.g. a TLS 1.3 KeyUpdate response queued by the engine
                                                 // during the decode). drainReadProducedCiphertext (inside feedAndDecrypt) appended it to
                                                 // pendingCipher; flushTls submits a send SQE for the unsent region so it reaches the peer.
-                                                // This mirrors the poller's writableArmed / armWritableForFlush machinery that drains the tail
+                                                // This mirrors the poller's flushReArmPending / armWritableForFlush machinery that drains the tail
                                                 // after every write engine op. No flush is submitted when pendingCipher is empty (the common path
                                                 // for reads that produce no outbound ciphertext) or when a send is already in flight.
                                                 flushTls(h)

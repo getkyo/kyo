@@ -12,10 +12,10 @@ import kyo.net.internal.transport.WriteResult
 
 /** Write CONSERVATION under repeated backpressure plus writable-event interleaving for the TLS write path in [[PollerIoDriver]].
   *
-  * This pushes the `writableArmed` arm/clear/re-submit cycle in [[PollerIoDriver.armWritableForFlush]] far harder than the single double-arm
-  * coalesce that [[WritableArmedCoalesceTest]] pins. The field is the one piece of write-path state that is NOT strictly single-owner: the engine
-  * FIFO worker SETS `writableArmed = true` while arming, and the writable-promise completion carrier (off the FIFO) CLEARS it false. The danger
-  * is a lost arm: an append that lands while `writableArmed` is true relies on the already-pending flush re-submit to carry its bytes; if the clear
+  * This pushes the `flushReArmPending` arm/clear/re-submit cycle in [[PollerIoDriver.armWritableForFlush]] far harder than the single double-arm
+  * coalesce that [[FlushReArmPendingCoalesceTest]] pins. The field is the one piece of write-path state that is NOT strictly single-owner: the engine
+  * FIFO worker SETS `flushReArmPending = true` while arming, and the writable-promise completion carrier (off the FIFO) CLEARS it false. The danger
+  * is a lost arm: an append that lands while `flushReArmPending` is true relies on the already-pending flush re-submit to carry its bytes; if the clear
   * races that append such that no flush is pending and none is armed, the appended ciphertext is stranded forever in `pendingCipher` and the bytes
   * never reach the socket.
   *

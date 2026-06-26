@@ -181,13 +181,13 @@ final private[net] class PosixHandle private (
     @volatile var flushMirror: Maybe[Buffer[Byte]] = Absent
 
     /** Double-arm guard for the writable re-arm that drives the pending-ciphertext flush. Set when a flush armed `awaitWritable` and has not yet
-      * fired; an append that happens while it is set does NOT arm a second writable (the already-pending flush picks up the appended bytes).
-      * Unlike [[pendingCipher]]/[[pendingCipherSent]] (FIFO-worker-only single owners) this field has TWO writers: the engine FIFO worker SETS it
-      * true while arming (in `armWritableForFlush`), and the writable-promise completion callback CLEARS it false when the promise fires (in
-      * `onComplete`). The two are causally serialized: the set happens-before the promise is registered, and the clear runs only after that promise
-      * completes, so the clear can never precede the set. The `@volatile` carries that ordering across the arming carrier and the completion carrier.
+      * fired; an append that happens while it is set does NOT arm a second writable (the already-pending flush picks up the appended bytes). This
+      * field has TWO writers: the engine FIFO worker SETS it true while arming (in `armWritableForFlush`), and the writable-promise completion
+      * callback CLEARS it false when the promise fires. The two are causally serialized: the set happens-before the promise is registered, and
+      * the clear runs only after that promise completes, so the clear can never precede the set. The `@volatile` carries that ordering across the
+      * arming carrier and the completion carrier.
       */
-    @volatile var writableArmed: Boolean = false
+    @volatile var flushReArmPending: Boolean = false
 
     /** Pump-carrier-owned reused off-heap send buffer for plaintext writes. writeRaw copies the unsent plaintext region once into this buffer
       * and sends from it, eliminating the per-write Buffer.fromArray/close alloc churn. Grown on demand; never shrunk. Lazily allocated on
@@ -222,32 +222,30 @@ final private[net] class PosixHandle private (
       */
     @volatile var rawSendInFlight: Boolean = false
 
-    /** Single-in-flight-send guard for the io_uring TLS write path (the completion-driver twin of [[writableArmed]]). io_uring's send is
+    /** Single-in-flight-send guard for the io_uring TLS write path (the completion-driver twin of [[flushReArmPending]]). io_uring's send is
       * asynchronous: a send SQE's `pendingCipherSent` advance happens only when its CQE reaps, so without this guard a second `writeTls` whose
       * flush runs while the first send's CQE is still outstanding re-sends the still-unacknowledged ciphertext region (a duplicate-byte / wire-order
       * violation). The guard makes the io_uring driver hold AT MOST ONE TLS send SQE in flight per handle: `flushTls` submits a send SQE only when
       * this is false (and sets it true); a `writeTls` that runs while it is true APPENDS its ciphertext to [[pendingCipher]] and does NOT submit
-      * (coalescing, exactly as [[writableArmed]] makes an append coalesce onto an already-armed poller flush); the send CQE's `onTlsSendComplete`
+      * (coalescing, exactly as [[flushReArmPending]] makes an append coalesce onto an already-armed poller flush); the send CQE's `onTlsSendComplete`
       * clears it false, advances [[pendingCipherSent]] by the bytes actually sent, and re-submits a send SQE for any remainder (including bytes a
       * coalesced write appended). Mutated ONLY on the engine FIFO worker (the single owner of every write engine op and the reap-enqueued
       * `onTlsSendComplete` for this connection), so the `@volatile` is for the close path's safe read, not for concurrent mutation. The poller never
-      * touches this field (its send is inline; it uses [[writableArmed]] instead).
+      * touches this field (its send is inline; it uses [[flushReArmPending]] instead).
       */
     @volatile var sendInFlight: Boolean = false
 
     /** The WritePump's writable promise parked because the write-backpressure tail reached [[PosixHandle.WriteTailHighWater]]: the driver returned
       * `WriteResult.Partial` and the pump suspended on `awaitWritable`, but the kernel send buffer alone is not the readiness signal here (the bound,
       * not the socket, is what stopped the write), so the promise is held on the handle and completed by the drain path when the tail drops below
-      * [[PosixHandle.WriteTailLowWater]]. This folds the async-write tail into the same writable-park backpressure flow the synchronous poller raw path
-      * already uses, so the outbound channel backs up and the application's `Connection.write` suspends rather than the tail growing without limit.
-      *
-      * Written by `awaitWritable` (the WritePump's carrier) and read/cleared by the drain path (the engine FIFO worker), causally serialized through
-      * the tail-size check: the waiter is registered only when the tail is over the low-water mark, and the drain completes-and-clears it only after
-      * advancing the sent pointer below the mark, so a registration that races a drain either sees the tail still high (and the next drain completes it)
-      * or is itself completed immediately by `awaitWritable`'s own below-mark fast path. The `@volatile` carries the cross-carrier visibility. The close
-      * path fails any parked waiter via `cancel` / the driver teardown, so a slow peer never strands the pump.
+      * [[PosixHandle.WriteTailLowWater]]. Written by `awaitWritable` (the WritePump's carrier) and read/cleared by the drain path (the engine FIFO
+      * worker), causally serialized through the tail-size check: the waiter is registered only when the tail is over the low-water mark, and the drain
+      * completes-and-clears it only after advancing the sent pointer below the mark, so a registration that races a drain either sees the tail still
+      * high (and the next drain completes it) or is itself completed immediately by `awaitWritable`'s own below-mark fast path. The `@volatile`
+      * carries the cross-carrier visibility. The close path fails any parked waiter via `cancel` / the driver teardown, so a slow peer never
+      * strands the pump.
       */
-    @volatile var backpressureWaiter: Maybe[(Promise.Unsafe[Unit, Abort[Closed]], Frame)] = Absent
+    @volatile var backpressurePromise: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
 
     /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
       * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
@@ -448,18 +446,17 @@ final private[net] class PosixHandle private (
         cipherUnsent + rawUnsent
     end unsentTailBytes
 
-    /** Complete a parked backpressure waiter ([[backpressureWaiter]]) if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the
-      * WritePump retries the write that the high-water bound previously deferred. A no-op when no waiter is parked or the tail is still over the mark.
+    /** Complete the parked backpressure promise ([[backpressurePromise]]) if the write tail has drained below [[PosixHandle.WriteTailLowWater]], so the
+      * WritePump retries the write that the high-water bound previously deferred. A no-op when no promise is parked or the tail is still over the mark.
       * Called by the drain paths (poller `flushPending`, io_uring `onTlsSendComplete` / `onRawSendComplete`) on the engine FIFO worker AFTER they
       * advance the sent pointer, so the tail size read here reflects the just-completed send. Completing the promise with `Success` signals writability;
       * the pump's `onWritable` re-issues the deferred write, which now passes the high-water check (the tail is below low-water) and appends.
       */
     private[posix] def releaseBackpressureWaiter()(using AllowUnsafe): Unit =
-        backpressureWaiter match
-            case Present((p, _)) if unsentTailBytes < PosixHandle.WriteTailLowWater =>
-                backpressureWaiter = Absent
-                p.completeDiscard(Result.succeed(()))
-            case _ => ()
+        val p = backpressurePromise
+        if (p.asInstanceOf[AnyRef] ne null) && unsentTailBytes < PosixHandle.WriteTailLowWater then
+            backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+            p.completeDiscard(Result.succeed(()))
     end releaseBackpressureWaiter
 
     /** Request close of the shared resources. If no op holds them (holder count 0), they are freed immediately. If a read or write is in flight,
@@ -596,7 +593,7 @@ private[net] object PosixHandle:
       * keeps the native `ssl` from ever being touched by two carriers at once. The `tls` slot is cleared and the read buffer closed now: the
       * slot clear signals "freed" to any gated caller immediately, and the buffer close is already coordinated by the guard.
       *
-      * The pending-ciphertext backpressure tail ([[pendingCipher]], [[pendingCipherSent]], [[writableArmed]], [[sendInFlight]]) is cleared here
+      * The pending-ciphertext backpressure tail ([[pendingCipher]], [[pendingCipherSent]], [[flushReArmPending]], [[sendInFlight]]) is cleared here
       * too. The buffer is a plain array object (no native handle), so dropping the reference is the whole release; the guard ensures no engine op is
       * mid-flush when this runs, so the clear cannot race a concurrent append. The FIFO-worker-owned TLS write buffers ([[plaintextStaging]],
       * [[encryptDrain]], [[flushMirror]]) are closed and cleared here as well; they are off-heap and require an explicit close.
@@ -622,31 +619,31 @@ private[net] object PosixHandle:
         h.sendMirror = Absent
         h.pendingCipher = Absent
         h.pendingCipherSent = 0
-        h.writableArmed = false
+        h.flushReArmPending = false
         h.sendInFlight = false
         // The io_uring raw write tail is on-heap (a GrowableByteBuffer), so dropping the reference is the whole release; the guard ensures no raw
         // flush is mid-run when this fires. A reaped raw send CQE that runs after this sees rawPending Absent and no-ops (onRawSendComplete).
         h.rawPending = Absent
         h.rawPendingSent = 0
         h.rawSendInFlight = false
-        // Fail (not merely clear) any parked write-backpressure waiter. The driver's `cancel` fails a waiter present at cancel time, but a waiter
-        // parked in the window AFTER cancel and before this teardown (the close-vs-writable race) would otherwise be left incomplete: its promise
-        // never resolves and the WritePump fiber that parked on it hangs forever. Completing it with Closed here releases that fiber. The free
-        // runs exactly once (guard CAS to Closed), and completeDiscard is idempotent, so a double-fail (here and in cancel or awaitWritable's
+        // Fail (not merely clear) any parked write-backpressure promise. The driver's `cancel` fails a promise present at cancel time, but a
+        // promise parked in the window AFTER cancel and before this teardown (the close-vs-writable race) would otherwise be left incomplete: its
+        // promise never resolves and the WritePump fiber that parked on it hangs forever. Completing it with Closed here releases that fiber. The
+        // free runs exactly once (guard CAS to Closed), and completeDiscard is idempotent, so a double-fail (here and in cancel or awaitWritable's
         // close-race check) is harmless.
-        // Fail it with the frame captured when the waiter was parked (awaitWritable's caller), so the Closed carries real provenance on every
-        // teardown path (closeHandle, the read-dispatch deferred free, and the io_uring deferred close that runs under Frame.internal alike).
         // `kyo.Closed` is qualified because `PosixHandle.Closed` here is the guard's terminal sentinel constant.
-        h.backpressureWaiter.foreach { (p, fr) =>
-            p.completeDiscard(
+        val bp = h.backpressurePromise
+        if bp.asInstanceOf[AnyRef] ne null then
+            given Frame = Frame.internal
+            bp.completeDiscard(
                 Result.fail(kyo.Closed(
                     "PosixHandle",
-                    fr,
+                    Frame.internal,
                     s"fd=${h.readFd}/${h.writeFd} closed while a write was parked on backpressure"
-                )(using fr))
+                ))
             )
-        }
-        h.backpressureWaiter = Absent
+        end if
+        h.backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
         // Fail (not merely clear) a STARTTLS handshake parked on the stale-recv handoff: if the handle closes mid-upgrade (a deadline reap or a
         // peer reset) the stale recv may never deliver, so completing the parked waiter Closed lets the handshake tear down instead of hanging on
         // it. Swing the one handoff slot to Idle and, if it held a parked Waiter, fail that promise with the frame captured when it parked. A

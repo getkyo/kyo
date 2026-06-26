@@ -100,8 +100,8 @@ final private[kyo] class Connection[Handle] private (
     /** Check if connection is still open. */
     def isOpen(using AllowUnsafe): Boolean =
         state.get() match
-            case ConnectionState.Created | ConnectionState.Established | ConnectionState.Upgrading => true
-            case ConnectionState.Closing | ConnectionState.Closed                                  => false
+            case ConnectionState.Created | ConnectionState.Established                        => true
+            case ConnectionState.Upgrading | ConnectionState.Closing | ConnectionState.Closed => false
 
     /** Close the connection. Closes channels and handle. Idempotent. */
     def close()(using AllowUnsafe, Frame): Unit = closeFn()
@@ -227,7 +227,7 @@ private[kyo] object Connection:
             end if
 
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)
-        val writePump = new WritePump(handle, driver, outbound, closeFn)
+        val writePump = new WritePump(handle, driver, outbound, closeFn, AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
         new Connection(handle, driver, inbound, outbound, readPump, writePump, state, closeFn)
     end init

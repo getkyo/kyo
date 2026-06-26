@@ -50,7 +50,14 @@ class WritePumpTest extends Test:
             PosixTestSockets.loopbackPair().map { case (clientFd, peerFd) =>
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](N + 1)
-                val pump    = new WritePump(handle, spy, channel, () => discard(channel.close()), logger)
+                val pump = new WritePump(
+                    handle,
+                    spy,
+                    channel,
+                    () => discard(channel.close()),
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle),
+                    logger
+                )
 
                 // Pre-load the channel with N small spans. Each span fits well within the loopback kernel buffer so each write returns
                 // Done synchronously and the pump does not park in awaitWritable.
@@ -99,7 +106,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 val payload = Array.tabulate[Byte](32)(i => (i + 1).toByte)
                 val span    = Span.fromUnsafe(payload)
@@ -137,7 +144,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 // 128 KB payload guarantees EAGAIN on a 4KB buffer pair.
                 val payload = Array.fill[Byte](128 * 1024)(42)
@@ -190,6 +197,8 @@ class WritePumpTest extends Test:
                     () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    ,
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
                 // The instant the pump registers its writable wait, close the handle: closeHandle fails the just-registered writable promise with
@@ -233,6 +242,8 @@ class WritePumpTest extends Test:
                     () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    ,
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
                 // A small first write succeeds (Done). Then the peer resets (ECONNRESET).
@@ -275,7 +286,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 // No data: pump registers for take and parks.
                 pump.start()
@@ -302,7 +313,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 discard(channel.offer(Span.empty[Byte]))
                 pump.start()
@@ -327,7 +338,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 val firstPayload = Array.tabulate[Byte](8)(i => (i + 1).toByte)
                 discard(channel.offer(Span.fromUnsafe(firstPayload)))
@@ -377,6 +388,8 @@ class WritePumpTest extends Test:
                     () =>
                         closed += "closed"
                         closedLatch.completeDiscard(Result.succeed(()))
+                    ,
+                    AtomicRef.Unsafe.init[WriteState](WriteState.Idle)
                 )
 
                 // 128 KB: guarantees EAGAIN on 4KB pair.
@@ -421,7 +434,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 // 128 KB on a 4 KB pair guarantees EAGAIN, so the driver returns Partial and the pump re-presents the remainder.
                 val payload = Array.fill[Byte](128 * 1024)(0x42.toByte)
@@ -475,7 +488,7 @@ class WritePumpTest extends Test:
                 val handle  = PosixHandle.socket(clientFd, PosixHandle.DefaultReadBufferSize, Absent)
                 val channel = Channel.Unsafe.init[Span[Byte]](16)
                 val closed  = scala.collection.mutable.ListBuffer[String]()
-                val pump    = new WritePump(handle, spy, channel, () => closed += "closed")
+                val pump = new WritePump(handle, spy, channel, () => closed += "closed", AtomicRef.Unsafe.init[WriteState](WriteState.Idle))
 
                 val payload = Array.fill[Byte](128 * 1024)(42)
                 discard(channel.offer(Span.fromUnsafe(payload)))

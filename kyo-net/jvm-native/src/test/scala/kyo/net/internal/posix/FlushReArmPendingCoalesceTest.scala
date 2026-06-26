@@ -8,10 +8,11 @@ import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
 import kyo.net.internal.transport.WriteResult
 
-/** Deterministic guard for the `writableArmed` double-arm coalescing in [[PollerIoDriver.armWritableForFlush]]: while a pending-ciphertext flush
-  * is already awaiting writability (`writableArmed == true`), a SECOND TLS write that arrives and appends more ciphertext must NOT register a
-  * second `awaitWritable`. The already-pending flush re-submits a [[PollerIoDriver.flushPending]] that drains the combined buffer, so a single
-  * writable re-arm covers both writes; a second registration would leak interest and could double-drive the flush.
+/** Deterministic guard for the `flushReArmPending` double-arm coalescing in [[PollerIoDriver.armWritableForFlush]]: while a
+  * pending-ciphertext flush is already awaiting writability (`flushReArmPending == true`), a SECOND TLS write that arrives and appends
+  * more ciphertext must NOT register a second `awaitWritable`. The already-pending flush re-submits a [[PollerIoDriver.flushPending]]
+  * that drains the combined buffer, so a single writable re-arm covers both writes; a second registration would leak interest and could
+  * double-drive the flush.
   *
   * Gate: `PosixTestSockets.assumePoller()` (real loopback pair for real EAGAIN) and `TlsRealEngines.assumeTlsReady()` (a real BoringSSL/OpenSSL
   * engine).
@@ -31,7 +32,7 @@ import kyo.net.internal.transport.WriteResult
   * Uses a real BoringSSL engine via `TlsRealEngines.singleEngine`, handshaked on the driver's engine FIFO. The key assertion is
   * `registerWriteCount == 1`: the second write while armed must not register a second `awaitWritable`.
   */
-class WritableArmedCoalesceTest extends Test:
+class FlushReArmPendingCoalesceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
@@ -58,7 +59,7 @@ class WritableArmedCoalesceTest extends Test:
         done
     end handshakeOnDriver
 
-    "writableArmed double-arm coalescing" - {
+    "flushReArmPending double-arm coalescing" - {
         "a second write while a flush is awaiting writable does not arm a second awaitWritable" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
             else
@@ -92,8 +93,8 @@ class WritableArmedCoalesceTest extends Test:
                         _ <- fifoBarrier(driver).safe.get
                         // The arm's registerWrite runs on the change-FIFO worker; latch on its execution (no sleep).
                         _ <- backend.registeredWrite(writeFd).safe.get
-                        _ = assert(handle.writableArmed, "the first flush must arm writability before the second write")
-                        // Write 2 arrives WHILE writableArmed is set: appends 600 KB; the flush must NOT register a second awaitWritable.
+                        _ = assert(handle.flushReArmPending, "the first flush must arm writability before the second write")
+                        // Write 2 arrives WHILE flushReArmPending is set: appends 600 KB; the flush must NOT register a second awaitWritable.
                         w2 <- Sync.defer(driver.write(handle, Span.fromUnsafe(plain2), 0))
                         _ = assert(w2 == WriteResult.Done, s"TLS write 2 should return Done, got $w2")
                         // FIFO barrier: proves write 2's engine op (including its attempted flush) has run.
@@ -114,4 +115,4 @@ class WritableArmedCoalesceTest extends Test:
         }
     }
 
-end WritableArmedCoalesceTest
+end FlushReArmPendingCoalesceTest

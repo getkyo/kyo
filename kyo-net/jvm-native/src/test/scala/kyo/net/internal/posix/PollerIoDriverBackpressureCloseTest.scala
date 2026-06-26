@@ -62,7 +62,10 @@ class PollerIoDriverBackpressureCloseTest extends Test:
                 // The racing WritePump parks its writable promise AFTER cancel: the tail is high, so this is the backpressure park.
                 val waiter = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 driver.awaitWritable(handle, waiter)
-                assert(handle.backpressureWaiter.isDefined, "the waiter must be parked (the tail is at the high-water mark)")
+                assert(
+                    handle.backpressurePromise.asInstanceOf[AnyRef] != null,
+                    "the waiter must be parked (the tail is at the high-water mark)"
+                )
                 // Drain the engine FIFO so the park's double-check (releaseBackpressureWaiter) has run (it no-ops: the tail is still high), leaving
                 // no FIFO op to race the teardown.
                 fifoBarrier(driver).safe.get.map { _ =>

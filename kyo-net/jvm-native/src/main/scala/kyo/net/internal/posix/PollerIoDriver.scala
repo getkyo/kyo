@@ -451,7 +451,7 @@ final private[net] class PollerIoDriver private[posix] (
             // ends with flushPending, which arms armWritableForFlush (a socket-readiness re-arm) when it EAGAINs with bytes pending. This branch is
             // reached ONLY from the public WritePump path; the internal flush re-arm and connect call armSocketWritable directly (below), so they
             // are never mis-routed here.
-            handle.backpressureWaiter = Present((promise, summon[Frame]))
+            handle.backpressurePromise = promise
             // Double-check on the FIFO worker: a flush may have drained the tail below the low-water mark between the check above and this
             // registration (flushPending runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
             // consistent tail snapshot (the tail fields are FIFO-worker-owned) and completes the just-registered waiter if the drain already
@@ -781,7 +781,7 @@ final private[net] class PollerIoDriver private[posix] (
 
     /** Arm a one-shot writable re-arm that re-submits [[flushPending]] when the socket drains.
       *
-      * The double-arm guard ([[PosixHandle.writableArmed]]) has two writers, causally serialized: this method (on the engine FIFO worker) SETS it
+      * The double-arm guard ([[PosixHandle.flushReArmPending]]) has two writers, causally serialized: this method (on the engine FIFO worker) SETS it
       * true while arming, and the completion callback below CLEARS it false when the writable promise fires. It coalesces appends: if a flush is
       * already pending, an append that adds more bytes does NOT arm a second writable, because the already-pending flush re-submits a
       * [[flushPending]] that sends the unsent region (which now includes the appended bytes). On the writable readiness the completion callback
@@ -790,13 +790,13 @@ final private[net] class PollerIoDriver private[posix] (
       * flag and never touches the (possibly freed) pending buffer.
       */
     private def armWritableForFlush(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        if handle.writableArmed then () // a flush re-arm is already pending; it will pick up any appended bytes
+        if handle.flushReArmPending then () // a flush re-arm is already pending; it will pick up any appended bytes
         else
-            handle.writableArmed = true
+            handle.flushReArmPending = true
             val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
             p.onComplete {
                 case Result.Success(_) =>
-                    handle.writableArmed = false
+                    handle.flushReArmPending = false
                     submitEngineOp { () =>
                         if handle.beginWrite() then
                             try flushPending(handle)
@@ -805,11 +805,11 @@ final private[net] class PollerIoDriver private[posix] (
                     }
                 case _ =>
                     // Close / cancel failed the promise: bail without re-touching the (possibly freed) pending state.
-                    handle.writableArmed = false
+                    handle.flushReArmPending = false
             }
             // Arm SOCKET write-readiness directly: the flush re-arm needs the kernel-send-buffer-has-room signal so it can send more of the tail.
             // It must NOT go through the tail-aware public awaitWritable, whose tail-bound branch would mis-route this flush promise into the
-            // backpressure-waiter slot (the tail is high here, since the flush just EAGAINed), stranding the re-arm and the tail's only drain path.
+            // backpressure slot (the tail is high here, since the flush just EAGAINed), stranding the re-arm and the tail's only drain path.
             armSocketWritable(handle, p)
     end armWritableForFlush
 
@@ -824,7 +824,7 @@ final private[net] class PollerIoDriver private[posix] (
         // pendingAccepts) and the missedReads clear move into the OpDeregister apply on the poll-loop carrier (single-writer): the
         // backend.deregister handler removes the map entries there. The PROMISE FAILS stay SYNCHRONOUS here so a cancel delivers Closed at once
         // rather than waiting up to one poll cycle (EC-1): every pending promise is held on the handle (pendingReadPromise / pendingAcceptPromise /
-        // pendingWritablePromise / backpressureWaiter), so failing them needs no map access. completeDiscard is idempotent, so if the poll fiber's
+        // pendingWritablePromise / backpressurePromise), so failing them needs no map access. completeDiscard is idempotent, so if the poll fiber's
         // deregister removal also tried to fail them (it does not), there would be no double-completion hazard.
         submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
         if handle.writeFd != handle.readFd then
@@ -839,8 +839,9 @@ final private[net] class PollerIoDriver private[posix] (
         handle.pendingAcceptPromise = Absent
         // Fail any WritePump promise parked at the write-backpressure high-water bound (it is not in pendingWritables: a tail-bound park is held on
         // the handle, not armed on socket readiness). Releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        handle.backpressureWaiter.foreach { case (p, _) => p.completeDiscard(Result.fail(closed)) }
-        handle.backpressureWaiter = Absent
+        val bp = handle.backpressurePromise
+        if bp.asInstanceOf[AnyRef] ne null then bp.completeDiscard(Result.fail(closed))
+        handle.backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
     end deregisterFds
 
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
@@ -1299,7 +1300,7 @@ final private[net] class PollerIoDriver private[posix] (
       *
       * Poll-carrier-only: called from dispatchReadTls before submitEngineOp. The lazy-alloc write (first TLS read) happens here
       * on the poll carrier and is visible to the FIFO worker via the engine-op enqueue as the happens-before barrier, exactly like
-      * writableArmed. After the first alloc the field is stable. The at-most-one-in-flight guarantee (enforced by the engine-op enqueue
+      * flushReArmPending. After the first alloc the field is stable. The at-most-one-in-flight guarantee (enforced by the engine-op enqueue
       * ordering) ensures the FIFO worker's feedCiphertext read from the staging buffer completes before the poll carrier's next recvNow
       * write into it (one in-flight ciphertext per handle).
       */
@@ -1344,7 +1345,7 @@ final private[net] class PollerIoDriver private[posix] (
         if n > 0 then
             // Feed staging directly to feedCiphertext on the FIFO worker: no per-read re-fromArray.
             // The happens-before between the recvNow write (poll carrier) and the feedCiphertext read (FIFO worker) is the
-            // submitEngineOp enqueue, the same mechanism as writableArmed. The at-most-one-in-flight guarantee ensures the next
+            // submitEngineOp enqueue, the same mechanism as flushReArmPending. The at-most-one-in-flight guarantee ensures the next
             // recvNow write cannot happen before this feedCiphertext completes.
             // Persist the half-close observation on the handle before handing off to the engine FIFO worker, so a consumer-paced
             // re-dispatch triggered by readMightHaveMore (or a missed edge replayed via rearmOwned) carries the pending-EOF flag and
