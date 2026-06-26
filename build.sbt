@@ -1799,11 +1799,11 @@ lazy val `kyo-threejs` =
 
 // The visual-review demo bundle: kyo-threejs MAIN plus the demos' scene-graph builders, exposing the
 // DemoMounts client-mount entries (`@JSExportTopLevel` mountBouncingBalls / mountReactiveCubeField /
-// mountSnake3D / mountSolarSystem / mountGltfViewer / mountFeedProve / mountFeedChunk / mountFeedEmit /
+// mountSnake3D / mountSolarSystem / mountGltfViewer / mountFeedClock / mountFeedChunk / mountFeedEmit /
 // mountControls, each mounting a real scene via `Three.runMount`) and the DemoHarness browser-test
 // probes (`@JSExportTopLevel` mountOrderingProbe / mountRendererReleaseProbe / mountHostProbe /
 // mountEmbedProbe / mountEmbedInteractive / mountEmbedSiblingProbe). The per-app island sub-projects
-// (feedprove/emit/controls) link their own `@JSExportTopLevel` main against these same entries. Linked
+// (feedclock/emit/controls) link their own `@JSExportTopLevel` main against these same entries. Linked
 // as a browser-clean ESModule (one external `three` import, no node:* / require). The demo sources stay
 // in kyo-threejs's test tree (so they remain compile-checked by kyo-threejs's own test on both
 // backends) and are pulled in here via unmanagedSourceDirectories; this project never links the kyo-threejs test
@@ -1829,7 +1829,7 @@ lazy val `kyo-threejs-demos` =
             Test / sources := Seq.empty
         )
 
-// The esbuild bundle script shared by every per-app island sub-project (feedprove / emit / controls):
+// The esbuild bundle script shared by every per-app island sub-project (feedclock / emit / controls):
 // bundle the linked island ESM (`main.js`) and its `three` dependency into a single self-contained ESM.
 // Forces `format: 'esm'` (the page links it as a module script) and `bundle: true` so `three` is inlined
 // and no bare `import "three"` survives.
@@ -1850,19 +1850,19 @@ def islandEsbuildScript(stageDir: File, outDir: File): String = {
        |""".stripMargin
 }
 
-// The FeedProve per-app island: the self-contained ESM the
-// `democlient.FeedProve` launcher links through `head.moduleScript` on the page `Three.Feed.run` serves.
+// The FeedClock per-app island: the self-contained ESM the
+// `democlient.FeedClock` launcher links through `head.moduleScript` on the page `Three.Feed.run` serves.
 // A `ModuleKind.ESModule` linked with a main initializer, then esbuild-bundled with `three` inlined so
 // the page needs no import map; its main is
-// `feedprove.FeedProveIslandApp`, which mounts the FeedProve scene at `#app` (the cube spins client-side)
+// `feedclock.FeedClockIslandApp`, which mounts the FeedClock scene at `#app` (the cube spins client-side)
 // and connects the color feed mirror, rather than scanning `[data-kyo-host]`. It reuses the demos'
-// `demoharness.DemoMounts` (the `mountFeedProve` entry) and the shared `demo.FeedProveScene`, so the
-// island runs the SAME compiled scene the browser prove test mounts. This is the per-app island the Y
+// `demoharness.DemoMounts` (the `mountFeedClock` entry) and the shared `demo.FeedClockScene`, so the
+// island runs the SAME compiled scene the FeedClock browser test mounts. This is the per-app island the Y
 // build model ships: the client half owns and animates the real scene; the server half (the launcher)
 // runs only the `ui` builder to learn the fed ids and fork the feed observers.
-lazy val `kyo-threejs-feedprove-island` =
+lazy val `kyo-threejs-feedclock-island` =
     project
-        .in(file("kyo-threejs/feedprove-island"))
+        .in(file("kyo-threejs/feedclock-island"))
         .enablePlugins(ScalaJSPlugin, ScalaJSEsbuildPlugin)
         .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
         .disablePlugins(MimaPlugin, KyoDoctestPlugin)
@@ -1872,9 +1872,9 @@ lazy val `kyo-threejs-feedprove-island` =
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
             scalaJSUseMainModuleInitializer := true,
-            Compile / mainClass             := Some("feedprove.FeedProveIslandApp"),
-            // Reuse the demos' `demoharness.DemoMounts` (the `mountFeedProve` entry) and the shared
-            // `demo.FeedProveScene`, so the island links the SAME compiled scene the FeedProve browser test mounts.
+            Compile / mainClass             := Some("feedclock.FeedClockIslandApp"),
+            // Reuse the demos' `demoharness.DemoMounts` (the `mountFeedClock` entry) and the shared
+            // `demo.FeedClockScene`, so the island links the SAME compiled scene the FeedClock browser test mounts.
             Compile / unmanagedSourceDirectories ++= Seq(
                 (`kyo-threejs`.js / baseDirectory).value / ".." / "demos" / "src" / "main" / "scala" / "demoharness",
                 (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo"
@@ -1890,13 +1890,13 @@ lazy val `kyo-threejs-feedprove-island` =
             )
         )
 
-// Bundle the FeedProve per-app island into one self-contained ESM (three inlined). The output lands at
-// kyo-threejs/feedprove-island/target/scala-<ver>/esbuild/main/out/main.js, served by the launcher.
-addCommandAlias("feedProveIslandBundle", "; kyo-threejs-feedprove-island/esbuildBundle")
+// Bundle the FeedClock per-app island into one self-contained ESM (three inlined). The output lands at
+// kyo-threejs/feedclock-island/target/scala-<ver>/esbuild/main/out/main.js, served by the launcher.
+addCommandAlias("feedClockIslandBundle", "; kyo-threejs-feedclock-island/esbuildBundle")
 
 // The app-event per-app island: the self-contained
 // ESM the emit browser test links through `head.moduleScript` on the page `Three.Feed.run` serves. Mirrors
-// `kyo-threejs-feedprove-island` exactly, but its main is `emitisland.EmitIslandApp`, which mounts the
+// `kyo-threejs-feedclock-island` exactly, but its main is `emitisland.EmitIslandApp`, which mounts the
 // FeedEmit scene at `#app` (a clickable cube whose onClick calls `Three.Feed.emit`) and connects the color
 // feed mirror, so the server's `onAppEvent` handler can feed the bumped color back.
 lazy val `kyo-threejs-emit-island` =
@@ -1935,7 +1935,7 @@ addCommandAlias("emitIslandBundle", "; kyo-threejs-emit-island/esbuildBundle")
 
 // The orbit-controls per-app island: the
 // self-contained ESM the controls browser test links through `head.moduleScript`. Mirrors
-// `kyo-threejs-feedprove-island` exactly, but its main is `controlsisland.ControlsIslandApp`, which mounts
+// `kyo-threejs-feedclock-island` exactly, but its main is `controlsisland.ControlsIslandApp`, which mounts
 // the ControlsScene at `#app` (a static object plus `Three.controls(autoRotate = true)`), so the island
 // binds a live OrbitControls and the camera orbits the scene. The bundle inlines three AND OrbitControls
 // (esbuild), so the page needs no import map.
@@ -1974,7 +1974,7 @@ lazy val `kyo-threejs-controls-island` =
 addCommandAlias("controlsIslandBundle", "; kyo-threejs-controls-island/esbuildBundle")
 
 // The flagship per-app island: the self-contained ESM
-// the `democlient.Flagship` launcher links through `head.moduleScript`. Mirrors `kyo-threejs-feedprove-island`
+// the `democlient.Flagship` launcher links through `head.moduleScript`. Mirrors `kyo-threejs-feedclock-island`
 // exactly, but its main is `flagship.FlagshipIslandApp`, which mounts the consolidated Flagship scene at
 // `#app`: ONE cube that simultaneously spins client-side (`onFrame`), steps color from a server-fed
 // `serverSignal`, steps scale from a client `onClick` -> `Three.Feed.emit` the server reflects into a second
@@ -2019,7 +2019,7 @@ addCommandAlias("flagshipIslandBundle", "; kyo-threejs-flagship-island/esbuildBu
 // `KyoApp`s in `democlient` run their HttpServer on Node, serving a static page that runs the scene in
 // the browser through `Three.runMount`. This project reuses the same demo sources as `kyo-threejs-demos`;
 // each launcher is an `object X extends KyoApp` with its own main, so a launcher is selected by the
-// `demoClient<Name>` / `feedProve` command aliases below (each sets `mainClass` to that launcher's main
+// `demoClient<Name>` / `feedClock` command aliases below (each sets `mainClass` to that launcher's main
 // and runs it). A Scala.js main initializer takes no command-line arguments, so the launcher cannot be
 // chosen as a `run` argument; the alias selects it through `mainClass` instead. There is no god
 // dispatcher: one `run` launches exactly one launcher's server.
@@ -2041,7 +2041,7 @@ lazy val `kyo-threejs-demo-runner` =
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
             // Link a Node main initializer so `run` executes a demo's main. The default main is one of
-            // the client-mount launchers; the `demoClient<Name>` / `feedProve` aliases override it to
+            // the client-mount launchers; the `demoClient<Name>` / `feedClock` aliases override it to
             // select another before running.
             scalaJSUseMainModuleInitializer := true,
             Compile / mainClass             := Some("democlient.BouncingBalls"),
@@ -2108,11 +2108,11 @@ addCommandAlias(
 // open the printed URL. Unlike the client-mount launchers above (pure local animation), this also declares a
 // server-owned fed signal (`Three.Feed.serverSignal`) and forks a `Clock` fiber that cycles a palette every
 // ~1s; `Three.Feed.run` forks one observer per fed id, pushing each step as a `HostUpdate` over the WS, so
-// the open page shows client animation and server-fed reactivity on one cube. Bundles the self-contained FeedProve island (three
-// inlined) the page links through `head.moduleScript`, then runs the `democlient.FeedProve` launcher.
+// the open page shows client animation and server-fed reactivity on one cube. Bundles the self-contained FeedClock island (three
+// inlined) the page links through `head.moduleScript`, then runs the `democlient.FeedClock` launcher.
 addCommandAlias(
-    "demoClientFeedProve",
-    """; kyo-threejs-feedprove-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedProve") ; kyo-threejs-demo-runner/run"""
+    "demoClientFeedClock",
+    """; kyo-threejs-feedclock-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedClock") ; kyo-threejs-demo-runner/run"""
 )
 
 // The flagship consolidated launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube

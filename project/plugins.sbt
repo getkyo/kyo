@@ -15,7 +15,7 @@ addSbtPlugin("org.scala-js"       % "sbt-scalajs"                   % "1.21.0")
 addSbtPlugin("org.scala-native"   % "sbt-scala-native"              % "0.5.10")
 addSbtPlugin("org.portable-scala" % "sbt-scala-native-crossproject" % "1.3.2")
 // scalajs-esbuild bundles a per-app island Scala.js ESModule with its `three` npm dependency into one
-// self-contained ship file. Scoped to the per-app island projects (feedprove / emit / controls, enabled
+// self-contained ship file. Scoped to the per-app island projects (feedclock / emit / controls, enabled
 // there via enablePlugins(ScalaJSEsbuildPlugin)); no other module adopts a bundler. Pinned, idiomatic
 // Scala.js bundling per https://github.com/ptrdom/scalajs-esbuild (built against sbt-scalajs 1.21.0).
 addSbtPlugin("me.ptrdom" % "sbt-scalajs-esbuild" % "0.1.3")

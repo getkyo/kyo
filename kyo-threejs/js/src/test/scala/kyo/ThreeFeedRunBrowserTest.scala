@@ -1,16 +1,16 @@
 package kyo
 
-import demo.FeedProveScene
+import demo.FeedClockScene
 import kyo.Browser.ScreenshotFrame
 
 /** Browser proof of the PUBLIC serve path `Three.Feed.run`,
   * end to end over a real WebSocket: the page, the WS feed route, and the per-id feed observers all come
-  * from `Three.Feed.run`, not a hand-rolled harness. The same cube as [[ThreeFeedProveBrowserTest]]
+  * from `Three.Feed.run`, not a hand-rolled harness. The same cube as [[ThreeFeedClockBrowserTest]]
   * proves client animation and server-fed reactivity on one cube, but every server-side wire is the locked
   * public surface:
   *
   *   1. SERVE PATH: `Three.Feed.run("", head)(ui)` returns the SSR page handler (linking the
-  *      self-contained FeedProve island bundle through `head.moduleScript`, carrying the inline kyo-ui
+  *      self-contained FeedClock island bundle through `head.moduleScript`, carrying the inline kyo-ui
   *      client that routes each inbound `HostUpdate` into `window.__kyoHostChannels`) and the WebSocket
   *      route. The `ui` builder declares the fed color signal via `Three.Feed.serverSignal(colorId, ...)`
   *      and forks a server-side palette cycler; running it inside the WS session registers a feed observer
@@ -99,7 +99,7 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
     /** Installs the per-frame canvas sampler over the live public-path page (post-load via CDP), so the
       * page served by `Three.Feed.run` stays unmodified and the sampler reads the REAL rendered scene.
       * Copies the `#app` WebGL canvas into a 2D canvas inside requestAnimationFrame and classifies the
-      * center pixel to a dominant-channel color name, exactly as `ThreeFeedProveBrowserTest`'s baked-in
+      * center pixel to a dominant-channel color name, exactly as `ThreeFeedClockBrowserTest`'s baked-in
       * sampler does.
       */
     private def installSampler(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
@@ -135,7 +135,7 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
         }
     end saveFrames
 
-    /** Serves the PUBLIC `Three.Feed.run` handlers plus the self-contained FeedProve island bundle, then
+    /** Serves the PUBLIC `Three.Feed.run` handlers plus the self-contained FeedClock island bundle, then
       * hands the page URL to `f`. The page, the WS route, and the per-id feed observers are all produced
       * by `Three.Feed.run`; the only extra handler is the static one serving the island bundle bytes the
       * page links through `head.moduleScript`.
@@ -150,7 +150,7 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
             result   <- f(s"http://localhost:${server.port}/")
         yield result
 
-    /** The page head linking the self-contained FeedProve island bundle (three inlined; no import map). */
+    /** The page head linking the self-contained FeedClock island bundle (three inlined; no import map). */
     private def head(using Frame): UI.PageHead =
         UI.PageHead("kyo-threejs Three.Feed.run", moduleScript = Present(islandRoute))
 
@@ -161,13 +161,13 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
       */
     private def ui(using Frame): UI < (Async & Scope) =
         for
-            color <- Three.Feed.serverSignal[Int](FeedProveScene.colorId, FeedProveScene.palette.head)
+            color <- Three.Feed.serverSignal[Int](FeedClockScene.colorId, FeedClockScene.palette.head)
             _     <- Fiber.init(cyclePalette(color))
         yield UI.host("canvas").id("app")
 
     private def cyclePalette(color: SignalRef[Int])(using Frame): Unit < Async =
         Loop(0) { i =>
-            color.set(FeedProveScene.palette(i % FeedProveScene.palette.size))
+            color.set(FeedClockScene.palette(i % FeedClockScene.palette.size))
                 .andThen(Async.sleep(serverStepMs.millis))
                 .andThen(Loop.continue(i + 1))
         }
@@ -197,8 +197,8 @@ object ThreeFeedRunBrowserTest:
     /** The server color-step interval (ms): the server advances the fed palette color once per this. */
     private val serverStepMs: Long = 1000L
 
-    /** The served route of the FeedProve island bundle the page links through `head.moduleScript`. */
-    private val islandRoute: String = "/_kyo/feedprove-island.js"
+    /** The served route of the FeedClock island bundle the page links through `head.moduleScript`. */
+    private val islandRoute: String = "/_kyo/feedclock-island.js"
 
     /** The recorder window: ~5s, spanning several ~1s server color steps. */
     private val recordWindow: Schedule = Schedule.fixed(50.millis).take(100)
@@ -212,12 +212,12 @@ object ThreeFeedRunBrowserTest:
         ()
     end mkdirp
 
-    /** Reads the bundled FeedProve island ESM (`main.js`, three inlined) from the feedprove-island esbuild
+    /** Reads the bundled FeedClock island ESM (`main.js`, three inlined) from the feedclock-island esbuild
       * output tree. The output lands under
-      * `kyo-threejs/feedprove-island/target/scala-<ver>/esbuild/main/out/main.js`.
+      * `kyo-threejs/feedclock-island/target/scala-<ver>/esbuild/main/out/main.js`.
       */
     private def readIslandBundle: String =
-        val target = NodePathJ.join(NodeProcessJ.cwd(), "kyo-threejs", "feedprove-island", "target")
+        val target = NodePathJ.join(NodeProcessJ.cwd(), "kyo-threejs", "feedclock-island", "target")
         val located = NodeFsMk.readdirSync(target).toSeq.collectFirst {
             case d
                 if d.startsWith("scala-") &&
@@ -226,7 +226,7 @@ object ThreeFeedRunBrowserTest:
         }
         NodeFsMk.readFileSync(
             located.getOrElse(sys.error(
-                s"FeedProve island bundle main.js not found under $target; run 'sbt feedProveIslandBundle' first"
+                s"FeedClock island bundle main.js not found under $target; run 'sbt feedClockIslandBundle' first"
             )),
             "utf8"
         )
@@ -235,7 +235,7 @@ object ThreeFeedRunBrowserTest:
     /** The per-frame canvas sampler installed over the live public-path page: copies the `#app` WebGL
       * canvas into a 2D canvas inside requestAnimationFrame and reads its center pixel into
       * `window.__colorLog` as a dominant-channel color name. Mirrors the baked-in sampler of
-      * `ThreeFeedProveBrowserTest.provePage`.
+      * `ThreeFeedClockBrowserTest.feedClockPage`.
       */
     private val samplerScript: String =
         """(function(){

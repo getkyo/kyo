@@ -1,6 +1,6 @@
 package democlient
 
-import demo.FeedProveScene
+import demo.FeedClockScene
 import kyo.*
 import scala.scalajs.js
 import scala.scalajs.js.annotation.JSImport
@@ -9,10 +9,10 @@ import scala.scalajs.js.annotation.JSImport
   * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows client animation and
   * server-fed reactivity on the SAME cube and STAYS UP so a human can open it.
   *
-  *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop compiled into the FeedProve
+  *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop compiled into the FeedClock
   *      island bundle. The server does not drive the spin; the motion is local and continuous.
   *   2. SERVER-driven reactivity: the cube material's color is bound to a server-fed `SignalRef[Int]`
-  *      declared with [[Three.Feed.serverSignal]] under [[demo.FeedProveScene.colorId]]. A server fiber
+  *      declared with [[Three.Feed.serverSignal]] under [[demo.FeedClockScene.colorId]]. A server fiber
   *      cycles the signal through a fixed palette (red, green, blue, yellow,
   *      magenta) every ~1s; [[Three.Feed.run]] forks one observer per registered fed signal id, so each
   *      emission becomes a `HostUpdate(SignalUpdate(colorId, encoded))` over the WebSocket the island
@@ -20,27 +20,27 @@ import scala.scalajs.js.annotation.JSImport
   *
   * This launcher uses ONLY the public API: `Three.Feed.serverSignal` (the server-owned fed signal), a
   * server-side background fiber (the palette cycler), and `Three.Feed.run` (the serve entry). `run` serves the
-  * SSR page that links the self-contained FeedProve island bundle through `head.moduleScript` and carries
+  * SSR page that links the self-contained FeedClock island bundle through `head.moduleScript` and carries
   * the inline kyo-ui client that routes each inbound `HostUpdate` into `window.__kyoHostChannels`; the
   * launcher composes `run`'s handlers with a static handler that serves the island bundle bytes, then
   * starts the server and awaits. The island inlines three (esbuild), so the page needs no import map and
   * no separately-served three.
   *
-  * Bundle the island first with `sbt feedProveIslandBundle`; the `demoClientFeedProve` alias does this.
+  * Bundle the island first with `sbt feedClockIslandBundle`; the `demoClientFeedClock` alias does this.
   */
-object FeedProve extends ClientDemoApp:
+object FeedClock extends ClientDemoApp:
 
     /** The server color-step interval: the server advances the fed palette color once per this. */
     private val serverStepMs: Long = 1000L
 
-    /** The served route of the FeedProve island bundle the page links through `head.moduleScript`. */
-    private val islandPath: String = "/_kyo/feedprove-island.js"
+    /** The served route of the FeedClock island bundle the page links through `head.moduleScript`. */
+    private val islandPath: String = "/_kyo/feedclock-island.js"
 
     run {
         serve(port)
     }
 
-    /** Serves the FeedProve page (via [[Three.Feed.run]]) plus the island bundle on `port` (0 = an
+    /** Serves the FeedClock page (via [[Three.Feed.run]]) plus the island bundle on `port` (0 = an
       * ephemeral port), forks the server-side palette cycler, prints the open URL, and awaits forever.
       */
     private def serve(port: Int)(using Frame): Unit < (Async & Scope & Abort[FileException]) =
@@ -49,21 +49,21 @@ object FeedProve extends ClientDemoApp:
             handlers <- Three.Feed.run("", head)(ui)
             server   <- HttpServer.init(port, "localhost")((handlers :+ jsHandler(islandPath, island))*)
             _ <- Console.printLine(
-                s"FeedProve running on http://localhost:${server.port}/  " +
+                s"FeedClock running on http://localhost:${server.port}/  " +
                     "(the cube spins client-side AND steps color red/green/blue/yellow/magenta every ~1s from the server feed)"
             )
             _ <- server.await
         yield ()
 
-    /** The page head that links the self-contained FeedProve island bundle. `moduleScript` emits a
-      * `<script type="module" src="/_kyo/feedprove-island.js">` into the SSR page; the bundle inlines three
+    /** The page head that links the self-contained FeedClock island bundle. `moduleScript` emits a
+      * `<script type="module" src="/_kyo/feedclock-island.js">` into the SSR page; the bundle inlines three
       * and self-runs on load, mounting the spinning cube at `#app` and connecting the color feed mirror.
       */
     private def head(using Frame): UI.PageHead =
-        UI.PageHead("kyo-threejs FeedProve", moduleScript = Present(islandPath))
+        UI.PageHead("kyo-threejs FeedClock", moduleScript = Present(islandPath))
 
-    /** The page body the island mounts into: a `<canvas id="app">` host the FeedProve island selects with
-      * `mountFeedProve("#app")`, plus the server-owned fed color signal and its palette cycler.
+    /** The page body the island mounts into: a `<canvas id="app">` host the FeedClock island selects with
+      * `mountFeedClock("#app")`, plus the server-owned fed color signal and its palette cycler.
       *
       * `Three.Feed.serverSignal(colorId, palette.head)` declares the fed signal; running it inside the
       * `Three.Feed.run` WebSocket session registers a feed observer for `colorId`, so each set on the
@@ -74,7 +74,7 @@ object FeedProve extends ClientDemoApp:
       */
     private def ui(using Frame): UI < (Async & Scope) =
         for
-            color <- Three.Feed.serverSignal[Int](FeedProveScene.colorId, FeedProveScene.palette.head)
+            color <- Three.Feed.serverSignal[Int](FeedClockScene.colorId, FeedClockScene.palette.head)
             _     <- Fiber.init(cyclePalette(color))
         yield UI.host("canvas").id("app")
 
@@ -85,7 +85,7 @@ object FeedProve extends ClientDemoApp:
       */
     private def cyclePalette(color: SignalRef[Int])(using Frame): Unit < Async =
         Loop(0) { i =>
-            color.set(FeedProveScene.palette(i % FeedProveScene.palette.size))
+            color.set(FeedClockScene.palette(i % FeedClockScene.palette.size))
                 .andThen(Async.sleep(serverStepMs.millis))
                 .andThen(Loop.continue(i + 1))
         }
@@ -109,12 +109,12 @@ object FeedProve extends ClientDemoApp:
             case false => Abort.fail(FileNotFoundException(Path(path)))
         }
 
-    /** The absolute path of the bundled FeedProve island ESM `main.js` (the esbuild output). */
+    /** The absolute path of the bundled FeedClock island ESM `main.js` (the esbuild output). */
     private lazy val islandFile: String =
-        val islandTarget = NodePath.join(NodeProcess.cwd(), "kyo-threejs", "feedprove-island", "target")
+        val islandTarget = NodePath.join(NodeProcess.cwd(), "kyo-threejs", "feedclock-island", "target")
         locate(islandTarget, d => NodePath.join(islandTarget, d, "esbuild", "main", "out", "main.js"))
             .getOrElse(sys.error(
-                s"FeedProve island bundle main.js not found under $islandTarget; run 'sbt feedProveIslandBundle' first"
+                s"FeedClock island bundle main.js not found under $islandTarget; run 'sbt feedClockIslandBundle' first"
             ))
     end islandFile
 
@@ -150,4 +150,4 @@ object FeedProve extends ClientDemoApp:
         def cwd(): String = js.native
     end NodeProcess
 
-end FeedProve
+end FeedClock

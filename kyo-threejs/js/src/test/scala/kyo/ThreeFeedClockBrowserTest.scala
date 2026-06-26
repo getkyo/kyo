@@ -1,6 +1,6 @@
 package kyo
 
-import demo.FeedProveScene
+import demo.FeedClockScene
 import kyo.Browser.ScreenshotFrame
 import kyo.internal.HtmlOp
 
@@ -11,7 +11,7 @@ import kyo.internal.HtmlOp
   *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop. The server does not drive
   *      the spin; the motion is local and continuous.
   *   2. SERVER-driven reactivity: the cube's material color is bound to a server-fed mirror `SignalRef`
-  *      addressed by the string id [[FeedProveScene.colorId]]. A SERVER fiber pushes
+  *      addressed by the string id [[FeedClockScene.colorId]]. A SERVER fiber pushes
   *      `HostPayload.SignalUpdate(colorId, encoded)` frames over the WS on a ~1s schedule, cycling a
   *      fixed palette; the page routes each inbound `HostUpdate` to the per-id feed receiver
   *      (`Three.Feed.connect`), which writes the mirror, and the existing `forkBoundRef`/`patchProp`
@@ -26,17 +26,17 @@ import kyo.internal.HtmlOp
   *     order on the ~1s schedule, proving the server feed (not local animation) drove the color change.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded. The
-  * screencast frames are saved under `runs/visual-review/feed-prove/` for inspection.
+  * screencast frames are saved under `runs/visual-review/feed-clock/` for inspection.
   */
-class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
+class ThreeFeedClockBrowserTest extends WebGLSceneHarness:
 
-    import ThreeFeedProveBrowserTest.*
+    import ThreeFeedClockBrowserTest.*
 
     override def timeout = 180.seconds
 
     "one cube animates client-side AND steps color from the server feed over the WS" in {
         cancelOnUnsupportedPlatform {
-            servedProve { url =>
+            servedFeedClock { url =>
                 swiftshaderLaunch.map { launch =>
                     Browser.run(launch) {
                         for
@@ -61,7 +61,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
                             assert(
                                 changedPairs >= 2,
                                 s"canvas did not animate: only $changedPairs of ${frames.size - 1} consecutive frame pairs " +
-                                    s"changed (a static canvas yields ~identical frames). Frames saved under runs/visual-review/feed-prove/"
+                                    s"changed (a static canvas yields ~identical frames). Frames saved under runs/visual-review/feed-clock/"
                             )
 
                             // ---- REACTIVITY: the sampled cube color stepped through the server palette ----
@@ -71,7 +71,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
                             assert(
                                 steps.size >= 3,
                                 s"the cube color did not step on the server feed: observed only ${steps.size} distinct " +
-                                    s"color(s) over the recording (${steps.mkString(", ")}). The server cycles ${FeedProveScene.palette.size} " +
+                                    s"color(s) over the recording (${steps.mkString(", ")}). The server cycles ${FeedClockScene.palette.size} " +
                                     s"colors every ~${serverStepMs}ms; a single color means the feed never reached the scene. " +
                                     s"colorLog size=${colorLog.size} $diag"
                             )
@@ -125,9 +125,9 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
             diffs > n / 100
     end framesDiffer
 
-    /** Writes each recorded frame as a JPEG under `runs/visual-review/feed-prove/frame-NNN.jpg`. */
+    /** Writes each recorded frame as a JPEG under `runs/visual-review/feed-clock/frame-NNN.jpg`. */
     private def saveFrames(frames: Chunk[ScreenshotFrame])(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val dir = "runs/visual-review/feed-prove"
+        val dir = "runs/visual-review/feed-clock"
         Sync.defer(mkdirp(dir)).andThen {
             Kyo.foreachIndexed(frames) { (i, frame) =>
                 val idx  = f"$i%03d"
@@ -148,7 +148,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
     )(using Frame): String < (Browser & Abort[BrowserReadException]) =
         Abort.recover[BrowserReadException] { _ =>
             Browser.eval("String(window.__mountError)").map { err =>
-                Abort.fail(BrowserScriptErrorException(s"feed-prove mount ready flag never set: mountError='$err'"))
+                Abort.fail(BrowserScriptErrorException(s"feed-clock mount ready flag never set: mountError='$err'"))
             }
         }(wait)
 
@@ -156,7 +156,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
       * server forks a fiber that cycles the color feed through the palette every ~1s, pushing each step as
       * a `HostUpdate(SignalUpdate(colorId, encoded))` over the socket. Hands the page URL to `f`.
       */
-    private def servedProve[A](
+    private def servedFeedClock[A](
         f: String => A < (Async & Scope & Abort[BrowserException])
     )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
         for
@@ -168,7 +168,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
             skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
             orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
             server <- HttpServer.init(0, "localhost")(
-                WebGLSceneHarness.htmlHandler(provePage),
+                WebGLSceneHarness.htmlHandler(feedClockPage),
                 WebGLSceneHarness.jsHandler("main.js", bundle),
                 WebGLSceneHarness.jsHandler("three.module.js", module),
                 WebGLSceneHarness.jsHandler("three.core.js", core),
@@ -201,9 +201,9 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
             AtomicInt.init(0).map { idx =>
                 Clock.repeatAtInterval(serverStepMs.millis) {
                     idx.getAndIncrement.map { i =>
-                        val rgb     = FeedProveScene.palette(i % FeedProveScene.palette.size)
-                        val payload = Three.Feed.encodeUpdate[Int](FeedProveScene.colorId, rgb)
-                        val op      = HtmlOp.HostUpdate(Seq(FeedProveScene.colorId), payload)
+                        val rgb     = FeedClockScene.palette(i % FeedClockScene.palette.size)
+                        val payload = Three.Feed.encodeUpdate[Int](FeedClockScene.colorId, rgb)
+                        val op      = HtmlOp.HostUpdate(Seq(FeedClockScene.colorId), payload)
                         ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))
                     }
                 }.map(_.get)
@@ -239,9 +239,9 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
             }
     end isPaletteCycleSlice
 
-end ThreeFeedProveBrowserTest
+end ThreeFeedClockBrowserTest
 
-object ThreeFeedProveBrowserTest:
+object ThreeFeedClockBrowserTest:
 
     /** The server color-step interval (ms): the server advances the fed palette color once per this. */
     private val serverStepMs: Long = 1000L
@@ -272,17 +272,17 @@ object ThreeFeedProveBrowserTest:
         def mkdirSync(path: String, options: js.Object): Unit = js.native
     end NodeFsMk
 
-    /** The prove page: imports the demo bundle's `mountFeedProve` entry (which mounts the spinning cube
+    /** The FeedClock page: imports the demo bundle's `mountFeedClock` entry (which mounts the spinning cube
       * AND connects the `feed-color` mirror), opens a WebSocket to `/_kyo/ws`, and routes each inbound
       * `HostUpdate` to `window.__kyoHostChannels[path[0]]` exactly as the kyo-ui inline clientJs does
       * (`HtmlRenderer.scala:771-799`), with the same late-registration flush. It also runs a per-frame
       * sampler that reads the rendered canvas center pixel into `window.__colorLog` as a dominant-channel
       * color name, so the test can prove the server feed visibly changed the scene from real pixels.
       */
-    private val provePage: String =
+    private val feedClockPage: String =
         s"""<!doctype html>
            |<html>
-           |<head><meta charset="utf-8"><title>kyo-threejs feed prove</title>
+           |<head><meta charset="utf-8"><title>kyo-threejs FeedClock</title>
            |<script type="importmap">
            |{ "imports": {
            |    "three": "/three.module.js",
@@ -338,8 +338,8 @@ object ThreeFeedProveBrowserTest:
            |} catch (e) { window.__mountError = "ws: " + String(e && e.message ? e.message : e); }
            |// Mount the spinning cube + connect the feed mirror.
            |try {
-           |  const { mountFeedProve } = await import("/main.js");
-           |  mountFeedProve("#app");
+           |  const { mountFeedClock } = await import("/main.js");
+           |  mountFeedClock("#app");
            |  window.__mounted = true;
            |} catch (e) {
            |  window.__mountError = String(e && e.message ? e.message : e);
@@ -378,4 +378,4 @@ object ThreeFeedProveBrowserTest:
            |</body>
            |</html>""".stripMargin
 
-end ThreeFeedProveBrowserTest
+end ThreeFeedClockBrowserTest

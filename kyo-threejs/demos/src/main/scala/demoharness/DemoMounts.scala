@@ -84,22 +84,22 @@ object DemoMounts:
     /** Mounts the feed-driven scene at `selector`: a cube
       * spinning via client `onFrame` whose material color is bound to a server-fed mirror `SignalRef`.
       * The mount runs the real `Three.runMount` GL pipeline (so the spin animates locally) AND calls
-      * `Three.Feed.connect(FeedProveScene.colorId, mirror)` under the SAME page Scope, which registers
+      * `Three.Feed.connect(FeedClockScene.colorId, mirror)` under the SAME page Scope, which registers
       * the per-id inbound feed receiver on `window.__kyoHostChannels`. The server pushes
       * `HostPayload.SignalUpdate(colorId, encoded)` frames over the WebSocket; the existing kyo-ui inline
       * clientJs routes each to the receiver, which writes the mirror, and the scene's `forkBoundRef`
       * patch fiber steps the cube's color. The page raises `window.__mounted` once the entry returns.
       */
-    @JSExportTopLevel("mountFeedProve")
-    def mountFeedProve(selector: String): Unit =
+    @JSExportTopLevel("mountFeedClock")
+    def mountFeedClock(selector: String): Unit =
         runMounted {
-            FeedProveScene.sceneWithMirror.map { case (scene, mirror) =>
+            FeedClockScene.sceneWithMirror.map { case (scene, mirror) =>
                 for
                     // Connect the feed receiver FIRST (it registers on window.__kyoHostChannels and flushes
                     // any feeds buffered before mount), then run the mount: Three.runMount parks on the RAF
                     // loop and never returns, so the connect must precede it under the same page Scope.
-                    _ <- Three.Feed.connect(FeedProveScene.colorId, mirror)
-                    _ <- Three.runMount(scene, FeedProveScene.camera, selector, ThreeFrames.Raf)
+                    _ <- Three.Feed.connect(FeedClockScene.colorId, mirror)
+                    _ <- Three.runMount(scene, FeedClockScene.camera, selector, ThreeFrames.Raf)
                 yield ()
             }
         }

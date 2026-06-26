@@ -9,7 +9,7 @@ import kyo.*
   *      RAF tick, bound to the cube `Group`'s rotation. The motion is continuous and driven entirely by
   *      the client frame loop; the server never touches it.
   *   2. SERVER-driven reactivity: the cube material's color is bound to a server-fed mirror
-  *      `SignalRef[Int]` ([[FeedProveScene.colorId]]). On the island the mount calls
+  *      `SignalRef[Int]` ([[FeedClockScene.colorId]]). On the island the mount calls
   *      `Three.Feed.connect(colorId, colorMirror)`, which writes inbound `HostPayload.SignalUpdate`
   *      feeds into the mirror; the existing `forkBoundRef`/`patchProp` path the scene already forked for
   *      the bound color then patches exactly the cube's material color. The server cycles the fed value
@@ -20,7 +20,7 @@ import kyo.*
   * the scene. Combining client animation with server-fed reactivity on one cube is the capability the
   * scene demonstrates.
   */
-object FeedProveScene:
+object FeedClockScene:
 
     /** The string signal id the two halves agree on: the server feeds its color value addressed by this
       * id, and the island binds a mirror `SignalRef[Int]` under the same id.
@@ -71,4 +71,4 @@ object FeedProveScene:
             lookAt = Vec3(0, 0, 0)
         )
 
-end FeedProveScene
+end FeedClockScene

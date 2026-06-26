@@ -573,7 +573,7 @@ val served =
     yield server
 ```
 
-The client half is a per-app Scala.js island: a small `@JSExportTopLevel` main that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). kyo bundles the island plus three.js into one self-contained ESM (esbuild), so the page links a single file with no import map and no separately served three. The kyo-threejs demos ship runnable examples: `sbt demoClientFeedProve` serves one cube that spins client-side and steps color from a server feed, and `sbt demoClientFlagship` serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera).
+The client half is a per-app Scala.js island: a small `@JSExportTopLevel` main that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). kyo bundles the island plus three.js into one self-contained ESM (esbuild), so the page links a single file with no import map and no separately served three. The kyo-threejs demos ship runnable examples: `sbt demoClientFeedClock` serves one cube that spins client-side and steps color from a server feed, and `sbt demoClientFlagship` serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera).
 
 ## Putting it together
 
@@ -613,7 +613,7 @@ val solarSystem =
 
 ## Demos
 
-The demo scenes live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and are compile-checked by kyo-threejs's own test on both the JS and Wasm backends. Each launcher runs a small server on Node that serves a page; the 3D rendering happens in the browser through `Three.runMount`, so the scene owns and animates itself client-side. The server-fed demos (FeedProve, Flagship) additionally feed data over the WebSocket. See [Running the demos](#running-the-demos) for how to launch one.
+The demo scenes live in [`shared/src/test/scala/demo`](shared/src/test/scala/demo) and are compile-checked by kyo-threejs's own test on both the JS and Wasm backends. Each launcher runs a small server on Node that serves a page; the 3D rendering happens in the browser through `Three.runMount`, so the scene owns and animates itself client-side. The server-fed demos (FeedClock, Flagship) additionally feed data over the WebSocket. See [Running the demos](#running-the-demos) for how to launch one.
 
 <table>
   <tr>
@@ -680,9 +680,9 @@ The launcher prints a `http://localhost:<port>/` URL; open it to see the scene r
 | `sbt demoClientSnake3D` | Snake3D |
 | `sbt demoClientGltfViewer` | GltfViewer |
 | `sbt demoClientEmbedded` | EmbeddedScene |
-| `sbt demoClientFeedProve` | FeedProve (client spin + a server-fed color) |
+| `sbt demoClientFeedClock` | FeedClock (client spin + a server-fed color) |
 | `sbt demoClientFlagship` | Flagship (all four halves on one cube) |
 
-The pure-animation aliases (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene alias link the shared `kyo-threejs-demos` bundle and run entirely client-side. The two server-fed aliases (FeedProve, Flagship) additionally bundle their own per-app island and serve it through `Three.Feed.run`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
+The pure-animation aliases (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene alias link the shared `kyo-threejs-demos` bundle and run entirely client-side. The two server-fed aliases (FeedClock, Flagship) additionally bundle their own per-app island and serve it through `Three.Feed.run`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
 
 `ThumbnailGallery` uses `Three.toImage`, which requires a browser WebGL context and cannot run via the Node demo runner. Its rendered output is the committed `docs/images/*.png` thumbnails in this repository. The `toImage` primitive is validated by `ThreeToImageBrowserTest` and `WebGLAcceptanceTest` in a real software-WebGL Chrome.
