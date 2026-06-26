@@ -6,7 +6,8 @@ import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
-/** Verifies that write backpressure does not deadlock the inbound channel.
+/** Verifies that write backpressure does not deadlock the inbound channel, and that the ReadPump
+  * re-arms exactly once per drain cycle.
   *
   * When a write parks (AwaitingWritable), the connection's inbound channel must still be drainable. Backpressure on the write side must
   * not block the read side. This exercises the write-coupling discipline: the WritePump parks independently of the ReadPump.
@@ -14,8 +15,6 @@ import kyo.net.internal.transport.WriteResult
   * All driver callbacks are synchronous (inline), so the write-park, the inbound delivery, and the poll all happen within the
   * synchronous start/offer/poll call chain. No sleep or latch is needed: after conn.start() the inbound already has data (the read
   * driver delivers it inline), and after conn.outbound.offer the write pump is already parked (the write driver parks inline).
-  *
-  * The read-coupling half (re-arm-exactly-once-per-drain) is in P4's LIVE4Test extension.
   */
 class LIVE4Test extends Test:
 
@@ -80,6 +79,68 @@ class LIVE4Test extends Test:
                 case _                                => false
 
             assert(inboundHasData, s"inbound channel must be drainable even while write pump is parked, poll returned $inboundResult")
+            succeed
+        }
+
+        // Given: the inbound channel receives one span and the ReadPump re-arms
+        // When: the span is delivered and the pump calls requestNextRead
+        // Then: exactly one awaitRead re-arm call fires (not zero, not two)
+        //
+        // This exercises the re-arm path in ReadPump.requestNextRead: after a Bytes delivery that
+        // the channel accepts, the pump calls becomeAvailable() (resets the IOPromise) and then
+        // driver.awaitRead exactly once. No batching, no double-arm.
+        "read-rearm-exactly-once-per-drain" in {
+            var awaitReadCalls = 0
+
+            // Driver delivers one span on the first awaitRead call (the initial arm), then parks on
+            // the second call (the re-arm after delivery). Parking on the second call prevents an
+            // infinite loop and lets us observe the call count precisely.
+            final class CountingReadDriver extends IoDriver[Unit]:
+                def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
+                    Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
+                def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+                    awaitReadCalls += 1
+                    if awaitReadCalls == 1 then
+                        // Initial arm: deliver a span. The pump offers it to inbound and immediately
+                        // calls requestNextRead -> awaitRead again (the re-arm, call #2).
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](7)))))
+                    end if
+                    // Re-arm (awaitReadCalls == 2) and beyond: park. The pump waits for the next delivery.
+                end awaitRead
+                def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+                def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit  = ()
+                def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+                def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult = WriteResult.Done
+                def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                               = ()
+                def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                          = ()
+                def close()(using AllowUnsafe, Frame): Unit                                            = ()
+                def label: String                                                                      = "CountingReadDriver"
+                def handleLabel(handle: Unit): String                                                  = "stub"
+            end CountingReadDriver
+
+            val driver = new CountingReadDriver
+            val conn   = Connection.init[Unit]((), driver, 8)
+            conn.start()
+            // Synchronous chain within start():
+            // - ReadPump.start() -> awaitRead #1 (call #1) -> delivers Bytes([7])
+            // - onComplete -> offerToChannel -> channel accepts -> requestNextRead -> awaitRead #2 (call #2, parks)
+
+            assert(
+                awaitReadCalls == 2,
+                s"initial arm + exactly one re-arm expected after a single span delivery; got awaitReadCalls=$awaitReadCalls"
+            )
+
+            // The delivered span must be in the inbound channel.
+            val polled = conn.inbound.poll()
+            assert(
+                polled match
+                    case Result.Success(Maybe.Present(span)) => span.toArray.toList == List[Byte](7)
+                    case _                                   => false,
+                s"inbound must contain the delivered span [7]; got $polled"
+            )
+
+            // Polling does not trigger another re-arm (the pump is already parked waiting for the driver).
+            assert(awaitReadCalls == 2, s"poll must not trigger additional re-arms; awaitReadCalls stayed at $awaitReadCalls")
             succeed
         }
     }

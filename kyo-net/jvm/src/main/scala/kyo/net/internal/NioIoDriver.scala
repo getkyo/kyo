@@ -54,7 +54,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     // concurrent-map type, and its effect-based collections cannot back this driver's non-parking selector path (these maps are read/written on
     // the selector carrier when arming and on the caller's carrier on cancel/close, with no suspension). The raw type is retained as a documented
     // no-equivalent exception; each map is a channel -> pending-state entry, removed by cleanupPending/closeHandle.
-    // Pending read requests: channel -> handle (promise and token stored on handle.readArm)
+    // Pending read requests: channel -> handle (promise stored on handle.readArm)
     private val pendingReads =
         new java.util.concurrent.ConcurrentHashMap[SocketChannel, NioHandle]()
 
@@ -158,12 +158,12 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         end match
     end awaitRead
 
-    // Install promise into the read-arm owner cell via CAS and register selector interest.
-    // Each arm uses a fresh monotonic token; the selector carrier completes only the current owner's promise
-    // by matching the token, so a stale pump arm whose token no longer matches cannot reach the handshake's promise.
+    // Install promise into the read-arm owner cell and register selector interest. Each arm creates a
+    // fresh cell object; the selector carrier completes only the current owner's promise via a
+    // reference-equality CAS on the stored cell, so a stale pump arm holding an old cell reference
+    // cannot reach the handshake's promise.
     private def armRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        val token   = handle.id.packed ^ java.lang.System.nanoTime()
-        val newCell = Present((token, promise))
+        val newCell = Present(promise)
         handle.readArm.set(newCell)
         pendingReads.put(handle.channel, handle)
         Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
@@ -295,7 +295,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             }")
         val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} closed")
         Maybe(pendingReads.remove(handle.channel)).foreach { h =>
-            h.readArm.getAndSet(Absent).foreach { case (_, p) =>
+            h.readArm.getAndSet(Absent).foreach { p =>
                 p.completeDiscard(Result.fail(closed))
             }
         }
@@ -379,7 +379,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             )
             val closed = Closed(label, summon[Frame], "driver closed")
             pendingReads.forEach { (_, h) =>
-                h.readArm.getAndSet(Absent).foreach { case (_, p) =>
+                h.readArm.getAndSet(Absent).foreach { p =>
                     p.completeDiscard(Result.fail(closed))
                 }
             }
@@ -862,18 +862,18 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     private def dispatchRead(channel: SocketChannel)(using AllowUnsafe): Unit =
         Maybe(pendingReads.remove(channel)) match
             case Present(handle) =>
-                // Read the current owner cell. The cell value is the identity token for the CAS in
+                // Read the current owner cell. The cell value is the identity for the CAS in
                 // dispatchReadPlain/dispatchReadTls: the SAME object reference must be used in
                 // compareAndSet (AtomicReference.compareAndSet uses reference equality, so a freshly
-                // constructed Present((token, promise)) would always fail even for matching values).
+                // constructed Present(promise) would always fail even for matching values).
                 // A concurrent cancel/close calls getAndSet(Absent), which races with the CAS; only one
                 // side wins (the other side's CAS fails or finds Absent and skips the completion).
                 val cell = handle.readArm.get()
                 cell match
-                    case arm @ Present((token, promise)) =>
+                    case Present(promise) =>
                         handle.tls match
-                            case Present(tls) => dispatchReadTls(channel, cell, token, promise, handle, tls)
-                            case Absent       => dispatchReadPlain(channel, cell, token, promise, handle)
+                            case Present(tls) => dispatchReadTls(channel, cell, promise, handle, tls)
+                            case Absent       => dispatchReadPlain(channel, cell, promise, handle)
                     case Absent =>
                         given Frame = Frame.internal
                         Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} readArm already cleared (cancelled)")
@@ -886,8 +886,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
 
     private def dispatchReadPlain(
         channel: SocketChannel,
-        cell: Maybe[(Long, Promise.Unsafe[ReadOutcome, Abort[Closed]])],
-        token: Long,
+        cell: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]],
         promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: NioHandle
     )(using AllowUnsafe): Unit =
@@ -924,14 +923,13 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
 
     private def dispatchReadTls(
         channel: SocketChannel,
-        cell: Maybe[(Long, Promise.Unsafe[ReadOutcome, Abort[Closed]])],
-        token: Long,
+        cell: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]],
         promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: NioHandle,
         tls: NioTlsState
     )(using AllowUnsafe): Unit =
         // All compareAndSet calls pass the SAME cell object read in dispatchRead: AtomicReference.compareAndSet
-        // uses reference equality (eq), so constructing a new Present((token, promise)) here would always fail.
+        // uses reference equality (eq), so constructing a new Present(promise) here would always fail.
         try
             // Check for buffered data from a previous read (e.g. post-handshake leftover)
             tryUnwrapBuffered(tls) match
@@ -958,7 +956,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                         if handle.readArm.compareAndSet(cell, Absent) then
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                     else if n == 0 then
-                        // Spurious wakeup: no data ready. Restore entry and re-arm (token is unchanged).
+                        // Spurious wakeup: no data ready. Restore entry and re-arm.
                         pendingReads.put(channel, handle)
                         discard(registerInterest(channel, SelectionKey.OP_READ))
                     else
@@ -985,7 +983,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                                 if handle.readArm.compareAndSet(cell, Absent) then
                                     promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                             case Absent =>
-                                // Got ciphertext but no complete TLS record yet: need more data (token unchanged, re-arm).
+                                // Got ciphertext but no complete TLS record yet: need more data, re-arm.
                                 pendingReads.put(channel, handle)
                                 discard(registerInterest(channel, SelectionKey.OP_READ))
                         end match

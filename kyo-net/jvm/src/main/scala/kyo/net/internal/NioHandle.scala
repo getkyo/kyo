@@ -26,12 +26,12 @@ final private[kyo] class NioHandle private (
     import AllowUnsafe.embrace.danger
     val readBuffer: ByteBuffer = ByteBuffer.allocateDirect(readBufferSize)
     val id: HandleId           = HandleId.next(java.lang.System.identityHashCode(channel))
-    // The read-arm OWNER cell. Each arm (the plaintext pump's, the handshake's) installs its
-    // (token, promise), and the selector carrier completes ONLY the current owner's promise via a
-    // single-winner CAS, so a stale pump arm whose token does not match the current owner cannot
-    // complete the handshake's read promise. Re-arm ownership is the cell's token, and the upgrade is
-    // the ConnectionState.Upgrading transition.
-    val readArm: AtomicRef.Unsafe[Maybe[(Long, Promise.Unsafe[ReadOutcome, Abort[Closed]])]] = AtomicRef.Unsafe.init(Absent)
+    // The read-arm OWNER cell. Each arm (the plaintext pump's, the handshake's) installs a fresh
+    // Present(promise) object, and the selector carrier completes ONLY the current owner's promise via a
+    // reference-equality CAS on the stored cell object: a stale pump arm holding an old cell reference
+    // cannot complete the handshake's read promise because the current cell is a different object.
+    // The upgrade is the ConnectionState.Upgrading transition.
+    val readArm: AtomicRef.Unsafe[Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]]] = AtomicRef.Unsafe.init(Absent)
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */

@@ -48,7 +48,7 @@ class INV1Test extends Test:
 
     "INV-1" - {
 
-        // Given: one armed read (a single (token, promise) cell installed in the readArm owner cell).
+        // Given: one armed read (a single Present(promise) cell installed in the readArm owner cell).
         // When: two completers both try to complete the armed promise via a CAS-clear of the cell.
         // Then: exactly one delivery reaches the reader. The first CAS from the stored cell reference
         //       to Absent wins; the second finds the cell already Absent and no-ops. The promise's
@@ -65,7 +65,7 @@ class INV1Test extends Test:
 
                 // Build a fresh cell with one promise and install it as the armed read.
                 val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                val cell    = Present((42L, promise))
+                val cell    = Present(promise)
                 handle.readArm.set(cell)
 
                 // Both completers obtain the stored cell via get() and attempt to CAS it to Absent,
@@ -181,11 +181,11 @@ class INV1Test extends Test:
                     val hsPromise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
 
                     // Step 1: pump arms its read (installs pumpCell).
-                    val pumpCell = Present((1L, pumpPromise))
+                    val pumpCell = Present(pumpPromise)
                     handle.readArm.set(pumpCell)
 
                     // Step 2: handshake arms its read (installs hsCell, overwriting pumpCell).
-                    val hsCell = Present((2L, hsPromise))
+                    val hsCell = Present(hsPromise)
                     handle.readArm.set(hsCell)
 
                     // Step 3: a stale pump dispatch holds the old pumpCell reference and tries to CAS.
@@ -193,13 +193,13 @@ class INV1Test extends Test:
                     val staleWin = handle.readArm.compareAndSet(pumpCell, Absent)
                     assert(!staleWin, "stale pump CAS must FAIL: current cell is handshake's, not pump's")
 
-                    // Cell must still be the handshake's cell (the stale CAS changed nothing): the token
-                    // assigned to hsCell (2L) is still present.
+                    // Cell must still be the handshake's cell (the stale CAS changed nothing): the stored
+                    // promise is hsPromise (reference equality confirms identity).
                     assert(
                         handle.readArm.get() match
-                            case Present((tok, _)) => tok == 2L
-                            case Absent            => false,
-                        "cell must remain the handshake's cell (token 2L) after the stale pump CAS failed"
+                            case Present(p) => p.asInstanceOf[AnyRef] eq hsPromise.asInstanceOf[AnyRef]
+                            case Absent     => false,
+                        "cell must remain the handshake's cell (hsPromise) after the stale pump CAS failed"
                     )
 
                     // Step 4: the live handshake dispatch holds hsCell and CAS-clears successfully.
