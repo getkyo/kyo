@@ -1772,11 +1772,16 @@ final private[net] class PollerIoDriver private[posix] (
     private def drainEngineOps()(using AllowUnsafe, Frame): Unit =
         engineQueue.poll() match
             case null => ()
-            case op   =>
-                // A throwing engine op must not kill the drain: that would strand every later op on this driver (a multi-connection silent hang,
-                // Netty #7337 class). Surface the failure and keep draining; the throwing op's own promise handling is its concern.
+            case op =>
                 try op()
-                catch case ex: Throwable => Log.live.unsafe.error(s"$label engine op threw; the engine FIFO worker continues draining", ex)
+                catch
+                    // Contain ANY throw (not just NonFatal): the engine FIFO must not let one connection's
+                    // engine throw kill the FIFO for all connections. SSLEngine.unwrap raises on a received
+                    // fatal alert (a THROW, not the readPlain == -2 return), so the op's own connection is
+                    // expected to have failed typed inside the op's inner catch; this backstop logs and
+                    // continues so every other connection on this driver remains unaffected.
+                    case ex: Throwable =>
+                        Log.live.unsafe.error(s"$label engine op threw; the engine FIFO worker continues draining", ex)
                 end try
                 drainEngineOps()
     end drainEngineOps

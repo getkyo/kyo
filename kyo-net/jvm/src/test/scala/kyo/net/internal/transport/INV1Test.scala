@@ -6,6 +6,7 @@ import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.Test
 import kyo.net.internal.NioHandle
+import kyo.net.internal.ReadArmCell
 
 /** Read-delivery invariants for the NIO read-arm owner cell.
   *
@@ -16,8 +17,12 @@ import kyo.net.internal.NioHandle
   *     armed cell, the first CAS to Absent wins and the second finds the cell already cleared.
   *   - NIO orphan interleaving: the stale pump re-arm scenario that historically hung STARTTLS
   *     handshakes. The handshake installs its cell after the pump's; a stale dispatch holding the
-  *     pump's old cell reference fails its CAS (the current cell is the handshake's); the live
-  *     dispatch holding the handshake's cell succeeds and delivers to the handshake's promise.
+  *     pump's old cell object reference fails its CAS (the current cell is the handshake's fresh
+  *     object); the live dispatch holding the handshake's cell succeeds and delivers to its promise.
+  *
+  * The orphan guard is object identity: each `ReadArmCell(promise)` call allocates a fresh wrapper
+  * object. Two arms that carry the same promise are still distinguishable by cell reference
+  * equality because `new ReadArmCell(p) ne new ReadArmCell(p)` by JVM identity.
   *
   * Placement in `jvm/src/test`: `NioHandle` (and thus `NioHandle.readArm`) is JVM-only. The
   * double-completion leaf tests the CAS semantics of `AtomicRef.Unsafe`, which are cross-platform,
@@ -63,9 +68,11 @@ class INV1Test extends Test:
             try
                 val handle = NioHandle.init(client, 4096)
 
-                // Build a fresh cell with one promise and install it as the armed read.
+                // Build a fresh ReadArmCell (fresh allocation + promise) and install it as the armed read.
+                // Each ReadArmCell allocation produces a distinct heap object; reference equality in
+                // AtomicRef.compareAndSet is what gives the single-winner guarantee.
                 val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
-                val cell    = Present(promise)
+                val cell    = Present(ReadArmCell(promise))
                 handle.readArm.set(cell)
 
                 // Both completers obtain the stored cell via get() and attempt to CAS it to Absent,
@@ -171,7 +178,7 @@ class INV1Test extends Test:
 
             // Pass-after: the AtomicRef cell with CAS-clear prevents the stale pump dispatch from
             // completing the handshake's promise, because the stale dispatch holds the pump's old
-            // cell reference which no longer matches the current cell content.
+            // ReadArmCell reference which no longer matches the current cell content.
             "pass-after: handshake-cell-wins-cas-stale-pump-cell-loses" in {
                 val (client, server) = openPair()
                 try
@@ -180,24 +187,27 @@ class INV1Test extends Test:
                     val pumpPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     val hsPromise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
 
-                    // Step 1: pump arms its read (installs pumpCell).
-                    val pumpCell = Present(pumpPromise)
+                    // Step 1: pump arms its read (installs pumpCell with a fresh ReadArmCell object).
+                    val pumpArm  = ReadArmCell(pumpPromise)
+                    val pumpCell = Present(pumpArm)
                     handle.readArm.set(pumpCell)
 
-                    // Step 2: handshake arms its read (installs hsCell, overwriting pumpCell).
-                    val hsCell = Present(hsPromise)
+                    // Step 2: handshake arms its read (installs hsCell as a fresh ReadArmCell, overwriting pumpCell).
+                    val hsArm  = ReadArmCell(hsPromise)
+                    val hsCell = Present(hsArm)
                     handle.readArm.set(hsCell)
 
                     // Step 3: a stale pump dispatch holds the old pumpCell reference and tries to CAS.
-                    // The current cell is hsCell, so the CAS fails (reference equality: pumpCell != hsCell).
+                    // The current cell is hsCell, so the CAS fails: pumpCell and hsCell are distinct
+                    // objects (reference equality), even if pumpPromise and hsPromise were the same.
                     val staleWin = handle.readArm.compareAndSet(pumpCell, Absent)
-                    assert(!staleWin, "stale pump CAS must FAIL: current cell is handshake's, not pump's")
+                    assert(!staleWin, "stale pump CAS must FAIL: current cell is handshake's object, not pump's")
 
                     // Cell must still be the handshake's cell (the stale CAS changed nothing): the stored
-                    // promise is hsPromise (reference equality confirms identity).
+                    // cell's promise is hsPromise (reference equality confirms identity).
                     assert(
                         handle.readArm.get() match
-                            case Present(p) => p.asInstanceOf[AnyRef] eq hsPromise.asInstanceOf[AnyRef]
+                            case Present(c) => c.promise.asInstanceOf[AnyRef] eq hsPromise.asInstanceOf[AnyRef]
                             case Absent     => false,
                         "cell must remain the handshake's cell (hsPromise) after the stale pump CAS failed"
                     )
@@ -229,6 +239,60 @@ class INV1Test extends Test:
                         pumpResult == Absent,
                         s"pump promise must NOT be completed by the dispatch (stale CAS lost); got $pumpResult"
                     )
+                    succeed
+                finally
+                    client.close()
+                    server.close()
+                end try
+            }
+
+            // Stale-arm sub-test: when the SAME promise is reused across re-arms (e.g. a ReadPump
+            // re-arming its persistent IOPromise), each armRead call allocates a fresh ReadArmCell
+            // object. A stale dispatch holding the previous arm's cell must fail its CAS even
+            // though both arms carry the same promise reference, because the two ReadArmCell wrapper
+            // objects are distinct heap objects (new ReadArmCell(p) != new ReadArmCell(p) by reference).
+            "stale-arm: same-promise-different-cell-object-cas-fails" in {
+                val (client, server) = openPair()
+                try
+                    val handle = NioHandle.init(client, 4096)
+
+                    // One promise, used for two consecutive arms (simulates a ReadPump re-using its IOPromise).
+                    val sharedPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+
+                    // First arm: allocate a fresh ReadArmCell wrapper object.
+                    val arm1  = ReadArmCell(sharedPromise)
+                    val cell1 = Present(arm1)
+                    handle.readArm.set(cell1)
+
+                    // Second arm: SAME promise, a different fresh ReadArmCell wrapper object.
+                    val arm2  = ReadArmCell(sharedPromise)
+                    val cell2 = Present(arm2)
+                    handle.readArm.set(cell2)
+
+                    // arm1 and arm2 carry the same promise but are distinct heap objects: the `new`
+                    // in each ReadArmCell(sharedPromise) call produces a separate allocation.
+                    assert(
+                        (arm1: AnyRef) ne (arm2: AnyRef),
+                        "arm1 and arm2 must be distinct heap objects even when they carry the same promise"
+                    )
+
+                    // Stale dispatch from the first arm: tries to CAS with cell1.
+                    // Must FAIL: current cell is cell2, and Present(arm1) != Present(arm2) by reference.
+                    val staleWin = handle.readArm.compareAndSet(cell1, Absent)
+                    assert(!staleWin, "stale CAS must FAIL: same promise, but different ReadArmCell wrapper object")
+
+                    // Current cell must still be arm2's cell (the second arm's cell is unchanged).
+                    assert(
+                        handle.readArm.get() match
+                            case Present(c) => (c: AnyRef) eq (arm2: AnyRef)
+                            case Absent     => false,
+                        "current cell must still be arm2's ReadArmCell object after the stale CAS failed"
+                    )
+
+                    // Live dispatch from the second arm: CAS with cell2 succeeds.
+                    val liveWin = handle.readArm.compareAndSet(cell2, Absent)
+                    assert(liveWin, "live CAS must SUCCEED: it holds the current cell reference (arm2)")
+                    assert(handle.readArm.get().isEmpty, "cell must be Absent after the live dispatch cleared it")
                     succeed
                 finally
                     client.close()

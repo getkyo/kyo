@@ -1465,7 +1465,8 @@ final private[net] class IoUringDriver private[posix] (
                             // the truncation condition so closeReason reports Truncated, then deliver PeerFin.
                             h.halfClose = HalfCloseState.PeerEof
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-                        else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
+                        else
+                            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
                         end if
                     case PendingOp.Write(h, _, _, len) =>
                         deferredDecrement = true
@@ -1599,7 +1600,8 @@ final private[net] class IoUringDriver private[posix] (
     /** Drain every queued engine/submission op in order on the CURRENT (reap) carrier, running each to completion before the next, then return.
       * Called inline from [[reapLoop]] each cycle (and once more at reap-loop exit so a close fails every still-queued op's promise via the
       * closedFlag rejection in `awaitRead`/`submitRecv`). A throwing op must not abort the drain: that would strand every later op (a
-      * multi-connection silent hang, Netty #7337 class), so the failure is logged and the drain continues.
+      * multi-connection silent hang, Netty #7337 class). Each engine op already has an inner catch for expected typed failures (see the
+      * dispatchReadTls feed op); this outer catch is a backstop for any unexpected throw that escapes the inner boundary.
       */
     @scala.annotation.tailrec
     private def drainEngineOps()(using AllowUnsafe, Frame): Unit =
@@ -1607,7 +1609,14 @@ final private[net] class IoUringDriver private[posix] (
             case null => ()
             case op =>
                 try op()
-                catch case ex: Throwable => Log.live.unsafe.error(s"$label engine op threw; the reap carrier continues draining", ex)
+                catch
+                    // Contain ANY throw (not just NonFatal): the engine FIFO must not let one connection's
+                    // engine throw kill the FIFO for all connections. SSLEngine.unwrap raises on a received
+                    // fatal alert (a THROW, not the readPlain == -2 return), so the op's own connection is
+                    // expected to have failed typed inside the op's inner catch; this backstop logs and
+                    // continues so every other connection on this driver remains unaffected.
+                    case ex: Throwable =>
+                        Log.live.unsafe.error(s"$label engine op threw; the reap carrier continues draining", ex)
                 end try
                 drainEngineOps()
     end drainEngineOps

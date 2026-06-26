@@ -95,8 +95,9 @@ final private[kyo] class ReadPump[Handle](
         // Always re-arm. A STARTTLS upgrade needs no pump-gating flag: detachForUpgrade (the
         // Established -> Upgrading transition) fails the pump's in-flight read and closes its
         // channels, so the pump tears down rather than re-arming; and on NIO the read-arm owner cell
-        // is HandleId-keyed, so even a re-arm that races the handshake completes its OWN token's slot
-        // and cannot reach the handshake's read promise.
+        // is a per-arm ReadArmCell whose orphan guarantee is object identity: each armRead allocates a
+        // fresh ReadArmCell, so even a re-arm that races the handshake holds a distinct cell object and
+        // cannot match the handshake's CAS on the current owner slot.
         discard(becomeAvailable())
         driver.awaitRead(handle, self)
     end requestNextRead

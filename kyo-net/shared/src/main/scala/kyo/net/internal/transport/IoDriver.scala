@@ -122,10 +122,16 @@ abstract private[kyo] class IoDriver[Handle]:
     /** Shutdown the driver. Closes the poll mechanism and completes the event loop fiber. Idempotent. */
     def close()(using AllowUnsafe, Frame): Unit
 
-    /** Submit a TLS engine op to the serial engine worker and return immediately. The engine worker runs the op to completion before
-      * starting the next, so no two engine ops for any connection on this driver overlap. Drivers that have a dedicated engine FIFO
-      * (PollerIoDriver, IoUringDriver) override this with FIFO submission; drivers that are already single-owner (NioIoDriver, JsIoDriver,
-      * BlockingReaderDriver) use the default, which calls `op()` directly on the calling carrier.
+    /** Run a TLS engine op holding the connection's engine ownership, so no two carriers touch one native ssl or JDK SSLEngine at once on any
+      * backend. The posix drivers (PollerIoDriver, IoUringDriver) override this with their per-driver engine FIFO (the worker is the single
+      * owner). The NIO driver overrides it with a per-connection CAS ownership gate held for the op's duration, so the selector-carrier read
+      * path and the caller-carrier write path each touch the JDK SSLEngine only while holding it, one carrier at a time. The default
+      * (JsIoDriver, BlockingReaderDriver) runs inline: those backends are already single-owner.
+      *
+      * The op runs inside a containment boundary: a thrown engine op (a received fatal alert raising from SSLEngine.unwrap) is converted to
+      * the op's own connection's typed failure and that connection is torn down, while the FIFO continues for the others. The override carries
+      * the "Contain ANY throw (not just NonFatal): the engine FIFO must not let one connection's engine throw kill the FIFO for all
+      * connections" rationale.
       */
     def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
 

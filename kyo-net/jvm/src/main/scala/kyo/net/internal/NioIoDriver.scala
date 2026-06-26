@@ -158,12 +158,13 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         end match
     end awaitRead
 
-    // Install promise into the read-arm owner cell and register selector interest. Each arm creates a
-    // fresh cell object; the selector carrier completes only the current owner's promise via a
-    // reference-equality CAS on the stored cell, so a stale pump arm holding an old cell reference
-    // cannot reach the handshake's promise.
+    // Install a fresh ReadArmCell into the read-arm owner slot and register selector interest. Each arm
+    // wraps the caller's promise in a freshly allocated ReadArmCell object; the selector carrier completes
+    // only the current owner's promise via a reference-equality CAS on the stored cell. A stale arm holds
+    // an older ReadArmCell heap object (distinct from the current arm's object even when both carry the
+    // same promise), so its CAS fails.
     private def armRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
-        val newCell = Present(promise)
+        val newCell = Present(ReadArmCell(promise))
         handle.readArm.set(newCell)
         pendingReads.put(handle.channel, handle)
         Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
@@ -213,6 +214,16 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             "awaitAccept not supported on NioIoDriver; the Nio transport drives its own accept loop"
         )))
 
+    /** Run a TLS engine op on the NIO driver. The NIO driver's selector-carrier read path (dispatchReadTls) and caller-carrier write path
+      * (writeTls) acquire the per-connection engine ownership gate directly at their call sites, so no two carriers touch one connection's
+      * JDK SSLEngine concurrently. NEED_TASK delegated tasks run inline inside the held ownership (a Fiber-per-task would stall indefinitely
+      * waiting for the selector-carrier to schedule it while the selector-carrier is blocked waiting for the NEED_TASK result).
+      *
+      * This override exists to document the NIO ownership model. External callers (PosixTransport, tests) that reach NioIoDriver via the
+      * IoDriver interface call op() directly; the gate is already held by whichever NIO call site is currently executing.
+      */
+    override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
+
     def write(handle: NioHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult =
         if data.isEmpty || offset >= data.size then WriteResult.Done
         else
@@ -238,6 +249,13 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             case _: IOException => WriteResult.Error
 
     private def writeTls(handle: NioHandle, data: Span[Byte], offset: Int, tls: NioTlsState)(using AllowUnsafe): WriteResult =
+        // Acquire per-connection engine ownership before any SSLEngine call. The selector-carrier
+        // unwrap path (dispatchReadTls) and this caller-carrier wrap path both need exclusive access
+        // to the JDK SSLEngine; the gate serializes them. The engine op is brief (one wrap + socket
+        // write per call), so a spin avoids a park and the associated scheduling overhead.
+        @tailrec def spinAcquire(): Unit =
+            if !handle.engineGate.compareAndSet(false, true) then spinAcquire()
+        spinAcquire()
         try
             // If there is pending ciphertext from a previous partial write, flush it first
             val canProceed =
@@ -285,6 +303,10 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             end match
         catch
             case _: IOException => WriteResult.Error
+        finally
+            handle.engineGate.set(false)
+        end try
+    end writeTls
 
     /** Remove pending operations for a channel and fail their promises with Closed. */
     private def cleanupPending(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
@@ -295,8 +317,8 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             }")
         val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} closed")
         Maybe(pendingReads.remove(handle.channel)).foreach { h =>
-            h.readArm.getAndSet(Absent).foreach { p =>
-                p.completeDiscard(Result.fail(closed))
+            h.readArm.getAndSet(Absent).foreach { armCell =>
+                armCell.promise.completeDiscard(Result.fail(closed))
             }
         }
         Maybe(pendingWritables.remove(handle.channel)).foreach { promise =>
@@ -379,8 +401,8 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             )
             val closed = Closed(label, summon[Frame], "driver closed")
             pendingReads.forEach { (_, h) =>
-                h.readArm.getAndSet(Absent).foreach { p =>
-                    p.completeDiscard(Result.fail(closed))
+                h.readArm.getAndSet(Absent).foreach { armCell =>
+                    armCell.promise.completeDiscard(Result.fail(closed))
                 }
             }
             pendingReads.clear()
@@ -862,18 +884,18 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     private def dispatchRead(channel: SocketChannel)(using AllowUnsafe): Unit =
         Maybe(pendingReads.remove(channel)) match
             case Present(handle) =>
-                // Read the current owner cell. The cell value is the identity for the CAS in
-                // dispatchReadPlain/dispatchReadTls: the SAME object reference must be used in
-                // compareAndSet (AtomicReference.compareAndSet uses reference equality, so a freshly
-                // constructed Present(promise) would always fail even for matching values).
+                // Read the current owner cell. The cell object IS the identity for the CAS in
+                // dispatchReadPlain/dispatchReadTls: AtomicReference.compareAndSet uses reference equality,
+                // so only the carrier that read THIS exact ReadArmCell object can CAS-clear it. A stale
+                // dispatch from an earlier arm holds a different ReadArmCell instance and its CAS fails.
                 // A concurrent cancel/close calls getAndSet(Absent), which races with the CAS; only one
-                // side wins (the other side's CAS fails or finds Absent and skips the completion).
+                // side wins (the other's CAS fails or finds Absent and skips the completion).
                 val cell = handle.readArm.get()
                 cell match
-                    case Present(promise) =>
+                    case Present(armCell) =>
                         handle.tls match
-                            case Present(tls) => dispatchReadTls(channel, cell, promise, handle, tls)
-                            case Absent       => dispatchReadPlain(channel, cell, promise, handle)
+                            case Present(tls) => dispatchReadTls(channel, cell, armCell.promise, handle, tls)
+                            case Absent       => dispatchReadPlain(channel, cell, armCell.promise, handle)
                     case Absent =>
                         given Frame = Frame.internal
                         Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} readArm already cleared (cancelled)")
@@ -886,7 +908,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
 
     private def dispatchReadPlain(
         channel: SocketChannel,
-        cell: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]],
+        cell: Maybe[ReadArmCell],
         promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: NioHandle
     )(using AllowUnsafe): Unit =
@@ -923,79 +945,99 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
 
     private def dispatchReadTls(
         channel: SocketChannel,
-        cell: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]],
+        cell: Maybe[ReadArmCell],
         promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: NioHandle,
         tls: NioTlsState
     )(using AllowUnsafe): Unit =
         // All compareAndSet calls pass the SAME cell object read in dispatchRead: AtomicReference.compareAndSet
-        // uses reference equality (eq), so constructing a new Present(promise) here would always fail.
-        try
-            // Check for buffered data from a previous read (e.g. post-handshake leftover)
-            tryUnwrapBuffered(tls) match
-                case Present(buffered) =>
-                    given Frame = Frame.internal
-                    Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} buffered plaintext=${buffered.size}")
-                    if handle.readArm.compareAndSet(cell, Absent) then
-                        promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(buffered)))
-                case Absent if tls.peerCleanClose =>
-                    // The buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
-                    // ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
-                    if handle.readArm.compareAndSet(cell, Absent) then
-                        promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
-                case Absent =>
-                    val buf = handle.readBuffer
-                    buf.clear()
-                    val n = channel.read(buf)
-                    if n < 0 then
-                        // Peer ended the TCP stream. If a close_notify was already consumed (peerCleanClose set by tryUnwrapBuffered) this FIN
-                        // follows an orderly close; otherwise it is a bare FIN with no close_notify, the truncation-attack condition (RFC 8446
-                        // 6.1). Record peerEof for the bare-FIN case so closeReason reports Truncated; do not overwrite an already-observed clean
-                        // close. Mirrors the engine path's recv == 0 -> peerEof handling (PollerIoDriver / IoUringDriver).
-                        if !tls.peerCleanClose then tls.peerEof = true
+        // uses reference equality (eq), so the exact ReadArmCell reference is the CAS key.
+        // Acquire per-connection engine ownership before any SSLEngine call so the selector-carrier
+        // unwrap path (here) and the caller-carrier wrap path (writeTls) never touch the SSLEngine
+        // concurrently. If the write path holds the gate, re-arm for the next selector wakeup rather
+        // than spinning on the selector carrier (which would block other connections' read events).
+        if !handle.engineGate.compareAndSet(false, true) then
+            pendingReads.put(channel, handle)
+            discard(registerInterest(channel, SelectionKey.OP_READ))
+        else
+            // Collect the completion thunk; the gate is released in finally BEFORE the thunk runs so
+            // synchronous teardown callbacks (ReadPump.onComplete -> closeHandle -> NioHandle.close ->
+            // spinAcquire) never try to re-acquire the gate while the selector carrier still holds it.
+            var complete: () => Unit = () => ()
+            try
+                // Check for buffered data from a previous read (e.g. post-handshake leftover)
+                tryUnwrapBuffered(tls) match
+                    case Present(buffered) =>
+                        given Frame = Frame.internal
+                        Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} buffered plaintext=${buffered.size}")
                         if handle.readArm.compareAndSet(cell, Absent) then
-                            promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
-                    else if n == 0 then
-                        // Spurious wakeup: no data ready. Restore entry and re-arm.
-                        pendingReads.put(channel, handle)
-                        discard(registerInterest(channel, SelectionKey.OP_READ))
-                    else
-                        buf.flip()
-                        // Grow netInBuf if needed to hold existing data + new data
-                        val needed = tls.netInBuf.position() + buf.remaining()
-                        if needed > tls.netInBuf.capacity() then
-                            val grown = ByteBuffer.allocate(needed)
-                            tls.netInBuf.flip()
-                            grown.put(tls.netInBuf)
-                            tls.netInBuf = grown
+                            complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(buffered)))
+                    case Absent if tls.peerCleanClose =>
+                        // The buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
+                        // ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
+                        if handle.readArm.compareAndSet(cell, Absent) then
+                            complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
+                    case Absent =>
+                        val buf = handle.readBuffer
+                        buf.clear()
+                        val n = channel.read(buf)
+                        if n < 0 then
+                            // Peer ended the TCP stream. If a close_notify was already consumed (peerCleanClose set by tryUnwrapBuffered) this FIN
+                            // follows an orderly close; otherwise it is a bare FIN with no close_notify, the truncation-attack condition (RFC 8446
+                            // 6.1). Record peerEof for the bare-FIN case so closeReason reports Truncated; do not overwrite an already-observed clean
+                            // close. Mirrors the engine path's recv == 0 -> peerEof handling (PollerIoDriver / IoUringDriver).
+                            if !tls.peerCleanClose then tls.peerEof = true
+                            if handle.readArm.compareAndSet(cell, Absent) then
+                                complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+                        else if n == 0 then
+                            // Spurious wakeup: no data ready. Restore entry and re-arm.
+                            pendingReads.put(channel, handle)
+                            discard(registerInterest(channel, SelectionKey.OP_READ))
+                        else
+                            buf.flip()
+                            // Grow netInBuf if needed to hold existing data + new data
+                            val needed = tls.netInBuf.position() + buf.remaining()
+                            if needed > tls.netInBuf.capacity() then
+                                val grown = ByteBuffer.allocate(needed)
+                                tls.netInBuf.flip()
+                                grown.put(tls.netInBuf)
+                                tls.netInBuf = grown
+                            end if
+                            tls.netInBuf.put(buf)
+                            // Try to unwrap the newly fed ciphertext
+                            tryUnwrapBuffered(tls) match
+                                case Present(plaintext) =>
+                                    given Frame = Frame.internal
+                                    Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} plaintext=${plaintext.size}")
+                                    if handle.readArm.compareAndSet(cell, Absent) then
+                                        complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(plaintext)))
+                                case Absent if tls.peerCleanClose =>
+                                    // The newly fed ciphertext was the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose
+                                    // immediately so the ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
+                                    if handle.readArm.compareAndSet(cell, Absent) then
+                                        complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
+                                case Absent =>
+                                    // Got ciphertext but no complete TLS record yet: need more data, re-arm.
+                                    pendingReads.put(channel, handle)
+                                    discard(registerInterest(channel, SelectionKey.OP_READ))
+                            end match
                         end if
-                        tls.netInBuf.put(buf)
-                        // Try to unwrap the newly fed ciphertext
-                        tryUnwrapBuffered(tls) match
-                            case Present(plaintext) =>
-                                given Frame = Frame.internal
-                                Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} plaintext=${plaintext.size}")
-                                if handle.readArm.compareAndSet(cell, Absent) then
-                                    promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(plaintext)))
-                            case Absent if tls.peerCleanClose =>
-                                // The newly fed ciphertext was the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose
-                                // immediately so the ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
-                                if handle.readArm.compareAndSet(cell, Absent) then
-                                    promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
-                            case Absent =>
-                                // Got ciphertext but no complete TLS record yet: need more data, re-arm.
-                                pendingReads.put(channel, handle)
-                                discard(registerInterest(channel, SelectionKey.OP_READ))
-                        end match
-                    end if
-            end match
-        catch
-            case _: IOException =>
-                // A read IOException (e.g. a TCP RST) ends the inbound stream abruptly with no close_notify: a truncation, not an orderly close.
-                // Record peerEof unless a close_notify was already consumed, so closeReason reports Truncated rather than Active.
-                if !tls.peerCleanClose then tls.peerEof = true
-                if handle.readArm.compareAndSet(cell, Absent) then
-                    promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+                end match
+            catch
+                case _: IOException =>
+                    // A read IOException (e.g. a TCP RST) ends the inbound stream abruptly with no close_notify: a truncation, not an orderly close.
+                    // Record peerEof unless a close_notify was already consumed, so closeReason reports Truncated rather than Active.
+                    if !tls.peerCleanClose then tls.peerEof = true
+                    if handle.readArm.compareAndSet(cell, Absent) then
+                        complete = () => promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
+            finally
+                handle.engineGate.set(false)
+            end try
+            // Run the completion thunk after the gate is released. Synchronous callbacks on the promise
+            // (e.g. ReadPump.onComplete -> teardownHandle -> NioHandle.close -> spinAcquire) are now
+            // safe: the gate is free when they run on the selector carrier.
+            complete()
+        end if
     end dispatchReadTls
 
     private def dispatchWritable(channel: SocketChannel)(using AllowUnsafe): Unit =

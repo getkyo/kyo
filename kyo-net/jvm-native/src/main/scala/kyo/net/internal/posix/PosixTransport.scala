@@ -19,6 +19,8 @@ import kyo.net.NetStdioAlreadyOpenException
 import kyo.net.NetTlsConfig
 import kyo.net.NetTlsHandshakeException
 import kyo.net.NetUnixConnectException
+import kyo.net.internal.tls.HandshakeFailure
+import kyo.net.internal.tls.HandshakeState
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsProviderPlatform
 import kyo.net.internal.transport.Connection as InternalConnection
@@ -502,13 +504,17 @@ final private[net] class PosixTransport private[posix] (
                         handle.tls = Present(engine)
                         completeConnect(handle, driver, promise)
                     ,
-                    onFailed = closed =>
+                    onFailed = cause =>
                         closeUnwiredHandle(handle, driver)
                         // The handshake never reached onFinished, so the engine was not attached to handle.tls and the closeUnwiredHandle teardown
                         // above (whose PosixHandle.close frees only an attached engine) cannot free it. Free it directly here: the handshake is over
                         // and no pump started, so nothing else touches the engine. It is mutually exclusive with onFinished, so there is no double-free.
                         engine.free()
-                        promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, closed)))
+                        val causeMsg: String | Throwable = cause match
+                            case hf: HandshakeFailure.EngineThrew => hf.cause
+                            case hf: HandshakeFailure             => hf.toString
+                            case st: (String | Throwable)         => st
+                        promise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, causeMsg)))
                     ,
                     onPanic = e =>
                         closeUnwiredHandle(handle, driver)
@@ -923,8 +929,12 @@ final private[net] class PosixTransport private[posix] (
                                 spawnHandler(openTracked(handle, driver), driver, handler),
                         onFailed = cause =>
                             if disarm() then
+                                val causeMsg: String | Throwable = cause match
+                                    case hf: HandshakeFailure.EngineThrew => hf.cause
+                                    case hf: HandshakeFailure             => hf.toString
+                                    case st: (String | Throwable)         => st
                                 Log.live.unsafe.warn(
-                                    s"PosixTransport server TLS handshake failed fd=$clientFd: ${NetException.show(cause)}"
+                                    s"PosixTransport server TLS handshake failed fd=$clientFd: ${NetException.show(causeMsg)}"
                                 )
                                 teardown(),
                         onPanic = e =>
@@ -959,7 +969,8 @@ final private[net] class PosixTransport private[posix] (
             val timer   = Clock.live.unsafe.sleep(timeout)
             timer.onComplete { _ =>
                 if settled.compareAndSet(false, true) then
-                    Log.live.unsafe.warn(s"PosixTransport server TLS handshake timed out fd=$clientFd after ${timeout.show}")
+                    val reapedState = HandshakeState.Failed(HandshakeFailure.DeadlineReaped)
+                    Log.live.unsafe.warn(s"PosixTransport server TLS handshake timed out fd=$clientFd after ${timeout.show}: $reapedState")
                     onDeadline()
             }
             () =>
@@ -1289,9 +1300,13 @@ final private[net] class PosixTransport private[posix] (
                                 upgraded.start()
                                 out.completeDiscard(Result.succeed(upgraded: Connection))
                             ,
-                            onFailed = closed =>
+                            onFailed = cause =>
                                 releaseFailedUpgrade(handle, engine)
-                                out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, closed)))
+                                val causeMsg: String | Throwable = cause match
+                                    case hf: HandshakeFailure.EngineThrew => hf.cause
+                                    case hf: HandshakeFailure             => hf.toString
+                                    case st: (String | Throwable)         => st
+                                out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, causeMsg)))
                             ,
                             onPanic = e =>
                                 releaseFailedUpgrade(handle, engine)
@@ -1416,14 +1431,19 @@ final private[net] class PosixTransport private[posix] (
       * these thunks all run on the one per-driver engine FIFO worker, so the flag write in the reap thunk is serialized against these reads.
       * The connect and STARTTLS handshakes arm no deadline and pass `() => false` (never reaped).
       */
-    private def driveHandshake(
+    private[posix] def driveHandshake(
         handle: PosixHandle,
         engine: TlsEngine,
         onFinished: () => Unit,
-        onFailed: (String | Throwable) => Unit,
+        onFailed: (HandshakeFailure | String | Throwable) => Unit,
         onPanic: Throwable => Unit,
         isReaped: () => Boolean = () => false
     )(using AllowUnsafe, Frame): Unit =
+        // Adapter for helpers that carry the narrower (String | Throwable) onFailed type.
+        // HandshakeFailure-typed failures (EngineError, EngineThrew) are produced only inside this
+        // method's own match arms and catch; the helpers only ever call onFailed with String or
+        // Throwable values (send errors, recv errors, EOF), so the adapter correctly routes them.
+        val onFailedStr: (String | Throwable) => Unit = st => onFailed(st)
         def step(): Unit =
             // Submit one coarse-grained thunk: run handshakeStep + drainCiphertext inside the FIFO worker so no concurrent
             // read or write op can touch the engine during this step. The send and recv calls stay outside the thunk.
@@ -1433,42 +1453,47 @@ final private[net] class PosixTransport private[posix] (
                 if isReaped() then ()
                 else
                     try
-                        val s = engine.handshakeStep()
-                        if s == 1 then
-                            // DONE: drain any final ciphertext (engine op, inside thunk), then call onFinished (outside thunk).
-                            drainAllDirect(handle, engine, cont = onFinished, onFailed, onPanic)
-                        else if s == -2 then
-                            // Fatal alert (RFC 5246 7.2 / RFC 8446 6.2): drain and send the alert record the engine queued (e.g. protocol_version,
-                            // bad_certificate) so the peer learns the failure reason before the fd closes, THEN fail. Every other arm (done,
-                            // want-write, want-read) already drains; this arm did not, dropping the alert.
-                            //
-                            // openssl returns the fatal -2 from the first SSL_do_handshake but does not flush the queued alert into the write BIO
-                            // until a SECOND SSL_do_handshake call, so re-step once (it returns -2 again, the handshake does not otherwise proceed)
-                            // to force the flush before draining. BoringSSL already flushed on the first call, so the re-step adds no new bytes there.
-                            // drainAllDirect is bounded (one drain+send pass on the closing handshake) and routes a send failure to onFailed as well,
-                            // so the handshake always terminates.
-                            discard(engine.handshakeStep())
-                            drainAllDirect(
-                                handle,
-                                engine,
-                                cont = () => onFailed("server-fatal-alert"),
-                                onFailed,
-                                onPanic
-                            )
-                        else if s == -1 then
-                            // WANT_WRITE: drain ciphertext (engine op, inside thunk), send it (syscall, outside thunk via sendAll), then re-step.
-                            drainAllDirect(handle, engine, cont = step, onFailed, onPanic)
-                        else
-                            // WANT_READ (0): drain output first, then probe recv and maybe arm read (both outside thunk).
-                            drainAllDirect(
-                                handle,
-                                engine,
-                                cont = () => recvAndFeed(handle, engine, step, onFailed, onPanic, isReaped),
-                                onFailed,
-                                onPanic
-                            )
-                        end if
-                    catch case e: Throwable => onPanic(e)
+                        HandshakeState.fromCode(engine.handshakeStep()) match
+                            case HandshakeState.Done =>
+                                // Handshake complete: drain any final ciphertext (engine op, inside thunk), then call onFinished (outside thunk).
+                                drainAllDirect(handle, engine, cont = onFinished, onFailedStr, onPanic)
+                            case HandshakeState.Failed(reason) =>
+                                // Fatal alert (RFC 5246 7.2 / RFC 8446 6.2): drain and send the alert record the engine queued (e.g. protocol_version,
+                                // bad_certificate) so the peer learns the failure reason before the fd closes, THEN fail. Every other arm (done,
+                                // want-write, want-read) already drains; this arm did not, dropping the alert.
+                                //
+                                // openssl returns the fatal -2 from the first SSL_do_handshake but does not flush the queued alert into the write BIO
+                                // until a SECOND SSL_do_handshake call, so re-step once (it returns -2 again, the handshake does not otherwise proceed)
+                                // to force the flush before draining. BoringSSL already flushed on the first call, so the re-step adds no new bytes there.
+                                // drainAllDirect is bounded (one drain+send pass on the closing handshake) and routes a send failure to onFailed as well,
+                                // so the handshake always terminates.
+                                discard(engine.handshakeStep())
+                                drainAllDirect(
+                                    handle,
+                                    engine,
+                                    cont = () => onFailed(reason),
+                                    onFailedStr,
+                                    onPanic
+                                )
+                            case HandshakeState.WantWrite =>
+                                // Ciphertext queued: drain it (engine op, inside thunk), send it (syscall, outside thunk via sendAll), then re-step.
+                                drainAllDirect(handle, engine, cont = step, onFailedStr, onPanic)
+                            case HandshakeState.WantRead =>
+                                // Need more peer ciphertext: drain any output first, then probe recv and maybe arm read (both outside thunk).
+                                drainAllDirect(
+                                    handle,
+                                    engine,
+                                    cont = () => recvAndFeed(handle, engine, step, onFailedStr, onPanic, isReaped),
+                                    onFailedStr,
+                                    onPanic
+                                )
+                        end match
+                    catch
+                        // Throwable (not just NonFatal) because JDK SSLEngine.handshakeStep raises
+                        // SSLHandshakeException on a received fatal alert, which is a RuntimeException
+                        // and therefore NonFatal. Fatal JVM errors are rethrown by onFailed's caller
+                        // (the engine FIFO outer catch) so omitting NonFatal here is safe.
+                        case e: Throwable => onFailed(HandshakeFailure.EngineThrew(e))
                     end try
             }
         end step
