@@ -7,8 +7,10 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.net.internal.util.HandleId
 import kyo.net.internal.util.IntLongMap
 import kyo.net.internal.util.IntRefMap
 import kyo.net.internal.util.MpscLongQueue
@@ -430,7 +432,7 @@ final private[net] class PollerIoDriver private[posix] (
         end if
     end pollLoop
 
-    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         handle.pendingReadPromise = Present(promise)
         // The activeFds + pendingReads puts are applied on the poll fiber (single-writer): enqueue the registration, then submit the
         // change command. The poll fiber drains regIntake before processing the register command, so the map entry is in place when dispatchCmd
@@ -948,13 +950,13 @@ final private[net] class PollerIoDriver private[posix] (
             val handle = reg.handle
             reg.kind match
                 case RegKind.Read =>
-                    activeFds.put(handle.readFd, handle.id)
+                    activeFds.put(handle.readFd, handle.id.packed)
                     pendingReads.put(handle.readFd, handle)
                 case RegKind.Accept =>
-                    activeFds.put(handle.readFd, handle.id)
+                    activeFds.put(handle.readFd, handle.id.packed)
                     pendingAccepts.put(handle.readFd, handle)
                 case RegKind.Write =>
-                    activeFds.put(handle.writeFd, handle.id)
+                    activeFds.put(handle.writeFd, handle.id.packed)
                     handle.pendingWritablePromise match
                         case Present(p) => pendingWritables.put(handle.writeFd, PendingWritable(p, handle.id))
                         case Absent     => ()
@@ -1026,22 +1028,23 @@ final private[net] class PollerIoDriver private[posix] (
                 // owner's pending op was already failed by its close, so pendingReads[fd] there is the new owner (different id) and is correctly left
                 // alone; only the synthetic recycle-without-close path (the stale-read / stale-writable regression guards) has a matching-id op here.
                 // Compared low-32 (matching the guard above): the epoll event carries id-low-32, so an orphaned op's full id is masked to match.
+                // HandleId.packed = (fd << 32) | generation, so low-32 is the generation, which is what the event's udata low-32 carries.
                 val staleId  = ids(i) & 0xffffffffL
                 val staleErr = Closed(label, summon[Frame], s"stale event fd=$fd")
                 Maybe(pendingReads.get(fd)).foreach { h =>
-                    if (h.id & 0xffffffffL) == staleId then
+                    if (h.id.packed & 0xffffffffL) == staleId then
                         discard(pendingReads.remove(fd))
                         h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
                         h.pendingReadPromise = Absent
                 }
                 Maybe(pendingAccepts.get(fd)).foreach { h =>
-                    if (h.id & 0xffffffffL) == staleId then
+                    if (h.id.packed & 0xffffffffL) == staleId then
                         discard(pendingAccepts.remove(fd))
                         h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(staleErr)))
                         h.pendingAcceptPromise = Absent
                 }
                 Maybe(pendingWritables.get(fd)).foreach { entry =>
-                    if (entry.id & 0xffffffffL) == staleId then
+                    if (entry.id.packed & 0xffffffffL) == staleId then
                         discard(pendingWritables.remove(fd))
                         entry.promise.completeDiscard(Result.fail(staleErr))
                 }
@@ -1174,13 +1177,13 @@ final private[net] class PollerIoDriver private[posix] (
     private def finishDispatch(
         fd: Int,
         handle: PosixHandle,
-        promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
-        result: Result[Closed, Span[Byte]]
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
+        result: Result[Closed, ReadOutcome]
     )(using AllowUnsafe, Frame): Unit =
         if handle.endDispatch() then
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read on closed handle fd=$fd")))
         else
-            // Unsafe: erased-safe structural widening. `Span[Byte]` and its pending form are identical at runtime; the cast satisfies the
+            // Unsafe: erased-safe structural widening. `ReadOutcome` and its pending form are identical at runtime; the cast satisfies the
             // scheduler's promise contract without introducing a kyo-effect row in this method, and the type params are erased so it cannot throw.
             promise.asInstanceOf[kyo.scheduler.IOPromise[Any, Any]].completeDiscard(result)
 
@@ -1191,7 +1194,7 @@ final private[net] class PollerIoDriver private[posix] (
       * OpRegisterRead; `dispatchCmd` then re-dispatches immediately if `readMightHaveMore` is set (residual bytes stranded on ET), or otherwise
       * parks until the kernel fires a new readiness edge.
       */
-    private def rearmOwned(fd: Int, handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using
+    private def rearmOwned(fd: Int, handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
         AllowUnsafe,
         Frame
     ): Unit =
@@ -1239,7 +1242,7 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def dispatchReadPlain(
         fd: Int,
-        promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: PosixHandle,
         eofPending: Boolean = false
     )(using AllowUnsafe, Frame): Unit =
@@ -1247,7 +1250,7 @@ final private[net] class PollerIoDriver private[posix] (
         val n      = result.value.toInt
         // Persist an observed half-close on the handle so the consumer-paced drain keeps re-reading until recv returns 0, even across multiple
         // re-dispatches and even if a later edge does not re-carry eofPending (an ET half-close edge fires once; a missed edge or a multi-read
-        // drain ending on a partial recv would otherwise lose the EOF). Cleared when the EOF (empty Span) is delivered.
+        // drain ending on a partial recv would otherwise lose the EOF). Cleared when the PeerFin is delivered.
         if eofPending then handle.halfClosePending = true
         if n > 0 then
             val arr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
@@ -1266,19 +1269,19 @@ final private[net] class PollerIoDriver private[posix] (
             // flight against the old buffer here), so the close-old-then-replace recipe is single-owner-safe. The grown buffer
             // serves the next recv; the value delivered for THIS read is unchanged.
             discard(handle.growReadBufferForFullRead(n))
-            finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(arr)))
+            finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
         else if n == 0 then
-            // Orderly peer close: recv(2) returns 0 when the kernel buffer is empty and the peer sent FIN. Surface as empty Span (not error).
+            // Orderly peer close: recv(2) returns 0 when the kernel buffer is empty and the peer sent FIN.
             handle.readMightHaveMore = false
             handle.halfClosePending = false
-            finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+            finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
         else if isWouldBlock(result.errorCode) then
             // EAGAIN confirms the kernel buffer is empty: no residual possible.
             handle.readMightHaveMore = false
             if handle.halfClosePending then
-                // Buffer fully drained and the peer's half-close is confirmed empty. Deliver EOF (Span.empty) and release the dispatch.
+                // Buffer fully drained and the peer's half-close is confirmed empty. Deliver PeerFin and release the dispatch.
                 handle.halfClosePending = false
-                finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
             else
                 // Buffer drained with no pending EOF: the fd stays armed (ET keeps it in the kernel's interest set). Re-deposit the handle.
                 rearmOwned(fd, handle, promise)
@@ -1331,7 +1334,7 @@ final private[net] class PollerIoDriver private[posix] (
       */
     private def dispatchReadTls(
         fd: Int,
-        promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: PosixHandle,
         engine: TlsEngine,
         eofPending: Boolean = false
@@ -1380,19 +1383,19 @@ final private[net] class PollerIoDriver private[posix] (
                     // fresh edge fires while the fd was still readable. A spurious re-dispatch (no actual bytes) hits EAGAIN and re-arms harmlessly.
                     // Also force re-dispatch when halfClosePending: the EPOLLRDHUP / EV_EOF edge fires once; after the ciphertext above is
                     // decrypted and delivered, the consumer-paced drain must call recv again to observe the FIN (recv returns 0) and surface
-                    // Span.empty. Without this, a connection that half-closes with partial ciphertext in the same edge strands the consumer
+                    // PeerFin. Without this, a connection that half-closes with partial ciphertext in the same edge strands the consumer
                     // waiting for an EPOLLRDHUP edge that epoll ET will not re-fire. Mirrors dispatchReadPlain's `filled || halfClosePending`.
                     handle.readMightHaveMore = (!drained && !eof && errno == 0 && !handle.peerCleanClose) || handle.halfClosePending
                     if plain.length > 0 then
-                        finishDispatch(fd, handle, promise, Result.succeed(Span.fromUnsafe(plain)))
+                        finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plain))))
                     else if handle.peerCleanClose then
-                        // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the ReadPump tears down,
-                        // rather than re-arming for ciphertext the peer will never send. closeReason then reports CleanClose, not Truncated.
-                        finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                        // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the ReadPump tears down
+                        // cleanly, rather than re-arming for ciphertext the peer will never send.
+                        finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.CleanClose))
                     else if eof then
-                        // A bare FIN arrived mid-record (no close_notify): record the truncation and surface EOF.
+                        // A bare FIN arrived mid-record (no close_notify): record the truncation and surface PeerFin.
                         handle.peerEof = true
-                        finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                        finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
                     else if errno != 0 then
                         finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"recv failed fd=$fd errno=$errno")))
                     else
@@ -1417,11 +1420,11 @@ final private[net] class PollerIoDriver private[posix] (
                 end try
             }
         else if n == 0 then
-            // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered EOF first): record
-            // the truncation condition so closeReason reports Truncated, then deliver EOF immediately without engine involvement.
+            // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered CleanClose first):
+            // record the truncation condition so closeReason reports Truncated, then deliver PeerFin immediately without engine involvement.
             handle.readMightHaveMore = false
             handle.peerEof = true
-            finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+            finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
         else if isWouldBlock(result.errorCode) then
             // EAGAIN confirms the kernel socket buffer is empty: no residual possible. Engine plaintext may still be buffered (checked below).
             handle.readMightHaveMore = false
@@ -1435,15 +1438,15 @@ final private[net] class PollerIoDriver private[posix] (
                 try
                     if engine.hasBufferedPlaintext then
                         val buffered = engine.readBuffered()
-                        if buffered.nonEmpty then finishDispatch(fd, handle, promise, Result.succeed(buffered))
+                        if buffered.nonEmpty then finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(buffered)))
                         else rearmOwned(fd, handle, promise)
                         end if
                     else if halfCloseNow then
                         // Socket buffer confirmed empty (EAGAIN) AND the peer's half-close is known (EPOLLRDHUP / EV_EOF fired earlier,
-                        // stored as halfClosePending). The engine has no buffered plaintext: the FIN is the definitive end. Deliver EOF
-                        // (Span.empty) and clear the flag. Mirrors dispatchReadPlain's EAGAIN + halfClosePending branch.
+                        // stored as halfClosePending). The engine has no buffered plaintext: the FIN is the definitive end. Deliver PeerFin
+                        // and clear the flag. Mirrors dispatchReadPlain's EAGAIN + halfClosePending branch.
                         handle.halfClosePending = false
-                        finishDispatch(fd, handle, promise, Result.succeed(Span.empty[Byte]))
+                        finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
                     else rearmOwned(fd, handle, promise)
                     end if
                 catch
@@ -1490,7 +1493,7 @@ final private[net] class PollerIoDriver private[posix] (
       * recycled into a different handle since the event was queued. Reads `activeFds` with a `-1` absent sentinel; handle ids are always `>= 0`, so
       * an absent fd (sentinel) is correctly treated as stale. Poll-fiber-confined (activeFds is poll-fiber-owned).
       */
-    private def isStaleId(fd: Int, id: Long): Boolean = activeFds.getOrElse(fd, -1L) != id
+    private def isStaleId(fd: Int, id: HandleId): Boolean = activeFds.getOrElse(fd, -1L) != id.packed
 
     /** A non-blocking `recvNow` with a bounded in-place EINTR retry. POSIX recv(2): when a signal is delivered before any byte is transferred the
       * call returns -1 with errno EINTR; no data was moved, so the call is retried (the accept path's precedent). Only EINTR is retried; EAGAIN /
@@ -1627,19 +1630,19 @@ final private[net] class PollerIoDriver private[posix] (
                 val handle = reg.handle
                 kind match
                     case RegKind.Read =>
-                        activeFds.put(fd, handle.id)
+                        activeFds.put(fd, handle.id.packed)
                         pendingReads.put(fd, handle)
                     case RegKind.Accept =>
-                        activeFds.put(fd, handle.id)
+                        activeFds.put(fd, handle.id.packed)
                         pendingAccepts.put(fd, handle)
                     case RegKind.Write =>
-                        activeFds.put(fd, handle.id)
+                        activeFds.put(fd, handle.id.packed)
                         handle.pendingWritablePromise match
                             case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id))
                             case Absent     => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
                         end match
                 end match
-                handle.id
+                handle.id.packed
             case Absent =>
                 // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
                 // arming a fd with no pending op (the pre-fix behavior) would leave an interest with no owner id to tag the knote, and there is no op
@@ -1818,7 +1821,7 @@ private[net] object PollerIoDriver:
       * writable path stores it here because the writable promise is not held on the handle), so a writable readiness event the kernel queued
       * for a fd's prior owner is dropped after the fd is recycled into a new owner rather than delivered to the new owner as `Success`.
       */
-    final private case class PendingWritable(promise: Promise.Unsafe[Unit, Abort[Closed]], id: Long)
+    final private case class PendingWritable(promise: Promise.Unsafe[Unit, Abort[Closed]], id: HandleId)
 
     /** Kind of a pending interest registration carried through [[regIntake]] to the poll fiber, which applies the matching map put on its own
       * carrier (the single-writer confinement). Read and Accept share `OpRegisterRead` at the backend but route to different maps

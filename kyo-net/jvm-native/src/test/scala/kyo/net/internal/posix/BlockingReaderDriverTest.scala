@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Tests the [[BlockingReaderDriver]] regular-file fallback in isolation, against a real temp-file fd and a real PollerIoDriver.
@@ -29,8 +30,8 @@ class BlockingReaderDriverTest extends Test:
     private val transportConfig = kyo.net.TransportConfig.default
 
     /** Drive a single `awaitRead` on `driver` for `handle` and await the deposited promise. */
-    private def readVia(driver: BlockingReaderDriver, handle: PosixHandle)(using Frame): Span[Byte] < (Abort[Closed] & Async) =
-        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+    private def readVia(driver: BlockingReaderDriver, handle: PosixHandle)(using Frame): ReadOutcome < (Abort[Closed] & Async) =
+        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         driver.awaitRead(handle, promise)
         promise.safe.get
     end readVia
@@ -56,9 +57,9 @@ class BlockingReaderDriverTest extends Test:
             // Drain all data reads until EOF, accumulating bytes. A real file returns however many bytes the kernel provides per read
             // (may be all 6 at once, or split); the concatenation is asserted to equal the file content. EOF produces an empty Span.
             def readAll(acc: List[Byte])(using Frame): List[Byte] < (Abort[Closed] & Async) =
-                readVia(driver, handle).map { span =>
-                    if span.isEmpty then acc
-                    else readAll(acc ++ span.toArray.toList)
+                readVia(driver, handle).map {
+                    case ReadOutcome.Bytes(span) => readAll(acc ++ span.toArray.toList)
+                    case _                       => acc
                 }
             readAll(Nil).map { bytes =>
                 PosixTestSockets.closeTempFd(fd)

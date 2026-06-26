@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Verifies that sequential single-shot accepts lose no completion, and that the fused submit-and-wait enter loses no completion.
@@ -118,7 +119,7 @@ class IoUringMultishotTest extends Test:
                             val payload   = Span.fromUnsafe(Array.tabulate[Byte](16)(j => ((i * 16 + j) & 0xff).toByte))
                             val w         = driver.write(acceptedH, payload, 0)
                             assert(w == WriteResult.Done, s"write result=$w for round-trip $i")
-                            val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             // Peer sends first so the recv SQE sees data; the fused enter submits the recv and waits for its CQE in one call.
                             assert(
                                 sock.sendNow(
@@ -130,7 +131,10 @@ class IoUringMultishotTest extends Test:
                                 s"peer send failed for round-trip $i"
                             )
                             driver.awaitRead(acceptedH, readPromise)
-                            readPromise.safe.get.map { got =>
+                            readPromise.safe.get.map { outcome =>
+                                val got = outcome match
+                                    case ReadOutcome.Bytes(span) => span
+                                    case other                   => fail(s"round-trip $i: expected ReadOutcome.Bytes, got $other")
                                 driver.closeHandle(acceptedH)
                                 discard(sock.close(client))
                                 assert(

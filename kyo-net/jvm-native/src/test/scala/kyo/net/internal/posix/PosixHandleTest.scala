@@ -30,7 +30,7 @@ class PosixHandleTest extends Test:
         "each handle gets a strictly-greater monotonic id (recycled-fd guard)" in {
             val first  = PosixHandle.socket(10, PosixHandle.DefaultReadBufferSize, Absent)
             val second = PosixHandle.socket(11, PosixHandle.DefaultReadBufferSize, Absent)
-            assert(second.id > first.id)
+            assert(second.id.packed > first.id.packed)
         }
 
         "close frees the TLS engine exactly once and is idempotent" in {

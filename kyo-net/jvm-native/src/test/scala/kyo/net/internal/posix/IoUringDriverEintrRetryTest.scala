@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduction + regression guard for the io_uring counterpart of finding #13/#222 (POSIX recv/send EINTR handling, CWE-252 mishandled
@@ -150,7 +151,7 @@ class IoUringDriverEintrRetryTest extends Test:
                     // socket) does the peer send, so the retried recv genuinely delivers the data the interrupted recv never touched. Pre-sending
                     // would let the first recv read the bytes (a state a real -EINTR never produces) and the retry would then hang on an empty socket.
                     recording.armEintr()
-                    val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
                     recording.eintrFired.safe.get.flatMap { _ =>
                         assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
@@ -158,7 +159,7 @@ class IoUringDriverEintrRetryTest extends Test:
                             drv.closeHandle(acceptedH)
                             discard(sock.close(client))
                             outcome match
-                                case Result.Success(got) =>
+                                case Result.Success(ReadOutcome.Bytes(got)) =>
                                     assert(
                                         got.toArray.toList == payload.toList,
                                         s"the retried recv must deliver the full payload; got ${got.toArray.toList}"

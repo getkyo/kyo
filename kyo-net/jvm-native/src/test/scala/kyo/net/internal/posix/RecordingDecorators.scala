@@ -10,6 +10,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Spy decorator over a real [[SocketBindings]].
@@ -875,7 +876,7 @@ final class RecordingIoDriver(real: IoDriver[PosixHandle]) extends IoDriver[Posi
         real.start()
     end start
 
-    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         discard(awaitReadCalls.getAndIncrement())
         val hook = onAwaitRead
         if hook != null then

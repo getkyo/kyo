@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Wire-ORDER conservation across back-to-back raw (plaintext) writes on a single [[IoUringDriver]] handle, over a REAL io_uring ring.
@@ -66,9 +67,12 @@ class IoUringRawWriteOrderingTest extends Test:
         Loop(Array.emptyByteArray) { acc =>
             if acc.length >= want then Loop.done(acc)
             else
-                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 drv.awaitRead(peerHandle, p)
-                p.safe.get.map(chunk => Loop.continue(acc ++ chunk.toArray))
+                p.safe.get.map {
+                    case ReadOutcome.Bytes(chunk) => Loop.continue(acc ++ chunk.toArray)
+                    case _                        => Loop.done(acc)
+                }
         }
     end drainPeer
 

@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** SQ-full backpressure for a raw (plaintext) write on a [[IoUringDriver]] handle, over a REAL io_uring ring.
@@ -74,11 +75,11 @@ class IoUringRawWriteSqFullTest extends Test:
                         }
                         pinIn.safe.get.map { _ =>
                             // Reap carrier pinned: all three ops enqueue behind it and drain together when it releases.
-                            val fillerP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val fillerP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             drv.awaitRead(fillerH, fillerP) // consumes the one SQE, stays in flight (no peer bytes)
                             val payload = Span.fromUnsafe(Array.tabulate[Byte](48)(i => (i * 3 + 1).toByte))
                             val w       = drv.write(writeH, payload, 0)
-                            val peerP   = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val peerP   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             drv.awaitRead(peerH, peerP)
                             // Release the gate BEFORE asserting on the write result: a failed assertion must never leave the reap carrier
                             // parked (it would wedge every later test on this scheduler).
@@ -92,7 +93,7 @@ class IoUringRawWriteSqFullTest extends Test:
                                 drv.closeHandle(peerH)
                                 discard(sock.close(fillerClient))
                                 result match
-                                    case Result.Success(got) =>
+                                    case Result.Success(ReadOutcome.Bytes(got)) =>
                                         assert(
                                             got.toArray.toList == payload.toArray.toList,
                                             s"the re-flushed SQ-full write delivered wrong bytes: ${got.toArray.toList}"

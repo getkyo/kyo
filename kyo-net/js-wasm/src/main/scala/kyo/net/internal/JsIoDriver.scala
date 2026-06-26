@@ -46,7 +46,7 @@ final private[kyo] class JsIoDriver private (
         shutdownPromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
 
-    def awaitRead(handle: JsHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitRead(handle: JsHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         if handle.socket.destroyed.asInstanceOf[Boolean] then
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"socket destroyed")))
         else
@@ -143,17 +143,17 @@ final private[kyo] class JsIoDriver private (
 
     private def deliverLeftover(handle: JsHandle)(using AllowUnsafe): Unit =
         val (leftoverBuf, leftoverOff, leftoverLen) = handle.leftover
-        val bytes =
+        val arr =
             if leftoverOff == 0 && leftoverLen == leftoverBuf.length then
                 // Whole-array leftover: transfer ownership directly without copying.
-                Span.fromUnsafe(leftoverBuf)
+                leftoverBuf
             else
-                Span.fromUnsafe(java.util.Arrays.copyOfRange(leftoverBuf, leftoverOff, leftoverOff + leftoverLen))
+                java.util.Arrays.copyOfRange(leftoverBuf, leftoverOff, leftoverOff + leftoverLen)
         handle.clearLeftover()
         val pending = handle.pendingRead
         if !isNull(pending) then
             handle.clearPendingRead()
-            pending.nn.completeDiscard(Result.succeed(bytes))
+            pending.nn.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
         end if
     end deliverLeftover
 

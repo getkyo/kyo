@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Tests the completion-native [[IoUringDriver]] over a REAL io_uring ring.
@@ -61,8 +62,8 @@ class IoUringDriverTest extends Test:
         Sync.ensure(Sync.defer(driver.close()))(body(driver, recording))
     end withRecordingDriver
 
-    private def readVia(driver: IoUringDriver, handle: PosixHandle)(using Frame): Span[Byte] < (Abort[Closed] & Async) =
-        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+    private def readVia(driver: IoUringDriver, handle: PosixHandle)(using Frame): ReadOutcome < (Abort[Closed] & Async) =
+        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         driver.awaitRead(handle, promise)
         promise.safe.get
     end readVia
@@ -83,7 +84,8 @@ class IoUringDriverTest extends Test:
                     readVia(driver, acceptedH).map { got =>
                         driver.closeHandle(clientH)
                         driver.closeHandle(acceptedH)
-                        assert(got.toArray.toList == payload.toArray.toList)
+                        val ReadOutcome.Bytes(span) = got.runtimeChecked
+                        assert(span.toArray.toList == payload.toArray.toList)
                     }
                 }
             }.map(_ => succeed)
@@ -98,16 +100,17 @@ class IoUringDriverTest extends Test:
                     else
                         PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                             val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                            val promise   = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             driver.awaitRead(acceptedH, promise)
                             // Close the handle while the recv SQE is in flight: cancel fails the promise, the buffer is freed only on reap.
                             driver.closeHandle(acceptedH)
                             Abort.run[Closed](promise.safe.get).map { result =>
                                 discard(sock.close(client))
                                 result match
-                                    case Result.Failure(_: Closed)      => Loop.continue(i + 1)
-                                    case Result.Success(s) if s.isEmpty => Loop.continue(i + 1) // a same-cycle EOF reap is also terminal
-                                    case other                          => Loop.done(fail(s"expected Closed/EOF, got $other"))
+                                    case Result.Failure(_: Closed) => Loop.continue(i + 1)
+                                    case Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose) =>
+                                        Loop.continue(i + 1) // a same-cycle EOF reap is also terminal
+                                    case other => Loop.done(fail(s"expected Closed/EOF, got $other"))
                                 end match
                             }
                         }
@@ -135,16 +138,17 @@ class IoUringDriverTest extends Test:
                     discard(driver.start())
                     PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                         val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                        val promise   = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, promise) // recv SQE in flight, no data: the reap loop parks in wait holding cqePtr
                         driver.close()                       // tear the driver down while that wait is in flight
                         Abort.run[Closed](promise.safe.get).map { result =>
                             discard(sock.close(client))
                             discard(sock.close(accepted))
                             result match
-                                case Result.Failure(_: Closed)      => Loop.continue(i + 1)
-                                case Result.Success(s) if s.isEmpty => Loop.continue(i + 1) // a same-cycle EOF reap is also terminal
-                                case other                          => Loop.done(fail(s"expected Closed/EOF on driver close, got $other"))
+                                case Result.Failure(_: Closed) => Loop.continue(i + 1)
+                                case Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose) =>
+                                    Loop.continue(i + 1) // a same-cycle EOF reap is also terminal
+                                case other => Loop.done(fail(s"expected Closed/EOF on driver close, got $other"))
                             end match
                         }
                     }
@@ -235,7 +239,8 @@ class IoUringDriverTest extends Test:
                     readVia(drv, acceptedH).map { got =>
                         drv.closeHandle(acceptedH)
                         discard(sock.close(client))
-                        assert(got.toArray.toList == payload.toList, s"got ${got.toArray.toList}")
+                        val ReadOutcome.Bytes(span) = got.runtimeChecked
+                        assert(span.toArray.toList == payload.toList, s"got ${span.toArray.toList}")
                     }
                 }
             }.map(_ => succeed)
@@ -250,7 +255,7 @@ class IoUringDriverTest extends Test:
                     PosixTestSockets.closePeerForEof(sock, client)
                     readVia(drv, acceptedH).map { got =>
                         drv.closeHandle(acceptedH)
-                        assert(got.isEmpty, s"expected EOF empty Span, got ${got.size} bytes")
+                        assert(got == ReadOutcome.PeerFin, s"expected EOF (PeerFin), got $got")
                     }
                 }
             }.map(_ => succeed)
@@ -261,7 +266,7 @@ class IoUringDriverTest extends Test:
             withRecordingDriver(256) { (drv, _) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val promise   = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
                     // A real RST: SO_LINGER {l_onoff=1, l_linger=0} + close. The kernel fills the pending recv CQE with res=-ECONNRESET=-104
                     // on Linux; the driver maps any res<0 to Closed("read errno=N") with no errno-specific branch, so the message names 104.
@@ -300,9 +305,9 @@ class IoUringDriverTest extends Test:
                         pinIn.safe.get.map { _ =>
                             // Reap carrier pinned. Read A (no peer bytes) consumes the one SQE and stays in flight; read B's get_sqe returns Absent
                             // and parks. Both are enqueued behind the pin, so they drain together when it releases.
-                            val pA = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val pA = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             drv.awaitRead(accAH, pA)
-                            val pB = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val pB = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             drv.awaitRead(accBH, pB)
                             val payload = Array.tabulate[Byte](8)(i => (i + 10).toByte)
                             // Release the gate BEFORE asserting on the send result: a failed assertion must never leave the reap carrier
@@ -316,7 +321,7 @@ class IoUringDriverTest extends Test:
                                 discard(sock.close(clientA))
                                 discard(sock.close(clientB))
                                 result match
-                                    case Result.Success(got) =>
+                                    case Result.Success(ReadOutcome.Bytes(got)) =>
                                         assert(
                                             got.toArray.toList == payload.toList,
                                             s"the parked read delivered wrong bytes: ${got.toArray.toList}"
@@ -428,7 +433,7 @@ class IoUringDriverTest extends Test:
             withRecordingDriver(256) { (drv, recording) =>
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val promise   = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise   = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     val reaped    = recording.awaitReap()
                     drv.awaitRead(acceptedH, promise) // recv SQE with no data: stays in flight
                     // closeHandle while the recv SQE is in flight: it must NOT free the read buffer yet (the kernel still owns it).
@@ -459,7 +464,8 @@ class IoUringDriverTest extends Test:
                     readVia(drv, acceptedH).map { got =>
                         drv.closeHandle(acceptedH)
                         discard(sock.close(client))
-                        assert(got.toArray.toList == List[Byte](42), s"got ${got.toArray.toList}")
+                        val ReadOutcome.Bytes(span) = got.runtimeChecked
+                        assert(span.toArray.toList == List[Byte](42), s"got ${span.toArray.toList}")
                     }
                 }
             }.map(_ => succeed)
@@ -527,7 +533,7 @@ class IoUringDriverTest extends Test:
                         pinIn.safe.get.map { _ =>
                             // Reap carrier pinned. Read R (no peer bytes) consumes the one SQE and stays in flight; the accept's get_sqe returns
                             // Absent and parks. Both are enqueued behind the pin, so they drain together when it releases.
-                            val rp = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            val rp = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             drv.awaitRead(readH, rp)
                             val ap = Promise.Unsafe.init[Int, Abort[Closed]]()
                             drv.awaitAccept(listenH, ap)
@@ -592,7 +598,7 @@ class IoUringDriverTest extends Test:
                 PosixTestSockets.loopbackPair().map { case (client, accepted) =>
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     val reaped    = recording.awaitReap()
-                    drv.awaitRead(acceptedH, Promise.Unsafe.init[Span[Byte], Abort[Closed]]())
+                    drv.awaitRead(acceptedH, Promise.Unsafe.init[ReadOutcome, Abort[Closed]]())
                     // The peer sends one byte so the recv SQE completes and the reap loop runs wait_cqe then peek_cqe in one drain cycle.
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](Array[Byte](7)), 1L, 0).value == 1L)
                     reaped.safe.get.map { _ =>
@@ -622,7 +628,7 @@ class IoUringDriverTest extends Test:
                     PosixTestSockets.loopbackPair().map { case (driverFd, peerFd) =>
                         val handle = PosixHandle.socket(driverFd, PosixHandle.DefaultReadBufferSize, Absent)
                         handle.tls = Present(RecordingTlsEngine(serverEngine))
-                        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         val reaped  = recording.awaitReap()
                         drv.awaitRead(handle, promise)
                         // Send a partial TLS record (the leading bytes of a real record): feedCiphertext consumes them but readPlain yields no
@@ -730,10 +736,11 @@ class IoUringDriverTest extends Test:
                                         cipher.length.toLong,
                                         0
                                     ).value == cipher.length.toLong)
-                                    val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                                    val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                                     drv.awaitRead(handle, p)
                                     p.safe.get.flatMap { got =>
-                                        assert(got.toArray.toList == msg.toList, s"read mismatch: got ${got.toArray.toList}")
+                                        val ReadOutcome.Bytes(span) = got.runtimeChecked
+                                        assert(span.toArray.toList == msg.toList, s"read mismatch: got ${span.toArray.toList}")
                                         readEach(rest)
                                     }
 

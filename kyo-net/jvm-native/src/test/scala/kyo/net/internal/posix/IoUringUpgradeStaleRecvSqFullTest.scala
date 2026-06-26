@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** `hasInFlightRead` must count a recv parked on a full submission queue, over a REAL io_uring ring.
   *
@@ -67,9 +68,9 @@ class IoUringUpgradeStaleRecvSqFullTest extends Test:
                     }
                     pinIn.safe.get.map { _ =>
                         // Reap carrier pinned: all enqueue behind it and drain together when it releases.
-                        val fillerP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val fillerP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(fillerH, fillerP) // consumes the one SQE, stays in flight in `pending` (no peer bytes)
-                        val targetP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val targetP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(targetH, targetP) // SQ full: submitRecv parks this in `stalledSubmits`, not `pending`
                         val probe = Promise.Unsafe.init[Boolean, Abort[Closed]]()
                         // Read the contract on the reap carrier, after the target read parked and before reArmStalledSubmits runs.

@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Smoke tests verifying that each recording decorator delegates to the real component.
@@ -33,19 +34,22 @@ class RecordingDecoratorsTest extends Test:
                     val payload   = Span.fromUnsafe(Array[Byte](5, 6, 7, 8))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
-                    val readP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)
-                    readP.safe.get.map { got =>
-                        driver.closeHandle(clientH)
-                        driver.closeHandle(acceptedH)
-                        // The real bytes reached the peer (real send ran).
-                        assert(
-                            got.toArray.sameElements(Array[Byte](5, 6, 7, 8)),
-                            s"expected bytes [5,6,7,8] from real socket via RecordingSocketBindings, got ${got.toArray.toList}"
-                        )
-                        // The close count for server fd was incremented (close was recorded).
-                        // (The server fd was closed inside loopbackPair by the recording spy.)
-                        assert(!recording.closeCounts.isEmpty, "no close was recorded despite loopbackPair closing the server fd")
+                    readP.safe.get.map {
+                        case ReadOutcome.Bytes(got) =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
+                            // The real bytes reached the peer (real send ran).
+                            assert(
+                                got.toArray.sameElements(Array[Byte](5, 6, 7, 8)),
+                                s"expected bytes [5,6,7,8] from real socket via RecordingSocketBindings, got ${got.toArray.toList}"
+                            )
+                            // The close count for server fd was incremented (close was recorded).
+                            // (The server fd was closed inside loopbackPair by the recording spy.)
+                            assert(!recording.closeCounts.isEmpty, "no close was recorded despite loopbackPair closing the server fd")
+                        case other =>
+                            fail(s"expected ReadOutcome.Bytes but got $other")
                     }
                 }
             }

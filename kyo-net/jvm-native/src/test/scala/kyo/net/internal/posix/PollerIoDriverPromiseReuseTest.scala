@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import kyo.scheduler.IOPromise
 
@@ -32,14 +33,14 @@ class PollerIoDriverPromiseReuseTest extends Test:
     /** A reused read promise: an IOPromise subclass re-armed across reads exactly as ReadPump does (`becomeAvailable()` + `driver.awaitRead`),
       * collecting each delivered chunk. This exercises the in-tree reuse technique directly.
       */
-    final private class ReusedReadPromise(driver: PollerIoDriver, handle: PosixHandle) extends IOPromise[Closed, Span[Byte]]:
-        private val self: Promise.Unsafe[Span[Byte], Abort[Closed]] = this.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
-        def arm()(using AllowUnsafe, Frame): Unit                   = driver.awaitRead(handle, self)
+    final private class ReusedReadPromise(driver: PollerIoDriver, handle: PosixHandle) extends IOPromise[Closed, ReadOutcome]:
+        private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] = this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
+        def arm()(using AllowUnsafe, Frame): Unit                    = driver.awaitRead(handle, self)
         def rearm()(using AllowUnsafe, Frame): Unit =
             discard(becomeAvailable())
             driver.awaitRead(handle, self)
         end rearm
-        def awaitOne()(using Frame): Span[Byte] < (Abort[Closed] & Async) = self.safe.get
+        def awaitOne()(using Frame): ReadOutcome < (Abort[Closed] & Async) = self.safe.get
     end ReusedReadPromise
 
     "PollerIoDriver reused read promise" - {
@@ -60,7 +61,8 @@ class PollerIoDriverPromiseReuseTest extends Test:
                         val payload = Array.tabulate[Byte](8)(j => ((j + i) & 0xff).toByte)
                         assert(driver.write(clientH, Span.fromUnsafe(payload), 0) == WriteResult.Done)
                         reused.awaitOne().map { got =>
-                            assert(got.toArray.toList == payload.toList, s"reused read $i delivered wrong bytes")
+                            val ReadOutcome.Bytes(span) = got.runtimeChecked
+                            assert(span.toArray.toList == payload.toList, s"reused read $i delivered wrong bytes")
                             // Re-arm the SAME promise for the next read (the becomeAvailable + awaitRead reuse).
                             if i < n then reused.rearm()
                             ()
@@ -117,7 +119,8 @@ class PollerIoDriverPromiseReuseTest extends Test:
                         afterReused.awaitOne().map { got =>
                             driver.closeHandle(acceptedH)
                             discard(sock.close(client).poll())
-                            assert(got.toArray.toList == payload.toList, "the handle must re-arm and deliver cleanly after an interrupt")
+                            val ReadOutcome.Bytes(span) = got.runtimeChecked
+                            assert(span.toArray.toList == payload.toList, "the handle must re-arm and deliver cleanly after an interrupt")
                         }
                     }
                 }

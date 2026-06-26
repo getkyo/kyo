@@ -198,17 +198,18 @@ class NioIoDriverTest extends Test:
         driver.registerChannel(handle)
         discard(driver.start())
 
-        val p = new IOPromise[Closed, Span[Byte]]
-        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        val p = new IOPromise[Closed, ReadOutcome]
+        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
         // Write data from server side so client can read
         sv.write(ByteBuffer.wrap("hello".getBytes))
 
-        p.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+        p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { result =>
             sv.close()
             driver.closeHandle(handle)
             driver.close()
-            assert(result.nonEmpty)
+            val ReadOutcome.Bytes(span) = result.runtimeChecked
+            assert(span.nonEmpty)
             succeed
         }
     }
@@ -278,8 +279,8 @@ class NioIoDriverTest extends Test:
         val handle       = NioHandle.init(client, 4096)
         driver.registerChannel(handle)
 
-        val p = new IOPromise[Closed, Span[Byte]]
-        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        val p = new IOPromise[Closed, ReadOutcome]
+        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
         driver.cancel(handle)
 
@@ -333,8 +334,8 @@ class NioIoDriverTest extends Test:
         val handle       = NioHandle.init(client, 4096)
         driver.registerChannel(handle)
 
-        val p = new IOPromise[Closed, Span[Byte]]
-        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        val p = new IOPromise[Closed, ReadOutcome]
+        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
         driver.closeHandle(handle)
 
@@ -355,8 +356,8 @@ class NioIoDriverTest extends Test:
         val handle       = NioHandle.init(client, 4096)
         driver.registerChannel(handle)
 
-        val p = new IOPromise[Closed, Span[Byte]]
-        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        val p = new IOPromise[Closed, ReadOutcome]
+        driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
         driver.close()
 
@@ -513,8 +514,8 @@ class NioIoDriverTest extends Test:
             val handle       = NioHandle.init(client, 4096)
             driver.registerChannel(handle)
 
-            val p = new kyo.scheduler.IOPromise[Closed, Span[Byte]]
-            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+            val p = new kyo.scheduler.IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
             // Write from server side so the client channel becomes readable.
             sv.write(ByteBuffer.wrap("probe".getBytes))
@@ -522,11 +523,12 @@ class NioIoDriverTest extends Test:
             // The promise resolves when the selector fires. In the Present path the flat array set
             // dispatched the key; in the Absent path the standard iterator did. Both must deliver the
             // byte without missing the key.
-            p.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+            p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { result =>
                 sv.close()
                 driver.closeHandle(handle)
                 driver.close()
-                assert(result.nonEmpty)
+                val ReadOutcome.Bytes(span) = result.runtimeChecked
+                assert(span.nonEmpty)
                 succeed
             }
         catch
@@ -586,18 +588,19 @@ class NioIoDriverTest extends Test:
             driver.registerChannel(handleB)
             discard(driver.start())
 
-            val p = new kyo.scheduler.IOPromise[Closed, Span[Byte]]
-            driver.awaitRead(handleA, p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+            val p = new kyo.scheduler.IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handleA, p.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             svA.write(ByteBuffer.wrap("rebuild-progress".getBytes))
 
-            p.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+            p.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { result =>
                 svA.close()
                 svB.close()
                 driver.closeHandle(handleA)
                 driver.closeHandle(handleB)
                 driver.close()
                 // The driver's select loop (with or without a rebuild) must deliver real readiness.
-                assert(result.nonEmpty)
+                val ReadOutcome.Bytes(span) = result.runtimeChecked
+                assert(span.nonEmpty)
                 succeed
             }
         catch
@@ -626,10 +629,10 @@ class NioIoDriverTest extends Test:
             driver.registerServerChannel(serverChannel)
 
             val pw = new IOPromise[Closed, Unit]
-            val pr = new IOPromise[Closed, Span[Byte]]
+            val pr = new IOPromise[Closed, ReadOutcome]
             val pa = new IOPromise[Closed, Unit]
             driver.awaitWritable(handle, pw.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
-            driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+            driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             driver.awaitAccept(serverChannel, pa.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
 
             // Precondition: the socket channel carries OP_READ and OP_WRITE, the server channel OP_ACCEPT.
@@ -663,8 +666,8 @@ class NioIoDriverTest extends Test:
         val handle       = NioHandle.init(client, 4096)
         driver.registerChannel(handle)
 
-        val pr = new IOPromise[Closed, Span[Byte]]
-        driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        val pr = new IOPromise[Closed, ReadOutcome]
+        driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
         // Force the rebuild while the read is in flight (no loop running yet: no race), then start the loop.
         driver.rebuildSelector()
@@ -672,11 +675,12 @@ class NioIoDriverTest extends Test:
 
         sv.write(ByteBuffer.wrap("after-rebuild".getBytes))
 
-        pr.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+        pr.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { result =>
             sv.close()
             driver.closeHandle(handle)
             driver.close()
-            assert(new String(result.toArray) == "after-rebuild")
+            val ReadOutcome.Bytes(span) = result.runtimeChecked
+            assert(new String(span.toArray) == "after-rebuild")
             succeed
         }
     }
@@ -811,19 +815,20 @@ class NioIoDriverTest extends Test:
             // Wait for dispatch (select fires, interest cleared by dispatch loop).
             p1.asInstanceOf[Fiber.Unsafe[Unit, Abort[Closed]]].safe.get.map { _ =>
                 // OP_WRITE was cleared by the dispatch loop. Register OP_READ (genuine change).
-                val p2 = new kyo.scheduler.IOPromise[Closed, Span[Byte]]
-                driver.awaitRead(handle, p2.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+                val p2 = new kyo.scheduler.IOPromise[Closed, ReadOutcome]
+                driver.awaitRead(handle, p2.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
 
                 // Write from server to trigger the read event.
                 sv.write(ByteBuffer.wrap("guarded-baseline".getBytes))
 
-                p2.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { readResult =>
+                p2.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { readResult =>
                     sv.close()
                     driver.closeHandle(handle)
                     driver.close()
                     // The guarded path delivered the correct data (same final behavior as the unguarded baseline).
-                    assert(readResult.nonEmpty)
-                    assert(readResult.size == "guarded-baseline".getBytes.length)
+                    val ReadOutcome.Bytes(span) = readResult.runtimeChecked
+                    assert(span.nonEmpty)
+                    assert(span.size == "guarded-baseline".getBytes.length)
                     succeed
                 }
             }
@@ -867,21 +872,22 @@ class NioIoDriverTest extends Test:
 
             // Arm a read during the deferred window (before the channel is registered): the interest is held in the pending-op map and applied
             // when the poll carrier completes the deferred registration. awaitRead must NOT fail the promise here.
-            val pr = new IOPromise[Closed, Span[Byte]]
-            driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
-            assert(!pr.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].done())
+            val pr = new IOPromise[Closed, ReadOutcome]
+            driver.awaitRead(handle, pr.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+            assert(!pr.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].done())
 
             // Start the poll loop: its first select() flushes the cancelled key, drainPendingRegistrations registers the channel with the armed
             // OP_READ interest reconstructed from the pending-op map, and the server write is then delivered.
             discard(driver.start())
             sv.write(ByteBuffer.wrap("after-deferred-register".getBytes))
 
-            pr.asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { result =>
+            pr.asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { result =>
                 sv.close()
                 driver.closeHandle(handle)
                 driver.close()
                 // The deferred registration completed on the poll carrier and the read delivered the real bytes: no data lost, no park.
-                assert(new String(result.toArray) == "after-deferred-register")
+                val ReadOutcome.Bytes(span) = result.runtimeChecked
+                assert(new String(span.toArray) == "after-deferred-register")
                 assert(driver.pendingRegistrationCount == 0)
                 succeed
             }
@@ -904,7 +910,7 @@ class NioIoDriverTest extends Test:
         val n        = 8
         val pairs    = Array.fill(n)(openLoopbackPair())
         val handles  = pairs.map { case (client, _) => NioHandle.init(client, 4096) }
-        val promises = Array.fill(n)(new IOPromise[Closed, Span[Byte]])
+        val promises = Array.fill(n)(new IOPromise[Closed, ReadOutcome])
         try
             var i = 0
             while i < n do
@@ -912,7 +918,7 @@ class NioIoDriverTest extends Test:
                 driver.cancel(handles(i))
                 // Deferred path: the cancelled key lingers (no select() has run), so re-register enqueues for the poll carrier.
                 assert(driver.registerChannel(handles(i)))
-                driver.awaitRead(handles(i), promises(i).asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+                driver.awaitRead(handles(i), promises(i).asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
                 i += 1
             end while
             assert(driver.pendingRegistrationCount == n)
@@ -929,7 +935,8 @@ class NioIoDriverTest extends Test:
             def collect(idx: Int): Boolean < (Async & Abort[Closed]) =
                 if idx >= n then (true: Boolean)
                 else
-                    promises(idx).asInstanceOf[Fiber.Unsafe[Span[Byte], Abort[Closed]]].safe.get.map { bytes =>
+                    promises(idx).asInstanceOf[Fiber.Unsafe[ReadOutcome, Abort[Closed]]].safe.get.map { result =>
+                        val ReadOutcome.Bytes(bytes) = result.runtimeChecked
                         assert(new String(bytes.toArray) == s"chan-$idx")
                         collect(idx + 1)
                     }

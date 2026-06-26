@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Regression guard for the stale-fd monotonic-id equality check on the WRITABLE dispatch path of [[PollerIoDriver]].
   *
@@ -37,7 +38,7 @@ class PollerIoDriverStaleWritableTest extends Test:
                     // Two handles over the SAME accepted fd with distinct ids: the OLD writable owner and the NEW reader.
                     val oldHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     val newHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    assert(oldHandle.id != newHandle.id, "handles must have distinct ids")
+                    assert(oldHandle.id.packed != newHandle.id.packed, "handles must have distinct ids")
 
                     // Submit Write registration for oldHandle: when the poll loop starts and drainChanges runs, it sets
                     // activeFds[fd] = oldId and pendingWritables[fd] = (oldWritable, oldId).
@@ -46,7 +47,7 @@ class PollerIoDriverStaleWritableTest extends Test:
 
                     // Submit Read registration for newHandle: drainChanges processes this next in the SAME cycle (both are in the
                     // changeQueue from the test fiber), overwriting activeFds[fd] = newId (oldId is gone).
-                    val newRead = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val newRead = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(newHandle, newRead)
 
                     // Start the poll loop. Its first drainChanges drains both commands above together, then backend.poll returns the

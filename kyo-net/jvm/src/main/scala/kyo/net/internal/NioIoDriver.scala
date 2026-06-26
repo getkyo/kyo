@@ -54,7 +54,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     // concurrent-map type, and its effect-based collections cannot back this driver's non-parking selector path (these maps are read/written on
     // the selector carrier when arming and on the caller's carrier on cancel/close, with no suspension). The raw type is retained as a documented
     // no-equivalent exception; each map is a channel -> pending-state entry, removed by cleanupPending/closeHandle.
-    // Pending read requests: channel -> handle (promise stored on handle.pendingReadPromise)
+    // Pending read requests: channel -> handle (promise and token stored on handle.readArm)
     private val pendingReads =
         new java.util.concurrent.ConcurrentHashMap[SocketChannel, NioHandle]()
 
@@ -138,7 +138,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         donePromise.asInstanceOf[Fiber.Unsafe[Unit, Any]]
     end start
 
-    def awaitRead(handle: NioHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // Check for buffered TLS data before registering with selector.
         // After handshake, netInBuf may already contain application data.
         handle.tls match
@@ -146,36 +146,33 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                 tryUnwrapBuffered(tls) match
                     case Present(buffered) =>
                         Log.live.unsafe.debug(s"$label awaitRead ${handleLabel(handle)} found buffered TLS data size=${buffered.size}")
-                        promise.completeDiscard(Result.succeed(buffered))
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(buffered)))
                     case Absent if tls.peerCleanClose =>
-                        // Buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver EOF (empty Span) so the
-                        // ReadPump tears down instead of waiting on the selector for ciphertext the peer will never send. closeReason then
-                        // reports CleanClose. Mirrors the engine path's clean-close EOF delivery.
-                        promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                        // Buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
+                        // ReadPump tears down instead of waiting on the selector for ciphertext the peer will never send.
+                        promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                     case Absent =>
-                        // Buffer is in handle, no allocation here
-                        handle.pendingReadPromise = promise
-                        pendingReads.put(handle.channel, handle)
-                        Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
-                        if !registerInterest(handle.channel, SelectionKey.OP_READ) then
-                            discard(pendingReads.remove(handle.channel))
-                            promise.completeDiscard(Result.fail(Closed(
-                                label,
-                                summon[Frame],
-                                s"registerRead failed for ${handleLabel(handle)}"
-                            )))
-                        end if
+                        armRead(handle, promise)
             case Absent =>
-                // Buffer is in handle, no allocation here
-                handle.pendingReadPromise = promise
-                pendingReads.put(handle.channel, handle)
-                Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
-                if !registerInterest(handle.channel, SelectionKey.OP_READ) then
-                    discard(pendingReads.remove(handle.channel))
-                    promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"registerRead failed for ${handleLabel(handle)}")))
-                end if
+                armRead(handle, promise)
         end match
     end awaitRead
+
+    // Install promise into the read-arm owner cell via CAS and register selector interest.
+    // Each arm uses a fresh monotonic token; the selector carrier completes only the current owner's promise
+    // by matching the token, so a stale pump arm whose token no longer matches cannot reach the handshake's promise.
+    private def armRead(handle: NioHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        val token   = handle.id.packed ^ java.lang.System.nanoTime()
+        val newCell = Present((token, promise))
+        handle.readArm.set(newCell)
+        pendingReads.put(handle.channel, handle)
+        Log.live.unsafe.debug(s"$label awaitRead registered ${handleLabel(handle)}")
+        if !registerInterest(handle.channel, SelectionKey.OP_READ) then
+            discard(handle.readArm.compareAndSet(newCell, Absent))
+            discard(pendingReads.remove(handle.channel))
+            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"registerRead failed for ${handleLabel(handle)}")))
+        end if
+    end armRead
 
     def awaitWritable(handle: NioHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         pendingWritables.put(handle.channel, promise)
@@ -298,7 +295,9 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             }")
         val closed = Closed(label, summon[Frame], s"${handleLabel(handle)} closed")
         Maybe(pendingReads.remove(handle.channel)).foreach { h =>
-            h.pendingReadPromise.completeDiscard(Result.fail(closed))
+            h.readArm.getAndSet(Absent).foreach { case (_, p) =>
+                p.completeDiscard(Result.fail(closed))
+            }
         }
         Maybe(pendingWritables.remove(handle.channel)).foreach { promise =>
             promise.completeDiscard(Result.fail(closed))
@@ -342,15 +341,6 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         cleanupPending(handle)
     end detachForUpgrade
 
-    /** Forbid the plaintext ReadPump from re-arming once a STARTTLS upgrade has begun on this handle. The pump and the handshake share the single
-      * `pendingReadPromise` slot; without this gate a pump re-arm (`awaitRead(handle, self)`) can land AFTER the handshake armed its own read
-      * promise, overwriting the slot so the poll carrier completes the pump and orphans the handshake's promise (which then never completes -> the
-      * handshake hangs forever). `handle.upgrading` is set before `detachForUpgrade`, so a pump re-arm after that point is dropped here; the pump's
-      * already-in-flight read is failed by detachForUpgrade's cleanupPending. The handshake arms reads directly (not through the pump) and is
-      * unaffected.
-      */
-    override def readPumpMayRearm(handle: NioHandle)(using AllowUnsafe): Boolean = !handle.upgrading
-
     def closeHandle(handle: NioHandle)(using AllowUnsafe, Frame): Unit =
         Log.live.unsafe.debug(s"$label closeHandle ${handleLabel(handle)}")
         cleanupPending(handle)
@@ -389,7 +379,9 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             )
             val closed = Closed(label, summon[Frame], "driver closed")
             pendingReads.forEach { (_, h) =>
-                h.pendingReadPromise.completeDiscard(Result.fail(closed))
+                h.readArm.getAndSet(Absent).foreach { case (_, p) =>
+                    p.completeDiscard(Result.fail(closed))
+                }
             }
             pendingReads.clear()
             pendingWritables.forEach { (_, promise) =>
@@ -870,10 +862,22 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
     private def dispatchRead(channel: SocketChannel)(using AllowUnsafe): Unit =
         Maybe(pendingReads.remove(channel)) match
             case Present(handle) =>
-                val promise = handle.pendingReadPromise
-                handle.tls match
-                    case Present(tls) => dispatchReadTls(channel, promise, handle, tls)
-                    case Absent       => dispatchReadPlain(channel, promise, handle)
+                // Read the current owner cell. The cell value is the identity token for the CAS in
+                // dispatchReadPlain/dispatchReadTls: the SAME object reference must be used in
+                // compareAndSet (AtomicReference.compareAndSet uses reference equality, so a freshly
+                // constructed Present((token, promise)) would always fail even for matching values).
+                // A concurrent cancel/close calls getAndSet(Absent), which races with the CAS; only one
+                // side wins (the other side's CAS fails or finds Absent and skips the completion).
+                val cell = handle.readArm.get()
+                cell match
+                    case arm @ Present((token, promise)) =>
+                        handle.tls match
+                            case Present(tls) => dispatchReadTls(channel, cell, token, promise, handle, tls)
+                            case Absent       => dispatchReadPlain(channel, cell, token, promise, handle)
+                    case Absent =>
+                        given Frame = Frame.internal
+                        Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} readArm already cleared (cancelled)")
+                end match
             case Absent =>
                 given Frame = Frame.internal
                 Log.live.unsafe.warn(s"$label dispatchRead for channel=${channel.hashCode()} with no pending promise")
@@ -882,7 +886,9 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
 
     private def dispatchReadPlain(
         channel: SocketChannel,
-        promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
+        cell: Maybe[(Long, Promise.Unsafe[ReadOutcome, Abort[Closed]])],
+        token: Long,
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: NioHandle
     )(using AllowUnsafe): Unit =
         given Frame = Frame.internal
@@ -896,41 +902,49 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                 val arr = new Array[Byte](n)
                 buf.get(arr)
                 Log.live.unsafe.debug(s"$label dispatchRead ${handleLabel(handle)} bytes=$n")
-                promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
+                // CAS-clear the owner cell before completing. Pass the SAME cell object read in dispatchRead
+                // so AtomicReference.compareAndSet's reference check succeeds.
+                if handle.readArm.compareAndSet(cell, Absent) then
+                    promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
             else if n < 0 then
-                // EOF
-                promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                // Orderly peer EOF (recv == 0 with no local shutdown).
+                if handle.readArm.compareAndSet(cell, Absent) then
+                    promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
             else
-                // n == 0: no data (shouldn't happen after select), treat as retry needed
-                // Re-register for read
-                handle.pendingReadPromise = promise
+                // n == 0: no data ready (selector spurious wakeup). Re-arm: restore the entry and interest.
                 pendingReads.put(channel, handle)
                 discard(registerInterest(channel, SelectionKey.OP_READ))
             end if
         catch
             case _: IOException =>
-                promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                if handle.readArm.compareAndSet(cell, Absent) then
+                    promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
         end try
     end dispatchReadPlain
 
     private def dispatchReadTls(
         channel: SocketChannel,
-        promise: Promise.Unsafe[Span[Byte], Abort[Closed]],
+        cell: Maybe[(Long, Promise.Unsafe[ReadOutcome, Abort[Closed]])],
+        token: Long,
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
         handle: NioHandle,
         tls: NioTlsState
     )(using AllowUnsafe): Unit =
+        // All compareAndSet calls pass the SAME cell object read in dispatchRead: AtomicReference.compareAndSet
+        // uses reference equality (eq), so constructing a new Present((token, promise)) here would always fail.
         try
             // Check for buffered data from a previous read (e.g. post-handshake leftover)
             tryUnwrapBuffered(tls) match
                 case Present(buffered) =>
                     given Frame = Frame.internal
                     Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} buffered plaintext=${buffered.size}")
-                    promise.completeDiscard(Result.succeed(buffered))
+                    if handle.readArm.compareAndSet(cell, Absent) then
+                        promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(buffered)))
                 case Absent if tls.peerCleanClose =>
-                    // The buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver EOF (empty Span) so the
-                    // ReadPump tears down, rather than re-arming for ciphertext the peer will never send. closeReason then reports CleanClose, not
-                    // Truncated. Mirrors PollerIoDriver / IoUringDriver's clean-close EOF delivery on the engine path.
-                    promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                    // The buffered records ended in the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose so the
+                    // ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
+                    if handle.readArm.compareAndSet(cell, Absent) then
+                        promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                 case Absent =>
                     val buf = handle.readBuffer
                     buf.clear()
@@ -941,9 +955,10 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                         // 6.1). Record peerEof for the bare-FIN case so closeReason reports Truncated; do not overwrite an already-observed clean
                         // close. Mirrors the engine path's recv == 0 -> peerEof handling (PollerIoDriver / IoUringDriver).
                         if !tls.peerCleanClose then tls.peerEof = true
-                        promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                        if handle.readArm.compareAndSet(cell, Absent) then
+                            promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                     else if n == 0 then
-                        handle.pendingReadPromise = promise
+                        // Spurious wakeup: no data ready. Restore entry and re-arm (token is unchanged).
                         pendingReads.put(channel, handle)
                         discard(registerInterest(channel, SelectionKey.OP_READ))
                     else
@@ -962,15 +977,15 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                             case Present(plaintext) =>
                                 given Frame = Frame.internal
                                 Log.live.unsafe.debug(s"$label dispatchReadTls ${handleLabel(handle)} plaintext=${plaintext.size}")
-                                promise.completeDiscard(Result.succeed(plaintext))
+                                if handle.readArm.compareAndSet(cell, Absent) then
+                                    promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(plaintext)))
                             case Absent if tls.peerCleanClose =>
-                                // The newly fed ciphertext was the peer's close_notify (orderly close, RFC 8446 6.1): deliver EOF (empty Span)
+                                // The newly fed ciphertext was the peer's close_notify (orderly close, RFC 8446 6.1): deliver CleanClose
                                 // immediately so the ReadPump tears down, rather than re-arming for ciphertext the peer will never send.
-                                // closeReason then reports CleanClose. Mirrors the engine path's clean-close EOF delivery.
-                                promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                                if handle.readArm.compareAndSet(cell, Absent) then
+                                    promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                             case Absent =>
-                                // Got ciphertext but no complete TLS record yet: need more data
-                                handle.pendingReadPromise = promise
+                                // Got ciphertext but no complete TLS record yet: need more data (token unchanged, re-arm).
                                 pendingReads.put(channel, handle)
                                 discard(registerInterest(channel, SelectionKey.OP_READ))
                         end match
@@ -981,7 +996,8 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                 // A read IOException (e.g. a TCP RST) ends the inbound stream abruptly with no close_notify: a truncation, not an orderly close.
                 // Record peerEof unless a close_notify was already consumed, so closeReason reports Truncated rather than Active.
                 if !tls.peerCleanClose then tls.peerEof = true
-                promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                if handle.readArm.compareAndSet(cell, Absent) then
+                    promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
     end dispatchReadTls
 
     private def dispatchWritable(channel: SocketChannel)(using AllowUnsafe): Unit =

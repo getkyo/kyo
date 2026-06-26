@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Regression guard for the error-only readiness event handling in [[PollerIoDriver]], covering both directions it must get right.
   *
@@ -78,7 +79,7 @@ class PollerIoDriverErrorEventTest extends Test:
                 // Reset the peer so SO_ERROR is set on acceptedFd; the driver's real getsockopt reads the genuine non-zero errno.
                 PosixTestSockets.resetPeer(spy, clientFd)
 
-                val readPromise  = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val readPromise  = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 // Register both a pending read and a pending writable so the error dispatch has both in its tables.
                 driver.awaitRead(handle, readPromise)
@@ -148,7 +149,7 @@ class PollerIoDriverErrorEventTest extends Test:
                 discard(driver.start())
                 // Do NOT reset the peer; the accepted fd is still connected, so SO_ERROR == 0.
 
-                val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 // Register read interest on the idle fd (no data -> the real backend never fires a read event on its own).
                 driver.awaitRead(handle, readPromise)
 

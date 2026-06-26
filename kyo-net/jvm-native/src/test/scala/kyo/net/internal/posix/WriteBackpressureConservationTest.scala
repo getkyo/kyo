@@ -8,6 +8,7 @@ import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Write CONSERVATION under repeated backpressure plus writable-event interleaving for the TLS write path in [[PollerIoDriver]].
@@ -102,14 +103,14 @@ class WriteBackpressureConservationTest extends Test:
             if acc.size >= total then acc.toArray
             else if steps > total + 256 then acc.toArray // safety bound; the conservation assertion catches a shortfall
             else
-                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(peerHandle, p)
-                p.safe.get.map { delivered =>
-                    val batch = delivered.toArray
-                    val step: Unit < Async =
-                        if batch.isEmpty then ()
-                        else decryptOnDriver(driver, serverEngine, batch).safe.get.map(plain => acc ++= plain)
-                    step.map(_ => loop(steps + 1))
+                p.safe.get.map {
+                    case ReadOutcome.Bytes(delivered) =>
+                        decryptOnDriver(driver, serverEngine, delivered.toArray).safe.get.map(plain => acc ++= plain).map(_ =>
+                            loop(steps + 1)
+                        )
+                    case _ => acc.toArray // EOF
                 }
             end if
         end loop
@@ -228,15 +229,13 @@ class WriteBackpressureConservationTest extends Test:
                             if recovered.size >= total && issuingDone.get() then Loop.done(())
                             else if steps > 8 * total + 256 then Loop.done(()) // safety net
                             else
-                                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                                 driver.awaitRead(peerHandle, p)
                                 Abort.run[Closed](p.safe.get).map {
-                                    case Result.Success(delivered) =>
-                                        val batch = delivered.toArray
-                                        val step: Unit < Async =
-                                            if batch.isEmpty then ()
-                                            else decryptOnDriver(driver, serverEngine, batch).safe.get.map(plain => recovered ++= plain)
-                                        step.map(_ => Loop.continue(steps + 1))
+                                    case Result.Success(ReadOutcome.Bytes(delivered)) =>
+                                        decryptOnDriver(driver, serverEngine, delivered.toArray).safe.get.map(plain =>
+                                            recovered ++= plain
+                                        ).map(_ => Loop.continue(steps + 1))
                                     case _ => Loop.continue(steps + 1)
                                 }
                         }

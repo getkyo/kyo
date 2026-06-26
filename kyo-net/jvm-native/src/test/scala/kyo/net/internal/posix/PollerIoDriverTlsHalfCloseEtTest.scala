@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.scheduler.IOPromise
 
 /** Reproduce-first regression guard for the TLS read path ET half-close drain on epoll (STEP-FURTHER from Phase 2 re-audit, audit-r2.md).
@@ -48,10 +49,10 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         handle: PosixHandle,
         acc: java.io.ByteArrayOutputStream,
         done: Promise.Unsafe[String, Any]
-    ) extends IOPromise[Closed, Span[Byte]]:
+    ) extends IOPromise[Closed, ReadOutcome]:
 
-        private val self: Promise.Unsafe[Span[Byte], Abort[Closed]] =
-            this.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
+        private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
+            this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 
         def start()(using AllowUnsafe, Frame): Unit = driver.awaitRead(handle, self)
 
@@ -59,12 +60,14 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
             import AllowUnsafe.embrace.danger
             given Frame = Frame.internal
             poll() match
-                case Present(Result.Success(bytes)) =>
-                    if bytes.isEmpty then done.completeDiscard(Result.succeed(TlsHalfCloseReader.EofSeen))
-                    else
-                        acc.write(bytes.toArrayUnsafe)
-                        if becomeAvailable() then driver.awaitRead(handle, self)
-                        else done.completeDiscard(Result.succeed(TlsHalfCloseReader.BecomeAvailableFailed))
+                case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
+                    acc.write(bytes.toArrayUnsafe)
+                    if becomeAvailable() then driver.awaitRead(handle, self)
+                    else done.completeDiscard(Result.succeed(TlsHalfCloseReader.BecomeAvailableFailed))
+                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose)) =>
+                    done.completeDiscard(Result.succeed(TlsHalfCloseReader.EofSeen))
+                case Present(Result.Success(_)) =>
+                    done.completeDiscard(Result.succeed(TlsHalfCloseReader.EofSeen))
                 case Present(Result.Failure(_: Closed)) => done.completeDiscard(Result.succeed(TlsHalfCloseReader.ClosedSeen))
                 case Present(Result.Panic(t))           => done.completeDiscard(Result.panic(t))
                 case Absent                             => done.completeDiscard(Result.succeed(TlsHalfCloseReader.NoResult))

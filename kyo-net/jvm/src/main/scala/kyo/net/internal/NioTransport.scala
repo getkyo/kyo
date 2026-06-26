@@ -603,40 +603,42 @@ final private[kyo] class NioTransport private (
 
             if needMoreData then
                 // Need more data from network
-                val readPromise = new IOPromise[Closed, Span[Byte]]
+                val readPromise = new IOPromise[Closed, ReadOutcome]
                 readPromise.onComplete { result =>
                     result match
-                        case Result.Success(bytes) =>
-                            if bytes.isEmpty then
-                                connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                            else
-                                // Feed raw ciphertext to engine
-                                val arr = bytes.toArrayUnsafe
-                                tlsState.netInBuf.put(arr)
-                                tlsState.netInBuf.flip()
-                                tlsState.appInBuf.clear()
-                                try
-                                    val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
-                                    tlsState.netInBuf.compact()
-                                    val status = res.getStatus
-                                    if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
-                                        driveHandshake(handle, tlsState, host, port, connectPromise)
-                                    else if status eq SSLEngineResult.Status.CLOSED then
-                                        connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                                    else // BUFFER_OVERFLOW
-                                        connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                                    end if
-                                catch
-                                    case e: Exception =>
-                                        connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
-                                end try
-                            end if
+                        case Result.Success(outcome) =>
+                            outcome match
+                                case ReadOutcome.Bytes(bytes) =>
+                                    // Feed raw ciphertext to engine
+                                    val arr = bytes.toArrayUnsafe
+                                    tlsState.netInBuf.put(arr)
+                                    tlsState.netInBuf.flip()
+                                    tlsState.appInBuf.clear()
+                                    try
+                                        val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
+                                        tlsState.netInBuf.compact()
+                                        val status = res.getStatus
+                                        if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
+                                            driveHandshake(handle, tlsState, host, port, connectPromise)
+                                        else if status eq SSLEngineResult.Status.CLOSED then
+                                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                                        else // BUFFER_OVERFLOW
+                                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                                        end if
+                                    catch
+                                        case e: Exception =>
+                                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
+                                    end try
+                                case _ =>
+                                    // PeerFin, LocalShutdown, CleanClose, WouldBlock, Failed: all end the handshake.
+                                    connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                            end match
                         case Result.Failure(e) =>
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
                         case Result.Panic(t) =>
                             connectPromise.completeDiscard(Result.panic(t))
                 }
-                driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+                driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
             end if
         else if hs eq SSLEngineResult.HandshakeStatus.NEED_WRAP then
             try
@@ -675,11 +677,6 @@ final private[kyo] class NioTransport private (
             engine.setEnableSessionCreation(false) // disable renegotiation
             // Switch handle to TLS mode: driver will now unwrap/wrap inline
             handle.tls = Present(tlsState)
-            // Clear the upgrade gate now that the handshake is done: the gate (readPumpMayRearm == !upgrading) exists only to stop the OLD plaintext
-            // ReadPump from re-arming the shared pending-read slot DURING the upgrade. The NEW TLS connection wired by completeConnect reuses this
-            // handle, so leaving upgrading set would permanently block its ReadPump from re-arming after its first read, hanging any multi-record
-            // (multi-read) TLS transfer. A no-op for a plain connect(tls) handshake, where upgrading was never set.
-            handle.upgrading = false
             completeConnect(handle, connectPromise)
         end if
     end driveHandshake
@@ -986,9 +983,6 @@ final private[kyo] class NioTransport private (
             // Unsafe: NioTransport only creates Connection[NioHandle] instances, so this downcast is safe.
             val nioConn = conn.asInstanceOf[Connection[NioHandle]]
             val handle  = nioConn.handle
-            // Mark the handle upgrading BEFORE detach so the plaintext ReadPump stops re-arming reads (readPumpMayRearm), preventing a pump re-arm
-            // from orphaning the handshake's read promise on the shared pendingReadPromise slot.
-            handle.upgrading = true
             // Central failure-close for the upgrade: detachForUpgrade gives up the plaintext connection's ownership of the channel WITHOUT closing
             // it, and on a STARTTLS handshake failure startTlsHandshake (existingHandle present) does not close it either, so the channel would leak
             // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new

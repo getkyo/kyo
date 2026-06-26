@@ -4,8 +4,10 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
+import kyo.net.internal.util.HandleId
 
 /** Unified raw-fd handle (the unification of the transport layer).
   *
@@ -23,7 +25,7 @@ import kyo.net.internal.util.GrowableByteBuffer
 final private[net] class PosixHandle private (
     val readFd: Int,
     val writeFd: Int,
-    val id: Long,
+    val id: HandleId,
     private var readBufferField: Buffer[Byte],
     private var readBufferSizeField: Int,
     @volatile var tls: Maybe[TlsEngine],
@@ -313,7 +315,7 @@ final private[net] class PosixHandle private (
       * paths never run concurrently on the same handle (at most one read dispatch is in flight per handle at a time, enforced by
       * `beginDispatch`/`endDispatch`).
       */
-    @volatile var pendingReadPromise: Maybe[Promise.Unsafe[Span[Byte], Abort[Closed]]] = Absent
+    @volatile var pendingReadPromise: Maybe[Promise.Unsafe[ReadOutcome, Abort[Closed]]] = Absent
 
     /** The pending accept promise for this fd, stored directly on the handle. Mirrors [[pendingReadPromise]] for the listen-fd accept path
       * (`awaitAccept` / `dispatchAccept`). Written before the corresponding change command is enqueued (the `changeQueue.offer` is the
@@ -526,10 +528,6 @@ private[net] object PosixHandle:
     final private val HolderMask = CloseBit - 1
     final private val Closed     = -1
 
-    // A process-lifetime id generator. This companion singleton has no construction site to receive a propagated AllowUnsafe, so it uses the raw
-    // java.util.concurrent.atomic.AtomicLong (the type AtomicLong.Unsafe aliases) directly: a monotonic counter needs no capability.
-    private val idGen = new java.util.concurrent.atomic.AtomicLong(0L)
-
     /** The single atomic handoff state for the STARTTLS-on-io_uring stale-recv bytes (see [[PosixHandle.upgradeHandoff]]). The stale recv reaped on
       * the io_uring reap carrier ([[IoUringDriver.complete]]) and the handshake-driving carrier ([[PosixTransport.driveUpgradeRead]]) run on
       * different carriers; this one state, swung by CAS, replaces the two separate `@volatile` slots whose independent check-then-act let the two
@@ -556,7 +554,7 @@ private[net] object PosixHandle:
         new PosixHandle(
             fd,
             fd,
-            idGen.getAndIncrement(),
+            HandleId.next(fd),
             Buffer.alloc[Byte](bufSize),
             bufSize,
             Absent,
@@ -571,7 +569,7 @@ private[net] object PosixHandle:
         new PosixHandle(
             0,
             1,
-            idGen.getAndIncrement(),
+            HandleId.next(0),
             Buffer.alloc[Byte](bufSize),
             bufSize,
             Absent,
@@ -682,15 +680,15 @@ private[posix] object NoDriver extends IoDriver[PosixHandle]:
     private def unbound: Nothing =
         throw new UnsupportedOperationException("PosixHandle is not bound to a driver")
 
-    def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]                                                         = unbound
-    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit = unbound
-    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = unbound
-    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = unbound
-    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit      = unbound
-    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                          = unbound
-    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                        = unbound
-    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                   = unbound
-    def close()(using AllowUnsafe, Frame): Unit                                                                            = unbound
-    def label: String                                                                                                      = "NoDriver"
+    def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]                                                          = unbound
+    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = unbound
+    def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = unbound
+    def awaitConnect(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit     = unbound
+    def awaitAccept(handle: PosixHandle, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit       = unbound
+    def write(handle: PosixHandle, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                           = unbound
+    def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                         = unbound
+    def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit                                                    = unbound
+    def close()(using AllowUnsafe, Frame): Unit                                                                             = unbound
+    def label: String                                                                                                       = "NoDriver"
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}(unbound)"
 end NoDriver

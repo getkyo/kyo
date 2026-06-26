@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.transport.Connection as InternalConnection
+import kyo.net.internal.transport.ReadOutcome
 
 // This suite lives in jvm-native/src/test because the Connection pumps run over PosixTransport's PollerIoDriver on JVM-posix and Native;
 // JS uses the Node transport.
@@ -56,11 +57,11 @@ class ConnectionHalfCloseOutboundTest extends Test:
       */
     private def drainPeer(driver: PollerIoDriver, peerH: PosixHandle)(using Frame): Array[Byte] < (Abort[Closed] & Async) =
         Loop(Array.emptyByteArray) { acc =>
-            val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(peerH, p)
-            p.safe.get.map { chunk =>
-                if chunk.isEmpty then Loop.done(acc)
-                else Loop.continue(acc ++ chunk.toArray)
+            p.safe.get.map {
+                case ReadOutcome.Bytes(span) => Loop.continue(acc ++ span.toArray)
+                case _                       => Loop.done(acc)
             }
         }
 

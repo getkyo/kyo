@@ -6,6 +6,7 @@ import kyo.net.internal.JsHandle
 import kyo.net.internal.JsIoDriver
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import scala.collection.mutable
 
@@ -50,7 +51,7 @@ class IoDriverPoolTest extends Test:
             if throwOnStart then throw new RuntimeException("driver start failed (throwOnStart=true)")
             real.start()
 
-        def awaitRead(handle: JsHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        def awaitRead(handle: JsHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
             real.awaitRead(handle, promise)
 
         def awaitWritable(handle: JsHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =

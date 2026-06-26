@@ -2,6 +2,7 @@ package kyo.net.internal
 
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.util.HandleId
 import scala.scalajs.js as sjs
 
 /** `JsIoDriver.awaitWritable` fails the promise (typed Closed) on a socket `error` or `close`, never spuriously succeeds.
@@ -31,7 +32,7 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
     "awaitWritable fails the promise with Closed on a socket error" in {
         val driver  = JsIoDriver.init()
         val socket  = mockSocket()
-        val handle  = new JsHandle(socket, 0)
+        val handle  = new JsHandle(socket, HandleId.next(0))
         val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
         driver.awaitWritable(handle, promise)
         // Drive the Node "error" event: the registered errorFn must fail the promise, not succeed.
@@ -48,7 +49,7 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
     "awaitWritable fails the promise with Closed on a socket close" in {
         val driver  = JsIoDriver.init()
         val socket  = mockSocket()
-        val handle  = new JsHandle(socket, 0)
+        val handle  = new JsHandle(socket, HandleId.next(0))
         val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
         driver.awaitWritable(handle, promise)
         discard(socket.emit("close"))
@@ -64,7 +65,7 @@ class JsIoDriverAwaitWritableFailureTest extends Test:
     "awaitWritable still succeeds on drain (the success path is preserved)" in {
         val driver  = JsIoDriver.init()
         val socket  = mockSocket()
-        val handle  = new JsHandle(socket, 0)
+        val handle  = new JsHandle(socket, HandleId.next(0))
         val promise = Promise.Unsafe.init[Unit, Abort[Closed]]()
         driver.awaitWritable(handle, promise)
         discard(socket.emit("drain"))

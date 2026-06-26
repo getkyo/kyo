@@ -5,6 +5,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.TransportConfig
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 
 /** Shared real-socket helpers for posix-level tests on JVM and Native (Linux epoll, macOS/BSD kqueue, io_uring).
   *
@@ -220,12 +221,14 @@ object PosixTestSockets:
         def loop(total: Int): Int < (Abort[Closed] & Async) =
             if total >= want then total
             else
-                val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, promise)
-                promise.safe.get.map { delivered =>
-                    val afterDelivered = total + delivered.size
-                    val afterDrain     = recvLoop(afterDelivered)
-                    loop(afterDrain)
+                promise.safe.get.map {
+                    case ReadOutcome.Bytes(span) =>
+                        val afterDelivered = total + span.size
+                        val afterDrain     = recvLoop(afterDelivered)
+                        loop(afterDrain)
+                    case _ => total // EOF: stop draining
                 }
             end if
         end loop
@@ -262,12 +265,14 @@ object PosixTestSockets:
         def loop(acc: List[Byte]): List[Byte] < (Abort[Closed] & Async) =
             if acc.length >= want then acc
             else
-                val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, promise)
-                promise.safe.get.map { delivered =>
-                    // The delivered span carries the readiness chunk; recvLoop drains any further bytes the same edge made available.
-                    val afterDelivered = acc ++ delivered.toArray.toList
-                    loop(recvLoop(afterDelivered))
+                promise.safe.get.map {
+                    case ReadOutcome.Bytes(span) =>
+                        // The delivered span carries the readiness chunk; recvLoop drains any further bytes the same edge made available.
+                        val afterDelivered = acc ++ span.toArray.toList
+                        loop(recvLoop(afterDelivered))
+                    case _ => acc // EOF: stop
                 }
             end if
         end loop

@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Behavioral pins for edge-triggered (ET) registration in [[PollerIoDriver]].
   *
@@ -76,15 +77,14 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
     )(using Frame): Array[Byte] < (Abort[Closed] & Async) =
         val acc = new java.io.ByteArrayOutputStream
         Loop(()) { _ =>
-            val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, p)
             Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p.safe.get))).map {
-                case Result.Success(Result.Success(span: Span[Byte] @unchecked)) =>
-                    if span.isEmpty then Loop.done(acc.toByteArray)
-                    else
-                        acc.write(span.toArrayUnsafe)
-                        Loop.continue(())
-                    end if
+                case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+                    acc.write(span.toArrayUnsafe)
+                    Loop.continue(())
+                case Result.Success(Result.Success(_)) =>
+                    Loop.done(acc.toByteArray) // EOF (PeerFin, CleanClose, etc.)
                 case Result.Success(Result.Failure(closed: Closed)) =>
                     Abort.fail(closed)
                 case _ =>
@@ -106,15 +106,14 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
         Loop(()) { _ =>
             if acc.size() >= want then Loop.done(acc.toByteArray)
             else
-                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, p)
                 Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p.safe.get))).map {
-                    case Result.Success(Result.Success(span: Span[Byte] @unchecked)) =>
-                        if span.isEmpty then Loop.done(acc.toByteArray)
-                        else
-                            acc.write(span.toArrayUnsafe)
-                            Loop.continue(())
-                        end if
+                    case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
+                        acc.write(span.toArrayUnsafe)
+                        Loop.continue(())
+                    case Result.Success(Result.Success(_)) =>
+                        Loop.done(acc.toByteArray) // EOF
                     case Result.Success(Result.Failure(closed: Closed)) =>
                         Abort.fail(closed)
                     case _ =>
@@ -256,7 +255,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                         // is sent. For iteration 0 this suspends until registerRead executes on the change worker; for
                         // iterations 1+ the promise is already done and returns immediately (no-op sync). Using
                         // Abort.run[Any] collapses the Promise.Unsafe[Unit, Any] error channel back to Abort[Closed].
-                        val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(handle, p)
                         Abort.run[Any](backend.registeredRead(acceptedFd).safe.get).andThen {
                             val sendBuf = Buffer.fromArray[Byte](Array[Byte]((i % 127).toByte))
@@ -407,7 +406,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             discard(driver.start())
 
             val handle = PosixHandle.socket(acceptedFd, PosixHandle.DefaultReadBufferSize, Absent)
-            val p      = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val p      = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, p)
 
             // Wait until the read is registered, then close the handle (close path: fdClosing=true).
@@ -453,7 +452,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                         discard(driver2.start())
 
                         val handle2 = PosixHandle.socket(accepted2Fd, PosixHandle.DefaultReadBufferSize, Absent)
-                        val p2      = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val p2      = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver2.awaitRead(handle2, p2)
                         // Send exactly one byte of real data after the read is armed (no pre-existing data).
                         backend2.registeredRead(accepted2Fd).safe.get.map { _ =>
@@ -466,7 +465,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                                     PosixTestSockets.closePeerForEof(spy2, client2Fd)
                                     PosixTestSockets.closePeerForEof(spy2, accepted2Fd)
                                     outcome match
-                                        case Result.Success(span: Span[Byte]) =>
+                                        case Result.Success(ReadOutcome.Bytes(span)) =>
                                             assert(
                                                 span.size == 1 && span(0) == 0x42.toByte,
                                                 s"new fd=$accepted2Fd (old=$acceptedFd) must receive exactly the sent byte, not a stale event: got ${span.toArrayUnsafe.toList}"
@@ -516,7 +515,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             val handle = PosixHandle.socket(acceptedFd, readBufSize, Absent)
 
             // Register the first read BEFORE sending to avoid the premature-edge race (the same pattern as syscallCountConstant).
-            val p1 = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val p1 = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, p1)
             // Wait until the ADD has actually executed on the change worker, then send the first payload.
             Abort.run[Any](backend.registeredRead(acceptedFd).safe.get).andThen {
@@ -524,7 +523,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
                     // Collect the first payload. Because firstPayload.length < readBufferSize, dispatchReadPlain sets
                     // readMightHaveMore=false after this recv. The consumer-paced drain therefore does NOT re-dispatch.
                     Abort.run[Timeout](Async.timeout(10.seconds)(Abort.run[Closed](p1.safe.get))).map {
-                        case Result.Success(Result.Success(span: Span[Byte] @unchecked)) =>
+                        case Result.Success(Result.Success(ReadOutcome.Bytes(span))) =>
                             assert(
                                 span.size == firstPayload.length,
                                 s"first delivery must match firstPayload size: got ${span.size}"
@@ -589,7 +588,7 @@ class PollerIoDriverEdgeTriggeredTest extends Test:
             val sendBuf = Buffer.fromArray[Byte](Array[Byte](42.toByte))
             sock.send(clientFd, sendBuf, 1L, PosixConstants.MSG_NOSIGNAL).safe.get.map { _ =>
                 sendBuf.close()
-                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, p)
                 Abort.run[Timeout](Async.timeout(5.seconds)(p.safe.get)).map { outcome =>
                     driver.close()

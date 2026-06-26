@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Reproduction + regression guard for security finding #9 (io_uring C shim signed-length-to-unsigned cast, CWE-190 / CWE-195 / CWE-805) in
   * [[IoUringBindings]] / [[IoUringDriver]].
@@ -131,7 +132,7 @@ class IoUringDriverNegativeLengthTest extends Test:
                     // driver must FAIL the read promise observably (Closed) instead of dropping the SQE silently (which would leave the promise
                     // waiting on a CQE that never arrives, a hang). The 5s ceiling exists only to turn a regression (hang) into a failed test.
                     recording.armReject()
-                    val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise)
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
                         driver.closeHandle(acceptedH)

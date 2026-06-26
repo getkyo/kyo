@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Fallback driver for the one driver-selection cell the readiness poller cannot serve: an epoll backend reading a regular-file stdin (`S_ISREG`).
@@ -27,7 +28,7 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
 
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] = real.start()
 
-    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // One read per handle (the IoDriver contract). The blocking read of a regular file returns near-instantly;
         // its result is consumed via onComplete (or done()/poll() inline on JVM/Native) without re-entering the
         // effect system. The spawned carrier runs the read and immediately registers the completion callback.
@@ -48,11 +49,11 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                         s"read failed fd=${handle.readFd} errno=${result.errorCode}"
                     )))
                 else if n == 0 then
-                    // EOF on a regular file: an empty Span, not a failure.
-                    promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                    // EOF on a regular file: orderly peer close.
+                    promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                 else
                     val arr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
-                    promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
+                    promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                 end if
             end deliver
             if readFiber.done() then

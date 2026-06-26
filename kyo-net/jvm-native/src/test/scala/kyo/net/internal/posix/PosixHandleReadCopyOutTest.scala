@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Read copy-out correctness. The read path delivers the bytes read off the socket to the consumer; the property under test is
@@ -22,10 +23,16 @@ class PosixHandleReadCopyOutTest extends Test:
 
     private def sock = kyo.ffi.Ffi.load[SocketBindings]
 
-    private def readVia(driver: PollerIoDriver, handle: PosixHandle)(using Frame): Span[Byte] < (Abort[Closed] & Async) =
-        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+    private def readVia(driver: PollerIoDriver, handle: PosixHandle)(using
+        Frame,
+        kyo.test.AssertScope
+    ): Span[Byte] < (Abort[Closed] & Async) =
+        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         driver.awaitRead(handle, promise)
-        promise.safe.get
+        promise.safe.get.map {
+            case ReadOutcome.Bytes(span) => span
+            case other                   => fail(s"expected ReadOutcome.Bytes but got $other")
+        }
     end readVia
 
     /** Send `bytes` from the client side as one write (the loopback buffer holds it). */

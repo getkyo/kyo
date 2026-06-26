@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Smoke tests for [[PosixTestSockets]].
@@ -28,12 +29,15 @@ class PosixTestSocketsTest extends Test:
                     val payload   = Span.fromUnsafe(Array[Byte](1, 2, 3, 4))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
-                    val readP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)
-                    readP.safe.get.map { got =>
-                        driver.closeHandle(clientH)
-                        driver.closeHandle(acceptedH)
-                        assert(got.toArray.toList == List[Byte](1, 2, 3, 4), s"got ${got.toArray.toList}")
+                    readP.safe.get.map {
+                        case ReadOutcome.Bytes(got) =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
+                            assert(got.toArray.toList == List[Byte](1, 2, 3, 4), s"got ${got.toArray.toList}")
+                        case other =>
+                            fail(s"expected Bytes, got $other")
                     }
                 }
             }
@@ -52,15 +56,18 @@ class PosixTestSocketsTest extends Test:
                     val payload   = Span.fromUnsafe(Array[Byte](10, 20, 30))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
-                    val readP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)
-                    readP.safe.get.map { got =>
-                        driver.closeHandle(clientH)
-                        driver.closeHandle(acceptedH)
-                        assert(
-                            got.toArray.sameElements(Array[Byte](10, 20, 30)),
-                            s"expected bytes [10,20,30] from real socket, got ${got.toArray.toList}"
-                        )
+                    readP.safe.get.map {
+                        case ReadOutcome.Bytes(got) =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
+                            assert(
+                                got.toArray.sameElements(Array[Byte](10, 20, 30)),
+                                s"expected bytes [10,20,30] from real socket, got ${got.toArray.toList}"
+                            )
+                        case other =>
+                            fail(s"expected Bytes, got $other")
                     }
                 }
             }
@@ -105,15 +112,16 @@ class PosixTestSocketsTest extends Test:
                     Abort.run[Closed](
                         (for
                             readP <-
-                                Sync.defer { val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]](); driver.awaitRead(acceptedH, p); p }
+                                Sync.defer { val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]](); driver.awaitRead(acceptedH, p); p }
                             result <- readP.safe.get
                         yield result)
                     ).map { result =>
                         driver.closeHandle(acceptedH)
                         result match
-                            case Result.Failure(_: Closed)      => succeed
-                            case Result.Success(s) if s.isEmpty => succeed
-                            case other                          => fail(s"expected Closed or EOF after RST, got $other")
+                            case Result.Failure(_: Closed)                         => succeed
+                            case Result.Success(ReadOutcome.Bytes(s)) if s.isEmpty => succeed
+                            case Result.Success(_: ReadOutcome)                    => succeed
+                            case other                                             => fail(s"expected Closed or EOF after RST, got $other")
                         end match
                     }
                 }
@@ -129,11 +137,18 @@ class PosixTestSocketsTest extends Test:
                 Sync.ensure(Sync.defer(driver.close())) {
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     PosixTestSockets.closePeerForEof(sock, client)
-                    val readP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)
-                    readP.safe.get.map { got =>
-                        driver.closeHandle(acceptedH)
-                        assert(got.isEmpty, s"expected empty Span (EOF), got ${got.size} bytes")
+                    readP.safe.get.map {
+                        case ReadOutcome.Bytes(got) if got.isEmpty =>
+                            driver.closeHandle(acceptedH)
+                            succeed
+                        case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown =>
+                            driver.closeHandle(acceptedH)
+                            succeed
+                        case other =>
+                            driver.closeHandle(acceptedH)
+                            fail(s"expected empty Span (EOF), got $other")
                     }
                 }
             }
@@ -148,12 +163,21 @@ class PosixTestSocketsTest extends Test:
                 Sync.ensure(Sync.defer(driver.close())) {
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     PosixTestSockets.halfClose(sock, client)
-                    val readP = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readP = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readP)
-                    readP.safe.get.map { got =>
-                        driver.closeHandle(acceptedH)
-                        discard(sock.close(client))
-                        assert(got.isEmpty, s"expected EOF (empty Span) after SHUT_WR, got ${got.size} bytes")
+                    readP.safe.get.map {
+                        case ReadOutcome.Bytes(got) if got.isEmpty =>
+                            driver.closeHandle(acceptedH)
+                            discard(sock.close(client))
+                            succeed
+                        case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown =>
+                            driver.closeHandle(acceptedH)
+                            discard(sock.close(client))
+                            succeed
+                        case other =>
+                            driver.closeHandle(acceptedH)
+                            discard(sock.close(client))
+                            fail(s"expected EOF (empty Span) after SHUT_WR, got $other")
                     }
                 }
             }

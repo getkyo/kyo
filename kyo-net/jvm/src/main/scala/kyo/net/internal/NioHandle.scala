@@ -4,6 +4,8 @@ import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 import javax.net.ssl.SSLEngine
 import kyo.*
+import kyo.net.internal.transport.ReadOutcome
+import kyo.net.internal.util.HandleId
 
 /** JVM connection handle wrapping a non-blocking `SocketChannel` and a persistent read buffer.
   *
@@ -21,12 +23,15 @@ final private[kyo] class NioHandle private (
     val readBufferSize: Int,
     @volatile var tls: Maybe[NioTlsState]
 ):
-    val readBuffer: ByteBuffer                                                  = ByteBuffer.allocateDirect(readBufferSize)
-    @volatile var pendingReadPromise: Promise.Unsafe[Span[Byte], Abort[Closed]] = scala.compiletime.uninitialized
-    // Set true at the start of a STARTTLS upgrade (before detachForUpgrade), so the plaintext ReadPump stops re-arming reads on this handle and
-    // cannot orphan the handshake's read promise on the shared pendingReadPromise slot (see NioIoDriver.readPumpMayRearm). Cleared when the
-    // handshake completes (driveHandshake), so the upgraded TLS connection's ReadPump can re-arm reads for multi-record transfers.
-    @volatile var upgrading: Boolean = false
+    import AllowUnsafe.embrace.danger
+    val readBuffer: ByteBuffer = ByteBuffer.allocateDirect(readBufferSize)
+    val id: HandleId           = HandleId.next(java.lang.System.identityHashCode(channel))
+    // The read-arm OWNER cell. Each arm (the plaintext pump's, the handshake's) installs its
+    // (token, promise), and the selector carrier completes ONLY the current owner's promise via a
+    // single-winner CAS, so a stale pump arm whose token does not match the current owner cannot
+    // complete the handshake's read promise. Re-arm ownership is the cell's token, and the upgrade is
+    // the ConnectionState.Upgrading transition.
+    val readArm: AtomicRef.Unsafe[Maybe[(Long, Promise.Unsafe[ReadOutcome, Abort[Closed]])]] = AtomicRef.Unsafe.init(Absent)
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */

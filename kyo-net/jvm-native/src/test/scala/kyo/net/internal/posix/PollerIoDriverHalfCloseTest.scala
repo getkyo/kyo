@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.scheduler.IOPromise
 
 /** Correctness guard for the orderly half-close (peer `shutdown(SHUT_WR)`) path of [[PollerIoDriver]] on a real epoll / kqueue poller.
@@ -61,22 +62,24 @@ class PollerIoDriverHalfCloseTest extends Test:
         handle: PosixHandle,
         acc: java.io.ByteArrayOutputStream,
         done: Promise.Unsafe[String, Any]
-    ) extends IOPromise[Closed, Span[Byte]]:
+    ) extends IOPromise[Closed, ReadOutcome]:
 
-        private val self: Promise.Unsafe[Span[Byte], Abort[Closed]] =
-            this.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
+        private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
+            this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 
         def start()(using AllowUnsafe, Frame): Unit = driver.awaitRead(handle, self)
 
         override protected def onComplete(): Unit =
             import AllowUnsafe.embrace.danger
             poll() match
-                case Present(Result.Success(bytes)) =>
-                    if bytes.isEmpty then done.completeDiscard(Result.succeed(HalfCloseReader.EofSeen))
-                    else
-                        acc.write(bytes.toArrayUnsafe)
-                        if becomeAvailable() then driver.awaitRead(handle, self)
-                        else done.completeDiscard(Result.succeed(HalfCloseReader.BecomeAvailableFailed))
+                case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
+                    acc.write(bytes.toArrayUnsafe)
+                    if becomeAvailable() then driver.awaitRead(handle, self)
+                    else done.completeDiscard(Result.succeed(HalfCloseReader.BecomeAvailableFailed))
+                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose)) =>
+                    done.completeDiscard(Result.succeed(HalfCloseReader.EofSeen))
+                case Present(Result.Success(_)) =>
+                    done.completeDiscard(Result.succeed(HalfCloseReader.EofSeen))
                 case Present(Result.Failure(_: Closed)) => done.completeDiscard(Result.succeed(HalfCloseReader.ClosedSeen))
                 case Present(Result.Panic(t))           => done.completeDiscard(Result.panic(t))
                 case Absent                             => done.completeDiscard(Result.succeed(HalfCloseReader.NoResult))

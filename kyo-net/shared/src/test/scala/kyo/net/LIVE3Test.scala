@@ -2,6 +2,7 @@ package kyo.net
 
 import kyo.*
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WritePump
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.transport.WriteState
@@ -35,7 +36,7 @@ class LIVE3Test extends Test:
             final class PartialFirstDriver extends IoDriver[Unit]:
                 def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
                     Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
-                def awaitRead(handle: Unit, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+                def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
                 def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
                     capturedPromise = promise
                 def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()

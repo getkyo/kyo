@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** The poller's fd-keyed tables (`activeFds`, `pendingReads`, `pendingWritables`, `pendingAccepts`) are PRIMITIVE open-addressing
@@ -58,16 +59,20 @@ class PollerIoDriverFdMapTest extends Test:
                     Async.foreach(conns) { case (clientH, acceptedH, client, accepted, payload) =>
                         val w = driver.write(clientH, Span.fromUnsafe(Array[Byte](payload)), 0)
                         assert(w == WriteResult.Done, s"write result=$w")
-                        val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, p)
-                        p.safe.get.map { got =>
-                            assert(got.size == 1, s"expected one byte, got ${got.size}")
-                            assert(got.toArray.head == payload, s"misrouted read: ${got.toArray.head} != $payload (map corruption?)")
-                            // Close the handle here (concurrently with the other fibers' reads + closes): exercises OpDeregister map removal under
-                            // concurrency, the deregister half of the confinement.
-                            driver.closeHandle(acceptedH)
-                            discard(sock.close(client).poll())
-                            payload
+                        p.safe.get.map {
+                            case ReadOutcome.Bytes(got) =>
+                                assert(got.size == 1, s"expected one byte, got ${got.size}")
+                                assert(got.toArray.head == payload, s"misrouted read: ${got.toArray.head} != $payload (map corruption?)")
+                                // Close the handle here (concurrently with the other fibers' reads + closes): exercises OpDeregister map removal under
+                                // concurrency, the deregister half of the confinement.
+                                driver.closeHandle(acceptedH)
+                                discard(sock.close(client).poll())
+                                payload
+                            case other =>
+                                fail(s"expected ReadOutcome.Bytes, got $other")
+                                payload
                         }
                     }.map { delivered =>
                         // Every distinct payload was delivered exactly once: the maps stayed correct under concurrent register + deregister.

@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Write CONSERVATION across back-to-back TLS writes on a single [[IoUringDriver]] handle, over a REAL io_uring ring and a REAL BoringSSL
@@ -65,11 +66,14 @@ class IoUringTlsWriteOrderingTest extends Test:
         Loop(Array.emptyByteArray) { acc =>
             if acc.length >= want then Loop.done(acc)
             else
-                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 drv.awaitRead(peerHandle, p)
-                p.safe.get.map { chunk =>
-                    val more = TlsEngineLoopback.decrypt(peerEngine, chunk.toArray)
-                    Loop.continue(acc ++ more)
+                p.safe.get.map {
+                    case ReadOutcome.Bytes(chunk) =>
+                        val more = TlsEngineLoopback.decrypt(peerEngine, chunk.toArray)
+                        Loop.continue(acc ++ more)
+                    case other =>
+                        Loop.done(acc)
                 }
         }
     end collectPlaintext

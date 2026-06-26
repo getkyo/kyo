@@ -3,6 +3,7 @@ package kyo.net.internal.posix
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Deterministic guard for the poll-loop FIFO drain ([[PollerIoDriver.drainFifos]]), the recovery for the Native TLS lost-wakeup deadlock.
   *
@@ -38,7 +39,7 @@ class PollerFifoBackstopRecoveryTest extends Test:
 
                 // Arm a read through the public path: awaitRead -> submitChange enqueues an OpRegisterRead and returns. No poll loop is started and
                 // submitChange no longer spawns a drain task, so nothing drains the FIFO yet (the stranded state the old spawn-loss could wedge in).
-                val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(PosixHandle.socket(targetFd, PosixHandle.DefaultReadBufferSize, Absent), readPromise)
 
                 assert(

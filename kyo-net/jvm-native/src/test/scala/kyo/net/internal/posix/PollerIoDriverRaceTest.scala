@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 
 /** Deterministic reproduction + regression guard for the dispatchRead-vs-close use-after-free race in [[PollerIoDriver]].
   *
@@ -108,7 +109,7 @@ class PollerIoDriverRaceTest extends Test:
                     discard(Ffi.load[SocketBindings].sendNow(clientFd, preSendBuf, ciphertext.length.toLong, PosixConstants.MSG_NOSIGNAL))
                     preSendBuf.close()
 
-                    val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(handle, readPromise)
 
                     // The dispatch runs on the FIFO worker: recvNow returns the real ciphertext (pre-buffered), feedCiphertext fires closeHandle (the
@@ -138,13 +139,15 @@ class PollerIoDriverRaceTest extends Test:
                                 case Result.Failure(_: Closed) => succeed
                                 case Result.Failure(_: Timeout) =>
                                     fail("the dispatch did not complete within the timeout (read promise stranded)")
-                                case Result.Success(span) =>
+                                case Result.Success(ReadOutcome.Bytes(span)) =>
                                     // The dispatch ran on a LIVE engine (free deferred), so it correctly recovers the known plaintext (or delivers
                                     // an empty span if it bailed before decrypting). Either proves no use-after-free; corrupt data is the failure.
                                     assert(
                                         span.isEmpty || span.toArray.sameElements(knownPlain),
                                         s"dispatch on a live engine must recover the known plaintext, got ${span.toArray.toList}"
                                     )
+                                case Result.Success(other) =>
+                                    fail(s"expected ReadOutcome.Bytes, got $other")
                                 case other => fail(s"unexpected dispatch outcome: $other")
                             end match
                         }

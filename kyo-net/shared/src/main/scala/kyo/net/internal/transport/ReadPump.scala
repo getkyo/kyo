@@ -31,25 +31,33 @@ final private[kyo] class ReadPump[Handle](
     closeFn: () => Unit
 ) extends IOPromise[Closed, Span[Byte]]:
 
-    private val self: Promise.Unsafe[Span[Byte], Abort[Closed]] =
-        this.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
+    private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
+        this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 
     /** Start the pump. Registers for the first read. */
     def start()(using AllowUnsafe, Frame): Unit =
         driver.awaitRead(handle, self)
     end start
 
-    /** Callback when driver completes the promise with read result. */
+    /** Callback when the driver completes the promise with a typed [[ReadOutcome]]. */
     override protected def onComplete(): Unit =
         // Unsafe: IOPromise.onComplete is the scheduler callback boundary; it runs synchronously off the promise and has no AllowUnsafe in scope.
+        // The outer IOPromise type is Span[Byte] (the channel element), but the driver completes with ReadOutcome. The cast makes poll() return
+        // the actual runtime type; it is erased-safe since IOPromise type params are not reified.
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
-        poll() match
-            case Present(Result.Success(bytes)) =>
-                if bytes.isEmpty then
-                    teardown() // EOF
-                else
-                    offerToChannel(bytes)
+        this.asInstanceOf[kyo.scheduler.IOPromise[Closed, ReadOutcome]].poll() match
+            case Present(Result.Success(outcome)) =>
+                outcome match
+                    case ReadOutcome.Bytes(span)   => offerToChannel(span)
+                    case ReadOutcome.WouldBlock    => requestNextRead() // EAGAIN: re-arm, NOT EOF
+                    case ReadOutcome.PeerFin       => teardown()        // orderly peer EOF
+                    case ReadOutcome.LocalShutdown => teardown()        // our own shutdown(SHUT_RD)
+                    case ReadOutcome.CleanClose    => teardown()        // TLS close_notify consumed
+                    case ReadOutcome.Failed(cause) =>
+                        Log.live.unsafe.debug(s"ReadPump read failed on ${driver.handleLabel(handle)}: $cause")
+                        teardown()
+                end match
             case Present(Result.Failure(_)) =>
                 teardown()
             case Present(Result.Panic(t)) =>
@@ -84,13 +92,13 @@ final private[kyo] class ReadPump[Handle](
         end match
 
     private def requestNextRead()(using AllowUnsafe, Frame): Unit =
-        if driver.readPumpMayRearm(handle) then
-            discard(becomeAvailable())
-            driver.awaitRead(handle, self)
-        // else: a STARTTLS upgrade has taken over this handle (driver.readPumpMayRearm == false). Stop re-arming WITHOUT tearing down: the upgrade
-        // reuses the same fd and drives its own reads, and a pump re-arm here would race the handshake for the handle's single pending-read slot and
-        // orphan the handshake's read promise. The pump's already-in-flight read (if any) was failed by detachForUpgrade.
-        end if
+        // Always re-arm. A STARTTLS upgrade needs no pump-gating flag: detachForUpgrade (the
+        // Established -> Upgrading transition) fails the pump's in-flight read and closes its
+        // channels, so the pump tears down rather than re-arming; and on NIO the read-arm owner cell
+        // is HandleId-keyed, so even a re-arm that races the handshake completes its OWN token's slot
+        // and cannot reach the handshake's read promise.
+        discard(becomeAvailable())
+        driver.awaitRead(handle, self)
     end requestNextRead
 
     private def teardown()(using AllowUnsafe, Frame): Unit =

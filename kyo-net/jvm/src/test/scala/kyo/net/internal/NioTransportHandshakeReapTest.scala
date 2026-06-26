@@ -5,6 +5,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** A NIO handshake-deadline reap removes the driver's pendingReads entry for the reaped handle.
   *
@@ -46,7 +47,7 @@ class NioTransportHandshakeReapTest extends Test:
             discard(driver.registerChannel(handle))
             // Arm a read: this is what the server handshake does while waiting for the ClientHello; it creates the pendingReads[channel] -> handle
             // entry that the deadline teardown must clean up.
-            val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, readPromise)
             assert(driver.hasPendingRead(handle), "arming a read must register the pendingReads entry")
 

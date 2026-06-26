@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Reproduction + regression guard (libuv #4598, CWE-252 mishandled return value) in [[IoUringDriver]].
   *
@@ -89,13 +90,13 @@ class IoUringDriverShortSubmitTest extends Test:
                     // not flush it; the fix detects the short count and re-submits the stranded SQE, which the kernel then completes with the data.
                     assert(sock.sendNow(client, Buffer.fromArray[Byte](payload), payload.length.toLong, 0).value == 16L)
                     recording.armShortSubmit()
-                    val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     drv.awaitRead(acceptedH, promise)
                     Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
                         drv.closeHandle(acceptedH)
                         discard(sock.close(client))
                         outcome match
-                            case Result.Success(got) =>
+                            case Result.Success(ReadOutcome.Bytes(got)) =>
                                 assert(
                                     got.toArray.toList == payload.toList,
                                     s"the re-submitted recv must deliver the full payload; got ${got.toArray.toList}"

@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Guards the TLS-over-io_uring parity invariant on a REAL io_uring ring with a REAL BoringSSL engine: a TLS handle served by the
@@ -137,26 +138,29 @@ class IoUringTlsEncryptionTest extends Test:
                             0
                         ).value == ciphertext.length.toLong)
 
-                        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, promise)
-                        promise.safe.get.map { got =>
-                            handle.tls = Absent
-                            drv.closeHandle(handle)
-                            discard(sock.close(peerFd))
-                            // (1) The engine was fed the ciphertext (feedCiphertext ran).
-                            assert(
-                                recordingServer.feedCalls.get() > 0,
-                                "the inbound ciphertext was never fed to the engine; it was delivered undecrypted"
-                            )
-                            // (2) The application received the decrypted plaintext, never the raw ciphertext.
-                            assert(
-                                got.toArray.toList != ciphertext.toList,
-                                s"raw ciphertext was delivered undecrypted: ${got.toArray.toList}"
-                            )
-                            assert(
-                                got.toArray.toList == plaintext.toList,
-                                s"the application must receive the plaintext, got ${got.toArray.toList}"
-                            )
+                        promise.safe.get.map {
+                            case ReadOutcome.Bytes(got) =>
+                                handle.tls = Absent
+                                drv.closeHandle(handle)
+                                discard(sock.close(peerFd))
+                                // (1) The engine was fed the ciphertext (feedCiphertext ran).
+                                assert(
+                                    recordingServer.feedCalls.get() > 0,
+                                    "the inbound ciphertext was never fed to the engine; it was delivered undecrypted"
+                                )
+                                // (2) The application received the decrypted plaintext, never the raw ciphertext.
+                                assert(
+                                    got.toArray.toList != ciphertext.toList,
+                                    s"raw ciphertext was delivered undecrypted: ${got.toArray.toList}"
+                                )
+                                assert(
+                                    got.toArray.toList == plaintext.toList,
+                                    s"the application must receive the plaintext, got ${got.toArray.toList}"
+                                )
+                            case other =>
+                                fail(s"expected ReadOutcome.Bytes, got $other")
                         }
                     }
                 }

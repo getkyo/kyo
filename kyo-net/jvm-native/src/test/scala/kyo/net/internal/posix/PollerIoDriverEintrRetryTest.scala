@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduction + regression guard for finding #13 (POSIX recv/send EINTR handling, CWE-252 mishandled return value) in [[PollerIoDriver]].
@@ -83,7 +84,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                     // Arm the one-shot EINTR injection BEFORE registering read interest, so the very first recvNow the driver issues for this fd
                     // returns the injected (-1, EINTR). The retried recvNow (injection now cleared) reads the real bytes.
                     _           = spy.injectRecvEintrOnce.set(true)
-                    readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     _           = driver.awaitRead(handle, readPromise)
                     // Bounded so the test fails fast rather than hanging if the read is never delivered.
                     outcome <- Abort.run[Timeout | Closed](Async.timeout(5.seconds)(readPromise.safe.get))
@@ -93,7 +94,7 @@ class PollerIoDriverEintrRetryTest extends Test:
                         PosixTestSockets.closePeerForEof(spy, clientFd)
                     }
                 yield outcome match
-                    case Result.Success(got) =>
+                    case Result.Success(ReadOutcome.Bytes(got)) =>
                         assert(
                             got.toArray.toList == payload.toList,
                             s"the retried recv must deliver the full payload; got ${got.toArray.toList}"
@@ -102,6 +103,8 @@ class PollerIoDriverEintrRetryTest extends Test:
                             spy.injectRecvEintrOnce.get() == false,
                             "the one-shot EINTR injection must have fired (and a retry consumed it)"
                         )
+                    case Result.Success(other) =>
+                        fail(s"expected ReadOutcome.Bytes, got $other")
                     case Result.Failure(_: Closed) =>
                         fail("EINTR on recv was treated as a hard error and failed the read Closed; it must be retried (POSIX recv)")
                     case Result.Failure(_: Timeout) =>

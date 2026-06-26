@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Reproduction + regression guard for read/write interest starvation on the same fd in [[PollerIoDriver]].
   *
@@ -95,7 +96,7 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                     val payload   = Array.tabulate[Byte](8)(i => (i + 1).toByte)
 
                     // Park a READ on the accepted fd: no data has arrived, so it stays pending. On epoll this arms EPOLLIN.
-                    val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, readPromise)
 
                     // Park a WRITABLE on the SAME fd. The freshly-connected socket is writable, so this completes. On the unfixed epoll this is
@@ -120,11 +121,13 @@ class PollerIoDriverConcurrentInterestTest extends Test:
                             case other                      => fail(s"unexpected writable outcome: $other")
                         end match
                         readOutcome match
-                            case Result.Success(got) =>
+                            case Result.Success(ReadOutcome.Bytes(got)) =>
                                 assert(
                                     got.toArray.toList == payload.toList,
                                     s"read delivered ${got.toArray.toList}, expected ${payload.toList}"
                                 )
+                            case Result.Success(other) =>
+                                fail(s"expected ReadOutcome.Bytes, got $other")
                             case Result.Failure(_: Timeout) =>
                                 fail(
                                     "interest starvation: the parked read was clobbered by the writable arm and its readiness was never delivered"

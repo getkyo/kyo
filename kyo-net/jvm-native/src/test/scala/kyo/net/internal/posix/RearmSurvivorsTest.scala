@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** ET-behavior witness: confirms that under edge-triggered (ET) registration the driver never submits a rearm call.
   *
@@ -42,7 +43,7 @@ class RearmSurvivorsTest extends Test:
             fillSendBuffer(acceptedFd)
             PosixTestSockets.halfClose(spy, clientFd)
 
-            val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(handle, readPromise)
             // Arm write too: under one-shot this would require a survivor re-arm after the read fires; under ET it must not.
             val writePromise = Promise.Unsafe.init[Unit, Abort[Closed]]()

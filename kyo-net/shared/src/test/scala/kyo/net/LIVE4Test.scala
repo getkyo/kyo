@@ -3,6 +3,7 @@ package kyo.net
 import kyo.*
 import kyo.net.internal.transport.Connection
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Verifies that write backpressure does not deadlock the inbound channel.
@@ -27,10 +28,10 @@ class LIVE4Test extends Test:
 
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
-        def awaitRead(handle: Unit, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
             // Deliver a span immediately to simulate inbound data arriving. This fires the ReadPump's
             // onComplete synchronously (inline), so inbound has data before start() returns.
-            promise.completeDiscard(Result.succeed(Span.fromUnsafe(Array[Byte](99))))
+            promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(Array[Byte](99)))))
         def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
             capturedWritable = promise // park: never complete it in this test
             captured = true

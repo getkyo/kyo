@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Reproduction + regression guard for the TLS write-path backpressure stall in [[PollerIoDriver]].
@@ -142,14 +143,14 @@ class PollerIoDriverWriteBackpressureTest extends Test:
             if recovered.size >= want then recovered.toArray
             else if steps > want + 256 then recovered.toArray // safety bound; the conservation assertion catches a shortfall
             else
-                val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, promise)
-                promise.safe.get.map { delivered =>
-                    val batch = delivered.toArray
-                    val step: Unit < Async =
-                        if batch.isEmpty then ()
-                        else decryptOnDriver(driver, serverEngine, batch).safe.get.map(plain => recovered ++= plain)
-                    step.map(_ => loop(steps + 1))
+                promise.safe.get.map {
+                    case ReadOutcome.Bytes(delivered) =>
+                        decryptOnDriver(driver, serverEngine, delivered.toArray).safe.get.map(plain => recovered ++= plain).map(_ =>
+                            loop(steps + 1)
+                        )
+                    case _ => recovered.toArray
                 }
             end if
         end loop

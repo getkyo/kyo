@@ -20,16 +20,16 @@ class IoDriverPoolWrapRotationTest extends Test:
     final private class TagDriver extends IoDriver[Unit]:
         def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any] =
             Promise.Unsafe.init[Unit, Any]().asInstanceOf[Fiber.Unsafe[Unit, Any]]
-        def awaitRead(handle: Unit, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
-        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit   = ()
-        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
-        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit      = ()
-        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                          = WriteResult.Done
-        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                        = ()
-        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                                                   = ()
-        def close()(using AllowUnsafe, Frame): Unit                                                                     = ()
-        def label: String                                                                                               = "TagDriver"
-        def handleLabel(handle: Unit): String                                                                           = "tag"
+        def awaitRead(handle: Unit, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit = ()
+        def awaitWritable(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit    = ()
+        def awaitConnect(handle: Unit, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit     = ()
+        def awaitAccept(handle: Unit, promise: Promise.Unsafe[Int, Abort[Closed]])(using AllowUnsafe, Frame): Unit       = ()
+        def write(handle: Unit, data: Span[Byte], offset: Int)(using AllowUnsafe): WriteResult                           = WriteResult.Done
+        def cancel(handle: Unit)(using AllowUnsafe, Frame): Unit                                                         = ()
+        def closeHandle(handle: Unit)(using AllowUnsafe, Frame): Unit                                                    = ()
+        def close()(using AllowUnsafe, Frame): Unit                                                                      = ()
+        def label: String                                                                                                = "TagDriver"
+        def handleLabel(handle: Unit): String                                                                            = "tag"
     end TagDriver
 
     private def mkDrivers(n: Int): Array[IoDriver[Unit]] =

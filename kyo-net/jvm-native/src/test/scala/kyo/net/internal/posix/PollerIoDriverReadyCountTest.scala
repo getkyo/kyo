@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Poll ready-count read as a raw int. The poll loop reads the number of ready fds as a raw `Int` off the per-driver scratch
@@ -51,12 +52,16 @@ class PollerIoDriverReadyCountTest extends Test:
                         pending match
                             case Nil => Nil: List[Byte]
                             case (h, exp) :: rest =>
-                                val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                                val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                                 driver.awaitRead(h, promise)
-                                promise.safe.get.map { got =>
-                                    assert(got.size == 1, s"expected one byte, got ${got.size}")
-                                    assert(got.toArray.head == exp, s"wrong byte for a connection: ${got.toArray.head} != $exp")
-                                    readAll(rest).map(got.toArray.head :: _)
+                                promise.safe.get.map {
+                                    case ReadOutcome.Bytes(got) =>
+                                        assert(got.size == 1, s"expected one byte, got ${got.size}")
+                                        assert(got.toArray.head == exp, s"wrong byte for a connection: ${got.toArray.head} != $exp")
+                                        readAll(rest).map(got.toArray.head :: _)
+                                    case other =>
+                                        fail(s"expected ReadOutcome.Bytes, got $other")
+                                        readAll(rest).map(_ => exp :: Nil).map(identity)
                                 }
                     readAll(accepted.zip(payloads)).map { received =>
                         accepted.foreach(driver.closeHandle)
@@ -78,12 +83,15 @@ class PollerIoDriverReadyCountTest extends Test:
                     val clientH   = PosixHandle.socket(client, PosixHandle.DefaultReadBufferSize, Absent)
                     val payload   = Array.tabulate[Byte](8)(i => (i + 1).toByte)
                     assert(driver.write(clientH, Span.fromUnsafe(payload), 0) == WriteResult.Done)
-                    val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise)
-                    promise.safe.get.map { got =>
-                        driver.closeHandle(acceptedH)
-                        discard(sock.close(client).poll())
-                        assert(got.toArray.toList == payload.toList)
+                    promise.safe.get.map {
+                        case ReadOutcome.Bytes(got) =>
+                            driver.closeHandle(acceptedH)
+                            discard(sock.close(client).poll())
+                            assert(got.toArray.toList == payload.toList)
+                        case other =>
+                            fail(s"expected ReadOutcome.Bytes, got $other")
                     }
                 }
             }.map(_ => succeed)

@@ -7,6 +7,7 @@ import kyo.net.Test
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Tests the readiness-to-completion [[PollerIoDriver]] over a real epoll (Linux) / kqueue (macOS/BSD) poller on the host that has the
@@ -84,8 +85,8 @@ class PollerIoDriverTest extends Test:
     end withDriver
 
     /** Await a read on `handle` driven by the poller. */
-    private def readVia(driver: PollerIoDriver, handle: PosixHandle)(using Frame): Span[Byte] < (Abort[Closed] & Async) =
-        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+    private def readVia(driver: PollerIoDriver, handle: PosixHandle)(using Frame): ReadOutcome < (Abort[Closed] & Async) =
+        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
         driver.awaitRead(handle, promise)
         promise.safe.get
     end readVia
@@ -100,10 +101,15 @@ class PollerIoDriverTest extends Test:
                     val payload   = Span.fromUnsafe(Array.tabulate[Byte](16)(i => (i + 1).toByte))
                     val w         = driver.write(clientH, payload, 0)
                     assert(w == WriteResult.Done, s"write result=$w")
-                    readVia(driver, acceptedH).map { got =>
-                        driver.closeHandle(clientH)
-                        driver.closeHandle(acceptedH)
-                        assert(got.toArray.toList == payload.toArray.toList)
+                    readVia(driver, acceptedH).map {
+                        case ReadOutcome.Bytes(got) =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
+                            assert(got.toArray.toList == payload.toArray.toList)
+                        case other =>
+                            driver.closeHandle(clientH)
+                            driver.closeHandle(acceptedH)
+                            fail(s"expected bytes, got $other")
                     }
                 }
             }.map(_ => succeed)
@@ -116,9 +122,14 @@ class PollerIoDriverTest extends Test:
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     // Peer (client) closes orderly; the accepted side should observe EOF.
                     sock.close(client).safe.get.map { _ =>
-                        readVia(driver, acceptedH).map { got =>
+                        readVia(driver, acceptedH).map { outcome =>
                             driver.closeHandle(acceptedH)
-                            assert(got.isEmpty, s"expected EOF empty Span, got ${got.size} bytes")
+                            outcome match
+                                case ReadOutcome.Bytes(s) if s.isEmpty                                        => succeed // legacy EOF path
+                                case ReadOutcome.PeerFin | ReadOutcome.CleanClose | ReadOutcome.LocalShutdown => succeed
+                                case ReadOutcome.Bytes(s) => fail(s"expected EOF, got ${s.size} bytes")
+                                case other                => fail(s"expected EOF, got $other")
+                            end match
                         }
                     }
                 }
@@ -146,9 +157,12 @@ class PollerIoDriverTest extends Test:
                             // The reset surfaces as Closed; some kernels deliver the RST only after an EOF read, so accept either a Closed
                             // failure or a terminal EOF (both are non-data terminal outcomes, never live bytes).
                             result match
-                                case Result.Failure(_: Closed)      => succeed
-                                case Result.Success(s) if s.isEmpty => succeed
-                                case other                          => fail(s"expected Closed or EOF, got $other")
+                                case Result.Failure(_: Closed) => succeed
+                                case Result.Success(ReadOutcome.PeerFin) | Result.Success(ReadOutcome.CleanClose) | Result.Success(
+                                        ReadOutcome.LocalShutdown
+                                    ) => succeed
+                                case Result.Success(ReadOutcome.Bytes(s)) if s.isEmpty => succeed // legacy
+                                case other                                             => fail(s"expected Closed or EOF, got $other")
                             end match
                         }
                     }
@@ -176,7 +190,7 @@ class PollerIoDriverTest extends Test:
             assert(stdioH.readFd != stdioH.writeFd, "split handle must have distinct fds")
             // A per-fd promise for the write registration: completes when registerWrite(writeFd) has recorded the fd. Watch the spy's
             // registeredWriteFds via a fifoBarrier (the write registration is the second change; its execution latch is the read latch's twin).
-            val rp = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+            val rp = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
             driver.awaitRead(stdioH, rp)
             val wp = Promise.Unsafe.init[Unit, Abort[Closed]]()
             driver.awaitWritable(stdioH, wp)
@@ -239,7 +253,7 @@ class PollerIoDriverTest extends Test:
                 loopbackPair().map { case (client, accepted) =>
                     val acceptedH = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     // Register a read with no data available, so the promise stays pending until closeHandle cancels it.
-                    val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(acceptedH, promise)
                     driver.closeHandle(acceptedH)
                     Abort.run[Closed](promise.safe.get).map { result =>
@@ -260,9 +274,9 @@ class PollerIoDriverTest extends Test:
                     // Two handles over the SAME fd with different ids: the old read registration, then a new owner of the fd id slot.
                     val oldHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
                     val newHandle = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    assert(oldHandle.id != newHandle.id, "handles must have distinct ids")
+                    assert(oldHandle.id.packed != newHandle.id.packed, "handles must have distinct ids")
                     // Register a read for the OLD handle: pendingReads[fd] = oldPromise, activeFds[fd] = oldId.
-                    val oldPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val oldPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(oldHandle, oldPromise)
                     // The fd is recycled into newHandle: awaitWritable rewrites activeFds[fd] to newId WITHOUT touching pendingReads[fd].
                     val newWritable = Promise.Unsafe.init[Unit, Abort[Closed]]()
@@ -312,7 +326,7 @@ class PollerIoDriverTest extends Test:
                     // not what we are testing here (activeFds was wiped by cancel); we are testing that pendingAccepts is also cleared,
                     // so drainReady picks pendingReads over the no-longer-present pendingAccepts entry.
                     val readHandle  = PosixHandle.socket(accepted, PosixHandle.DefaultReadBufferSize, Absent)
-                    val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                    val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                     driver.awaitRead(readHandle, readPromise)
                     // Step 4: make the fd readable by sending a byte from the client side.
                     val wb = Buffer.fromArray[Byte](Array[Byte](42))
@@ -321,11 +335,16 @@ class PollerIoDriverTest extends Test:
                     }.andThen {
                         // Step 5: the read promise must complete with the byte. Without the fix (stale pendingAccepts entry present),
                         // drainReady would route to dispatchAccept and the read promise would never complete.
-                        readPromise.safe.get.map { got =>
+                        readPromise.safe.get.map { outcome =>
                             driver.closeHandle(readHandle)
                             discard(sock.close(client))
-                            assert(!got.isEmpty, "expected read promise to complete with the sent byte, not empty")
-                            assert(got.toArray.toList == List[Byte](42), s"expected byte 42, got ${got.toArray.toList}")
+                            outcome match
+                                case ReadOutcome.Bytes(got) =>
+                                    assert(!got.isEmpty, "expected read promise to complete with the sent byte, not empty")
+                                    assert(got.toArray.toList == List[Byte](42), s"expected byte 42, got ${got.toArray.toList}")
+                                case other =>
+                                    fail(s"expected bytes, got $other")
+                            end match
                         }
                     }
                 }
@@ -376,8 +395,11 @@ class PollerIoDriverTest extends Test:
                     else
                         val wb = Buffer.fromArray[Byte](Array[Byte]((k + 1).toByte))
                         Sync.ensure(Sync.defer(wb.close()))(sock.send(client, wb, 1L, PosixConstants.MSG_NOSIGNAL).safe.get).andThen {
-                            readVia(driver, acceptedH).map { got =>
-                                assert(got.toArray.toList == List[Byte]((k + 1).toByte), s"read $k got ${got.toArray.toList}")
+                            readVia(driver, acceptedH).map {
+                                case ReadOutcome.Bytes(got) =>
+                                    assert(got.toArray.toList == List[Byte]((k + 1).toByte), s"read $k got ${got.toArray.toList}")
+                                case other =>
+                                    fail(s"read $k: expected bytes, got $other")
                             }.andThen(drive(k + 1))
                         }
                 drive(0).map { _ =>
@@ -501,14 +523,20 @@ class PollerIoDriverTest extends Test:
                         val msg1 = "tls-read-one!".getBytes("UTF-8")
                         encryptOnDriver(driver, clientEngine, msg0).safe.get.flatMap { c0 =>
                             sendAll(client, c0)
-                            readVia(driver, acceptedH).map(got0 =>
-                                assert(got0.toArray.toList == msg0.toList, s"read 0 got ${got0.toArray.toList}")
-                            )
+                            readVia(driver, acceptedH).map {
+                                case ReadOutcome.Bytes(got0) =>
+                                    assert(got0.toArray.toList == msg0.toList, s"read 0 got ${got0.toArray.toList}")
+                                case other => fail(s"tls read 0: expected bytes, got $other")
+                            }
                                 .flatMap { _ =>
                                     encryptOnDriver(driver, clientEngine, msg1).safe.get.flatMap { c1 =>
                                         sendAll(client, c1)
                                         readVia(driver, acceptedH).map { got1 =>
-                                            assert(got1.toArray.toList == msg1.toList, s"read 1 got ${got1.toArray.toList}")
+                                            got1 match
+                                                case ReadOutcome.Bytes(b) =>
+                                                    assert(b.toArray.toList == msg1.toList, s"read 1 got ${b.toArray.toList}")
+                                                case other => fail(s"tls read 1: expected bytes, got $other")
+                                            end match
                                             import scala.jdk.CollectionConverters.*
                                             // Capture recvStaging and the recorded feed buffers BEFORE closeHandle frees the per-handle buffers.
                                             val feedBufs = recordingServer.feedBufs.iterator().asScala.toList
@@ -657,9 +685,12 @@ class PollerIoDriverTest extends Test:
             if received >= total then received
             else if steps > total + 256 then received // safety bound; the surrounding assertions catch a shortfall
             else
-                val p = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val p = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(peerHandle, p)
-                p.safe.get.map(delivered => loop(received + delivered.size, steps + 1))
+                p.safe.get.map {
+                    case ReadOutcome.Bytes(span) => loop(received + span.size, steps + 1)
+                    case _                       => received
+                }
         loop(0, 0)
     end drainCiphertextBytes
 

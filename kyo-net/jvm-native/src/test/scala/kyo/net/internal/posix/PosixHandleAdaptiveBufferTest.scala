@@ -2,6 +2,7 @@ package kyo.net.internal.posix
 
 import kyo.*
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 
 /** Adaptive receive-buffer predictor. The per-handle predictor grows [[PosixHandle.readBuffer]] when reads keep filling it, via
@@ -116,10 +117,13 @@ class PosixHandleAdaptiveBufferTest extends Test:
                     // Drive GrowAfterFullReads full-buffer reads to force a grow, each verified byte-for-byte, then one final post-grow read.
                     def fullPayload(tag: Int): Array[Byte] = Array.tabulate[Byte](seed)(j => ((j + tag) & 0xff).toByte)
                     def readOne(expected: Array[Byte]): Unit < (Abort[Closed] & Async) =
-                        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(acceptedH, promise)
-                        promise.safe.get.map { got =>
-                            assert(got.toArray.toList == expected.toList, "delivered bytes must equal the payload")
+                        promise.safe.get.map {
+                            case ReadOutcome.Bytes(got) =>
+                                assert(got.toArray.toList == expected.toList, "delivered bytes must equal the payload")
+                            case other =>
+                                fail(s"expected ReadOutcome.Bytes but got $other")
                         }
                     end readOne
                     def sendFull(tag: Int): Unit < (Abort[Closed] & Async) =

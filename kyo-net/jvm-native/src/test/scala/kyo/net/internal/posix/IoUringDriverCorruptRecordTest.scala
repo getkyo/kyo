@@ -6,6 +6,7 @@ import kyo.ffi.Ffi
 import kyo.net.Test
 import kyo.net.internal.tls.TlsEngineLoopback
 import kyo.net.internal.tls.TlsRealEngines
+import kyo.net.internal.transport.ReadOutcome
 
 /** io_uring-path parity guard for the fatal-record abort + read-produced-ciphertext drain (committed in ab8d49ec1, mirroring the poller's
   * [[TlsEngineIoCorruptRecordTest]] / [[TlsEngineIoReadDrainTest]]).
@@ -101,7 +102,7 @@ class IoUringDriverCorruptRecordTest extends Test:
                             0
                         ).value == coalesced.length.toLong)
 
-                        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, promise)
                         Abort.run[Timeout | Closed](Async.timeout(5.seconds)(promise.safe.get)).map { outcome =>
                             // The decrypt engine op (which ran requestClose on the fatal record) has run once the FIFO barrier fires.
@@ -118,9 +119,14 @@ class IoUringDriverCorruptRecordTest extends Test:
                                             closing,
                                             "the fatal record must mark the handle closing (requestClose), tearing it down rather than re-arming a freed handle"
                                         )
-                                    case Result.Success(got) =>
+                                    case Result.Success(ReadOutcome.Bytes(got)) =>
                                         fail(
                                             s"a fatal TLS record was swallowed: the read delivered ${got.size} bytes (${got.toArray.toList}) " +
+                                                "instead of failing Closed; RFC 5246 §7.2.2 requires the connection to be torn down"
+                                        )
+                                    case Result.Success(other) =>
+                                        fail(
+                                            s"a fatal TLS record was swallowed: the read produced $other " +
                                                 "instead of failing Closed; RFC 5246 §7.2.2 requires the connection to be torn down"
                                         )
                                     case Result.Failure(_: Timeout) =>
@@ -155,9 +161,12 @@ class IoUringDriverCorruptRecordTest extends Test:
                             0
                         ).value == ciphertext.length.toLong)
 
-                        val promise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val promise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         drv.awaitRead(handle, promise)
-                        promise.safe.get.flatMap { got =>
+                        promise.safe.get.flatMap { outcome =>
+                            val got = outcome match
+                                case ReadOutcome.Bytes(span) => span
+                                case other                   => fail(s"expected ReadOutcome.Bytes, got $other")
                             fifoBarrier(drv).safe.get.map { _ =>
                                 val drains = recordingServer.drainCalls.get()
                                 val feeds  = recordingServer.feedCalls.get()

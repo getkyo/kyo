@@ -7,6 +7,7 @@ import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.internal.tls.TlsEngine
 import kyo.net.internal.transport.IoDriver
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.WriteResult
 import kyo.net.internal.util.GrowableByteBuffer
 
@@ -32,7 +33,7 @@ private[net] enum PendingOp(val handle: PosixHandle):
       * so the retry is bounded by [[IoUringDriver.maxTransientIoRetries]]: a fresh read starts at 0, and the reap re-submits with an incremented
       * count until the bound, past which the last `-EINTR` falls through to the normal hard-error branch (fail Closed) so an EINTR storm cannot spin.
       */
-    case Read(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], h: PosixHandle, eintrRetries: Int) extends PendingOp(h)
+    case Read(promise: Promise.Unsafe[ReadOutcome, Abort[Closed]], h: PosixHandle, eintrRetries: Int) extends PendingOp(h)
 
     /** A plaintext send: pins the per-write `buf` for the kernel for the duration of the send SQE. `offset` is the index of `buf`'s first byte
       * in the original payload span and `len` is the number of bytes this SQE was asked to send, so the reap can detect a partial send
@@ -218,7 +219,7 @@ final private[net] class IoUringDriver private[posix] (
 
     def handleLabel(handle: PosixHandle): String = s"fd=${handle.readFd}/${handle.writeFd}"
 
-    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+    def awaitRead(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         // STARTTLS single-recv gate. While `upgradeActive` is set the handshake owns the fd's read side exclusively: the only recv that may be in
         // flight is the one the plaintext ReadPump armed BEFORE the upgrade (kernel-owned, uncancellable, carrying the peer's first post-signal
         // flight), which the reap routes through `upgradeHandoff`. Any recv arm REQUESTED while the flag is set is a stray plaintext-ReadPump re-arm
@@ -245,7 +246,7 @@ final private[net] class IoUringDriver private[posix] (
       * pending op so the reap can bound the EINTR retry. The public [[awaitRead]] enters at 0; the reap's `-EINTR` re-submit enters at the
       * incremented count.
       */
-    private def submitRecv(handle: PosixHandle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]], eintrRetries: Int)(using
+    private def submitRecv(handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]], eintrRetries: Int)(using
         AllowUnsafe,
         Frame
     ): Unit =
@@ -792,7 +793,7 @@ final private[net] class IoUringDriver private[posix] (
         // is what decrements the in-flight count and releases the per-op memory in order.
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
         pending.forEach { (_, op) =>
-            if op.handle.id == handle.id then op.failPromise(closed)
+            if op.handle.id.packed == handle.id.packed then op.failPromise(closed)
         }
         // Fail any WritePump promise parked at the write-backpressure high-water bound. It is held on the handle (a tail-bound park, not a pending
         // SQE), so it is not in `pending`; releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
@@ -836,7 +837,7 @@ final private[net] class IoUringDriver private[posix] (
       */
     override def hasInFlightRead(handle: PosixHandle)(using AllowUnsafe): Boolean =
         def isReadFor(op: PendingOp): Boolean = op match
-            case PendingOp.Read(_, h, _) => h.id == handle.id
+            case PendingOp.Read(_, h, _) => h.id.packed == handle.id.packed
             case _                       => false
         val pendingIt = pending.values().iterator()
         var found     = false
@@ -855,7 +856,7 @@ final private[net] class IoUringDriver private[posix] (
     def closeHandle(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
         // Mark the close as requested NOW (synchronously, before the deferred engine-FIFO close machinery), so a teardown that races the deferred
         // close can force-complete it and reclaim the fd. Removed in closeNow when the fd actually closes.
-        discard(pendingCloses.put(handle.id, handle))
+        discard(pendingCloses.put(handle.id.packed, handle))
         // Route the engine free through the engine queue so it is serialized behind any read/write engine ops for this connection (no two
         // carriers touch one ssl). Installed before the close path can fire so freeResources sees the sink whether the close runs now or is
         // deferred until the in-flight count drains.
@@ -887,7 +888,7 @@ final private[net] class IoUringDriver private[posix] (
       * close_notify TLS close share the same close-vs-reap race handling.
       */
     private def registerDeferredClose(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        if Maybe(inFlight.get(handle.id)).getOrElse(0L) <= 0L then closeNow(handle)
+        if Maybe(inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L then closeNow(handle)
         else
             // Force any in-flight recv to EOF so its CQE reaps and the deferred close runs even against an idle peer that sends nothing: a recv SQE
             // is kernel-owned and close(fd) alone does NOT complete it (io_uring holds its own reference to the file). shutdown the READ half only
@@ -896,9 +897,9 @@ final private[net] class IoUringDriver private[posix] (
             if handle.readFd == handle.writeFd then discard(sockets.shutdown(handle.readFd, PosixConstants.SHUT_RD))
             // Register the deferred close, then re-check: if the reap loop drained the count between the read above and this put, it already
             // ran (and removed) nothing, so claim the registration back and close here. This closes the close-vs-reap race either way.
-            discard(closeAfterDrain.put(handle.id, handle))
-            if Maybe(inFlight.get(handle.id)).getOrElse(0L) <= 0L then
-                Maybe(closeAfterDrain.remove(handle.id)).foreach(closeNow)
+            discard(closeAfterDrain.put(handle.id.packed, handle))
+            if Maybe(inFlight.get(handle.id.packed)).getOrElse(0L) <= 0L then
+                Maybe(closeAfterDrain.remove(handle.id.packed)).foreach(closeNow)
         end if
     end registerDeferredClose
 
@@ -928,7 +929,7 @@ final private[net] class IoUringDriver private[posix] (
         // Drop the handle from the SQ-full re-flush set so a closed handle is never re-flushed.
         discard(stalledRaw.remove(handle))
         // Drop the handle's send-EINTR retry count so the map does not retain an entry for a closed handle.
-        discard(sendEintrRetries.remove(handle.id))
+        discard(sendEintrRetries.remove(handle.id.packed))
         // Close the socket fd: io_uring has no prep_close and PosixHandle.close frees only the buffers, so the fd is closed here through
         // SocketBindings (mirroring the poller's closeHandle). close(fd) sends the FIN, so the peer observes the close (without this an io_uring
         // connection close never reached the peer). One-shot via claimFdClose so a racing transport-path close (a connect / STARTTLS failure, or
@@ -936,7 +937,7 @@ final private[net] class IoUringDriver private[posix] (
         if handle.readFd == handle.writeFd && handle.claimFdClose() then discard(takeNow(sockets.close(handle.readFd)))
         PosixHandle.close(handle)
         // The requested close has completed; drop it from the teardown force-close set.
-        discard(pendingCloses.remove(handle.id))
+        discard(pendingCloses.remove(handle.id.packed))
     end closeNow
 
     /** Read the inline result of an `@Ffi.blocking` fiber that completes synchronously on JVM/Native (the `SocketBindings.close` used by the
@@ -1421,7 +1422,7 @@ final private[net] class IoUringDriver private[posix] (
                                                     s"fatal TLS record fd=${h.readFd}"
                                                 )))
                                             else if plain.length > 0 then
-                                                promise.completeDiscard(Result.succeed(Span.fromUnsafe(plain)))
+                                                promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plain))))
                                                 // Flush any ciphertext the read produced (e.g. a TLS 1.3 KeyUpdate response queued by the engine
                                                 // during the decode). drainReadProducedCiphertext (inside feedAndDecrypt) appended it to
                                                 // pendingCipher; flushTls submits a send SQE for the unsent region so it reaches the peer.
@@ -1430,10 +1431,10 @@ final private[net] class IoUringDriver private[posix] (
                                                 // for reads that produce no outbound ciphertext) or when a send is already in flight.
                                                 flushTls(h)
                                             else if h.peerCleanClose then
-                                                // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver EOF (empty Span) so the
-                                                // ReadPump tears down, rather than re-arming for ciphertext the peer will never send. closeReason then
-                                                // reports CleanClose, not Truncated. Mirrors the poller's dispatchReadTls clean-close branch.
-                                                promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                                                // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the
+                                                // ReadPump tears down cleanly, rather than re-arming for ciphertext the peer will never send.
+                                                // Mirrors the poller's dispatchReadTls clean-close branch.
+                                                promise.completeDiscard(Result.succeed(ReadOutcome.CleanClose))
                                             else
                                                 // Only handshake / partial-record bytes consumed: submit another recv on the same promise rather than
                                                 // signalling EOF, mirroring the poller's rearmOwned. Then flush any read-produced ciphertext so a
@@ -1459,12 +1460,12 @@ final private[net] class IoUringDriver private[posix] (
                                     }
                                 case Absent =>
                                     val arr = Buffer.copyToArray[Byte](h.readBuffer, 0, res) // right-sized copy out
-                                    promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
+                                    promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                         else if res == 0 then
-                            // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered EOF first): record the
-                            // truncation condition so closeReason reports Truncated, then deliver EOF.
+                            // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered CleanClose first): record
+                            // the truncation condition so closeReason reports Truncated, then deliver PeerFin.
                             h.peerEof = true
-                            promise.completeDiscard(Result.succeed(Span.empty[Byte])) // EOF
+                            promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                         else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
                         end if
                     case PendingOp.Write(h, _, _, len) =>
@@ -1530,7 +1531,7 @@ final private[net] class IoUringDriver private[posix] (
     /** Register a pending op: store it under `key` and increment its handle's in-flight count (the count the close handshake drains). */
     private def register(key: Long, op: PendingOp)(using AllowUnsafe): Unit =
         discard(pending.put(key, op))
-        discard(inFlight.merge(op.handle.id, 1L, (a, b) => a + b))
+        discard(inFlight.merge(op.handle.id.packed, 1L, (a, b) => a + b))
     end register
 
     /** Undo a [[register]] for an op that was never submitted (SQ full): drop the pending entry and decrement the in-flight count. */
@@ -1541,10 +1542,10 @@ final private[net] class IoUringDriver private[posix] (
       * handle is awaiting a deferred close, the close runs now: the kernel has released every buffer, so `PosixHandle.close` is safe.
       */
     private def decrementInFlight(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
-        val remaining = inFlight.merge(handle.id, -1L, (a, b) => a + b)
+        val remaining = inFlight.merge(handle.id.packed, -1L, (a, b) => a + b)
         if remaining <= 0L then
-            discard(inFlight.remove(handle.id))
-            Maybe(closeAfterDrain.remove(handle.id)).foreach(closeNow)
+            discard(inFlight.remove(handle.id.packed))
+            Maybe(closeAfterDrain.remove(handle.id.packed)).foreach(closeNow)
         end if
     end decrementInFlight
 
@@ -1625,17 +1626,17 @@ final private[net] class IoUringDriver private[posix] (
       * Engine-FIFO-worker-only, the single owner of [[sendEintrRetries]].
       */
     private def sendEintrCount(handle: PosixHandle): Int =
-        Maybe(sendEintrRetries.get(handle.id)).getOrElse(0)
+        Maybe(sendEintrRetries.get(handle.id.packed)).getOrElse(0)
 
     /** Record one more `-EINTR` send CQE for `handle`, advancing the bounded retry count. Engine-FIFO-worker-only. */
     private def bumpSendEintr(handle: PosixHandle): Unit =
-        discard(sendEintrRetries.merge(handle.id, 1, (a, b) => a + b))
+        discard(sendEintrRetries.merge(handle.id.packed, 1, (a, b) => a + b))
 
     /** Clear the `-EINTR` send retry count for `handle` after a non-EINTR send completion, so the bound counts only an uninterrupted EINTR run.
       * Engine-FIFO-worker-only.
       */
     private def clearSendEintr(handle: PosixHandle): Unit =
-        discard(sendEintrRetries.remove(handle.id))
+        discard(sendEintrRetries.remove(handle.id.packed))
 
     /** Per-handle off-heap landing zone for one in-flight TLS recv ciphertext. Lazily allocated on the first TLS read and reused across reads.
       * The recv SQE points the kernel at this buffer; the reap carrier feeds it to the engine. A single TLS recv is in flight per handle at a

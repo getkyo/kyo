@@ -4,6 +4,7 @@ import kyo.*
 import kyo.ffi.Buffer
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 import kyo.scheduler.IOPromise
 
 /** Reproduction + regression guard for a LOST server-side read re-arm in [[PollerIoDriver]] under back-to-back reads on one fd.
@@ -94,10 +95,10 @@ class PollerIoDriverStandingReadTest extends Test:
         expected: Int,
         acc: java.io.ByteArrayOutputStream,
         done: Promise.Unsafe[Unit, Abort[Closed]]
-    ) extends IOPromise[Closed, Span[Byte]]:
+    ) extends IOPromise[Closed, ReadOutcome]:
 
-        private val self: Promise.Unsafe[Span[Byte], Abort[Closed]] =
-            this.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
+        private val self: Promise.Unsafe[ReadOutcome, Abort[Closed]] =
+            this.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 
         def start()(using AllowUnsafe, Frame): Unit = driver.awaitRead(handle, self)
 
@@ -105,15 +106,16 @@ class PollerIoDriverStandingReadTest extends Test:
             import AllowUnsafe.embrace.danger
             given Frame = Frame.internal
             poll() match
-                case Present(Result.Success(bytes)) =>
-                    if bytes.isEmpty then
-                        // EOF before we got everything: surface as a failure so the test's await resolves rather than hangs.
-                        done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "EOF before expected bytes")))
-                    else
-                        acc.write(bytes.toArrayUnsafe)
-                        if acc.size() >= expected then done.completeDiscard(Result.succeed(()))
-                        else if becomeAvailable() then driver.awaitRead(handle, self)
-                        else done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "becomeAvailable failed")))
+                case Present(Result.Success(ReadOutcome.Bytes(bytes))) =>
+                    acc.write(bytes.toArrayUnsafe)
+                    if acc.size() >= expected then done.completeDiscard(Result.succeed(()))
+                    else if becomeAvailable() then driver.awaitRead(handle, self)
+                    else done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "becomeAvailable failed")))
+                case Present(Result.Success(ReadOutcome.PeerFin | ReadOutcome.LocalShutdown | ReadOutcome.CleanClose)) =>
+                    // EOF before we got everything: surface as a failure so the test's await resolves rather than hangs.
+                    done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "EOF before expected bytes")))
+                case Present(Result.Success(_)) =>
+                    done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "EOF before expected bytes")))
                 case Present(Result.Failure(c: Closed)) => done.completeDiscard(Result.fail(c))
                 case Present(Result.Panic(t))           => done.completeDiscard(Result.panic(t))
                 case Absent => done.completeDiscard(Result.fail(Closed("StandingReader", summon[Frame], "no result")))

@@ -2,6 +2,7 @@ package kyo.net.internal
 
 import kyo.*
 import kyo.net.internal.transport.*
+import kyo.net.internal.util.HandleId
 import scala.compiletime.uninitialized
 import scala.scalajs.js
 
@@ -14,9 +15,9 @@ import scala.scalajs.js
   * Leftover bytes are stored when a `"data"` chunk arrives before `awaitRead` has been called (or when a chunk contains more data than the
   * pending read can consume). They are delivered on the next `awaitRead` call without resuming the socket.
   */
-final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: Int):
+final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: HandleId):
     // Pending read promise (at most one). Null when no read is pending.
-    var pendingRead: Promise.Unsafe[Span[Byte], Abort[Closed]] = uninitialized
+    var pendingRead: Promise.Unsafe[ReadOutcome, Abort[Closed]] = uninitialized
 
     // Leftover bytes from an oversized chunk
     private var leftoverBuf: Array[Byte] = uninitialized
@@ -41,19 +42,17 @@ final private[kyo] class JsHandle private[kyo] (val socket: js.Dynamic, val id: 
     end clearLeftover
 
     def clearPendingRead(): Unit =
-        pendingRead = null.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]]
+        pendingRead = null.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]]
 
 end JsHandle
 
 /** Factory for `JsHandle`. Registers permanent event listeners on the Node.js socket. */
 private[kyo] object JsHandle:
-    // Unsafe: created at object initialization with no ambient AllowUnsafe; the danger bridge builds it here and getAndIncrement below runs
-    // under the caller's AllowUnsafe.
-    private val idCounter = AtomicInt.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
     /** Create a `JsHandle` from a connected, paused Node.js socket and attach permanent `data`, `end`, `close`, and `error` listeners. */
     def init(socket: js.Dynamic, driver: IoDriver[JsHandle])(using AllowUnsafe, Frame): JsHandle =
-        val handle = new JsHandle(socket, idCounter.getAndIncrement())
+        // JS has no file-descriptor concept; use 0 as the fd placeholder so HandleId.next produces a process-unique id.
+        val handle = new JsHandle(socket, HandleId.next(0))
 
         // Permanent "data" listener
         discard(socket.on(
@@ -62,12 +61,11 @@ private[kyo] object JsHandle:
                 discard(socket.pause())
                 val nodeBuffer = chunk.asInstanceOf[js.typedarray.Uint8Array]
                 val arr        = copyFromNodeBuffer(nodeBuffer, nodeBuffer.length)
-                val bytes      = Span.fromUnsafe(arr)
 
                 val pending = handle.pendingRead
                 if !isNull(pending) then
                     handle.clearPendingRead()
-                    pending.nn.completeDiscard(Result.succeed(bytes))
+                    pending.nn.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                 else
                     // No pending read: store as leftover
                     handle.setLeftover(arr, 0, arr.length)
@@ -80,7 +78,7 @@ private[kyo] object JsHandle:
             val pending = handle.pendingRead
             if !isNull(pending) then
                 handle.clearPendingRead()
-                pending.nn.completeDiscard(Result.succeed(Span.empty[Byte]))
+                pending.nn.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
             end if
 
         discard(socket.on("end", signalEof))

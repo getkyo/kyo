@@ -32,16 +32,20 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def start()(using AllowUnsafe, Frame): Fiber.Unsafe[Unit, Any]
 
-    /** Request a read. The driver performs the read and completes the promise with bytes.
+    /** Request a read. The driver performs the read and completes the promise with a typed
+      * [[ReadOutcome]], so a zero-length read is never overloaded:
       *
-      *   - Success with bytes: data read
-      *   - Success with empty span: EOF
-      *   - Failure(Closed): connection error
-      *   - Panic: unexpected error
+      *   - `Success(ReadOutcome.Bytes(span))`: data read
+      *   - `Success(ReadOutcome.WouldBlock)`: EAGAIN, re-arm (NOT EOF)
+      *   - `Success(ReadOutcome.PeerFin)`: orderly peer EOF (`recv == 0`, no local shutdown)
+      *   - `Success(ReadOutcome.LocalShutdown)`: `recv == 0` after our own `shutdown(SHUT_RD)`
+      *   - `Success(ReadOutcome.CleanClose)`: a TLS close_notify was consumed
+      *   - `Success(ReadOutcome.Failed(cause))`: a typed hard error
+      *   - `Failure(Closed)`: the read was cancelled (detach/close)
       *
       * Only one read request per handle at a time. Calling again before completion is undefined.
       */
-    def awaitRead(handle: Handle, promise: Promise.Unsafe[Span[Byte], Abort[Closed]])(using AllowUnsafe, Frame): Unit
+    def awaitRead(handle: Handle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit
 
     /** Request writable notification. The driver completes the promise when the handle becomes writable.
       *
@@ -81,12 +85,6 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def detachForUpgrade(handle: Handle)(using AllowUnsafe, Frame): Unit =
         cancel(handle)
-
-    /** Whether the plaintext [[ReadPump]] may re-arm a read on this handle. Default true. A driver returns false once a STARTTLS upgrade has begun
-      * on the handle so the pump stops re-arming and cannot race the handshake for the handle's read registration (the NIO driver shares a single
-      * pending-read slot between the pump and the handshake; an unfettered pump re-arm there orphans the handshake's read promise and hangs it).
-      */
-    def readPumpMayRearm(handle: Handle)(using AllowUnsafe): Boolean = true
 
     /** Tear down a listener: cancel its pending accept and close its listen fd via `closeFd`, sequenced so that no accept registration for
       * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers, where `cancel` clears the accept state

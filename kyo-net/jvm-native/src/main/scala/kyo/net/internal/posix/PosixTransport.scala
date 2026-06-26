@@ -25,6 +25,7 @@ import kyo.net.internal.transport.Connection as InternalConnection
 import kyo.net.internal.transport.IoDriver
 import kyo.net.internal.transport.IoDriverPool
 import kyo.net.internal.transport.ListenerImpl
+import kyo.net.internal.transport.ReadOutcome
 import kyo.net.internal.transport.TransportImpl
 import kyo.net.internal.transport.WriteResult
 import kyo.scheduler.IOPromise
@@ -112,8 +113,8 @@ final private[net] class PosixTransport private[posix] (
       */
     private def openTracked(handle: PosixHandle, driver: IoDriver[PosixHandle])(using AllowUnsafe, Frame): InternalConnection[PosixHandle] =
         handle.driver = driver
-        val conn = InternalConnection.init(handle, driver, config.channelCapacity, () => discard(connections.remove(handle.id)))
-        discard(connections.put(handle.id, conn))
+        val conn = InternalConnection.init(handle, driver, config.channelCapacity, () => discard(connections.remove(handle.id.packed)))
+        discard(connections.put(handle.id.packed, conn))
         conn
     end openTracked
 
@@ -1274,9 +1275,9 @@ final private[net] class PosixTransport private[posix] (
                                     handle,
                                     handle.driver,
                                     channelCapacity,
-                                    () => discard(connections.remove(handle.id))
+                                    () => discard(connections.remove(handle.id.packed))
                                 )
-                                discard(connections.put(handle.id, upgraded))
+                                discard(connections.put(handle.id.packed, upgraded))
                                 // Wire the cert-hash and re-upgrade functions on the upgraded connection, exactly as completeConnect /
                                 // spawnHandler do for a directly-connected or accepted connection. Without this the TLS connection
                                 // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
@@ -1738,38 +1739,39 @@ final private[net] class PosixTransport private[posix] (
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
-        val readPromise = new IOPromise[Closed, Span[Byte]]
+        val readPromise = new IOPromise[Closed, ReadOutcome]
         readPromise.onComplete {
-            case Result.Success(bytes) =>
-                if bytes.isEmpty then
-                    // EOF mid-handshake: the peer closed before completing it. The descriptive cause distinguishes a bare close from a received fatal
-                    // alert (which fails the handshake with its own engine-level cause, never this phrase): the dropped-alert symptom
-                    // PosixTransportHandshakeAlertTest guards against (#229).
-                    onFailed("peer closed during read")
-                else
-                    val arr = bytes.toArrayUnsafe
-                    // feedCiphertext is an engine op: submit through the FIFO. The continuation runs inside the FIFO thunk.
-                    handle.driver.submitEngineOp { () =>
-                        // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
-                        if isReaped() then ()
-                        else
-                            try
-                                val buf = Buffer.fromArray[Byte](arr)
-                                try discard(engine.feedCiphertext(buf, arr.length))
-                                finally buf.close()
-                                cont()
-                            catch
-                                // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
-                                // never allowed to escape the carrier (a carrier escape would abort the process or stall
-                                // the event loop). See the listen-handler containment pattern at listenImpl ~:972-974.
-                                case e: Throwable => onPanic(e)
-                            end try
-                    }
-                end if
+            case Result.Success(outcome) =>
+                outcome match
+                    case ReadOutcome.Bytes(bytes) =>
+                        val arr = bytes.toArrayUnsafe
+                        // feedCiphertext is an engine op: submit through the FIFO. The continuation runs inside the FIFO thunk.
+                        handle.driver.submitEngineOp { () =>
+                            // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
+                            if isReaped() then ()
+                            else
+                                try
+                                    val buf = Buffer.fromArray[Byte](arr)
+                                    try discard(engine.feedCiphertext(buf, arr.length))
+                                    finally buf.close()
+                                    cont()
+                                catch
+                                    // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
+                                    // never allowed to escape the carrier (a carrier escape would abort the process or stall
+                                    // the event loop). See the listen-handler containment pattern at listenImpl ~:972-974.
+                                    case e: Throwable => onPanic(e)
+                                end try
+                        }
+                    case _ =>
+                        // PeerFin, CleanClose, LocalShutdown, WouldBlock, Failed: the peer closed or the read could not deliver ciphertext.
+                        // The descriptive cause distinguishes a bare close from a received fatal alert (which fails the handshake with its
+                        // own engine-level cause, never this phrase): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
+                        onFailed("peer closed during read")
+                end match
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)
         }
-        handle.driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]])
+        handle.driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
     end awaitReadCiphertext
 
 end PosixTransport

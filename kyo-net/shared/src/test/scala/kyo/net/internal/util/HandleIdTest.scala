@@ -23,6 +23,48 @@ class HandleIdTest extends Test:
             assert(a.generation != b.generation)
             succeed
         }
+
+        "next for different fds are distinct" in {
+            val a = HandleId.next(3)
+            val b = HandleId.next(4)
+            assert(a.packed != b.packed)
+            succeed
+        }
+
+        "next fd round-trips" in {
+            val id = HandleId.next(99)
+            assert(id.fd == 99, s"fd round-trip failed: expected 99, got ${id.fd}")
+            succeed
+        }
+
+        "generation increases monotonically across sequential next calls" in {
+            val a = HandleId.next(0)
+            val b = HandleId.next(0)
+            assert(b.packed > a.packed, "second HandleId must have a higher packed value than the first")
+            succeed
+        }
+
+        "fromPacked is the inverse of packed" in {
+            val id      = HandleId.next(11)
+            val rebuilt = HandleId.fromPacked(id.packed)
+            assert(rebuilt.fd == id.fd)
+            assert(rebuilt.generation == id.generation)
+            assert(rebuilt.packed == id.packed)
+            succeed
+        }
+
+        "fd=0 is representable" in {
+            val id = HandleId.next(0)
+            assert(id.fd == 0)
+            succeed
+        }
+
+        "max fd (Int.MaxValue) round-trips without sign corruption" in {
+            val maxFd = Int.MaxValue
+            val id    = HandleId.of(maxFd, 0)
+            assert(id.fd == maxFd, s"max fd round-trip failed: expected $maxFd, got ${id.fd}")
+            succeed
+        }
     }
 
 end HandleIdTest

@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import kyo.ffi.Ffi
 import kyo.net.Test
+import kyo.net.internal.transport.ReadOutcome
 
 /** Deterministic guard for the per-driver change FIFO ordering invariant (`PollerIoDriver.submitChange` / `drainChanges`, drained by one worker
   * in submission order): `epoll_ctl` and kqueue's `EV_ADD` / `EV_DELETE` are last-write-wins per fd+filter, so a deregister that executes AFTER
@@ -55,7 +56,7 @@ class ChangeFifoOrderingTest extends Test:
                 // Submit deregister (cancel) THEN register (awaitRead) for the same fd, in that order. The registerRead is the SECOND change, so its
                 // execution promise completing means both changes have run; the test then reads the final order with no sleep.
                 driver.cancel(handle)
-                val readPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                val readPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                 driver.awaitRead(handle, readPromise)
 
                 backend.registeredRead(targetFd).safe.get.map { _ =>
@@ -107,12 +108,12 @@ class ChangeFifoOrderingTest extends Test:
                         val firstH  = PosixHandle.socket(firstFd, PosixHandle.DefaultReadBufferSize, Absent)
                         val secondH = PosixHandle.socket(secondFd, PosixHandle.DefaultReadBufferSize, Absent)
 
-                        val firstPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                        val firstPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                         driver.awaitRead(firstH, firstPromise)
                         for
                             _ <- firstEntered.safe.get
                             // The worker is now pinned inside the first change. Submit the second change from a separate fiber (genuinely concurrent).
-                            secondPromise = Promise.Unsafe.init[Span[Byte], Abort[Closed]]()
+                            secondPromise = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
                             submit <- Fiber.initUnscoped(Sync.defer(driver.awaitRead(secondH, secondPromise)))
                             _      <- submit.get
                             // While the first change holds the worker, the second must NOT have executed (single owner; no second worker).
