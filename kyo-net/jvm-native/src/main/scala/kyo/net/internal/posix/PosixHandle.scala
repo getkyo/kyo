@@ -83,20 +83,10 @@ final private[net] class PosixHandle private (
       */
     @volatile var upgradeActive: Boolean = false
 
-    /** Whether the peer's TLS close_notify alert was consumed on this handle's read side (a `readPlain == -3` clean-close return, RFC 8446 6.1).
-      * Set true on the engine FIFO worker when the decrypt path observes the peer's close_notify; read by the connection's `closeReason`
-      * accessor to tell an orderly close (close_notify received) from a bare TCP FIN with no close_notify (the truncation-attack condition).
-      * Once set it stays set: a clean close is terminal for the inbound side. The `@volatile` carries the FIFO worker's write to the caller's
-      * carrier that reads it via `closeReason`.
-      */
-    @volatile var peerCleanClose: Boolean = false
-
-    /** Whether a bare TCP FIN (a `recv == 0` end-of-stream) was observed on this handle's read side WITHOUT a preceding TLS close_notify. Set on
-      * the driver carrier when the read path delivers a peer-initiated EOF that did not come from a consumed close_notify (the [[peerCleanClose]]
-      * path). Read by the connection's `closeReason` accessor: a peer EOF with `peerCleanClose` unset is a truncation (RFC 8446 6.1), while a
-      * local `close()` with neither flag set is an ordinary local close. The `@volatile` carries the driver carrier's write to the reader.
-      */
-    @volatile var peerEof: Boolean = false
+    // The half-close state, written by the loop carrier only and read by closeReason. @volatile
+    // carries the loop-carrier write to the closeReason reader; closeReason is a total function of
+    // this one state, so the close reason is derived from a single consistent value.
+    @volatile var halfClose: HalfCloseState = HalfCloseState.Open
 
     /** One-shot claim of the socket-fd close, so the fd is closed EXACTLY once even when two teardown paths target the same handle. The plain
       * close path (`PollerIoDriver.closeHandle`) is the sole closer for a normal connection and always wins the claim. A STARTTLS upgrade is the
@@ -258,15 +248,6 @@ final private[net] class PosixHandle private (
       * Poll-carrier-only: written and read exclusively on the single poll-loop carrier, so no @volatile is needed.
       */
     var readMightHaveMore: Boolean = false
-
-    /** Whether a peer half-close (eof / FIN, surfaced as `eofPending`) has been observed for this fd but the terminal EOF (recv == 0) has not yet
-      * been delivered. Set once the read path sees `eofPending` and persisted across re-dispatches so the consumer-paced drain keeps re-reading
-      * until recv returns 0, regardless of edge timing. This is required because an edge-triggered backend fires the half-close edge once: if it
-      * arrives while no read is pending (recorded in `missedReads`) or the buffered bytes span multiple reads ending on a partial recv, the per-edge
-      * `eofPending` flag alone would be lost and the final EOF would never be read (no new edge re-fires the persistent half-close condition).
-      * Cleared when the EOF (empty Span) is delivered. Poll-carrier-only, like [[readMightHaveMore]], so no @volatile is needed.
-      */
-    var halfClosePending: Boolean = false
 
     /** Count of consecutive reads that completely filled [[readBuffer]] (n == readBufferSize). The adaptive predictor grows the buffer
       * once this reaches [[PosixHandle.GrowAfterFullReads]]: a connection that keeps saturating its buffer is one whose peer sends in bursts

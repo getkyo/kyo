@@ -151,10 +151,10 @@ private[posix] trait TlsEngineIo:
       * silently swallowed. The single-record fast path and the multi-record loop both check `-2` explicitly so a fatal in either position is
       * surfaced rather than collapsed into want-read (`0`).
       *
-      * Clean-close handling (RFC 8446 6.1): a `readPlain == -3` (the peer's close_notify was consumed) sets [[PosixHandle.peerCleanClose]] so
-      * the connection's `closeReason` can tell an orderly close from a bare-FIN truncation. The `-3` is observable in any read position (the
-      * close_notify can arrive alone or coalesced behind the last data record); whichever call sees it sets the flag and stops the drain, after
-      * the already-decoded good prefix is delivered (the close_notify is the last thing on the stream, so there is no further app data to lose).
+      * Clean-close handling (RFC 8446 6.1): a `readPlain == -3` (the peer's close_notify was consumed) advances [[PosixHandle.halfClose]] to
+      * `PeerCleanClose` so the connection's `closeReason` can tell an orderly close from a bare-FIN truncation. The `-3` is observable in any
+      * read position (the close_notify can arrive alone or coalesced behind the last data record); whichever call sees it advances the state
+      * and stops the drain, after the already-decoded good prefix is delivered (the close_notify is the last thing on the stream).
       *
       * Owned by the engine FIFO worker (called from feedAndDecrypt inside submitEngineOp); reuses the per-handle drain buffer and accumulator.
       */
@@ -164,7 +164,7 @@ private[posix] trait TlsEngineIo:
         val n0        = engine.readPlain(out, chunkSize)
         if n0 == -2 then TlsEngineIo.FatalRecord
         else if n0 == -3 then
-            handle.peerCleanClose = true
+            handle.halfClose = HalfCloseState.PeerCleanClose
             Array.emptyByteArray
         else if n0 <= 0 then Array.emptyByteArray
         else
@@ -172,7 +172,7 @@ private[posix] trait TlsEngineIo:
             val n1    = engine.readPlain(out, chunkSize)
             if n1 == -2 then TlsEngineIo.FatalRecord
             else if n1 == -3 then
-                handle.peerCleanClose = true
+                handle.halfClose = HalfCloseState.PeerCleanClose
                 first
             else if n1 <= 0 then first
             else
@@ -187,7 +187,7 @@ private[posix] trait TlsEngineIo:
                     if nk > 0 then acc.writeFromBuffer(out, nk)
                     else
                         if nk == -2 then fatal = true
-                        else if nk == -3 then handle.peerCleanClose = true
+                        else if nk == -3 then handle.halfClose = HalfCloseState.PeerCleanClose
                         more = false
                     end if
                 end while

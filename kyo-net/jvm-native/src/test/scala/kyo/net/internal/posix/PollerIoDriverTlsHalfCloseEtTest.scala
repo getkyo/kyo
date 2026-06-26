@@ -13,17 +13,18 @@ import kyo.scheduler.IOPromise
   *
   * The defect: `dispatchReadTls` did not forward `eofPending` from `dispatchRead`. On an epoll ET-armed connection where the peer sends
   * ciphertext and then immediately half-closes (TCP FIN), the kernel delivers one event carrying BOTH `EPOLLIN` and `EPOLLRDHUP`. The plain
-  * read path (`dispatchReadPlain`) persists this as `handle.halfClosePending = true` and sets `readMightHaveMore = filled || halfClosePending`
-  * so the consumer-paced drain forces another recv after the plaintext is delivered. The TLS path omitted both steps:
-  *   - `handle.halfClosePending` was never set, so the consumer-paced drain did not force a re-dispatch after plaintext delivery.
-  *   - The EAGAIN branch never checked `halfClosePending`, so a connection where the initial recv returned EAGAIN (ciphertext not yet
+  * read path (`dispatchReadPlain`) persists this as `halfClose = PeerHalfClosePending` and sets
+  * `readMightHaveMore = filled || (halfClose == PeerHalfClosePending)` so the consumer-paced drain forces another recv after plaintext delivery.
+  * The TLS path omitted both steps:
+  *   - `halfClose` was never advanced to `PeerHalfClosePending`, so the drain did not force a re-dispatch after plaintext delivery.
+  *   - The EAGAIN branch never checked for `PeerHalfClosePending`, so a connection where the initial recv returned EAGAIN (ciphertext not yet
   *     visible at the moment of the call) with `eofPending=true` would re-arm and wait for an EPOLLRDHUP edge that ET will not re-fire.
   *
   * The fix mirrors `dispatchReadPlain`:
   *   - `dispatchReadTls` now accepts and propagates `eofPending`.
-  *   - In the `n > 0` branch: `if eofPending then handle.halfClosePending = true`; `readMightHaveMore` includes `|| handle.halfClosePending`.
-  *   - In the EAGAIN branch: `if eofPending then handle.halfClosePending = true`; the engine FIFO op delivers `Span.empty` when
-  *     `halfClosePending` is true and no engine-buffered plaintext remains.
+  *   - In the `n > 0` branch: `halfClose` is advanced to `PeerHalfClosePending`; `readMightHaveMore` includes the `PeerHalfClosePending` check.
+  *   - In the EAGAIN branch: `halfClose` is advanced to `PeerHalfClosePending`; the engine FIFO op delivers `Span.empty` when
+  *     `halfClose == PeerHalfClosePending` and no engine-buffered plaintext remains.
   *
   * This test captures the dominant failure shape: a server encrypts a known plaintext, sends the ciphertext, and immediately half-closes
   * the TCP write side (shutdown SHUT_WR). The accepted side runs a TLS-armed `PollerIoDriver` in a re-arming standing-read loop (mirroring
@@ -88,10 +89,10 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         /** Core case: the peer sends encrypted data and immediately half-closes. The ciphertext and the TCP FIN both arrive in the kernel
           * buffer before the reader starts. On epoll, EPOLLIN + EPOLLRDHUP arrive in one event. The TLS path must:
           *   1. Decrypt the ciphertext and deliver the plaintext to the consumer.
-          *   2. On the consumer's next awaitRead (re-arm), force another recv via readMightHaveMore (set by halfClosePending).
+          *   2. On the consumer's next awaitRead (re-arm), force another recv via readMightHaveMore (set when halfClose == PeerHalfClosePending).
           *   3. The second recv returns 0 (FIN), which surfaces as Span.empty (Success, not Closed).
-          * Pre-fix: readMightHaveMore was false after delivering plaintext (halfClosePending never set), so the consumer re-armed and
-          * parked forever waiting for a second EPOLLRDHUP edge that ET will not re-fire.
+          * Pre-fix: readMightHaveMore was false after delivering plaintext (halfClose never advanced to PeerHalfClosePending), so the consumer
+          * re-armed and parked forever waiting for a second EPOLLRDHUP edge that ET will not re-fire.
           */
         "TLS plaintext delivered in full and Span.empty surfaces on ET half-close with buffered ciphertext (8c)" in {
             if kyo.internal.Platform.isJS then Sync.defer(succeed)
@@ -147,14 +148,14 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                                     case Result.Success(TlsHalfCloseReader.ClosedSeen) =>
                                         fail(
                                             s"TLS half-close surfaced Closed after ${acc.size()} of ${plain.length} bytes instead of " +
-                                                "Span.empty EOF (dispatchReadTls did not propagate eofPending / halfClosePending)"
+                                                "Span.empty EOF (dispatchReadTls did not propagate eofPending to halfClose == PeerHalfClosePending)"
                                         )
                                     case Result.Success(other) => fail(s"unexpected reader outcome: $other after ${acc.size()} bytes")
                                     case Result.Failure(_: Timeout) =>
                                         fail(
                                             s"TLS half-close read stalled after ${acc.size()} of ${plain.length} bytes " +
-                                                "(no EOF delivered; readMightHaveMore not set from halfClosePending, strand waiting for " +
-                                                "an EPOLLRDHUP edge that ET will not re-fire)"
+                                                "(no EOF delivered; readMightHaveMore not set from halfClose == PeerHalfClosePending, " +
+                                                "strand waiting for an EPOLLRDHUP edge that ET will not re-fire)"
                                         )
                                     case other => fail(s"unexpected outcome: $other")
                                 end match
@@ -165,15 +166,15 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
         }
 
         /** EAGAIN variant: the reader is started BEFORE the data arrives, so the first recv returns EAGAIN with eofPending=true.
-          * This exercises the EAGAIN branch of dispatchReadTls (lines 1424+). Pre-fix: `halfClosePending` was never set in the EAGAIN
-          * branch, so the handle re-armed and waited for an EPOLLRDHUP edge that ET will not re-fire after the data was delivered.
+          * This exercises the EAGAIN branch of dispatchReadTls. Pre-fix: `halfClose` was never advanced to `PeerHalfClosePending` in the
+          * EAGAIN branch, so the handle re-armed and waited for an EPOLLRDHUP edge that ET will not re-fire after the data was delivered.
           *
           * Timing: the reader registers awaitRead first; then the sender sends ciphertext + half-close. On the first edge the recv may
           * succeed (n > 0) or EAGAIN depending on race; on the second edge (if a first EAGAIN was returned) the recv delivers the data.
           * The test is correct in both races because:
           *   - If first recv delivers data (n > 0 with eofPending): covered by the first leaf above.
-          *   - If first recv returns EAGAIN (eofPending set, no data yet): the EAGAIN branch must set halfClosePending and deliver EOF
-          *     after subsequent edges bring the data + FIN; otherwise the strand parks forever on a missing re-edge.
+          *   - If first recv returns EAGAIN (eofPending set, no data yet): the EAGAIN branch must advance halfClose to PeerHalfClosePending
+          *     and deliver EOF after subsequent edges bring the data + FIN; otherwise the strand parks forever on a missing re-edge.
           * The test accepts either outcome (the fix makes both paths correct); only a Closed failure or a timeout is a regression.
           */
         "TLS Span.empty surfaces on ET half-close when initial recv returns EAGAIN (8c)" in {
@@ -224,7 +225,7 @@ class PollerIoDriverTlsHalfCloseEtTest extends Test:
                                     case Result.Failure(_: Timeout) =>
                                         fail(
                                             s"TLS half-close EAGAIN read stalled after ${acc.size()} of ${plainData.length} bytes " +
-                                                "(halfClosePending not set in EAGAIN branch; strand stranded waiting for a missing re-edge)"
+                                                "(halfClose not advanced to PeerHalfClosePending in EAGAIN branch; strand waiting for a missing re-edge)"
                                         )
                                     case other => fail(s"unexpected outcome: $other")
                                 end match

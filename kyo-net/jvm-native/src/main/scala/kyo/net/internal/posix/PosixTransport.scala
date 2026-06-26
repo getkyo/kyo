@@ -590,17 +590,17 @@ final private[net] class PosixTransport private[posix] (
     end installCertHash
 
     /** Install `connection.closeReasonFn` so a TLS connection reports the RFC 8446 6.1 / RFC 5246 7.2.1 close distinction. It reads the handle's
-      * observed read-side close signals (set on the driver / engine-FIFO carrier): `peerCleanClose` (the peer's authenticated close_notify was
-      * consumed) and `peerEof` (a bare TCP FIN with no close_notify, the truncation-attack condition). While the connection is open it reports
-      * Active; once it has closed with neither peer signal set, it was a local close. The function touches no engine, only the handle's
-      * `@volatile` flags, so it is safe to call on the caller's carrier after close.
+      * observed read-side close signal (the `halfClose` state on the handle). While the connection is open with no half-close, it reports
+      * Active; once closed with the state still Open, it was a local close. The function touches no engine, only the handle's `@volatile`
+      * `halfClose` field, so it is safe to call on the caller's carrier after close.
       */
     private def installCloseReason(connection: InternalConnection[PosixHandle], handle: PosixHandle)(using AllowUnsafe): Unit =
         connection.closeReasonFn = Present(() =>
-            if handle.peerCleanClose then NetConnection.CloseReason.CleanClose
-            else if handle.peerEof then NetConnection.CloseReason.Truncated
-            else if connection.isOpen then NetConnection.CloseReason.Active
-            else NetConnection.CloseReason.LocalClose
+            handle.halfClose match
+                case HalfCloseState.PeerCleanClose => NetConnection.CloseReason.CleanClose
+                case HalfCloseState.PeerEof        => NetConnection.CloseReason.Truncated
+                case _ if connection.isOpen        => NetConnection.CloseReason.Active
+                case _                             => NetConnection.CloseReason.LocalClose
         )
     end installCloseReason
 

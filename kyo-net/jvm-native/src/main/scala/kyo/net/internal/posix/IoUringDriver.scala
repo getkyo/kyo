@@ -1429,7 +1429,7 @@ final private[net] class IoUringDriver private[posix] (
                                                 // after every write engine op. No flush is submitted when pendingCipher is empty (the common path
                                                 // for reads that produce no outbound ciphertext) or when a send is already in flight.
                                                 flushTls(h)
-                                            else if h.peerCleanClose then
+                                            else if h.halfClose == HalfCloseState.PeerCleanClose then
                                                 // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the
                                                 // ReadPump tears down cleanly, rather than re-arming for ciphertext the peer will never send.
                                                 // Mirrors the poller's dispatchReadTls clean-close branch.
@@ -1463,7 +1463,7 @@ final private[net] class IoUringDriver private[posix] (
                         else if res == 0 then
                             // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered CleanClose first): record
                             // the truncation condition so closeReason reports Truncated, then deliver PeerFin.
-                            h.peerEof = true
+                            h.halfClose = HalfCloseState.PeerEof
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                         else promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
                         end if

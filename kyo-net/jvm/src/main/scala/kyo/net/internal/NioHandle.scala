@@ -54,10 +54,21 @@ private[kyo] object NioHandle:
         new NioHandle(channel, bufferSize, Present(tlsState))
     end initTls
 
-    /** Close the handle: close channel, close SSLEngine if TLS (buffer is GC'd). */
+    /** Close the handle: send TLS close_notify if TLS (best-effort, non-blocking), then close channel. */
     def close(handle: NioHandle)(using AllowUnsafe): Unit =
         handle.tls.foreach { tls =>
-            try tls.engine.closeOutbound()
+            try
+                tls.engine.closeOutbound()
+                // Generate the close_notify alert record (RFC 8446 6.1 / RFC 5246 7.2.1). The wrap call
+                // produces the alert into a scratch buffer to avoid a data race with the selector thread's
+                // tls.netOutBuf. The send is best-effort and non-blocking: if the kernel send buffer is full
+                // the alert is dropped and the peer observes a bare FIN (truncation-observable), but that is
+                // the same outcome as not sending it at all, and the close still completes immediately.
+                val empty  = ByteBuffer.allocate(0)
+                val notify = ByteBuffer.allocate(tls.engine.getSession.getPacketBufferSize)
+                tls.engine.wrap(empty, notify)
+                notify.flip()
+                if notify.hasRemaining then discard(handle.channel.write(notify))
             catch case _: Exception => ()
         }
         try handle.channel.close()

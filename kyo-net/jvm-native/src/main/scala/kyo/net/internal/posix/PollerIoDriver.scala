@@ -197,8 +197,8 @@ final private[net] class PollerIoDriver private[posix] (
 
     // Companion to missedReads for the half-close case: records every fd whose dropped read edge ALSO carried eof (peer half-close). The plain
     // missedReads entry alone would re-dispatch with eofPending=false and lose the EOF, so on the consumer's next awaitRead the OpRegisterRead
-    // branch transfers this into the handle's persistent halfClosePending flag, ensuring the drain continues until recv returns 0. Same
-    // poll-carrier-only confinement and lifecycle (cleared on the re-dispatch, on deregister, and on driver close) as missedReads.
+    // branch advances halfClose to PeerHalfClosePending, ensuring the drain continues until recv returns 0. Same poll-carrier-only confinement
+    // and lifecycle (cleared on the re-dispatch, on deregister, and on driver close) as missedReads.
     private val missedEof = new java.util.HashSet[Int]()
 
     // Opcode constants for the packed Long change command:
@@ -853,8 +853,7 @@ final private[net] class PollerIoDriver private[posix] (
         // (a recycled fd number would receive EV_DELETE intended for the old fd). Pass fdClosing=true to skip EV_DELETE on kqueue.
         deregisterFds(handle, fdClosing = true)
         // Route the engine free through the engine FIFO so it is serialized behind any read/write engine ops for this connection (no two
-        // carriers touch one ssl). Installed before requestClose can fire so whoever runs freeResources (here, or a deferred endDispatch /
-        // endWrite on the FIFO worker) sees the sink.
+        // carriers touch one ssl). Installed before the engine op runs so freeResources sees the sink.
         handle.engineFreeSink = op => submitEngineOp(op)
         handle.tls match
             case Present(engine) =>
@@ -862,8 +861,13 @@ final private[net] class PollerIoDriver private[posix] (
                 // to the wire BEFORE closing the fd, then close the fd, all in ONE engine-FIFO op so the alert and the fd close are serialized in
                 // order behind any in-flight read/write engine op (the single-owner-of-ssl invariant) and the alert reaches the peer ahead of the
                 // FIN. Bounded + non-blocking: shutdownTls runs one shutdownStep and a best-effort inline send (it never waits for the peer's
-                // close_notify and never blocks a carrier), so close() always completes. PosixHandle.close (below) requests the resource free,
-                // which routes engine.free through the SAME FIFO, ordered AFTER this op, so the engine is alive for the shutdown emit.
+                // close_notify and never blocks a carrier), so close() always completes.
+                //
+                // PosixHandle.close is called INSIDE this op, after shutdownTls and the fd close, so the CloseBit is not set until the alert
+                // has been flushed. Calling PosixHandle.close before the op runs would set the CloseBit immediately (holders == 0 at submission
+                // time), causing beginWrite() to return false and the close_notify to be skipped.
+                // freeResources (called by PosixHandle.close) routes engine.free through the SAME FIFO via engineFreeSink, serialized AFTER
+                // this op, so the engine is alive for the shutdown emit.
                 submitEngineOp { () =>
                     if handle.beginWrite() then
                         try shutdownTls(handle, engine)
@@ -872,6 +876,8 @@ final private[net] class PollerIoDriver private[posix] (
                     end if
                     // Close the fd after the alert flush, inside this op so the FIN follows the close_notify on the wire.
                     if handle.readFd == handle.writeFd && handle.claimFdClose() then discard(takeNow(sockets.close(handle.readFd)))
+                    // Request the resource free here, after shutdownTls and the fd close, so the CloseBit is set only after the alert is sent.
+                    PosixHandle.close(handle)
                 }
             case Absent =>
                 // Plaintext close: no close_notify to emit. Close the socket fd (sockets set readFd == writeFd; stdio leaves 0/1 untouched).
@@ -879,8 +885,8 @@ final private[net] class PollerIoDriver private[posix] (
                 // this closeHandle targets the SAME fd, so without the claim the fd could be closed twice (and a recycled fd belonging to another
                 // connection wrongly closed). The single claim winner issues the close.
                 if handle.readFd == handle.writeFd && handle.claimFdClose() then discard(takeNow(sockets.close(handle.readFd)))
+                PosixHandle.close(handle)
         end match
-        PosixHandle.close(handle)
     end closeHandle
 
     /** Emit this side's TLS close_notify and flush it to the wire (best-effort, bounded). FIFO-worker-only (called from the closeHandle engine
@@ -1162,7 +1168,7 @@ final private[net] class PollerIoDriver private[posix] (
                     discard(missedReads.add(fd))
                     // Preserve the half-close bit of a dropped edge: a bare missedReads entry re-dispatches with eofPending=false, which would
                     // read the buffered bytes but never surface the EOF (the ET half-close edge does not re-fire). Record it so the next
-                    // awaitRead transfers it into the handle's persistent halfClosePending flag.
+                    // awaitRead advances halfClose to PeerHalfClosePending, ensuring the drain reaches recv == 0.
                     if eofPending then discard(missedEof.add(fd))
         end match
     end dispatchRead
@@ -1211,7 +1217,7 @@ final private[net] class PollerIoDriver private[posix] (
             // plain read path is synchronous on the poll carrier, so no edge can interleave its dispatch and missedReads is empty there: a no-op).
             val missed     = missedReads.remove(fd)
             val missedEofd = missedEof.remove(fd)
-            if missedEofd then handle.halfClosePending = true
+            if missedEofd && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
             if missed || missedEofd || handle.readMightHaveMore then dispatchRead(fd)
             // ET: otherwise the fd stays armed at the kernel; the consumer-paced drain in dispatchCmd handles residual bytes on the next re-register.
 
@@ -1248,8 +1254,8 @@ final private[net] class PollerIoDriver private[posix] (
         val n      = result.value.toInt
         // Persist an observed half-close on the handle so the consumer-paced drain keeps re-reading until recv returns 0, even across multiple
         // re-dispatches and even if a later edge does not re-carry eofPending (an ET half-close edge fires once; a missed edge or a multi-read
-        // drain ending on a partial recv would otherwise lose the EOF). Cleared when the PeerFin is delivered.
-        if eofPending then handle.halfClosePending = true
+        // drain ending on a partial recv would otherwise lose the EOF).
+        if eofPending && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
         if n > 0 then
             val arr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
             // Keep a reference to this chunk so a subsequent STARTTLS upgrade can recover a handshake flight that arrived coalesced with
@@ -1257,11 +1263,11 @@ final private[net] class PollerIoDriver private[posix] (
             handle.lastPlaintextRead = Present(arr)
             // Set readMightHaveMore when the kernel may have additional bytes with no new ET edge pending. Two cases:
             // (1) n == readBufferSize: the recv filled the buffer; residual bytes may remain in the kernel that epoll ET will not re-signal.
-            // (2) halfClosePending: the peer half-closed; the next recv will either return more data or 0 (EOF). Re-dispatch is required
+            // (2) PeerHalfClosePending: the peer half-closed; the next recv will either return more data or 0 (EOF). Re-dispatch is required
             //     regardless of buffer fill so the EOF surfaces on a later awaitRead rather than waiting for an edge that epoll ET will not
             //     re-fire (EPOLLRDHUP fires once per transition).
             val filled = n == handle.readBufferSize
-            handle.readMightHaveMore = filled || handle.halfClosePending
+            handle.readMightHaveMore = filled || (handle.halfClose == HalfCloseState.PeerHalfClosePending)
             // Adaptive receive-buffer growth: feed the fill ratio to the per-handle predictor. The bytes for THIS read are already copied
             // out into `arr` above, so a grow that closes the old buffer cannot lose them. Poll-fiber-confined and between reads (no recv is in
             // flight against the old buffer here), so the close-old-then-replace recipe is single-owner-safe. The grown buffer
@@ -1271,14 +1277,14 @@ final private[net] class PollerIoDriver private[posix] (
         else if n == 0 then
             // Orderly peer close: recv(2) returns 0 when the kernel buffer is empty and the peer sent FIN.
             handle.readMightHaveMore = false
-            handle.halfClosePending = false
+            handle.halfClose = HalfCloseState.PeerEof
             finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
         else if isWouldBlock(result.errorCode) then
             // EAGAIN confirms the kernel buffer is empty: no residual possible.
             handle.readMightHaveMore = false
-            if handle.halfClosePending then
+            if handle.halfClose == HalfCloseState.PeerHalfClosePending then
                 // Buffer fully drained and the peer's half-close is confirmed empty. Deliver PeerFin and release the dispatch.
-                handle.halfClosePending = false
+                handle.halfClose = HalfCloseState.PeerEof
                 finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
             else
                 // Buffer drained with no pending EOF: the fd stays armed (ET keeps it in the kernel's interest set). Re-deposit the handle.
@@ -1287,7 +1293,6 @@ final private[net] class PollerIoDriver private[posix] (
         else
             // Hard error (e.g. ECONNRESET, ECONNABORTED): surface Closed.
             handle.readMightHaveMore = false
-            handle.halfClosePending = false
             finishDispatch(
                 fd,
                 handle,
@@ -1328,7 +1333,7 @@ final private[net] class PollerIoDriver private[posix] (
       * `eofPending` is forwarded from `dispatchRead` when `PollFlags.Eof` fired alongside `PollFlags.Read`, signalling that the peer
       * half-closed but ciphertext bytes were still buffered at the time of the event. Under EPOLLET, the EPOLLRDHUP edge fires only once
       * per transition; after ciphertext is consumed and plaintext delivered, the missing re-edge would prevent EOF from surfacing. Mirrors
-      * the same `eofPending` / `halfClosePending` logic in `dispatchReadPlain`.
+      * the same `eofPending` / `halfClose == PeerHalfClosePending` logic in `dispatchReadPlain`.
       */
     private def dispatchReadTls(
         fd: Int,
@@ -1349,10 +1354,10 @@ final private[net] class PollerIoDriver private[posix] (
             // submitEngineOp enqueue, the same mechanism as flushReArmPending. The at-most-one-in-flight guarantee ensures the next
             // recvNow write cannot happen before this feedCiphertext completes.
             // Persist the half-close observation on the handle before handing off to the engine FIFO worker, so a consumer-paced
-            // re-dispatch triggered by readMightHaveMore (or a missed edge replayed via rearmOwned) carries the pending-EOF flag and
-            // eventually calls dispatchReadTls with eofPending=false but handle.halfClosePending=true, keeping the drain alive until
-            // the TCP FIN confirms the socket is empty. Mirrors dispatchReadPlain's `if eofPending then handle.halfClosePending = true`.
-            if eofPending then handle.halfClosePending = true
+            // re-dispatch triggered by readMightHaveMore (or a missed edge replayed via rearmOwned) carries the pending-EOF state and
+            // eventually calls dispatchReadTls with eofPending=false but handle.halfClose==PeerHalfClosePending, keeping the drain alive
+            // until the TCP FIN confirms the socket is empty. Mirrors dispatchReadPlain's eofPending guard.
+            if eofPending && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
             submitEngineOp { () =>
                 try
                     var plain   = feedAndDecrypt(engine, staging, n, handle)
@@ -1366,7 +1371,7 @@ final private[net] class PollerIoDriver private[posix] (
                     // engine yields plaintext, the socket reports EAGAIN, or the peer closes, rather than inferring emptiness from a short recv and
                     // re-arming for an edge that never fires. Mirrors the io_uring driver's awaitRead re-arm; without it a multi-record / bulk TLS
                     // transfer strands on the poller under load.
-                    while plain.length == 0 && !eof && errno == 0 && !handle.peerCleanClose && !drained do
+                    while plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose && !drained do
                         val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
                         val rN = r.value.toInt
                         if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle)
@@ -1379,20 +1384,22 @@ final private[net] class PollerIoDriver private[posix] (
                     // peer closed cleanly, or the recv errored. After delivering plaintext the socket is NOT confirmed empty (the loop stops the
                     // moment plaintext appears, before the next recv), so the consumer-paced drain must re-dispatch to pull the rest; under EPOLLET no
                     // fresh edge fires while the fd was still readable. A spurious re-dispatch (no actual bytes) hits EAGAIN and re-arms harmlessly.
-                    // Also force re-dispatch when halfClosePending: the EPOLLRDHUP / EV_EOF edge fires once; after the ciphertext above is
+                    // Also force re-dispatch when PeerHalfClosePending: the EPOLLRDHUP / EV_EOF edge fires once; after the ciphertext above is
                     // decrypted and delivered, the consumer-paced drain must call recv again to observe the FIN (recv returns 0) and surface
                     // PeerFin. Without this, a connection that half-closes with partial ciphertext in the same edge strands the consumer
-                    // waiting for an EPOLLRDHUP edge that epoll ET will not re-fire. Mirrors dispatchReadPlain's `filled || halfClosePending`.
-                    handle.readMightHaveMore = (!drained && !eof && errno == 0 && !handle.peerCleanClose) || handle.halfClosePending
+                    // waiting for an EPOLLRDHUP edge that epoll ET will not re-fire.
+                    handle.readMightHaveMore =
+                        (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
+                            (handle.halfClose == HalfCloseState.PeerHalfClosePending)
                     if plain.length > 0 then
                         finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plain))))
-                    else if handle.peerCleanClose then
+                    else if handle.halfClose == HalfCloseState.PeerCleanClose then
                         // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the ReadPump tears down
                         // cleanly, rather than re-arming for ciphertext the peer will never send.
                         finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.CleanClose))
                     else if eof then
                         // A bare FIN arrived mid-record (no close_notify): record the truncation and surface PeerFin.
-                        handle.peerEof = true
+                        handle.halfClose = HalfCloseState.PeerEof
                         finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
                     else if errno != 0 then
                         finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"recv failed fd=$fd errno=$errno")))
@@ -1421,17 +1428,17 @@ final private[net] class PollerIoDriver private[posix] (
             // Peer close via a bare TCP FIN (no close_notify reached the engine, else the clean-close branch above delivered CleanClose first):
             // record the truncation condition so closeReason reports Truncated, then deliver PeerFin immediately without engine involvement.
             handle.readMightHaveMore = false
-            handle.peerEof = true
+            handle.halfClose = HalfCloseState.PeerEof
             finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
         else if isWouldBlock(result.errorCode) then
             // EAGAIN confirms the kernel socket buffer is empty: no residual possible. Engine plaintext may still be buffered (checked below).
             handle.readMightHaveMore = false
             // Persist a half-close observation from this edge before the engine FIFO op (same as the n>0 branch above).
-            if eofPending then handle.halfClosePending = true
+            if eofPending && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
             // Socket buffer empty: check for already-buffered plaintext first (via the engine FIFO), then check half-close, then re-arm.
-            // Capture halfClosePending here on the poll carrier so the engine FIFO closure sees it without racing a concurrent
+            // Capture the half-close state here on the poll carrier so the engine FIFO closure sees it without racing a concurrent
             // closeHandle or a future poll-carrier write (the field is poll-carrier-confined; capturing here is safe).
-            val halfCloseNow = handle.halfClosePending
+            val halfCloseNow = handle.halfClose == HalfCloseState.PeerHalfClosePending
             submitEngineOp { () =>
                 try
                     if engine.hasBufferedPlaintext then
@@ -1441,9 +1448,8 @@ final private[net] class PollerIoDriver private[posix] (
                         end if
                     else if halfCloseNow then
                         // Socket buffer confirmed empty (EAGAIN) AND the peer's half-close is known (EPOLLRDHUP / EV_EOF fired earlier,
-                        // stored as halfClosePending). The engine has no buffered plaintext: the FIN is the definitive end. Deliver PeerFin
-                        // and clear the flag. Mirrors dispatchReadPlain's EAGAIN + halfClosePending branch.
-                        handle.halfClosePending = false
+                        // stored as PeerHalfClosePending). The engine has no buffered plaintext: the FIN is the definitive end. Deliver PeerFin.
+                        handle.halfClose = HalfCloseState.PeerEof
                         finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
                     else rearmOwned(fd, handle, promise)
                     end if
@@ -1699,9 +1705,9 @@ final private[net] class PollerIoDriver private[posix] (
                         val missed     = missedReads.remove(fd)
                         val missedEofd = missedEof.remove(fd)
                         Maybe(pendingReads.get(fd)).foreach { h =>
-                            // A dropped edge that carried eof transfers into the handle's persistent half-close flag so the re-dispatch (and any
-                            // further re-dispatches) drain to recv == 0 and surface the EOF, which the bare missedReads entry would not.
-                            if missedEofd then h.halfClosePending = true
+                            // A dropped edge that carried eof advances halfClose to PeerHalfClosePending so re-dispatches drain to recv == 0
+                            // and surface the EOF; the bare missedReads entry alone would re-dispatch with eofPending=false and lose it.
+                            if missedEofd && h.halfClose == HalfCloseState.Open then h.halfClose = HalfCloseState.PeerHalfClosePending
                             if h.readMightHaveMore || missed || missedEofd then dispatchRead(fd)
                         }
                     end if
