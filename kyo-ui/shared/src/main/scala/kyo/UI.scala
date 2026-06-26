@@ -246,7 +246,19 @@ object UI:
       * resets when the client disconnects.
       */
     def runHandlers(basePath: String)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
-        UIServer.handlers(basePath)(ui)
+        runHandlers(basePath, PageHead("kyo-ui"))(ui)
+
+    /** Server-push with a configurable page head: like the 1-arg `runHandlers`, but the SSR page
+      * is built from `head` so a server-push app can declare a client island bundle through
+      * `head.moduleScript` (a `<script type="module" src="...">` linked into the page). This is
+      * what lets a server-push 3D host reach the browser: the island carries the Scala.js
+      * reconciler that mounts the host, and the page must link it. The 1-arg form delegates here
+      * with the default `PageHead("kyo-ui")`, so there is one implementation and no duplicated
+      * logic. The page GET stays pure SSR (no session, no fiber, no cookie); each WebSocket owns
+      * its own per-connection subscription tree.
+      */
+    def runHandlers(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using Frame): Seq[HttpHandler[?, ?, ?]] < Sync =
+        UIServer.handlers(basePath, head)(ui)
 
     /** Read-only stream of the full rendered HTML. Emits whenever any signal changes. First emission is the initial render. Useful for
       * testing, SSR, export, or custom transports.
@@ -317,6 +329,15 @@ object UI:
       * empty (the default) emits none. Both carry [[kyo.UI.DataIsland]] values built by
       * [[kyo.UI.dataIsland]]; the renderer escapes their JSON bodies so a `</script>`
       * substring cannot close the element early.
+      *
+      * `importMap` is an ordered list of `(specifier, url)` entries rendered as one
+      * `<script type="importmap">{"imports": {...}}</script>` in the head, before any
+      * `moduleScript`, so a linked bundle that imports bare ES module specifiers (for example
+      * `three`) resolves each to a served module URL. This is the no-bundler companion to
+      * `moduleScript`: link a plain `fastLinkJS`/`fullLinkJS` ESModule and map its bare npm
+      * imports here, instead of pre-bundling the dependency into the script. Empty (the default)
+      * emits no import map; the renderer escapes the JSON so a `</script>` substring in any
+      * specifier or url cannot close the element early.
       */
     final case class PageHead(
         title: String,
@@ -324,6 +345,7 @@ object UI:
         links: Seq[(String, String)] = Seq.empty,
         css: String = "",
         moduleScript: Maybe[String] = Absent,
+        importMap: Seq[(String, String)] = Seq.empty,
         jsonLd: Maybe[UI.DataIsland] = Absent,
         dataIslands: Seq[UI.DataIsland] = Seq.empty
     ) derives CanEqual
@@ -832,6 +854,35 @@ object UI:
           * (`div(Svg.svg(...))` compiles; `div(Svg.circle(...))` does not).
           */
         trait SvgRootNode extends SvgInteractiveNode with Inline with HtmlContent
+
+        // ---- Host cross-file bridge (an element kyo-ui renders but never paints inside) ----
+
+        /** Sanctioned cross-file bridge for a HOST node: an element kyo-ui renders once as a real
+          * DOM element (default `<canvas>`) on every runner and never paints inside. It exposes a
+          * platform-neutral, optional mount capability so external content (a 3D canvas, a map, a
+          * chart engine) can attach when the element enters the live DOM on the client and detach
+          * when the page tears down. kyo-ui knows nothing about what attaches.
+          *
+          * Mirrors `SvgRootNode`: a non-sealed descendant of the sealed HTML AST, so a node declared
+          * outside this file is still a valid HTML child. The DOM tag is a plain `String`, so the
+          * shared renderer emits it on every platform; the mount capability has a concrete form only
+          * on JS+Wasm.
+          */
+        trait HostNode extends Element with Inline with HtmlContent:
+            type Self <: HostNode
+            final def children: Chunk[UI] = Chunk.empty
+            private[kyo] def hostTag: String
+            private[kyo] def mount: Maybe[HostMount]
+        end HostNode
+
+        /** Platform-neutral marker for a host's client mount intent. Its only concrete
+          * implementation lives in `kyo-ui/js-wasm` and closes over a
+          * `org.scalajs.dom.Element => (Unit < (Async & Scope))`. Declaring the marker (not the
+          * function type) here keeps `org.scalajs.dom` off the JVM/Native classpath while still
+          * letting a shared `Host` value CARRY a mount the client backend runs. The shared backend
+          * (SSR / server-push) never invokes it.
+          */
+        trait HostMount
 
         // ---- Void trait (elements that cannot have children) ----
 
@@ -1625,6 +1676,22 @@ object UI:
                 Reactive[Self](v.map(s => this.src(s): UI))
             def title(v: String): Iframe = copy(frameTitle = Present(v))
         end Iframe
+
+        /** A host element kyo-ui renders once as a real `<tag>` (default `<canvas>`) on every
+          * runner and never paints inside. On JVM/Native it renders the bare element with
+          * `mount = Absent` and runs nothing; on JS+Wasm a `Host` built through the
+          * `UI.host(tag)(mount)` factory (or `Three.embed`) carries a `mount` the DOM backend runs
+          * when the element enters the live DOM, releasing on page teardown.
+          */
+        final case class Host(
+            attrs: Attrs = Attrs(),
+            hostTag: String = "canvas",
+            mount: Maybe[HostMount] = Absent
+        )(using val frame: Frame) extends HostNode:
+            type Self = Host
+            def withAttrs(a: Attrs): Host                  = copy(attrs = a)
+            private[kyo] def withMount(m: HostMount): Host = copy(mount = Present(m))
+        end Host
 
         // ---- Custom dropdown (div-based overlay, NOT native <select>) ----
 

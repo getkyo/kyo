@@ -17,3 +17,5 @@ jmh-result.json
 *.gpg
 test-output
 .DS_Store
+# Screencast frame captures from the demo runners.
+runs/

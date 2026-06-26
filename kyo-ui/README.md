@@ -137,6 +137,31 @@ val grid: UI = table(
 )
 ```
 
+### Host nodes
+
+`UI.host(tag)(mount)` produces a `UI.Ast.Host`: a plain `<tag>` element in the rendered HTML that external content can mount into once the element is in the DOM. The two-argument form takes a mount callback `dom.Element => (Unit < (Async & Scope))` that runs once after the host element is attached. The `Scope` in that row is load-bearing: any resource the callback acquires (a `WebGLRenderer`, a chart context, a subscription) is bound to the ambient page `Scope`, so its releases run at page teardown. It is the bridge from a kyo-ui tree to any non-kyo-ui renderer (a 3D scene, a chart, a map widget) that needs a real DOM element to work with.
+
+```scala doctest:platform=js expect=skipped
+import UI.*
+import kyo.*
+import org.scalajs.dom
+
+val hostNode: UI.Ast.Host =
+    UI.host("canvas") { el =>
+        Sync.defer {
+            // el is the live canvas element. Mount anything into it here.
+            val ctx = el.asInstanceOf[dom.html.Canvas].getContext("2d")
+            ()
+        }
+    }.id("my-canvas")
+```
+
+`UI.host(tag)` (one argument) produces the element with no callback, for use as a target whose mounting is handled externally.
+
+The host element sits in the tree like any other child: it can carry `.id`, `.style`, and other attribute setters and participates in reactive sibling updates. kyo-ui's DOM backend calls the mount callback exactly once, after the element is first attached to the DOM, and does not call it again on sibling re-renders. The host element is never replaced or re-created during a sibling update: a signal emission replaces only the sibling reactive zone's own `data-kyo-reactive` wrapper, and a host in a const subtree is not inside any such wrapper, so it (and anything mounted into it) is left intact.
+
+> **Note:** the bare `UI.host(tag)` factory is cross-platform (it lives in shared source), so a host node renders its plain tag on every backend. Only the mount-carrying `UI.host(tag)(mount)` overload is Scala.js-only (`kyo-ui/js-wasm`, JS and Wasm), because its callback takes a browser `dom.Element`. On the server-push backend (`UI.runHandlers`) host nodes render as their plain HTML tag and the mount callback is never called: the mount requires a live browser DOM.
+
 ## Reactivity
 
 A reactive UI needs values that change over time. kyo-core supplies two primitives for that:
@@ -1219,6 +1244,32 @@ val server: Unit < (Async & Scope) =
 ```
 
 The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
+
+A 2-arg overload accepts a `UI.PageHead` so the served page can link a client Scala.js island bundle. The motivating case is a server-push app that embeds a 3D scene (kyo-threejs): the browser must load the island that mounts the host node, and the page HEAD must carry that `<script type="module">`. Pass `head.moduleScript = Present("/island.js")` to link it. When the island is a plain `fastLinkJS`/`fullLinkJS` ESModule that imports bare npm modules (such as `three`), also pass `head.importMap` to map each bare specifier to a served module URL, so the page resolves them without a pre-bundling step:
+
+```scala
+import UI.*
+import kyo.*
+
+val withIsland: Unit < (Async & Scope) =
+    for
+        counter <- Signal.initRef(0)
+        page = div(
+            button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
+            counter.render(n => span(n.toString).id("count"))
+        )
+        head = UI.PageHead(
+            title = "My App",
+            moduleScript = Present("/island.js"),
+            // Resolves the island's bare ES module imports; empty when the island bundles its own deps.
+            importMap = Seq("three" -> "/three.module.js")
+        )
+        uiHandlers <- runHandlers("/app", head)(page)
+        _          <- HttpServer.init(uiHandlers*)
+    yield ()
+```
+
+The 1-arg `runHandlers(basePath)(ui)` delegates to this overload with `PageHead("kyo-ui")` (no `moduleScript`), so all existing call sites are unchanged.
 
 ### `UI.runRender(ui)`
 

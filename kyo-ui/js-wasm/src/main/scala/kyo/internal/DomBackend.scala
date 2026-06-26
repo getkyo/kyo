@@ -10,7 +10,9 @@ private[kyo] object DomBackend:
 
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
-        mountInto(ui, document.body)
+        // `document.body` is read inside the effect, not at the call site, so building the mount
+        // value stays pure (no DOM access until it runs, so it is safe to construct under Node/SSR).
+        Sync.defer(document.body).map(body => mountInto(ui, body))
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
     def mount(ui: UI, selector: String)(using Frame): Unit < (Async & Scope) =
@@ -41,6 +43,7 @@ private[kyo] object DomBackend:
             html <- HtmlRenderer.render(ui, Seq.empty)
             _    <- Sync.defer(container.innerHTML = html)
             _    <- applyJsProps(container)
+            _    <- fireHostMounts(ui, Seq.empty)
             _    <- Sync.defer(beginAnimationsSync(container))
             exchange = LocalExchange(root)
             dispatch <- ReactiveUI.subscribe(root, exchange)
@@ -59,6 +62,62 @@ private[kyo] object DomBackend:
         yield ()
         end for
     end mountInto
+
+    /** Walk the original AST tracking `data-kyo-path` exactly as `HtmlRenderer.renderTo`
+      * assigns it (children indexed by position; `KeyedChild` keeps its parent path), and for
+      * each `HostNode` carrying a `DomHostMount` resolve the live element by its path and run
+      * the mount effect once under the ambient page Scope. A host inside a reactive
+      * (`Reactive`/`Foreach`) zone is NOT fired: it sits under a signal whose subtree a re-render
+      * may replace, so only a host in a const subtree mounts. A skipped host is not silent: the
+      * walk descends a reactive region's current content with `underReactive = true` and logs a
+      * warning when it finds a host carrying a mount, so the no-op is visible to the author.
+      */
+    private def fireHostMounts(ui: UI, path: Seq[String], underReactive: Boolean = false)(using Frame): Unit < (Async & Scope) =
+        ui match
+            case host: UI.Ast.HostNode =>
+                host.mount match
+                    case Present(m: DomHostMount) =>
+                        if underReactive then
+                            Log.warn(
+                                s"UI host '${host.hostTag}' carries a client mount but sits inside a reactive region " +
+                                    "(UI.show/when/render/foreach); its mount is not fired because a reactive boundary may " +
+                                    "replace the subtree. Place the host in a non-reactive position so its mount runs."
+                            )
+                        else
+                            Sync.defer(document.querySelector(s"""[data-kyo-path="${path.mkString(".")}"]""")).map {
+                                case null    => ()
+                                case element => m.run(element.asInstanceOf[dom.Element])
+                            }
+                    case _ => Kyo.unit
+            case elem: UI.Ast.Element =>
+                Kyo.foreachDiscard(elem.children.toSeq.zipWithIndex) { (child, i) =>
+                    fireHostMounts(child, path :+ i.toString, underReactive)
+                }
+            case UI.Ast.Fragment(children) =>
+                Kyo.foreachDiscard(children.toSeq.zipWithIndex) { (child, i) =>
+                    val childPath = child match
+                        case kc: UI.Ast.KeyedChild[?] => path :+ kc.key
+                        case _                        => path :+ i.toString
+                    fireHostMounts(child, childPath, underReactive)
+                }
+            case UI.Ast.KeyedChild(_, child) =>
+                fireHostMounts(child, path, underReactive)
+            case r: UI.Ast.Reactive[?] =>
+                // Descend the region's CURRENT content only to surface a skipped host (never to fire one):
+                // a re-render may replace this subtree, so a host here cannot be safely mounted.
+                r.signal.current(using r.frame).map(cur => fireHostMounts(cur, path, underReactive = true))
+            case f: UI.Ast.Foreach[?, ?] @unchecked =>
+                // Reduce the keyed list to its current rendered content (as ReactiveUI.normalize does) and
+                // descend it to surface a skipped host; the items render under a signal, so none is fired.
+                val rendered: Signal[UI] =
+                    f.signal.map { items =>
+                        UI.Ast.Fragment[UI](Chunk.from(items.toSeq.zipWithIndex.map((item, i) => f.render(i, item)))): UI
+                    }
+                rendered.current(using f.frame).map(cur => fireHostMounts(cur, path, underReactive = true))
+            case _ =>
+                // Text and RawHtml carry no fireable host.
+                Kyo.unit
+    end fireHostMounts
 
     /** Exchange that renders UI to HTML and applies directly to the DOM. */
     private class LocalExchange(root: ReactiveUI) extends UIExchange:

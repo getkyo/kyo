@@ -353,6 +353,7 @@ lazy val kyoJS = project
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
+        `kyo-threejs`.js,
         `kyo-website`.js,
         `kyo-website-bundle`.js,
         `kyo-pod`.js,
@@ -457,6 +458,7 @@ lazy val kyoWasm = project
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
         `kyo-ui`.wasm,
+        `kyo-threejs`.wasm,
         `kyo-test-api`.wasm,
         `kyo-test-runner`.wasm,
         `kyo-test-prop`.wasm,
@@ -1846,6 +1848,208 @@ lazy val `kyo-ui` =
             `wasm-settings`,
             libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.1"
         )
+
+val installThree = taskKey[Unit]("npm install three@0.184.0 next to the Scala.js test linker output dir")
+
+// Installs three.js into the PARENT of the test linker output directory. Node loads the test entry
+// file from the linker output dir and walks UP for module resolution, so node_modules/three in the
+// parent resolves for both require("three") (CommonJS/JS) and import "three" (ESModule/Wasm). The
+// install target must be OUTSIDE the linker output dir itself: the Scala.js linker deletes the
+// contents of its output dir before each link, and a non-empty node_modules there fails that delete
+// with a DirectoryNotEmptyException. Idempotency-guarded on the package marker so a re-run with three
+// already present is a no-op. Each platform sets `installThree := installThreeTask.value` in its own
+// settings, so `scalaJSLinkerOutputDirectory` resolves to that platform's target tree: JS and Wasm
+// install three independently under their respective js/target and wasm/target trees.
+def installThreeTask = Def.task {
+    val outDir    = (Test / fastLinkJS / scalaJSLinkerOutputDirectory).value
+    val installIn = outDir.getParentFile
+    val marker    = installIn / "node_modules" / "three" / "package.json"
+    if (!marker.exists()) {
+        IO.createDirectory(installIn)
+        val rc = scala.sys.process.Process(Seq("npm", "install", "three@0.184.0"), installIn).!
+        if (rc != 0) sys.error(s"npm install three failed with exit $rc in $installIn")
+    }
+}
+
+lazy val `kyo-threejs` =
+    crossProject(JSPlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-threejs"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-ui`, `kyo-browser`)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            Test / sourceGenerators += Def.task {
+                val readme = baseDirectory.value / ".." / "README.md"
+                // The `Test.scala` suffix matters: the generated objects live under `package kyo.readme`,
+                // and the `Frame` macro refuses to derive inside package `kyo` except in files whose name
+                // ends in `Test.scala`/`Spec.scala`/`Bench.scala` (see kyo.internal.FindEnclosing). README
+                // examples build scenes through `(using Frame)` factories, so the file must use that
+                // suffix or every factory call fails to derive its `Frame`.
+                val out = (Test / sourceManaged).value / "ReadmeExamplesTest.scala"
+                ReadmeBlocks.generate(readme, out)
+                Seq(out)
+            }.taskValue
+        )
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            installThree := installThreeTask.value,
+            Test / test  := (Test / test).dependsOn(installThree).value
+        )
+        .wasmSettings(
+            `wasm-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            installThree := installThreeTask.value,
+            Test / test  := (Test / test).dependsOn(installThree).value
+        )
+
+// The visual-review demo bundle: kyo-threejs MAIN plus the demos' scene-graph builders, exposing the
+// DemoMounts client-mount entries (`@JSExportTopLevel` mountBouncingBalls / mountReactiveCubeField /
+// mountSnake3D / mountSolarSystem / mountGltfViewer / mountFeedClock / mountFeedChunk / mountFeedEmit /
+// mountControls, each mounting a real scene via `Three.runMount`) and the DemoHarness browser-test
+// probes (`@JSExportTopLevel` mountOrderingProbe / mountRendererReleaseProbe / mountHostProbe /
+// mountEmbedProbe / mountEmbedInteractive / mountEmbedSiblingProbe). The feed launchers and browser
+// tests link their page mount shims against these same entries. Linked as a browser-clean ESModule (an
+// external `three` import plus the GLTFLoader jsm, no node:* / require). The demo sources stay in
+// kyo-threejs's test tree (so they remain compile-checked by kyo-threejs's own test on both backends) and
+// are pulled in here via unmanagedSourceDirectories; this project never links the kyo-threejs test stack
+// (kyo-ui DOM mount, HttpServer, kyo-browser) because the entries reach only the client reconciler and the
+// demos' scene-graph builders, so the linker's dead-code elimination drops the node:*-carrying paths.
+// kyo-ui is a compile dependency because the demos reference UI.embed /
+// UI.runMount; the server-serving code is unreachable from the entries and elided from the linked
+// output (asserted by the node:* grep in the harness gate).
+lazy val `kyo-threejs-demos` =
+    project
+        .in(file("kyo-threejs/demos"))
+        .enablePlugins(ScalaJSPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.ESModule) },
+            Compile / unmanagedSourceDirectories +=
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
+            // No test sources; this project exists only to produce the linked demo bundle.
+            Test / sources := Seq.empty
+        )
+
+// The Node launcher for the demos. Scala.js has no `Test/runMain`, and kyo-threejs has no JVM
+// variant, so the kyo-ui `runMain` launch verb does not apply: instead, the client-mount launcher
+// `KyoApp`s in `democlient` run their HttpServer on Node, serving a static page that runs the scene in
+// the browser through `Three.runMount`. This project reuses the same demo sources as `kyo-threejs-demos`;
+// each launcher is an `object X extends KyoApp` with its own main, so a launcher is selected by the
+// `demoClient<Name>` command aliases below (each sets `mainClass` to that launcher's main
+// and runs it). A Scala.js main initializer takes no command-line arguments, so the launcher cannot be
+// chosen as a `run` argument; the alias selects it through `mainClass` instead. There is no god
+// dispatcher: one `run` launches exactly one launcher's server.
+//
+// It is a SEPARATE project from `kyo-threejs-demos` on purpose. `kyo-threejs-demos` links the demo
+// bundle as a no-main ESModule (the served page imports its `mountX` entry and the browser tests depend
+// on it). A Node runner needs the opposite linker shape: a main initializer over a CommonJSModule that
+// can pull in the launchers' HttpServer (node:* carrying) code. Keeping the two outputs in distinct
+// projects leaves the demo bundle's shape untouched while giving the runner the Node-runnable main it needs.
+lazy val `kyo-threejs-demo-runner` =
+    project
+        .in(file("kyo-threejs/demo-runner"))
+        .enablePlugins(ScalaJSPlugin)
+        .dependsOn(`kyo-threejs`.js, `kyo-ui`.js)
+        .disablePlugins(MimaPlugin, KyoDoctestPlugin)
+        .settings(
+            `kyo-settings`,
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scalajs-dom" % "2.8.0",
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) },
+            // Link a Node main initializer so `run` executes a demo's main. The default main is one of
+            // the client-mount launchers; the `demoClient<Name>` aliases override it to
+            // select another before running.
+            scalaJSUseMainModuleInitializer := true,
+            Compile / mainClass             := Some("democlient.BouncingBalls"),
+            Compile / unmanagedSourceDirectories +=
+                (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo",
+            // No test sources; this project exists only to run a demo on Node.
+            Test / sources := Seq.empty,
+            // The demo bundle imports `three`, so Node must resolve it. Install three next to the
+            // Compile fastLink output (Node walks up from main.js for node_modules). Idempotency-guarded
+            // on the package marker, like the cross-project installs.
+            installThree := {
+                val outDir    = (Compile / fastLinkJS / scalaJSLinkerOutputDirectory).value
+                val installIn = outDir.getParentFile
+                val marker    = installIn / "node_modules" / "three" / "package.json"
+                if (!marker.exists()) {
+                    IO.createDirectory(installIn)
+                    val rc = scala.sys.process.Process(Seq("npm", "install", "three@0.184.0"), installIn).!
+                    if (rc != 0) sys.error(s"npm install three failed with exit $rc in $installIn")
+                }
+            },
+            // Install three before the link the runner executes, so `run` resolves the module.
+            Compile / fastLinkJS := (Compile / fastLinkJS).dependsOn(installThree).value
+        )
+
+// The CLIENT-MOUNT launchers for the five pure-animation demos (BouncingBalls, ReactiveCubeField,
+// Snake3D, SolarSystem, GltfViewer). These serve a static page
+// that runs the scene IN THE BROWSER through `Three.runMount`, so the per-frame `onFrame` loop animates
+// locally. Each alias first links the `kyo-threejs-demos` ESModule bundle (which the served page imports
+// its `mountX` entry from, and which lands `three` at the demos target the launcher serves), then sets
+// the runner main to that demo's `democlient` launcher and runs it. The launcher prints a
+// `http://localhost:<port>/` URL to open; opening it animates the scene.
+addCommandAlias(
+    "demoClientBouncingBalls",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.BouncingBalls") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoClientReactiveCubeField",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.ReactiveCubeField") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoClientSnake3D",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Snake3D") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoClientSolarSystem",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.SolarSystem") ; kyo-threejs-demo-runner/run"""
+)
+addCommandAlias(
+    "demoClientGltfViewer",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.GltfViewer") ; kyo-threejs-demo-runner/run"""
+)
+// The EmbeddedScene client-mount launcher: serves the full `EmbeddedSceneScene.ui` kyo-ui tree (a button,
+// the embedded 3D canvas via `Three.embed`, and a HUD label) into a `<div id="app">`, mounted through
+// `UI.runMount`. The embed is client-owned, so the earth's `onFrame` orbit animates and the
+// sun/earth `onClick` selection fires LOCALLY in the browser, each writing the shared `SignalRef[String]`
+// the HUD observes. Like the pure-animation launchers it links the `kyo-threejs-demos` ESModule bundle.
+addCommandAlias(
+    "demoClientEmbedded",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Embedded") ; kyo-threejs-demo-runner/run"""
+)
+
+// The feed-driven launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
+// that spins client-side AND steps color from a server feed over the WebSocket, and stays up so a human can
+// open the printed URL. Unlike the client-mount launchers above (pure local animation), this also declares a
+// server-owned fed signal (`Three.Feed.serverSignal`) and forks a `Clock` fiber that cycles a palette every
+// ~1s; `Three.Feed.run` forks one observer per fed id, pushing each step as a `HostUpdate` over the WS, so
+// the open page shows client animation and server-fed reactivity on one cube. Links the `kyo-threejs-demos`
+// ESModule bundle (the page's mount shim imports its `mountFeedClock` entry, resolving `three` through the
+// page's import map), then runs the `democlient.FeedClock` launcher.
+addCommandAlias(
+    "demoClientFeedClock",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedClock") ; kyo-threejs-demo-runner/run"""
+)
+
+// The flagship consolidated launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
+// that shows ALL FOUR behaviors at once (client `onFrame` spin, a server-fed `serverSignal` color that
+// steps every ~1s, a client `onClick` -> `Three.Feed.emit` the server reflects into a fed scale signal, and
+// a `Three.controls(autoRotate)` camera orbit), and stays up so a human can open the printed URL. Links the
+// `kyo-threejs-demos` ESModule bundle (the page's mount shim imports its `mountFlagship` entry, resolving
+// `three` and OrbitControls through the page's import map), then runs the `democlient.Flagship` launcher.
+addCommandAlias(
+    "demoClientFlagship",
+    """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Flagship") ; kyo-threejs-demo-runner/run"""
+)
 
 // The website: shared apps + page wrapper + content model + cross-platform kyo-parse Markdown
 // transpiler (DocsMarkdown in shared/, no third-party Markdown dependency). JVM side carries the

@@ -32,19 +32,34 @@ private[kyo] object HtmlRenderer:
         val tag = if svgContext then "g" else "span"
         s"""<$tag data-kyo-path="${path.mkString(".")}" data-kyo-reactive>$innerHtml</$tag>"""
 
-    /** Wrap body HTML in a full page with inline JS client. */
-    def renderPage(title: String, body: String, css: String, basePath: String): String =
+    /** Wrap body HTML in a full page with inline JS client. The optional `moduleScript` links a
+      * client island bundle (a `<script type="module" src="...">`) after the inline server-push
+      * client, so a server-push app can ship a Scala.js island the inline client routes host
+      * updates into. `Absent` emits no module script (the default server-push page).
+      */
+    def renderPage(
+        title: String,
+        body: String,
+        css: String,
+        basePath: String,
+        moduleScript: Maybe[String] = Absent,
+        importMap: Seq[(String, String)] = Seq.empty
+    ): String =
+        val islandScript = moduleScript match
+            case Present(src) => s"""\n<script type="module" src="${esc(src)}"></script>"""
+            case Absent       => ""
         s"""<!DOCTYPE html>
            |<html>
            |<head>
            |<meta charset="UTF-8">
-           |<title>${esc(title)}</title>
+           |<title>${esc(title)}</title>${importMapHead(importMap)}
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
-           |<script>${clientJs(jsStr(basePath))}</script>
+           |<script>${clientJs(jsStr(basePath))}</script>$islandScript
            |</body>
            |</html>""".stripMargin
+    end renderPage
 
     /** Wrap body HTML in a complete static HTML document with a configurable head (for SSG/SSR).
       *
@@ -68,7 +83,7 @@ private[kyo] object HtmlRenderer:
            |<head>
            |<meta charset="utf-8">
            |<meta name="viewport" content="width=device-width, initial-scale=1">
-           |<title>${esc(head.title)}</title>
+           |<title>${esc(head.title)}</title>${importMapHead(head.importMap)}
            |$metaTags$linkTags
            |<style>$baseCss${head.css}</style>
            |$ldBlock</head>
@@ -95,6 +110,42 @@ private[kyo] object HtmlRenderer:
     // is JSON read back by JSON.parse, not HTML re-parsed.
     private def escScript(json: String): String =
         json.replace("<", "\\u003c").replace(">", "\\u003e")
+
+    // Render the page's import map as `<script type="importmap">{"imports": { ... }}</script>`, the
+    // bare-specifier resolution table a linked module script (PageHead.moduleScript) relies on. Returns
+    // the leading-newline element when entries are present, or "" when empty (no import map emitted, the
+    // default). Keys and values are JSON-string-escaped, then the whole body runs through escScript so a
+    // `</script>` substring in any specifier or url cannot close the element early (the data-island rule).
+    private def importMapHead(entries: Seq[(String, String)]): String =
+        if entries.isEmpty then ""
+        else
+            val imports = entries.map((spec, url) => s"${jsonStr(spec)}:${jsonStr(url)}").mkString(",")
+            val json    = s"""{"imports":{$imports}}"""
+            s"""\n<script type="importmap">${escScript(json)}</script>"""
+    end importMapHead
+
+    // Escape a string as a JSON double-quoted string literal (the import-map encoder's leaf): the JSON
+    // parse hazards are backslash and double-quote, plus the C0 control characters JSON forbids raw
+    // (`\n`/`\r`/`\t` get their short escapes, the rest the `\u00XX` form). `<`/`>` are left to escScript.
+    private def jsonStr(s: String): String =
+        val hex = "0123456789abcdef"
+        val sb  = new StringBuilder(s.length + 2)
+        sb.append('"')
+        s.foreach {
+            case '\\' => sb.append("\\\\")
+            case '"'  => sb.append("\\\"")
+            case '\n' => sb.append("\\n")
+            case '\r' => sb.append("\\r")
+            case '\t' => sb.append("\\t")
+            case c if c < ' ' =>
+                sb.append("\\u00")
+                sb.append(hex.charAt((c >> 4) & 0xf))
+                sb.append(hex.charAt(c & 0xf))
+            case c => sb.append(c)
+        }
+        sb.append('"')
+        sb.toString
+    end jsonStr
 
     // ---- Core rendering ----
 
@@ -305,6 +356,7 @@ private[kyo] object HtmlRenderer:
         case _: FileInput      => "input"
         case _: HiddenInput    => "input"
         case _: Dropdown       => "div"
+        case h: HostNode       => h.hostTag
         case e: Svg.SvgElement => svgTagName(e)
         // SvgNode/SvgRootNode are the sanctioned non-sealed cross-file bridge for the SVG AST
         // (see UI.Ast.SvgNode); every in-tree SVG node extends Svg.SvgElement, matched above, so
@@ -714,8 +766,37 @@ private[kyo] object HtmlRenderer:
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
            |    document.head.appendChild(s);
+           |  }else if(op.HostUpdate){
+           |    var p=op.HostUpdate.path.join(".");
+           |    var rx=window.__kyoHostChannels&&window.__kyoHostChannels[p];
+           |    if(rx){rx(op.HostUpdate.payload);}
+           |    else{
+           |      // The host's island receiver has not registered yet (the WS session can push a host's
+           |      // initial state before the client island mounts and registers). Buffer the payload by
+           |      // path, bounded so a host whose island never registers (a bundle load failure) under
+           |      // continuous server-push cannot grow it without limit; the bound exceeds any realistic
+           |      // initial push so the normal late-registration race never drops a legitimate op.
+           |      // __kyoHostChannelRegister flushes it in order when the receiver registers, so a host's
+           |      // first structural/prop pushes are never lost to that startup race.
+           |      var q=window.__kyoHostPending[p]=window.__kyoHostPending[p]||[];
+           |      q.push(op.HostUpdate.payload);
+           |      if(q.length>4096)q.shift();
+           |    }
            |  }
            |};
+           |// The island registers a receiver per host path here; a HostUpdate for an unregistered
+           |// path is buffered (see above) and flushed on registration.
+           |window.__kyoHostChannels=window.__kyoHostChannels||{};
+           |window.__kyoHostPending=window.__kyoHostPending||{};
+           |// Registers a host receiver and flushes any payloads buffered before it registered, in order.
+           |window.__kyoHostChannelRegister=function(p,rx){
+           |  window.__kyoHostChannels[p]=rx;
+           |  var pend=window.__kyoHostPending[p];
+           |  if(pend){delete window.__kyoHostPending[p];for(var i=0;i<pend.length;i++)rx(pend[i]);}
+           |};
+           |// The client->server app-event back-channel: a client onClick that calls Three.Feed.emit
+           |// posts an AppEvent over this same WS; the server routes it to the handler registered by eventId.
+           |window.__kyoPostAppEvent=function(path,eventId,encoded){post({AppEvent:{path:path,eventId:eventId,encoded:encoded}});};
            |function fp(el){
            |  while(el&&el!==document.body){
            |    if(el.hasAttribute("data-kyo-path"))return el;
