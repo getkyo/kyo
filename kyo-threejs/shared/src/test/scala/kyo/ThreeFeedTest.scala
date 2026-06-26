@@ -1,7 +1,7 @@
 package kyo
 
-/** Deterministic (non-browser) tests for the Option-Y `Three.Feed` surface (design 02-design-r2 DY-02/
-  * DY-03/DY-04): the server-fed signal factories, the structural overload, the app-event registration, and
+/** Deterministic (non-browser) tests for the `Three.Feed` surface: the server-fed signal factories, the
+  * structural overload, the app-event registration, and
   * the typed `emit` failure row. The live wire round-trips are proven by the browser tests and the
   * `HostPayloadTest` Schema round-trips; this suite pins the registry behavior and the typed surface.
   */

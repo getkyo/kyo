@@ -2,7 +2,7 @@ package demo
 
 import kyo.*
 
-/** The Option-Y ORBIT-CONTROLS prove-the-mechanism scene (design 02-design-r2 DY-06, FORK-Y-A): a STATIC
+/** The orbit-controls scene: a STATIC
   * (non-spinning) object plus a `Three.controls(autoRotate = true)` node, so the CAMERA orbits the scene
   * automatically while the object itself never moves.
   *

@@ -2,7 +2,7 @@ package flagship
 
 import demoharness.DemoMounts
 
-/** The Option-Y FLAGSHIP per-app island (design 02-design-r2, Decision D-001, G5): the self-running
+/** The flagship per-app island: the self-running
   * client bundle the [[democlient.Flagship]] launcher links into its page through `head.moduleScript`.
   *
   * The `kyo-threejs-flagship-island` project links this object as its main module initializer, so loading
@@ -10,7 +10,7 @@ import demoharness.DemoMounts
   * Flagship scene at the page's `#app` canvas via [[DemoMounts.mountFlagship]], which runs the real
   * `Three.runMount` GL pipeline (the cube spins via client `onFrame`, the camera orbits via the bound
   * `OrbitControls`) AND connects BOTH server-fed mirrors (the auto-cycled color and the click-driven
-  * scale), so the four Option-Y behaviors run together on one cube. The bundle inlines three AND
+  * scale), so the four behaviors run together on one cube. The bundle inlines three AND
   * OrbitControls (esbuild), so the page needs no import map and no separately-served three.
   */
 object FlagshipIslandApp:

@@ -2,7 +2,7 @@ package kyo
 
 import kyo.Browser.ScreenshotFrame
 
-/** Browser proof of the Option-Y orbit `Three.controls` (design 02-design-r2 DY-06, FORK-Y-A): a STATIC
+/** Browser proof of the orbit `Three.controls`: a STATIC
   * object plus a `Three.controls(autoRotate = true)` node, so the island binds a live three.js
   * `OrbitControls` and the CAMERA orbits the scene automatically. The rendered view changes frame to frame
   * even though nothing in the scene carries an `onFrame`, observed from real Chrome pixels: only the
@@ -15,7 +15,7 @@ import kyo.Browser.ScreenshotFrame
   *   2. PROOF: the screencast frames change consecutively (the camera orbits the static object). Because no
   *      node has an `onFrame`, the change can only be the camera motion the controls drive.
   *
-  * Frames are saved under `runs/visual-review/y-controls/`. Runs in a real software-WebGL Chrome via CDP;
+  * Frames are saved under `runs/visual-review/controls/`. Runs in a real software-WebGL Chrome via CDP;
   * cancels (skips) where no Chrome can be downloaded.
   */
 class ThreeControlsBrowserTest extends WebGLSceneHarness:
@@ -45,7 +45,7 @@ class ThreeControlsBrowserTest extends WebGLSceneHarness:
                                 changedPairs >= 3,
                                 s"the camera did not orbit: only $changedPairs of ${frames.size - 1} consecutive frame " +
                                     s"pairs changed. No node has an onFrame, so a static view means the OrbitControls did not " +
-                                    s"drive the camera. Frames saved under runs/visual-review/y-controls/"
+                                    s"drive the camera. Frames saved under runs/visual-review/controls/"
                             )
                     }
                 }
@@ -77,7 +77,7 @@ class ThreeControlsBrowserTest extends WebGLSceneHarness:
     end framesDiffer
 
     private def saveFrames(frames: Chunk[ScreenshotFrame])(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val dir = "runs/visual-review/y-controls"
+        val dir = "runs/visual-review/controls"
         Sync.defer(mkdirp(dir)).andThen {
             Kyo.foreachIndexed(frames) { (i, frame) =>
                 val idx  = f"$i%03d"

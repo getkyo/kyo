@@ -20,13 +20,13 @@ import kyo.*
 sealed private[kyo] trait HostPayload derives CanEqual, Schema
 
 private[kyo] object HostPayload:
-    // The feed-by-signal-id leaf (design 02-design-r2 D-002): a scalar prop feed addressed by a string
+    // The feed-by-signal-id leaf: a scalar prop feed addressed by a string
     // signal id. The carried value is an opaque `Json.encode`d string of the `Schema`-serialized fed
     // value `A`, decoded client-side with the same `Schema[A]` the island shares. The server feeds
     // DATA by signal id and the client writes a mirror `SignalRef[A]` the existing forkBoundRef/patchProp
     // path already patches; the string `encoded` keeps the leaf total for any `A: Schema`.
     final case class SignalUpdate(signalId: String, encoded: String) extends HostPayload
-    // The structural feed-by-signal-id leaf (design 02-design-r2 D-002, DY-03): a server-fed `Chunk[A]`
+    // The structural feed-by-signal-id leaf: a server-fed `Chunk[A]`
     // addressed by a string signal id. The carried value is an opaque `Json.encode`d string of the
     // `Schema`-serialized `Chunk[A]`, decoded client-side with the same `Schema[A]` the island shares.
     // The server feeds the whole collection snapshot by signal id and the client writes a mirror

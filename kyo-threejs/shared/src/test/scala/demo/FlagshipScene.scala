@@ -2,8 +2,8 @@ package demo
 
 import kyo.*
 
-/** The Option-Y FLAGSHIP consolidated demo (design 02-design-r2 G5): ONE three.js scene that
-  * simultaneously shows ALL FOUR halves of Y on the same cube, each motion visually distinct so a
+/** The flagship consolidated demo: ONE three.js scene that
+  * simultaneously shows ALL FOUR behaviors on the same cube, each motion visually distinct so a
   * screencast can attribute every behavior:
   *
   *   1. CLIENT animation: the cube spins via a client `onFrame`/RAF loop advancing a local spin signal
@@ -21,7 +21,7 @@ import kyo.*
   *
   * Two server-owned fed mirrors meet two client behaviors: the auto color cycle proves a server-pushed
   * `serverSignal`, and the click-driven scale proves the full `emit` hook-and-feed loop, on the SAME cube
-  * the client spins while the camera orbits it. This is the demonstrable Option-Y end state.
+  * the client spins while the camera orbits it. This is the demonstrable end state.
   */
 object FlagshipScene:
 

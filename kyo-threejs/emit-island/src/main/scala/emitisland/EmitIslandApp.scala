@@ -2,7 +2,7 @@ package emitisland
 
 import demoharness.DemoMounts
 
-/** The Option-Y APP-EVENT per-app island (design 02-design-r2, Decision D-001, DY-04): the self-running
+/** The app-event per-app island: the self-running
   * client bundle the emit browser test and the launcher link through `head.moduleScript`.
   *
   * The `kyo-threejs-emit-island` project links this object as its main module initializer, so loading the

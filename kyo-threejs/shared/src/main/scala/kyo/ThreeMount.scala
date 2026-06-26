@@ -142,6 +142,8 @@ object ThreeMount:
                 (rootLive, mounted) = mountResult
                 cam <- ThreeFacadeOps.makeCamera(camera)
                 _ <- Sync.Unsafe.defer {
+                    // Unsafe: reads the live canvas layout dimensions and mutates the renderer/camera
+                    // synchronously at mount; deferred so the FFI sizing stays inside the effect.
                     // Size the renderer and camera to the actual canvas layout dimensions so the
                     // projection aspect matches the non-square canvas kyo-ui lays out. clientWidth
                     // and clientHeight reflect CSS-pixel dimensions after layout; fall back to the
@@ -183,8 +185,8 @@ object ThreeMount:
         }
     end hostMountPipeline
 
-    /** The client feed receiver (design 02-design-r2, Decision D-002, the wire leaf seam): wires
-      * a per-signal-id mirror into the existing inbound `HostUpdate` routing. Registers a receiver on
+    /** The client feed receiver: wires a per-signal-id mirror into the existing inbound `HostUpdate`
+      * routing. Registers a receiver on
       * `window.__kyoHostChannels[id]` (the SAME registry the inline kyo-ui clientJs routes a `HostUpdate`
       * into, `HtmlRenderer.scala:771-799`, with the same late-registration flush) that decodes an inbound
       * `HostPayload.SignalUpdate` for this `id`, decodes its `encoded` payload with `Schema[A]`, and writes
@@ -209,6 +211,8 @@ object ThreeMount:
                 case _ => ()
             end match
         for
+            // Unsafe: registers the receiver on the live `window.__kyoHostChannels` registry by id; a
+            // synchronous DOM write deferred so it stays inside the effect.
             _ <- Sync.Unsafe.defer {
                 val w = dom.window.asInstanceOf[js.Dynamic]
                 if js.isUndefined(w.__kyoHostChannelRegister) then
@@ -218,6 +222,7 @@ object ThreeMount:
                     discard(w.__kyoHostChannelRegister(id, rx))
                 end if
             }
+            // Unsafe: drops the receiver from the registry on Scope close so a remount leaks no channel.
             _ <- Scope.ensure(Sync.Unsafe.defer {
                 val w = dom.window.asInstanceOf[js.Dynamic]
                 if !js.isUndefined(w.__kyoHostChannels) then
@@ -227,8 +232,8 @@ object ThreeMount:
         end for
     end connectFeed
 
-    /** The Option-Y client STRUCTURAL feed receiver (design 02-design-r2, Decision D-002, DY-03): the
-      * structural analog of [[connectFeed]]. Registers a receiver on `window.__kyoHostChannels[id]` (the
+    /** The client STRUCTURAL feed receiver: the structural analog of [[connectFeed]]. Registers a receiver
+      * on `window.__kyoHostChannels[id]` (the
       * SAME registry, with the same late-registration flush) that decodes an inbound
       * `HostPayload.SignalChunk` for this `id`, decodes its `encoded` payload with `Schema[Chunk[A]]`, and
       * writes the whole snapshot into `mirror`. The scene bound `mirror` with `.foreachKeyed(key)(render)`,
@@ -252,6 +257,8 @@ object ThreeMount:
                 case _ => ()
             end match
         for
+            // Unsafe: registers the receiver on the live `window.__kyoHostChannels` registry by id; a
+            // synchronous DOM write deferred so it stays inside the effect.
             _ <- Sync.Unsafe.defer {
                 val w = dom.window.asInstanceOf[js.Dynamic]
                 if js.isUndefined(w.__kyoHostChannelRegister) then
@@ -261,6 +268,7 @@ object ThreeMount:
                     discard(w.__kyoHostChannelRegister(id, rx))
                 end if
             }
+            // Unsafe: drops the receiver from the registry on Scope close so a remount leaks no channel.
             _ <- Scope.ensure(Sync.Unsafe.defer {
                 val w = dom.window.asInstanceOf[js.Dynamic]
                 if !js.isUndefined(w.__kyoHostChannels) then
@@ -270,8 +278,8 @@ object ThreeMount:
         end for
     end connectFeedChunk
 
-    /** The client app-event POST (design 02-design-r2, Decision D-003, DY-04): the client leg of
-      * `Three.Feed.emit`. Encodes `event` with `Schema[A]`, then posts a `UIEvent.AppEvent(path, id,
+    /** The client app-event POST: the client leg of `Three.Feed.emit`. Encodes `event` with `Schema[A]`,
+      * then posts a `UIEvent.AppEvent(path, id,
       * encoded)` over the page's single WS via the inline kyo-ui client helper `window.__kyoPostAppEvent`
       * (installed by the page's clientJs). When that helper is not
       * present (called outside an island feed context: no page WS bound), the effect fails with the typed
@@ -341,7 +349,7 @@ object ThreeMount:
       * panicking observe fiber surfaces as a `Log.error` (except `Interrupted`, which signals normal
       * scope close).
       */
-    def subscribeRegions(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
+    private[kyo] def subscribeRegions(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
         Kyo.foreachDiscard(boundRefs(mounted))(forkBoundRef)
 
     /** Subscribes every `Bound.Ref` prop on a freshly-materialized subtree: the element-materialized
@@ -364,6 +372,9 @@ object ThreeMount:
         val (live, patch, signal) = triple
         Fiber.init {
             Abort.run[Throwable] {
+                // Unsafe: `patchProp` mutates the one bound live three.js object synchronously with no
+                // suspension; `Sync.Unsafe.defer` lifts that FFI write into the observe callback's row. Safe
+                // because each triple's fiber owns its own live object and applies exactly one targeted patch.
                 signal.observe(value => Sync.Unsafe.defer(Reconciler.patchProp(live, patch(value)(_))))
             }.map { result =>
                 result.fold(
@@ -382,9 +393,11 @@ object ThreeMount:
       * value and patches exactly the one bound live object, so a captured frame shows each reactive
       * prop at its current value rather than its materialize seed.
       */
-    def fillBoundRefsOnce(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
+    private[kyo] def fillBoundRefsOnce(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
         Kyo.foreachDiscard(boundRefs(mounted)) { case (live, patch, signal) =>
             signal.current.map { value =>
+                // Unsafe: a synchronous one-shot FFI write of the current signal value onto the one bound
+                // live object, no suspension; safe because it patches exactly that object on this fiber.
                 Sync.Unsafe.defer(Reconciler.patchProp(live, patch(value)(_)))
             }
         }
@@ -400,7 +413,9 @@ object ThreeMount:
       * matches the declared `(Async & Scope)`; a reached failure here is a reconciler bug, not a
       * recoverable case.
       */
-    def subscribeReactiveRegions(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
+    private[kyo] def subscribeReactiveRegions(mounted: Reconciler.Mounted)(using Frame): Unit < (Async & Scope) =
+        // Unsafe: a synchronous write of the mount's `subscribeElement` hook field, no suspension; safe
+        // because it runs once on the mount's drain fiber before any reactive region fires.
         Sync.Unsafe.defer {
             // Install the element hook so the initial fill below AND every later re-materialization
             // subscribe each reactive-region child's Bound.Ref props under the child's own scope.
@@ -430,7 +445,7 @@ object ThreeMount:
       * the frame reflects this tick's state. The render submit is a tight FFI call, not a per-tick
       * effect allocation.
       */
-    def runLoop(
+    private[kyo] def runLoop(
         mounted: Reconciler.Mounted,
         root: Reconciler.Live,
         camera: js.Dynamic,
@@ -511,7 +526,7 @@ object ThreeMount:
       * 0L)`, then calls the render seam. Closures run inline so assertions in the test see the
       * mutations before `step` returns.
       */
-    def makeDriver(
+    private[kyo] def makeDriver(
         mounted: Reconciler.Mounted,
         root: Reconciler.Live,
         camera: js.Dynamic
@@ -530,7 +545,7 @@ object ThreeMount:
       * `onPointerOut` on leave. Each handler effect is enqueued on a scoped drain fiber; the
       * listeners are removed on scope close via `Scope.ensure`.
       */
-    def setupPointerDelegation(
+    private[kyo] def setupPointerDelegation(
         canvas: js.Dynamic,
         mounted: Reconciler.Mounted,
         camera: js.Dynamic
@@ -600,7 +615,7 @@ object ThreeMount:
         yield ()
 
     /** Binds a live three.js `OrbitControls` instance for each `Three.Ast.Controls` node in the mounted
-      * scene (design 02-design-r2 D-005, DY-06): `new OrbitControls(camera, canvas)` over the live camera
+      * scene: `new OrbitControls(camera, canvas)` over the live camera
       * and the mount canvas, applies the node's `enableZoom`/`enablePan`/`enableRotate`/`autoRotate`/
       * `target` fields, and registers `controls.dispose()` on `Scope` close (the same Scope the renderer
       * and listeners bind to), so a mount/unmount cycle leaks no controls listener. Returns the live
@@ -611,7 +626,7 @@ object ThreeMount:
       * the rest are logged and skipped; the guard keeps a misuse from stacking conflicting controls on one
       * camera.
       */
-    def setupControls(
+    private[kyo] def setupControls(
         canvas: js.Dynamic,
         mounted: Reconciler.Mounted,
         camera: js.Dynamic

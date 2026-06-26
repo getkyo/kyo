@@ -65,9 +65,9 @@ private[kyo] object GltfFacade extends js.Object:
     val GLTFLoader: js.Dynamic = js.native
 end GltfFacade
 
-/** The `OrbitControls` facade (design 02-design-r2 D-005): a three.js examples/jsm subpath module,
-  * imported the same cross-backend way as `GltfFacade`. OrbitControls.js ships in the bundled three
-  * examples/jsm, so the island binds `new OrbitControls(camera, renderer.domElement)` at mount with no
+/** The `OrbitControls` facade: a three.js examples/jsm subpath module, imported the same cross-backend
+  * way as `GltfFacade`. OrbitControls.js ships in the bundled three examples/jsm, so the client binds
+  * `new OrbitControls(camera, renderer.domElement)` at mount with no
   * new dependency; the imperative controls object stays inside the reconciler, never in the surface.
   */
 @js.native

@@ -3,10 +3,11 @@ package kyo
 import demo.FeedProveScene
 import kyo.Browser.ScreenshotFrame
 
-/** Browser proof of the PUBLIC Option-Y serve path `Three.Feed.run` (design 02-design-r2 DY-05/G5),
+/** Browser proof of the PUBLIC serve path `Three.Feed.run`,
   * end to end over a real WebSocket: the page, the WS feed route, and the per-id feed observers all come
   * from `Three.Feed.run`, not a hand-rolled harness. The same cube as [[ThreeFeedProveBrowserTest]]
-  * proves BOTH halves of Y on one cube, but every server-side wire is the locked public surface:
+  * proves client animation and server-fed reactivity on one cube, but every server-side wire is the locked
+  * public surface:
   *
   *   1. SERVE PATH: `Three.Feed.run("", head)(ui)` returns the SSR page handler (linking the
   *      self-contained FeedProve island bundle through `head.moduleScript`, carrying the inline kyo-ui
@@ -21,7 +22,7 @@ import kyo.Browser.ScreenshotFrame
   *
   * Both halves are observed from real Chrome pixels: a per-frame sampler (injected post-load via CDP, so
   * the page itself stays the unmodified public-path page) reads the rendered canvas center pixel into
-  * `window.__colorLog`, and the screencast frames are saved under `runs/visual-review/y-feed-run/`. The
+  * `window.__colorLog`, and the screencast frames are saved under `runs/visual-review/feed-run/`. The
   * test asserts the frames change consecutively (the cube spins) AND the sampled color steps through the
   * server palette in order (red, green, blue, yellow, magenta), proving the public feed path drove the
   * color change.
@@ -60,7 +61,7 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
                             assert(
                                 changedPairs >= 2,
                                 s"canvas did not animate: only $changedPairs of ${frames.size - 1} consecutive frame pairs " +
-                                    s"changed. Frames saved under runs/visual-review/y-feed-run/"
+                                    s"changed. Frames saved under runs/visual-review/feed-run/"
                             )
 
                             // ---- REACTIVITY: the sampled cube color stepped through the server palette ----
@@ -122,9 +123,9 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
             diffs > n / 100
     end framesDiffer
 
-    /** Writes each recorded frame as a JPEG under `runs/visual-review/y-feed-run/frame-NNN.jpg`. */
+    /** Writes each recorded frame as a JPEG under `runs/visual-review/feed-run/frame-NNN.jpg`. */
     private def saveFrames(frames: Chunk[ScreenshotFrame])(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val dir = "runs/visual-review/y-feed-run"
+        val dir = "runs/visual-review/feed-run"
         Sync.defer(mkdirp(dir)).andThen {
             Kyo.foreachIndexed(frames) { (i, frame) =>
                 val idx  = f"$i%03d"

@@ -81,7 +81,7 @@ object DemoMounts:
             }
         }
 
-    /** Mounts the Option-Y prove-the-mechanism scene at `selector` (design 02-design-r2 G5): a cube
+    /** Mounts the feed-driven scene at `selector`: a cube
       * spinning via client `onFrame` whose material color is bound to a server-fed mirror `SignalRef`.
       * The mount runs the real `Three.runMount` GL pipeline (so the spin animates locally) AND calls
       * `Three.Feed.connect(FeedProveScene.colorId, mirror)` under the SAME page Scope, which registers
@@ -104,7 +104,7 @@ object DemoMounts:
             }
         }
 
-    /** Mounts the Option-Y STRUCTURAL prove-the-mechanism scene at `selector` (design 02-design-r2 DY-03):
+    /** Mounts the structural feed scene at `selector`:
       * a `foreachKeyed` field of cubes whose count and arrangement are driven by a server-fed
       * `Chunk[Int]` item list. The mount runs the real `Three.runMount` GL pipeline (so the field spins
       * locally) AND calls `Three.Feed.connectChunk(FeedChunkScene.listId, mirror)` under the SAME page
@@ -125,7 +125,7 @@ object DemoMounts:
             }
         }
 
-    /** Mounts the Option-Y APP-EVENT prove-the-mechanism scene at `selector` (design 02-design-r2 DY-04):
+    /** Mounts the app-event scene at `selector`:
       * a cube whose `onClick` calls `Three.Feed.emit` to post a typed app event, and whose material color
       * is bound to a server-fed mirror the server's app-event handler updates. The mount runs the real
       * `Three.runMount` GL pipeline AND calls `Three.Feed.connect(FeedEmitScene.colorId, mirror)` under the
@@ -144,8 +144,8 @@ object DemoMounts:
             }
         }
 
-    /** Mounts the Option-Y ORBIT-CONTROLS prove-the-mechanism scene at `selector` (design 02-design-r2
-      * DY-06): a static (non-spinning) object plus a `Three.controls(autoRotate = true)` node, so the
+    /** Mounts the orbit-controls scene at `selector`:
+      * a static (non-spinning) object plus a `Three.controls(autoRotate = true)` node, so the
       * CAMERA orbits the scene automatically. The mount binds a live `OrbitControls` over the camera and
       * canvas under the page Scope (disposed on close), and the RAF loop calls `controls.update()` each
       * frame, so the view orbits a static object (distinct from an object's own `onFrame` spin).
@@ -158,8 +158,8 @@ object DemoMounts:
             }
         }
 
-    /** Mounts the Option-Y FLAGSHIP consolidated scene at `selector` (design 02-design-r2 G5): ONE cube
-      * that shows ALL FOUR halves of Y at once. The mount runs the real `Three.runMount` GL pipeline (so
+    /** Mounts the flagship consolidated scene at `selector`: ONE cube
+      * that shows ALL FOUR behaviors at once. The mount runs the real `Three.runMount` GL pipeline (so
       * the cube spins via client `onFrame` AND the camera orbits via the bound `OrbitControls`) AND
       * connects BOTH server-fed mirrors under the SAME page Scope: `Three.Feed.connect(colorId, color)`
       * for the auto-cycled palette color and `Three.Feed.connect(scaleId, scale)` for the click-driven
@@ -184,8 +184,8 @@ object DemoMounts:
         }
 
     /** Mounts the full [[EmbeddedSceneScene.ui]] kyo-ui tree (a "Focus Sun" button, the embedded 3D
-      * canvas via `Three.embed`, and a HUD label) at `selector` through `UI.runMount`. Under Option Y
-      * the embed is client-owned: kyo-ui calls the 3D host mount once the canvas is attached, running the
+      * canvas via `Three.embed`, and a HUD label) at `selector` through `UI.runMount`. The embed is
+      * client-owned: kyo-ui calls the 3D host mount once the canvas is attached, running the
       * real `Three.runMount` GL pipeline inside it, so the earth's `onFrame` orbit animates LOCALLY and a
       * raycast click on the sun or earth runs its `onClick` LOCALLY, writing the shared
       * `SignalRef[String]` the HUD label observes. The button and the 3D click both drive the one shared

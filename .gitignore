@@ -14,9 +14,11 @@ metals.sbt
 jmh-result.json
 *.jfr
 *.json
-# The kyo-threejs-island esbuild dependency contract is tracked source (esbuild + pinned three).
-!kyo-threejs/island/esbuild/package.json
+# The per-app island esbuild dependency contracts are tracked source (esbuild + pinned three).
+!kyo-threejs/*-island/esbuild/package.json
 *.gpg
 test-output
 .DS_Store
 .jvmopts
+# Screencast frame captures from the demo runners.
+runs/

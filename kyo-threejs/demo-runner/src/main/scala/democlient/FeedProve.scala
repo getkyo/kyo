@@ -5,9 +5,9 @@ import kyo.*
 import scala.scalajs.js
 import scala.scalajs.js.annotation.JSImport
 
-/** Live launcher for the Option-Y prove-the-mechanism demo (design 02-design-r2 G5) over the PUBLIC
-  * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows BOTH halves of Y on the
-  * SAME cube and STAYS UP so a human can open it.
+/** Live launcher for the feed-driven demo over the PUBLIC
+  * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows client animation and
+  * server-fed reactivity on the SAME cube and STAYS UP so a human can open it.
   *
   *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop compiled into the FeedProve
   *      island bundle. The server does not drive the spin; the motion is local and continuous.
@@ -60,7 +60,7 @@ object FeedProve extends ClientDemoApp:
       * and self-runs on load, mounting the spinning cube at `#app` and connecting the color feed mirror.
       */
     private def head(using Frame): UI.PageHead =
-        UI.PageHead("kyo-threejs Option-Y FeedProve", moduleScript = Present(islandPath))
+        UI.PageHead("kyo-threejs FeedProve", moduleScript = Present(islandPath))
 
     /** The page body the island mounts into: a `<canvas id="app">` host the FeedProve island selects with
       * `mountFeedProve("#app")`, plus the server-owned fed color signal and its palette cycler.

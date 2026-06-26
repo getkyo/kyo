@@ -2,7 +2,7 @@ package demo
 
 import kyo.*
 
-/** The Option-Y APP-EVENT prove-the-mechanism scene (design 02-design-r2 DY-04): ONE cube whose CLIENT
+/** The app-event scene: ONE cube whose CLIENT
   * `onClick` posts a typed app event over the back-channel, and whose color is driven by a server-fed
   * mirror the server's app-event handler updates.
   *

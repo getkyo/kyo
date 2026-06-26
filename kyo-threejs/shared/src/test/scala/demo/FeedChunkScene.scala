@@ -3,7 +3,7 @@ package demo
 import kyo.*
 import kyo.Three.foreachKeyed
 
-/** The Option-Y STRUCTURAL prove-the-mechanism scene (design 02-design-r2 DY-03): ONE three.js scene
+/** The structural feed scene: ONE three.js scene
   * whose mesh COUNT and ARRANGEMENT are driven by a server-fed `Chunk[Int]` addressed by
   * [[FeedChunkScene.listId]].
   *

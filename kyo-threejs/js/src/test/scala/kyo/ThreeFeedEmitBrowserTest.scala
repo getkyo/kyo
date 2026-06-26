@@ -3,7 +3,7 @@ package kyo
 import demo.FeedEmitScene
 import kyo.Browser.ScreenshotFrame
 
-/** Browser proof of the Option-Y APP-EVENT back-channel `Three.Feed.emit` (design 02-design-r2 DY-04),
+/** Browser proof of the app-event back-channel `Three.Feed.emit`,
   * end to end over a real WebSocket through the PUBLIC serve path. Clicking the cube on the live scene
   * runs its `onClick` LOCALLY, which calls `Three.Feed.emit` to post a typed app event; the server's
   * `Three.Feed.onAppEvent` handler (registered inside the `Three.Feed.run` `ui` builder) advances a
@@ -21,7 +21,7 @@ import kyo.Browser.ScreenshotFrame
   * The proof samples the rendered canvas center pixel before and after each click into `window.__colorLog`
   * and asserts the cube color stepped through the server palette in order on the clicks (red -> green ->
   * blue ...), proving the click drove the server-reflected color change. Frames are saved under
-  * `runs/visual-review/y-emit/` with the before/after-click frames.
+  * `runs/visual-review/feed-emit/` with the before/after-click frames.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded.
   */
@@ -48,8 +48,8 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
                             // island to mount before sampling and clicking.
                             _ <- Async.sleep(1200.millis)
                             _ <- installSampler
-                            // Dispatch several real clicks at the cube center, spaced so the server reflect
-                            // and the client color step land between clicks; record the screencast across them.
+                            // Dispatch a real click per palette step at the cube center, each gated on the
+                            // prior step's fed color being observed; record the screencast across them.
                             frames   <- recordWithClicks
                             _        <- saveFrames(frames)
                             colorLog <- readColorLog
@@ -61,7 +61,7 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
                                 steps.size >= 2,
                                 s"the cube color never stepped on a click: observed only ${steps.size} distinct color(s) " +
                                     s"(${steps.mkString(", ")}). Each click should emit an app event the server reflects into " +
-                                    s"a fed color step. colorLog size=${colorLog.size}. Frames under runs/visual-review/y-emit/"
+                                    s"a fed color step. colorLog size=${colorLog.size}. Frames under runs/visual-review/feed-emit/"
                             )
                             assert(
                                 isPaletteCycleSlice(steps),
@@ -74,17 +74,31 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
         }
     }
 
-    /** Records a screencast while dispatching several clicks at the cube center, one per ~1s, so each
-      * click's server reflect and color step is captured between clicks.
+    /** Records a screencast while clicking the cube center once per palette step. After each click it waits
+      * until the sampler actually observes the expected fed color at the center before clicking again, so
+      * every step's reflect renders and is sampled. Waiting on the observed color rather than a fixed delay
+      * keeps an intermediate step (the low-luminance blue) from collapsing into the next under load, where a
+      * delayed reflect could otherwise step the cube straight past blue before any frame samples it.
       */
     private def recordWithClicks(using Frame): Chunk[ScreenshotFrame] < (Browser & Async & Abort[BrowserReadException]) =
-        Browser.screenshotFrames(maxDurationMs = 14000L, maxFrames = 2000) {
-            // Click four times, ~1s apart, then let the last reflect settle.
-            Loop(0) { i =>
-                if i >= 4 then Async.sleep(800.millis).andThen(Loop.done)
-                else clickCubeCenter.andThen(Async.sleep(1000.millis)).andThen(Loop.continue(i + 1))
+        Browser.screenshotFrames(maxDurationMs = 30000L, maxFrames = 2000) {
+            // Step indices 1..4 click for green, blue, yellow, magenta (index 0, red, is the initial color).
+            Loop(1) { step =>
+                if step > 4 then Loop.done
+                else clickCubeCenter.andThen(awaitCenterColor(paletteChannels(step))).andThen(Loop.continue(step + 1))
             }
         }.map { case (frames, _) => frames }
+
+    /** Polls the per-frame sampler until the latest sampled center color equals `expected`, bounding the
+      * wait so a never-arriving reflect fails the step rather than hanging. Gating each click on the prior
+      * step's observed color makes every palette step deterministically sampled regardless of reflect
+      * latency under load.
+      */
+    private def awaitCenterColor(expected: String)(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
+        Browser.waitFor(
+            s"""(function(){var l=window.__colorLog;return !!(l&&l.length>0&&l[l.length-1]==="$expected");})()""",
+            Present(Schedule.fixed(50.millis).maxDuration(20.seconds))
+        ).unit
 
     /** Dispatches a real `pointerdown`/`pointerup` at the `#app` canvas center via the page, so the client
       * raycast hits the centered cube and runs its `onClick` (which calls `Three.Feed.emit`). The capture
@@ -104,9 +118,9 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
     private def installSampler(using Frame): Unit < (Browser & Abort[BrowserReadException]) =
         Browser.eval(samplerScript).unit
 
-    /** Writes each recorded frame as a JPEG under `runs/visual-review/y-emit/frame-NNN.jpg`. */
+    /** Writes each recorded frame as a JPEG under `runs/visual-review/feed-emit/frame-NNN.jpg`. */
     private def saveFrames(frames: Chunk[ScreenshotFrame])(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val dir = "runs/visual-review/y-emit"
+        val dir = "runs/visual-review/feed-emit"
         Sync.defer(mkdirp(dir)).andThen {
             Kyo.foreachIndexed(frames) { (i, frame) =>
                 val idx  = f"$i%03d"
@@ -228,6 +242,10 @@ object ThreeFeedEmitBrowserTest:
           |  var ctx = cap.getContext("2d");
           |  function channelName(r, g, b) {
           |    if (r < 40 && g < 40 && b < 40) return "none";
+          |    // Remove the achromatic (white) component so ambient/specular lighting on the cube does not
+          |    // pull a low-luminance hue (blue) toward white; classify the remaining chroma by dominance.
+          |    var m = Math.min(r, g, b);
+          |    r -= m; g -= m; b -= m;
           |    var hi = Math.max(r, g, b);
           |    var rOn = r > hi * 0.55, gOn = g > hi * 0.55, bOn = b > hi * 0.55;
           |    if (rOn && gOn && !bOn) return "yellow";

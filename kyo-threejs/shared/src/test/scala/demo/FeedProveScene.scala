@@ -2,8 +2,8 @@ package demo
 
 import kyo.*
 
-/** The Option-Y prove-the-mechanism scene (design 02-design-r2 G5, kept minimal to the proof): ONE
-  * three.js scene that simultaneously shows BOTH halves of Y on the SAME cube.
+/** The feed-driven scene (kept minimal): ONE
+  * three.js scene that simultaneously shows client animation and server-fed reactivity on the SAME cube.
   *
   *   1. CLIENT-side animation: a `SignalRef[Double]` spin angle that the cube's `onFrame` advances every
   *      RAF tick, bound to the cube `Group`'s rotation. The motion is continuous and driven entirely by
@@ -17,8 +17,8 @@ import kyo.*
   *      visually distinguishable from the smooth spin.
   *
   * The smooth spin proves the local loop runs; the discrete color steps prove the server feed reaches
-  * the scene. Proving both on one cube is the deliverable Option X could not produce (animation XOR
-  * reactivity).
+  * the scene. Combining client animation with server-fed reactivity on one cube is the capability the
+  * scene demonstrates.
   */
 object FeedProveScene:
 

@@ -60,9 +60,9 @@ object Three:
 
     // ---- Orbit camera controls -----------------------------------------------------
 
-    /** An orbit-camera control node (design 02-design-r2 FORK-Y-A, DY-06): add `Three.controls(...)` to a
-      * scene and the island binds a three.js `OrbitControls` instance to the live camera and canvas at
-      * mount, disposed on the mount `Scope` close (no leaked listener). Drag orbits, scroll zooms, and
+    /** An orbit-camera control node: add `Three.controls(...)` to a scene and the client binds a three.js
+      * `OrbitControls` instance to the live camera and canvas at mount, disposed on the mount `Scope`
+      * close (no leaked listener). Drag orbits, scroll zooms, and
       * right-drag pans the camera around `target`; `autoRotate = true` spins the camera around the scene
       * automatically. Each flag toggles one OrbitControls affordance.
       *
@@ -273,9 +273,9 @@ object Three:
 
         // ---- Orbit controls node ----------------------------------------------------------
 
-        /** The immutable AST value for orbit camera control (design 02-design-r2 DY-06, FORK-Y-A),
-          * produced by [[Three.controls]]. The island binds a live three.js `OrbitControls` instance from
-          * it at mount over the live camera and canvas, disposed on the mount `Scope` close. It renders no
+        /** The immutable AST value for orbit camera control, produced by [[Three.controls]]. The client
+          * binds a live three.js `OrbitControls` instance from it at mount over the live camera and canvas,
+          * disposed on the mount `Scope` close. It renders no
           * object of its own (it controls the camera), so it carries no live three.js object and no
           * children; the reconciler records it as an empty holder the mount pipeline reads to construct the
           * controls binding.
@@ -796,23 +796,21 @@ object Three:
     )(using Frame): UI.Ast.Host =
         ThreeMount.embed(scene, camera, frames)
 
-    /** Option-Y server-feeds-by-signal-id surface (design 02-design-r2, Decisions D-001/D-002/D-004).
+    /** The server-feeds-by-signal-id surface.
       *
-      * Under Y the client owns and animates the real scene (its `onFrame`/`onClick` closures compiled
-      * into the island bundle) while the SERVER feeds reactive DATA addressed by a string signal id over
-      * the EXISTING kyo-ui WebSocket `HostUpdate` transport. The two halves agree only on the set of
-      * string ids: a `Three.Feed.serverSignal[A](id, ...)` is server-owned (a clock fiber writes it) and
-      * mirrored client-side under the SAME id; each server emission becomes a
-      * `HostPayload.SignalUpdate(id, encoded)` wire leaf the client decodes and writes into the mirror
-      * `SignalRef[A]`, which the scene's existing `.color`/`.position` bound setters already observe
-      * through the `forkBoundRef`/`patchProp` path. The fed value crosses as a `Json.encode`d string of
-      * the `Schema`-serialized `A` (the prove-the-mechanism resolution of Q-Y2-3), so any `A: Schema`
-      * (the bound setters' `Color`/`Vec3`/`Double` and a plain `Int` alike) round-trips identically
-      * client-side and server-side without any typed-value wire union.
+      * The client owns and animates the real scene (its `onFrame`/`onClick` closures compiled into the
+      * client bundle) while the SERVER feeds reactive DATA addressed by a string signal id over the
+      * EXISTING kyo-ui WebSocket `HostUpdate` transport. The two halves agree only on the set of string
+      * ids: a `Three.Feed.serverSignal[A](id, ...)` is server-owned (a clock fiber writes it) and mirrored
+      * client-side under the SAME id; each server emission becomes a `HostPayload.SignalUpdate(id, encoded)`
+      * wire leaf the client decodes and writes into the mirror `SignalRef[A]`, which the scene's existing
+      * `.color`/`.position` bound setters already observe through the `forkBoundRef`/`patchProp` path. The
+      * fed value crosses as a `Json.encode`d string of the `Schema`-serialized `A`, so any `A: Schema` (the
+      * bound setters' `Color`/`Vec3`/`Double` and a plain `Int` alike) round-trips identically client-side
+      * and server-side without any typed-value wire union.
       *
-      * This object carries the minimal real mechanism exercised by the prove-the-mechanism demo: the
-      * mirror-`SignalRef` factory, the server-side wire-leaf encoder, and the client-side per-id feed
-      * receiver. The full `run`/`emit` serve wiring layers on top of this same seam.
+      * This object carries the mirror-`SignalRef` factory, the server-side wire-leaf encoder, and the
+      * client-side per-id feed receiver. The full `run`/`emit` serve wiring layers on top of this same seam.
       */
     object Feed:
 
@@ -828,8 +826,8 @@ object Three:
             observe: (kyo.internal.HostPayload => Unit < Async) => Unit < (Async & Scope)
         )
 
-        /** One registered server-side app-event handler (design 02-design-r2, Decision D-003): its routing
-          * `eventId` and a closure that, given the inbound `AppEvent`'s `Json.encode`d string, decodes it
+        /** One registered server-side app-event handler: its routing `eventId` and a closure that, given
+          * the inbound `AppEvent`'s `Json.encode`d string, decodes it
           * with the handler's own `Schema[A]` and runs the user's handler. The closure captures `A`/
           * `Schema[A]`, so the registry stays homogeneous with no existential leaking; a decode failure is a
           * log-and-skip (the fire-and-forget back-channel policy), never a thrown frame.
@@ -839,8 +837,8 @@ object Three:
             run: String => Unit < Async
         )
 
-        /** The request-context fed-signal registry (design 02-design-r2, Decision D-004): a mutable
-          * holder of the `FeedEntry`s the `serverSignal` calls record AND the `AppEventHandler`s the
+        /** The request-context fed-signal registry: a mutable holder of the `FeedEntry`s the `serverSignal`
+          * calls record AND the `AppEventHandler`s the
           * `onAppEvent` calls record while the `ui` builder runs. `run` establishes one fresh registry per
           * WebSocket session (via [[registryLocal]] `let`), runs the builder inside it, reads the recorded
           * feed entries to fork the feed observers, and reads the recorded app-event handlers to route
@@ -892,8 +890,8 @@ object Three:
                 }
             yield ref
 
-        /** Structural fed-signal overload (design 02-design-r2, Decision D-002, DY-03): a server-fed
-          * `Chunk[A]` the client's own `foreachKeyed` reconciler diffs locally.
+        /** Structural fed-signal overload: a server-fed `Chunk[A]` the client's own `foreachKeyed`
+          * reconciler diffs locally.
           *
           * Allocates the server-owned (or, on the island, the client mirror) `SignalRef[Chunk[A]]`
           * addressed by `id`. On the SERVER, when called inside a [[run]] WebSocket session, it registers
@@ -933,8 +931,8 @@ object Three:
             kyo.internal.HostPayload.SignalUpdate(id, Json.encode[A](value))
 
         /** Encodes a server-owned fed `Chunk[A]` snapshot as the `HostPayload.SignalChunk(id, encoded)`
-          * wire leaf the structural feed runner emits (design 02-design-r2 D-002, DY-03). The whole
-          * collection crosses as the `Json.encode`d string of its `Schema`, decoded client-side by
+          * wire leaf the structural feed runner emits. The whole collection crosses as the `Json.encode`d
+          * string of its `Schema`, decoded client-side by
           * [[connectChunk]] with the same `Schema[A]`; the client's own keyed reconciler then diffs it.
           */
         private[kyo] def encodeChunkUpdate[A: Schema](id: String, value: Chunk[A])(using Frame): kyo.internal.HostPayload =
@@ -948,18 +946,17 @@ object Three:
           * `mirror` then patches exactly the one bound live node. A malformed or wrong-id payload is a
           * silent no-op. The receiver is dropped on `Scope` close.
           *
-          * This is the per-app island entry's feed-connect helper (design 02-design-r2 open question
-          * Q-Y2-1): the island's `@JSExportTopLevel` main mounts the scene via `Three.runMount` and calls
-          * this once per fed signal id under the mount Scope. It is exercised by the prove-the-mechanism
-          * demo; the public surface here is the minimal island connect the per-app entry needs.
+          * This is the client island entry's feed-connect helper: the island's `@JSExportTopLevel` main
+          * mounts the scene via `Three.runMount` and calls this once per fed signal id under the mount
+          * Scope.
           */
         def connect[A: Schema](id: String, mirror: SignalRef[A])(using
             Frame
         ): Unit < (Async & Scope) =
             ThreeMount.connectFeed[A](id, mirror)
 
-        /** Wires the client mirror for a STRUCTURAL feed (design 02-design-r2 D-002, DY-03): the island-side
-          * connect for a `Three.Feed.serverSignal[Chunk[A]]`. Registers a receiver on
+        /** Wires the client mirror for a STRUCTURAL feed: the client-side connect for a
+          * `Three.Feed.serverSignal[Chunk[A]]`. Registers a receiver on
           * `window.__kyoHostChannels[id]` that decodes an inbound `HostPayload.SignalChunk` for this `id`
           * with `Schema[Chunk[A]]` and writes the whole decoded snapshot into `mirror`. The scene bound the
           * mirror with `.foreachKeyed(key)(render)`, so the write drives the client's OWN keyed reconciler
@@ -967,7 +964,7 @@ object Three:
           * its live object (GPU buffers survive), a new key materializes, a dropped key disposes. A
           * malformed or wrong-id payload is a silent no-op. The receiver is dropped on `Scope` close.
           *
-          * The per-app island entry calls this once per fed structural signal id under the mount Scope, the
+          * The client island entry calls this once per fed structural signal id under the mount Scope, the
           * structural analog of [[connect]].
           */
         def connectChunk[A: Schema](id: String, mirror: SignalRef[Chunk[A]])(using
@@ -975,16 +972,16 @@ object Three:
         ): Unit < (Async & Scope) =
             ThreeMount.connectFeedChunk[A](id, mirror)
 
-        /** The Option-Y client->server typed app-event back-channel (design 02-design-r2, Decision D-003,
-          * DY-04). Called from inside a CLIENT `onClick` (or other handler) on the user's live scene: the
-          * client raycasts and runs `onClick` LOCALLY, and within that closure `emit` posts a typed
-          * `[A: Schema]` app event addressed by `id` over the SAME WebSocket. The server's [[run]] routes it
-          * to the handler registered for that `id` via [[onAppEvent]], which reflects it into a server-owned
-          * fed signal it feeds back, closing the hook-and-feed loop.
+        /** The client->server typed app-event back-channel. Called from inside a CLIENT `onClick` (or other
+          * handler) on the user's live scene: the client raycasts and runs `onClick` LOCALLY, and within
+          * that closure `emit` posts a typed `[A: Schema]` app event addressed by `id` over the SAME
+          * WebSocket. The server's [[run]] routes it to the handler registered for that `id` via
+          * [[onAppEvent]], which reflects it into a server-owned fed signal it feeds back, closing the
+          * hook-and-feed loop.
           *
           * The event crosses as the `Json.encode`d string of its `Schema` inside a `private[kyo]`
           * `UIEvent.AppEvent(path, id, encoded)` (the user sees only this typed surface, never the wire
-          * envelope). When no feed channel is bound (called outside an island feed context, e.g. before the
+          * envelope). When no feed channel is bound (called outside a client feed context, e.g. before the
           * WS is open or in a non-island context), the post fails with `Abort[ThreeException.FeedUnavailable]`
           * visible in the row, never a silent drop. An event for an `id` with no registered server handler
           * is a log-and-skip server-side (the fire-and-forget back-channel policy).
@@ -992,9 +989,9 @@ object Three:
         def emit[A: Schema](id: String, event: A)(using Frame): Unit < (Async & Abort[ThreeException]) =
             ThreeMount.postAppEvent[A](id, event)
 
-        /** Registers a server-side handler for the typed app event `id` (design 02-design-r2, Decision
-          * D-003, DY-04): the server leg of the back-channel that [[emit]] drives from the client. Called
-          * inside the [[run]] `ui` builder, exactly as [[serverSignal]] is, so the handler records itself in
+        /** Registers a server-side handler for the typed app event `id`: the server leg of the back-channel
+          * that [[emit]] drives from the client. Called inside the [[run]] `ui` builder, exactly as
+          * [[serverSignal]] is, so the handler records itself in
           * the session's request-context registry; [[run]] then routes each inbound `AppEvent` for `id` to
           * this handler. The handler receives the decoded typed event and typically reflects it into a
           * server-owned fed signal it also declared with `serverSignal`, feeding the result back to the
@@ -1018,14 +1015,13 @@ object Three:
                 case Absent => Kyo.unit
             }
 
-        /** The Option-Y serve entry (design 02-design-r2, Decision D-004, DY-05): returns the HTTP
-          * handlers (an SSR page GET and a WebSocket route) that serve a feed-by-signal-id app. Compose
-          * the returned handlers with any static handlers (the client island bundle, three.js) via
-          * `HttpServer.init`.
+        /** The serve entry: returns the HTTP handlers (an SSR page GET and a WebSocket route) that serve a
+          * feed-by-signal-id app. Compose the returned handlers with any static handlers (the client island
+          * bundle, three.js) via `HttpServer.init`.
           *
           * The page is built from `head`: it links the client island bundle through `head.moduleScript`
-          * (the per-app `@JSExportTopLevel` entry that mounts the real scene via `Three.runMount` and
-          * connects each fed signal id via [[connect]], design Decision D-001) and carries the inline
+          * (the `@JSExportTopLevel` entry that mounts the real scene via `Three.runMount` and connects each
+          * fed signal id via [[connect]]) and carries the inline
           * kyo-ui client that routes each inbound `HostUpdate` into `window.__kyoHostChannels[id]`. The
           * `ui` builder renders the page body (a host `<canvas>` the island selects, plus any kyo-ui HUD).
           *
@@ -1035,7 +1031,7 @@ object Three:
           * `HostUpdate(Seq(id), HostPayload.SignalUpdate(id, encoded))` over that WS (via
           * `UIServer.emitHostUpdate`). The observers and the kyo-ui reactive session bind to the
           * connection Scope and are interrupted on disconnect (no leaked fiber). The server never builds
-          * the 3D scene graph; it learns only the fed ids (pure Y, NG1).
+          * the 3D scene graph; it learns only the fed ids.
           *
           * Construction is `< Sync` (the per-connection observers fork at WebSocket-connect time under
           * the connection Scope, matching the `UI.runHandlers` substrate).

@@ -4,8 +4,8 @@ import demo.FeedChunkScene
 import kyo.Browser.ScreenshotFrame
 import kyo.internal.HtmlOp
 
-/** Browser proof of the Option-Y STRUCTURAL feed `Three.Feed.serverSignal[Chunk[A]]` (design 02-design-r2
-  * DY-03), end to end over a real WebSocket. The server feeds a CHANGING list of item ids by signal id (add
+/** Browser proof of the structural feed `Three.Feed.serverSignal[Chunk[A]]`,
+  * end to end over a real WebSocket. The server feeds a CHANGING list of item ids by signal id (add
   * items, remove an item, reorder), and the client scene's mesh COUNT and arrangement change to match,
   * observed from real Chrome pixels.
   *
@@ -19,7 +19,7 @@ import kyo.internal.HtmlOp
   * The proof reads real pixels: a per-frame sampler scans a horizontal strip of the rendered canvas and
   * counts how many distinct cube-colored columns are lit, pushing the count into `window.__countLog`. The
   * test asserts the observed column count steps through the fed list lengths (3 -> 4 -> 5 -> 4) in order,
-  * proving the structural feed reshaped the live scene. Frames are saved under `runs/visual-review/y-chunk/`.
+  * proving the structural feed reshaped the live scene. Frames are saved under `runs/visual-review/feed-chunk/`.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded.
   */
@@ -48,7 +48,7 @@ class ThreeFeedChunkBrowserTest extends WebGLSceneHarness:
                             assert(
                                 changedPairs >= 2,
                                 s"canvas never changed structure: only $changedPairs of ${frames.size - 1} consecutive " +
-                                    s"frame pairs changed. Frames saved under runs/visual-review/y-chunk/"
+                                    s"frame pairs changed. Frames saved under runs/visual-review/feed-chunk/"
                             )
                             // ---- STRUCTURAL: the observed cube-column count stepped through the fed list lengths ----
                             val steps = distinctCountSteps(countLog)
@@ -101,9 +101,9 @@ class ThreeFeedChunkBrowserTest extends WebGLSceneHarness:
             diffs > n / 100
     end framesDiffer
 
-    /** Writes each recorded frame as a JPEG under `runs/visual-review/y-chunk/frame-NNN.jpg`. */
+    /** Writes each recorded frame as a JPEG under `runs/visual-review/feed-chunk/frame-NNN.jpg`. */
     private def saveFrames(frames: Chunk[ScreenshotFrame])(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val dir = "runs/visual-review/y-chunk"
+        val dir = "runs/visual-review/feed-chunk"
         Sync.defer(mkdirp(dir)).andThen {
             Kyo.foreachIndexed(frames) { (i, frame) =>
                 val idx  = f"$i%03d"
@@ -255,7 +255,7 @@ object ThreeFeedChunkBrowserTest:
     private val chunkPage: String =
         s"""<!doctype html>
            |<html>
-           |<head><meta charset="utf-8"><title>kyo-threejs Option-Y chunk</title>
+           |<head><meta charset="utf-8"><title>kyo-threejs feed chunk</title>
            |<script type="importmap">
            |{ "imports": {
            |    "three": "/three.module.js",

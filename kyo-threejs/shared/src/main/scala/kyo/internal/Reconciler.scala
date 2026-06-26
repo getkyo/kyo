@@ -98,6 +98,11 @@ private[kyo] object Reconciler:
       * ambient `Scope` for disposal and recording the identity binding.
       */
     def materialize(node: Three, mounted: Mounted)(using Frame): Live < (Async & Scope & Abort[ThreeException]) =
+        // Unsafe: every `record` call below mutates the three.js object graph (attaches children) and the
+        // mounted identity map synchronously with no suspension; `Sync.Unsafe.defer` lifts that FFI side
+        // effect into the row. Safe because materialize runs only on the mount's single drain fiber under
+        // the mount Scope (no concurrent access to the live map), and each created GL resource is registered
+        // for disposal on Scope close by the ThreeFacadeOps make* calls.
         node match
             case s: Ast.Scene =>
                 for
@@ -214,6 +219,9 @@ private[kyo] object Reconciler:
     private[kyo] def disposeElemScope(removedLive: Live, mounted: Mounted)(using
         Frame
     ): Unit < (Async & Sync) =
+        // Unsafe: removing the per-element scope and retiring the live-map entries is a synchronous mutation
+        // of the mounted state with no suspension; `Sync.Unsafe.defer` lifts it into the row. Safe because it
+        // runs on the mount's single drain fiber, so no other fiber observes the map mid-update.
         Sync.Unsafe.defer {
             val key = new IdentityKey(removedLive.node)
             val fin = Maybe.fromOption(mounted.elemScopes.remove(key))

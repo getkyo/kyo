@@ -32,7 +32,7 @@ private[kyo] enum UIEvent derives CanEqual, Schema:
     case Scroll(path: Seq[String], deltaX: Double, deltaY: Double, modifiers: UI.Modifiers, targetId: Maybe[String])
     case Hover(path: Seq[String], mouse: MouseEventData)
     case Unhover(path: Seq[String], mouse: MouseEventData)
-    // The client->server typed app-event back-channel (design 02-design-r2 D-003): a client
+    // The client->server typed app-event back-channel: a client
     // onClick (running locally on the live scene) calls `Three.Feed.emit[A](eventId, event)`, which posts
     // this variant carrying the `Json.encode`d typed event `A` as an opaque string under `eventId`. The
     // server routes it to the host's registered app-event handler by `eventId`, which decodes with the

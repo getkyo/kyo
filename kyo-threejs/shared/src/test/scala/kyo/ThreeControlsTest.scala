@@ -2,7 +2,7 @@ package kyo
 
 import kyo.internal.Reconciler
 
-/** Tests for the orbit-controls AST surface (design 02-design-r2 DY-06, FORK-Y-A): the `Three.controls`
+/** Tests for the orbit-controls AST surface: the `Three.controls`
   * factory produces the locked immutable `Three.Ast.Controls` node, and the reconciler materializes it
   * into the live map (the mount pipeline reads the node to bind a live OrbitControls; that GL binding is
   * exercised by the browser test, not here).

@@ -11,7 +11,7 @@ import kyo.*
   */
 class HostPayloadTest extends kyo.test.Test[Any]:
 
-    "SignalUpdate(encoded Int) Schema round-trip (feed leaf, Q-Y2-3 probe)" in {
+    "SignalUpdate(encoded Int) Schema round-trip (feed leaf round-trip)" in {
         // The feed-by-signal-id leaf carries the fed value as an opaque Json.encode'd string of
         // its Schema, decoded client-side with the same Schema. Probe the double round-trip: the leaf
         // survives the HostPayload codec, and the inner encoded payload decodes back to the exact Int the
@@ -31,7 +31,7 @@ class HostPayloadTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "SignalChunk(encoded Chunk[Int]) Schema round-trip (structural feed leaf, D-002 probe)" in {
+    "SignalChunk(encoded Chunk[Int]) Schema round-trip (structural feed leaf round-trip)" in {
         // The structural feed leaf carries the whole Chunk[A] snapshot as an opaque Json.encode'd
         // string of its Schema, decoded client-side with the same Schema. Probe the double round-trip: the
         // leaf survives the HostPayload codec, and the inner encoded payload decodes back to the exact list
@@ -50,7 +50,7 @@ class HostPayloadTest extends kyo.test.Test[Any]:
         end match
     }
 
-    "AppEvent(encoded payload) Schema round-trip (app-event back-channel leaf, D-003 probe)" in {
+    "AppEvent(encoded payload) Schema round-trip (app-event back-channel leaf round-trip)" in {
         // The app-event back-channel carries the typed event as an opaque Json.encode'd string of
         // its Schema under an eventId. Probe the double round-trip: the UIEvent.AppEvent survives the
         // UIEvent codec, and the inner encoded payload decodes back to the exact value the client emitted.

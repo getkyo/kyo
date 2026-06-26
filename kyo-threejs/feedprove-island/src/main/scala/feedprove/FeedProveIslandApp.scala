@@ -2,7 +2,7 @@ package feedprove
 
 import demoharness.DemoMounts
 
-/** The Option-Y FeedProve per-app island (design 02-design-r2, Decision D-001): the self-running
+/** The FeedProve per-app island: the self-running
   * client bundle the [[democlient.FeedProve]] launcher links into its page through `head.moduleScript`.
   *
   * The `kyo-threejs-feedprove-island` project links this object as its main module initializer, so

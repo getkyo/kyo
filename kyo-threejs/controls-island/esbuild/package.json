@@ -1,0 +1,9 @@
+{
+  "name": "kyo-threejs-controls-island",
+  "private": true,
+  "version": "0.0.0",
+  "devDependencies": {
+    "esbuild": "0.25.5",
+    "three": "0.184.0"
+  }
+}

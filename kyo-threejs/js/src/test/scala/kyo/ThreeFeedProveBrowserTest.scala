@@ -4,8 +4,9 @@ import demo.FeedProveScene
 import kyo.Browser.ScreenshotFrame
 import kyo.internal.HtmlOp
 
-/** Browser proof of the Option-Y mechanism (design 02-design-r2 G5): ONE three.js scene that
-  * simultaneously shows BOTH halves of Y on the SAME cube, served and driven over a real WebSocket.
+/** Browser proof of the feed-driven scene: ONE three.js scene that
+  * simultaneously shows client animation and server-fed reactivity on the SAME cube, served and driven
+  * over a real WebSocket.
   *
   *   1. CLIENT-side animation: the cube spins via a client `onFrame`/RAF loop. The server does not drive
   *      the spin; the motion is local and continuous.
@@ -25,7 +26,7 @@ import kyo.internal.HtmlOp
   *     order on the ~1s schedule, proving the server feed (not local animation) drove the color change.
   *
   * Runs in a real software-WebGL Chrome via CDP; cancels (skips) where no Chrome can be downloaded. The
-  * screencast frames are saved under `runs/visual-review/y-prove/` for inspection.
+  * screencast frames are saved under `runs/visual-review/feed-prove/` for inspection.
   */
 class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
 
@@ -33,7 +34,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
 
     override def timeout = 180.seconds
 
-    "Option-Y: one cube animates client-side AND steps color from the server feed over the WS" in {
+    "one cube animates client-side AND steps color from the server feed over the WS" in {
         cancelOnUnsupportedPlatform {
             servedProve { url =>
                 swiftshaderLaunch.map { launch =>
@@ -60,7 +61,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
                             assert(
                                 changedPairs >= 2,
                                 s"canvas did not animate: only $changedPairs of ${frames.size - 1} consecutive frame pairs " +
-                                    s"changed (a static canvas yields ~identical frames). Frames saved under runs/visual-review/y-prove/"
+                                    s"changed (a static canvas yields ~identical frames). Frames saved under runs/visual-review/feed-prove/"
                             )
 
                             // ---- REACTIVITY: the sampled cube color stepped through the server palette ----
@@ -124,9 +125,9 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
             diffs > n / 100
     end framesDiffer
 
-    /** Writes each recorded frame as a JPEG under `runs/visual-review/y-prove/frame-NNN.jpg`. */
+    /** Writes each recorded frame as a JPEG under `runs/visual-review/feed-prove/frame-NNN.jpg`. */
     private def saveFrames(frames: Chunk[ScreenshotFrame])(using Frame): Unit < (Async & Abort[BrowserReadException]) =
-        val dir = "runs/visual-review/y-prove"
+        val dir = "runs/visual-review/feed-prove"
         Sync.defer(mkdirp(dir)).andThen {
             Kyo.foreachIndexed(frames) { (i, frame) =>
                 val idx  = f"$i%03d"
@@ -151,7 +152,7 @@ class ThreeFeedProveBrowserTest extends WebGLSceneHarness:
             }
         }(wait)
 
-    /** Serves the demo bundle, three.js, the prove page, AND a WebSocket route at `/_kyo/ws`. The WS
+    /** Serves the demo bundle, three.js, the feed page, AND a WebSocket route at `/_kyo/ws`. The WS
       * server forks a fiber that cycles the color feed through the palette every ~1s, pushing each step as
       * a `HostUpdate(SignalUpdate(colorId, encoded))` over the socket. Hands the page URL to `f`.
       */
@@ -281,7 +282,7 @@ object ThreeFeedProveBrowserTest:
     private val provePage: String =
         s"""<!doctype html>
            |<html>
-           |<head><meta charset="utf-8"><title>kyo-threejs Option-Y prove</title>
+           |<head><meta charset="utf-8"><title>kyo-threejs feed prove</title>
            |<script type="importmap">
            |{ "imports": {
            |    "three": "/three.module.js",

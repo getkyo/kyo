@@ -71,121 +71,84 @@ A reviewer should be able to state the headline invariant in one line: **a `Thre
 immutable value; the reconciler holds a 1:1 node-identity to live-object map and applies targeted
 mutations, never a scene rebuild.**
 
-## Client/server 3D reactivity (the host-bridge seam)
+## Client-owned scene, server-fed data
 
-kyo-threejs runs **3D always on the client** (WebGL is browser-only; no server-side GL). The
-campaign added a server-push reactive layer that lets server-owned `Signal` changes reach the
-browser scene and client raycasts run server-side `onClick` closures, over kyo-ui's existing
-WebSocket transport (not a bespoke channel).
+kyo-threejs runs **3D always on the client** (WebGL is browser-only; there is no server-side GL).
+The client owns, builds, and animates the real scene. When a server is present it feeds reactive
+DATA by signal id over kyo-ui's existing WebSocket transport (not a bespoke channel); the two halves
+agree only on a set of string signal ids.
 
-### Architecture
+### The client owns the scene
 
-Three seams collaborate across the process boundary:
+`Three.runMount` (`ThreeMount.scala:26`) mounts the real closure-carrying scene in the browser: it
+materializes the AST, forks the `Bound.Ref` prop fibers (`subscribeRegions`) and the structural
+reactive watchers (`subscribeReactiveRegions`), wires pointer delegation (`setupPointerDelegation`),
+binds any orbit `Three.controls` (`setupControls`), and runs the frame loop (`runLoop`). Every
+behavior closure runs client-side:
+- `onFrame` runs at `requestAnimationFrame` (the `rafLoop`, `ThreeMount.scala:725`): each tick runs
+  every `onFrame` closure inline, then submits one render.
+- `onClick` / `onPointerOver` / `onPointerOut` run client-side from a **local** raycast: the
+  capture-phase `pointerdown` / `pointermove` listeners (`setupPointerDelegation`,
+  `ThreeMount.scala:548`) map the event to NDC and call `Raycasting.hit`, then dispatch the hit
+  node's own closure. No raycast crosses the wire.
+- `Three.foreach` / `foreachKeyed` reconcile **client-side, by key**: a `Signal[Chunk[A]]` change
+  diffs the holder region locally (`subscribeReactiveRegions`), reusing the live object for an
+  unchanged key so the GPU buffers survive.
 
-**Server side.** `ThreeMount.serverBridge` (defined at `ThreeMount.scala:316`) builds a
-`UI.Ast.HostBridge` implementation that the kyo-ui server attaches to a `UI.host` node via
-`.withServerBridge(...)`. Three responsibilities:
-- `serverInit`: flattens the initial scene to an inline JSON boot payload the SSR page emits as
-  a `<script type="application/json" data-kyo-host-init>` data island.
-- `subscriptions`: forks one observe fiber per server-owned `Bound.Ref` prop (via
-  `ThreeBridge.observeProps`) and one per structural region (via `ThreeBridge.observeStructure`),
-  each encoding changes as a `HostPayload` and pushing over the WebSocket.
-- `onPick`: runs the server-side `onClick` closure for a client raycast-hit by node id
-  (`ThreeBridge.runPick`).
+`Three.embed` places the same client pipeline inside a kyo-ui tree: it returns a `UI.Ast.Host`
+whose `hostMountPipeline` (`ThreeMount.scala:124`) runs the identical materialize / subscribe /
+pointer / controls / loop sequence under the page mount Scope.
 
-**Client island.** `ThreeIsland.kyoThreeIsland` (`demos/src/main/scala/kyo/ThreeIsland.scala:17`)
-is a `@JSExportTopLevel` entry point the SSR page loads as an ESModule. On load it scans the
-document for every `[data-kyo-host]` element, reads that host's inline init payload, and calls
-`ThreeMount.islandMount` for each host on a detached fiber whose ambient `Scope` stays open for the
-page lifetime. The mount runs **once per host and never re-mounts**; subsequent server pushes flow
-through the per-host channel opened at mount time (the persistent-channel invariant).
+### The server feeds data by signal id
 
-**Per-host channel.** `HostChannel` (`shared/src/main/scala/kyo/HostChannel.scala`) holds one
-mirror `SignalRef[Any]` per bound prop slot of the reconstituted scene plus a structural inbox
-(`SignalRef[Chunk[StructuralOp]]`). The inline `clientJs` routes each inbound `HostUpdate` to the
-correct channel by `data-kyo-path`. A `HostPayload.Prop` write drives exactly one targeted
-`patchProp` through the reconciler's `forkBoundRef` fiber. A `HostPayload.Structural` appends to
-the structural inbox, which the `subscribeStructuralInbox` drain loop processes in FIFO order.
+The server never builds the 3D scene graph; it learns only the fed ids. `Three.Feed` (`Three.scala:815`)
+is that seam:
+- `Three.Feed.serverSignal[A: Schema](id, initial)` allocates a `SignalRef[A]`. On the server, when
+  called inside a `run` WebSocket session, it registers a feed observer in the session's `FeedRegistry`
+  (`Three.scala:848`); on the client island the same call yields the mirror ref the scene binds with
+  the existing `.color(mirror)` / `.position(mirror)` setters.
+- `Three.Feed.serverSignal[A: Schema](id, initial: Chunk[A])` is the structural overload: the server
+  feeds the whole `Chunk[A]` snapshot and the client's own `foreachKeyed` reconciler diffs it locally.
+- `Three.Feed.run(basePath, head)(ui)` (`Three.scala:1039`) returns the SSR page handler and the
+  WebSocket route. Per connection it runs the `ui` builder once inside a fresh `FeedRegistry` (so the
+  builder's `serverSignal` / `onAppEvent` calls record their ids), then forks one observer per
+  registered id under the connection Scope; every observer is interrupted on disconnect.
+- `Three.Feed.connect[A: Schema](id, mirror)` / `connectChunk[A: Schema](id, mirror)` are the client
+  receivers; the island calls one per fed id under the mount Scope.
 
-### The typed wire payload
+### The typed wire leaves
 
-The wire is **fully typed, closure-free, and `js.Dynamic`-free**. All types derive `Schema` and
-live in `kyo-ui/shared/src/main/scala/kyo/internal/HostPayload.scala`:
+Each server emission becomes one typed, `Schema`-serializable, FFI-free wire leaf, carried as the body
+of the existing kyo-ui `HtmlOp.HostUpdate`. Both leaves live in
+`kyo-ui/shared/src/main/scala/kyo/internal/HostPayload.scala`:
+- `HostPayload.SignalUpdate(signalId, encoded)` (`HostPayload.scala:28`) for a scalar/prop feed.
+- `HostPayload.SignalChunk(signalId, encoded)` (`HostPayload.scala:35`) for a structural feed.
 
-- `HostPayload`: three leaves. `Prop(nodeId, slot, value)` for one targeted prop push;
-  `Structural(op, regionId)` for one keyed splice instruction routed to a region holder (the
-  `regionId` defaults to the host root `"r"`, so each foreach/reactive region's ops splice into its
-  own node rather than the mount root); `Boot(insert, camera)` for the page-load boot envelope,
-  carrying the scene's root insert alongside the embed's `CameraDescriptor` so the client
-  reconstitutes the server's actual viewpoint, not a default one.
-- `HostValue`: the value union, tagged by SLOT (not runtime type, which mis-tags a whole-number
-  scalar that boxes to an `Int` on Scala.js). `V3(x, y, z)` for position/rotation/scale; `Col(rgb)`
-  for color/emissive; `Num(value)` for opacity/metalness/roughness/intensity scalars.
-- `StructuralOp`: three leaves. `Insert(key, index, descriptor)` to splice a new subtree;
-  `Remove(key)` to dispose one; `Move(key, toIndex)` to reorder without dispose.
-- `SceneDescriptor`: the serializable declarative form of a spliced subtree: kind tag, resolved
-  prop values, and children recursively. A `mesh` kind also carries its typed `GeometryDescriptor`
-  (the geometry shape + numeric params, one leaf per `Three.Geometry.*`) and `MaterialKind` tag (the
-  material class, one leaf per `Three.Material.*`), so the client rebuilds the exact sphere/torus and
-  basic/standard/line/points material, not a hardcoded box + standard. Carries no closure, no signal
-  ref, and no `Custom`, `Reactive`, or `Foreach` node; a `Custom` geometry or material drops at
-  flatten time.
-- `GeometryDescriptor` / `MaterialKind` / `CameraDescriptor`: the typed, FFI-free shapes a mesh's
-  geometry, a mesh's material class, and the embed's camera flatten to, one leaf per `Three.Geometry.*`,
-  `Three.Material.*`, and `Three.Camera.*` factory the AST supports. A `Custom` geometry/material has
-  no leaf (it stays server-side).
-- `PointerData`: the FFI-free wire form of a raycast-hit pointer, carried client-to-server for
-  pick routing. Plain `Double` fields; no three.js object crosses the wire.
+In both, `encoded` is the `Json.encode`d string of the `Schema`-serialized fed value (`A` or
+`Chunk[A]`), decoded client-side with the same `Schema`. The leaf is **value-generic**: any `A: Schema`
+round-trips with no per-prop wire union and no `js.Dynamic`. The bound setters' `Color` / `Vec3` /
+`Double` and a plain `Int` alike cross the same two leaves.
 
-The **serializable subset** is geometry, material, transform, and lights whose props resolve to
-plain values. Closures (`onClick`/`onFrame`), server-owned signals, and `Custom`/`Reactive`/
-`Foreach` nodes **stay server-side** and never cross the wire. Reaching a non-serializable node
-while flattening raises a typed `ThreeBridge.UnserializableNode` failure rather than silently
-dropping subtrees. The boot path is the documented-drop side of this boundary (it falls back to an
-empty scene); the live structural-diff path propagates the typed failure to the caller.
+The client receivers (`connectFeed` / `connectFeedChunk`, `ThreeMount.scala:199` / `245`) register a
+receiver on `window.__kyoHostChannels[id]`, the same registry the inline kyo-ui clientJs routes an
+inbound `HostUpdate` into. A `SignalUpdate` decodes its `encoded` with `Schema[A]` and writes the
+mirror `SignalRef[A]`; the scene's existing `forkBoundRef` / `patchProp` fiber then applies exactly one
+targeted setter on the one bound live node (no re-materialize). A `SignalChunk` writes the mirror
+`SignalRef[Chunk[A]]`, driving the client's own keyed reconciler. A malformed or wrong-id payload is a
+silent no-op (the fire-and-forget feed policy), and the receiver is dropped on `Scope` close.
 
-Node identity on the wire uses a depth-first index path string (`"r"` for the root, `"r.0"` for
-its first child, `"r.0.1"` recursively). This scheme is **deterministic across flatten and
-reconstitute**, so a `HostPayload.Prop(nodeId, slot, value)` the server emits addresses the same
-node the client reconstituted.
+### The client-to-server app-event back-channel
 
-The slot names the server and client share are string constants on `ThreeBridge`
-(`ThreeBridge.slotPosition`, `slotRotation`, `slotScale`, `slotColor`, `slotOpacity`,
-`slotMetalness`, `slotRoughness`, `slotEmissive`, `slotIntensity`). Adding a new bindable prop
-kind requires adding a slot constant here and wiring it in both `ThreeBridge.collectBounds`
-(server side) and `ThreeBridge.materializeNode` (client reconstitution).
-
-### Structural reactivity over the channel
-
-A server reactive region (`foreach`/`foreachKeyed`) splices, removes, or reorders a 3D subtree on
-the client over the same host channel, with no re-mount. The server-side keyed diff
-(`ThreeBridge.diffKeyedServer`) produces the minimal op set: a surviving key at an unchanged index
-emits no op; a surviving key at a changed index emits `Move`; a removed key emits `Remove`; a new
-key emits `Insert` carrying its flattened `SceneDescriptor`. Only an `Insert` re-flattens a
-subtree; `Move` and `Remove` carry only the key.
-
-The client drain loop (`ThreeMount.subscribeStructuralInbox`, `ThreeMount.scala:883`) applies each
-op via `ThreeMount.applyStructuralOp` (`ThreeMount.scala:939`):
-- `Insert`: reconstitutes the descriptor through `ThreeBridge.reconstitute`, materializes it under
-  a fresh per-element scope (so its GL resources dispose when that scope closes), and splices it
-  at the requested index.
-- `Remove`: closes the key's per-element scope **exactly once**, disposing its GL resources once
-  and never more. A stale second `Remove` for the same key finds no entry and is a no-op (the
-  double-dispose guard).
-- `Move`: reuses the existing live `Object3D` reference at a new index with no dispose; GPU
-  buffers survive a reorder unchanged.
-
-The drain loop uses `Signal.next` rather than `Signal.observe` for the structural inbox
-deliberately: `observe` runs each value inside a per-value `Scope` that would dispose an inserted
-element's per-element scope on the next op. The `next`-driven loop runs splices under the island's
-long-lived ambient `Scope`, so an inserted subtree lives until its own `Remove`.
-
-### The persistent-channel invariant
-
-The host mount fires **once** per host element and holds the channel open for the page lifetime.
-A re-mount is never triggered by a subsequent server push, a sibling reactive re-render, or a
-prop change. All updates flow through the open channel. If you add a code path that could
-re-invoke `ThreeMount.islandMount` for an already-mounted host, you are breaking this invariant.
+A client `onClick` (running locally on the live scene) can post a typed app event back to the server
+with `Three.Feed.emit[A: Schema](id, event)` (`Three.scala:989`). The event crosses as a
+`UIEvent.AppEvent(path, eventId, encoded)` (`kyo-ui/shared/src/main/scala/kyo/internal/UIEvent.scala:41`)
+over the page's single WebSocket; the `encoded` field is the `Json.encode`d `Schema[A]` string. The
+server's `run` routes it by `eventId` to the handler registered with
+`Three.Feed.onAppEvent[A: Schema](id)(handler)` (`Three.scala:1004`), which decodes with the same
+`Schema[A]` and typically reflects the event into a server-owned fed signal it feeds back, closing the
+hook-and-feed loop. When no feed channel is bound (called before the WS is open or outside an island
+context), `emit` fails with the typed `ThreeException.FeedUnavailable(id)` in its row rather than
+dropping the event silently. A server-side event for an unregistered id is a log-and-skip.
 
 ## Invariants (binding)
 
@@ -208,11 +171,14 @@ invariant, that is a design decision to surface, not a quiet edit.
   through their **per-element scope**, which closes on removal (and a second close is a no-op:
   never a double-dispose). A surviving element's per-element scope is registered with the mount
   scope and closes on mount teardown. Never construct a GL resource outside a Scope-registered
-  acquire. Guarded by `ThreeMountTest` and `ReconcilerTest`; the renderer-disposal half is
-  browser-required (see the real-GL gate below). The channel structural-reactivity path extends
-  this: a `Remove` closes the per-element scope exactly once; a `Move` leaves it open (GPU buffers
-  survive). Guarded by `ThreeMountChannelTest` ("a removed key disposes its GL scope exactly once"
-  and "a removed key is not disposed twice").
+  acquire. Guarded by `ThreeMountTest` ("foreachKeyed shrink disposes removed child geometry and
+  material exactly once", "Reactive swap disposes the prior subtree's GL resources exactly once") and
+  `ReconcilerTest` ("each GL resource dispose fires once and only once per scope"); the
+  renderer-disposal half is browser-required (`ThreeMountBrowserTest`, `ThreeEmbedBrowserTest`; see
+  the real-GL gate below). The client keyed reconciler holds this line for structural reactivity: a
+  dropped key disposes its per-element scope exactly once and an unchanged key keeps its live object
+  undisturbed. Guarded by `ThreeMountTest` ("foreachKeyed shrink: unchanged keys keep the same Live
+  instance and are not disposed").
 
 - **Frame-loop ordering: closures before submit.** Per tick the loop runs every per-object
   `onFrame` closure **inline and awaited**, then calls `renderer.render` exactly once. The submit
@@ -248,29 +214,28 @@ invariant, that is a design decision to surface, not a quiet edit.
   the camera after every position update. Both calls live in one thunk in `ThreeFacadeOps`; keep
   the ordering when touching camera materialization.
 
-- **Prop pushes never re-materialize.** A `HostPayload.Prop` arriving over the channel writes
-  exactly one slot mirror and drives exactly one targeted `patchProp`; the live-map count is
-  unchanged. A prop push must not trigger a scene rebuild or a re-materialize of any subtree.
-  Guarded by `ThreeMountChannelTest` ("successive prop pushes do not re-materialize the scene
-  (live-map count is stable)").
+- **A fed prop update never re-materializes.** A `HostPayload.SignalUpdate` arriving over the WS
+  writes exactly one mirror `SignalRef`, which the scene's existing `forkBoundRef` fiber turns into
+  exactly one targeted `patchProp`; the live-map count is unchanged. A fed update must not trigger a
+  scene rebuild or a re-materialize of any subtree. Guarded by `ThreeReactiveTest` ("no full rebuild:
+  applying a signal patch does not replace the scene root live object", "signal patch on one mesh
+  leaves sibling live object identity unchanged") and `ThreeMountTest` (reactive camera and light
+  position patches); proven end to end over a real WebSocket by `ThreeFeedRunBrowserTest`.
 
-- **The wire carries no closures and no `js.Dynamic`.** A `HostPayload`, `HostValue`,
-  `StructuralOp`, or `SceneDescriptor` serialized to JSON and decoded on the client contains only
-  typed Scala values. `Custom`/`Reactive`/`Foreach` nodes and any node carrying a closure fail with
-  a typed `ThreeBridge.UnserializableNode` at flatten time rather than silently serializing a broken
-  payload. Guarded by `ThreeMountChannelTest` ("a Custom/closure subtree is not flattened to a
-  descriptor").
+- **The wire carries no closures and no `js.Dynamic`.** The feed leaves `HostPayload.SignalUpdate`
+  and `HostPayload.SignalChunk` and the client-to-server `UIEvent.AppEvent` all derive `Schema`, and
+  each carries a string signal/event id plus a `Json.encode`d string of the `Schema`-serialized value.
+  No function and no three.js object cross the wire: the client owns the scene, so closures
+  (`onClick` / `onFrame`) and `Custom` / `Reactive` / `Foreach` nodes never serialize. Guarded by
+  `HostPayloadTest` (the `SignalUpdate`, `SignalChunk`, and `AppEvent` Schema round-trips) and the
+  registry-and-typed-surface checks in `ThreeFeedTest`.
 
-- **Structural reorder preserves live-object identity.** A `Move` op reorders a keyed node
-  without disposing or recreating its `Object3D` or its GPU buffers. The live reference before and
-  after a `Move` is `eq`-identical. Guarded by `ThreeMountChannelTest` ("a surviving node is not
-  disposed on reorder").
-
-- **The server keyed diff is minimal.** `ThreeBridge.observeStructure` emits only the ops
-  needed: one `Remove` per removed key, one `Move` per key at a changed index, one `Insert` per new
-  key. A full re-materialize of `[a,c,d]` from `[a,b,c]` would emit 3 removes and 3 inserts; the
-  diff emits exactly 3 ops. Guarded by `ThreeMountChannelTest` ("the server-side keyed diff emits
-  the minimal op set").
+- **Structural reorder preserves live-object identity.** A reorder of a `foreachKeyed` field reuses
+  the live `Object3D` and its GPU buffers for an unchanged key; the live reference before and after is
+  `eq`-identical, since the keyed diff runs in the client's own reconciler off the fed `Chunk[A]`
+  snapshot. Guarded by `ReconcilerTest` ("keyed diff reuses live nodes on reorder by reference
+  identity") and `ThreeMountTest` ("foreachKeyed shrink: unchanged keys keep the same Live instance
+  and are not disposed"); proven end to end by `ThreeFeedChunkBrowserTest`.
 
 The remaining invariants each have a named guard test under `shared/src/test`: targeted mutation
 (a `Bound.Ref` patches exactly one live object, never a scene rebuild), the one facade that links
@@ -295,9 +260,11 @@ here) is:
      `requestAnimationFrame` callback that must run or complete a Kyo effect synchronously, via
      `Sync.Unsafe.evalOrThrow` or `Promise.unsafe.complete*`).
   3. **The `@JSExportTopLevel` demo entry points** that the browser page calls directly.
-  4. **The WS-receiver callback** (`ThreeMount.registerChannelReceiver`, `ThreeMount.scala:233`)
-     that decodes a `HostPayload` and applies it to the channel synchronously via
-     `Sync.Unsafe.evalOrThrow`. This is the JS-callback-to-effect bridge for the channel path.
+  4. **The feed receivers and the app-event POST** (`ThreeMount.connectFeed` / `connectFeedChunk`,
+     `ThreeMount.scala:199` / `245`, and `ThreeMount.postAppEvent`, `ThreeMount.scala:289`). The
+     receivers decode an inbound `HostPayload` feed leaf and write the mirror `SignalRef`
+     synchronously via `Sync.Unsafe.evalOrThrow`; the POST sends a `UIEvent.AppEvent` over the page
+     WebSocket. These are the JS-callback-to-effect bridges for the feed path.
 - **Mark each such site with a `// Unsafe:` comment stating why** (what is being bridged and why it
   is safe here). The unsafe tier mirrors the safe tier: every safe operation has its `Unsafe`
   equivalent, bridged through `Sync.Unsafe.defer`.
@@ -323,8 +290,8 @@ JVM source set to "round out" the cross-build. The `shared/` directory may freel
 Source and test layout:
 
 - `shared/src/main` holds the pure, FFI-free surface (the AST, `Bound`, `Color`/`Radians`/`Normal`/
-  `Vec3`, `Pointer`, `ThreeFrames`, `Asset`, `ThreeException`, `ThreeBridge`, `HostChannel`,
-  `HostInit`). This is Node-testable without a GPU.
+  `Vec3`, `Pointer`, `ThreeFrames`, `Asset`, `ThreeException`, and the server-feed-by-signal-id seam
+  `Three.Feed`). This is Node-testable without a GPU.
 - `js-wasm/src/main` holds the FFI: the facade, the reconciler, `ThreeMount`, the loaders,
   `ThreeToImage`. `CrossType.Full` does not auto-wire this directory for a two-platform cross, so
   both `jsSettings` and `wasmSettings` add it explicitly. A new FFI source must compile under both
@@ -366,13 +333,17 @@ The seams you will use:
   GL-visible behavior should be reachable from a test or demo scene so the browser suite covers it.
   For a real software-WebGL GPU render (non-blank pixels) launch Chrome with
   `headedSwiftshaderLaunch` / `headless=false` and `--enable-unsafe-swiftshader`.
-- **Channel-level reactivity tests** (`ThreeMountChannelTest`, `shared/src/test/scala/kyo/ThreeMountChannelTest.scala`)
-  drive the full server-to-client grain on Node with no WebGL: a server signal change flattens to
-  a boot payload, reconstitutes into per-slot mirror `SignalRef`s, a `HostPayload` write routes
-  through `HostChannel` to the mirror, and the reconciler's patch path applies exactly one targeted
-  mutation to the live three.js object. Synchronization uses `Channel`/`Fiber`/latch primitives
-  (no sleeps). Every assertion observes a concrete value: a live material color hex, a mirror's
-  current value, a counter. Mock nothing.
+- **Feed-seam tests** split by what they prove. On Node with no WebGL, `ThreeFeedTest`
+  (`shared/src/test/scala/kyo/ThreeFeedTest.scala`) pins the `Three.Feed` registry behavior and the
+  typed surface: a `serverSignal` inside a `run` session registers one feed entry, an `onAppEvent`
+  handler decodes and runs on the encoded event, and `emit` with no channel bound fails with the typed
+  `FeedUnavailable`. The wire-leaf `Schema` round-trips (`SignalUpdate`, `SignalChunk`, `AppEvent`)
+  live in kyo-ui's `HostPayloadTest`. The full server-to-client grain over a real WebSocket is proven
+  in the browser: `ThreeFeedRunBrowserTest` (a cube animates client-side and steps color from the
+  public `Three.Feed.run` feed), `ThreeFeedChunkBrowserTest` (the server feeds a changing list and the
+  client mesh count tracks it), and `ThreeFeedEmitBrowserTest` (a client click posts an app event the
+  server reflects into a visible color step). Every assertion observes a concrete value: a sampled
+  canvas pixel, a lit-column count, a registry size. Mock nothing.
 - **README examples are doctest-compiled**, not via the JVM doctest task (a js+wasm-only module has
   no JVM doctest host). `project/ReadmeBlocks.scala` extracts each fenced `scala` block into a
   generated source compiled under the Scala.js compiler. Two consequences for README authors: each
@@ -442,14 +413,12 @@ one pass:
    assertion if it owns a GPU buffer. If it is GL-visible, add or extend a demo so the visual-review
    harness covers it.
 
-If the new prop is a `Bound` prop that should cross the server-push wire, you also need:
-- A slot constant on `ThreeBridge` (`ThreeBridge.slotXxx`).
-- A `collectBounds` branch in `ThreeBridge` that emits the `(slot, Bound)` pair for the new node
-  kind.
-- A `materializeNode` branch in `ThreeBridge` that reconstitutes the prop as a `Bound.Ref` on the
-  client side.
-- A test in `ThreeMountChannelTest` asserting the prop reaches the client mirror and drives the
-  live object.
+A new `Bound` prop needs **no** wire-protocol change to be server-fed. The feed crosses any
+`A: Schema` by signal id (`HostPayload.SignalUpdate`), so wiring step 3's `Bound.Ref` patch in
+`ThreeMount.extractBoundRefs` is all the reactivity plumbing required: the prop's `.color(mirror)` /
+`.position(mirror)` setter binds the fed mirror, and `Three.Feed.serverSignal` / `connect` carry the
+value with no per-prop wire union. Only a new value type that is not yet `Schema`-serializable would
+need attention, and that is a `Schema` derivation, not a protocol branch.
 
 A new top-level type or a changed public signature is a surface change: raise it deliberately as a
 design decision, not a quiet addition. Nesting new primitives under the existing `Three.Geometry` /
@@ -463,22 +432,18 @@ Before shipping a change to kyo-threejs, run through these questions:
 - Does the change touch the AST factories? Verify they remain pure (no effect row, no `js.Dynamic`).
 - Does the change add a new bindable prop? Wire it in `ThreeMount.extractBoundRefs` (reactivity),
   `Reconciler.fillReactiveRegionsOnce` (headless fill), and `ThreeMount.fillBoundRefsOnce`
-  (toImage). If it should cross the server-push wire, add the slot constant and the
-  `ThreeBridge.collectBounds` / `ThreeBridge.materializeNode` branches.
+  (toImage). That same `Bound.Ref` wiring also makes the prop server-feedable, with no wire-protocol
+  change.
 - Does the change add a new GL resource? Use `acquireGl` (not `acquirePlain`, not a bare `new`);
   verify the dispose test fires exactly once.
-- Does the change touch the `HostChannel` or `ThreeBridge` wire protocol? Any new slot or payload
-  variant must be reflected in both the server flatten path and the client reconstitution path; the
-  tests in `ThreeMountChannelTest` must cover the round-trip.
-- Does the change add a new `Bound` prop that should not cross the wire (a closure-bearing or
-  signal-bearing prop)? Add a branch to `ThreeBridge.unserializableKind` so flatten raises the
-  typed failure rather than silently shipping a broken payload.
+- Does the change add a `HostPayload` wire leaf? It must derive `Schema` and round-trip
+  (`HostPayloadTest`), and the client receiver (`ThreeMount.connectFeed` / `connectFeedChunk`) must
+  decode it. A new fed value type is a `Schema` derivation on that type, not a new payload variant.
 - Does the change affect the frame loop? Verify `runFrame` keeps the closures-before-submit
   ordering (`ThreeMountTest`).
-- Does the change affect the structural drain loop? Verify the inbox uses `Signal.next` (not
-  `Signal.observe`) so inserted element scopes are not closed on the next op.
-- Does the change add a new entry point that could re-mount an already-mounted host? That breaks
-  the persistent-channel invariant.
+- Does the change touch client-side reactive regions? Verify a `Foreach` / `Reactive` region still
+  reuses live objects for unchanged keys and disposes removed ones exactly once (`ThreeMountTest`,
+  `ReconcilerTest`).
 - Is the new source JS+Wasm compatible? A `@JSImport` is fine; a `js.Dynamic.global.require` is not
   (the Wasm backend mandates ESModule). Test under both backends.
 - Does the change move a test into `js/src/test`? Only GL-submit or browser-specific behavior
@@ -499,10 +464,11 @@ not all of three.js:
 - `runMount` + the pluggable frame loop, raycast interaction (`onClick` / `onPointerOver` /
   `onPointerOut`), glTF + texture loading, headless `toImage`, and the reactive scene graph
   (`reactive` / `render` / `when` / `foreach` / `foreachKeyed`).
-- Client/server 3D reactivity over kyo-ui's WebSocket transport: server-owned `Signal` changes
-  reach the client scene; client raycasts run server-side `onClick` closures. Structural reactivity
-  (`foreach`/`foreachKeyed`) splices/removes/reorders 3D subtrees over the same channel with
-  minimal diffs and no re-mount.
+- A client-owned scene with server-fed data over kyo-ui's WebSocket transport (`Three.Feed`): the
+  client mounts, animates, and raycasts the real scene locally, while the server feeds reactive
+  values by signal id (`serverSignal` / `connect`), including a structural `Chunk[A]` snapshot the
+  client's own `foreachKeyed` reconciler diffs. A typed client-to-server back-channel
+  (`emit` / `onAppEvent`) posts app events the server reflects into the fed signals.
 
 Anything outside this slice is reachable **today** through the typed `custom` escape hatches; a
 contributor is never blocked on the round-1 boundary.

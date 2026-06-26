@@ -1850,7 +1850,7 @@ def islandEsbuildScript(stageDir: File, outDir: File): String = {
        |""".stripMargin
 }
 
-// The Option-Y FeedProve per-app island (design 02-design-r2, Decision D-001): the self-contained ESM the
+// The FeedProve per-app island: the self-contained ESM the
 // `democlient.FeedProve` launcher links through `head.moduleScript` on the page `Three.Feed.run` serves.
 // A `ModuleKind.ESModule` linked with a main initializer, then esbuild-bundled with `three` inlined so
 // the page needs no import map; its main is
@@ -1874,7 +1874,7 @@ lazy val `kyo-threejs-feedprove-island` =
             scalaJSUseMainModuleInitializer := true,
             Compile / mainClass             := Some("feedprove.FeedProveIslandApp"),
             // Reuse the demos' `demoharness.DemoMounts` (the `mountFeedProve` entry) and the shared
-            // `demo.FeedProveScene`, so the island links the SAME compiled scene the prove test mounts.
+            // `demo.FeedProveScene`, so the island links the SAME compiled scene the FeedProve browser test mounts.
             Compile / unmanagedSourceDirectories ++= Seq(
                 (`kyo-threejs`.js / baseDirectory).value / ".." / "demos" / "src" / "main" / "scala" / "demoharness",
                 (`kyo-threejs`.js / baseDirectory).value / ".." / "shared" / "src" / "test" / "scala" / "demo"
@@ -1894,7 +1894,7 @@ lazy val `kyo-threejs-feedprove-island` =
 // kyo-threejs/feedprove-island/target/scala-<ver>/esbuild/main/out/main.js, served by the launcher.
 addCommandAlias("feedProveIslandBundle", "; kyo-threejs-feedprove-island/esbuildBundle")
 
-// The Option-Y app-event per-app island (design 02-design-r2, Decision D-001, DY-04): the self-contained
+// The app-event per-app island: the self-contained
 // ESM the emit browser test links through `head.moduleScript` on the page `Three.Feed.run` serves. Mirrors
 // `kyo-threejs-feedprove-island` exactly, but its main is `emitisland.EmitIslandApp`, which mounts the
 // FeedEmit scene at `#app` (a clickable cube whose onClick calls `Three.Feed.emit`) and connects the color
@@ -1933,7 +1933,7 @@ lazy val `kyo-threejs-emit-island` =
 // kyo-threejs/emit-island/target/scala-<ver>/esbuild/main/out/main.js, served by the emit browser test.
 addCommandAlias("emitIslandBundle", "; kyo-threejs-emit-island/esbuildBundle")
 
-// The Option-Y orbit-controls per-app island (design 02-design-r2, Decision D-001, DY-06): the
+// The orbit-controls per-app island: the
 // self-contained ESM the controls browser test links through `head.moduleScript`. Mirrors
 // `kyo-threejs-feedprove-island` exactly, but its main is `controlsisland.ControlsIslandApp`, which mounts
 // the ControlsScene at `#app` (a static object plus `Three.controls(autoRotate = true)`), so the island
@@ -1973,7 +1973,7 @@ lazy val `kyo-threejs-controls-island` =
 // output lands at kyo-threejs/controls-island/target/scala-<ver>/esbuild/main/out/main.js.
 addCommandAlias("controlsIslandBundle", "; kyo-threejs-controls-island/esbuildBundle")
 
-// The Option-Y FLAGSHIP per-app island (design 02-design-r2, Decision D-001, G5): the self-contained ESM
+// The flagship per-app island: the self-contained ESM
 // the `democlient.Flagship` launcher links through `head.moduleScript`. Mirrors `kyo-threejs-feedprove-island`
 // exactly, but its main is `flagship.FlagshipIslandApp`, which mounts the consolidated Flagship scene at
 // `#app`: ONE cube that simultaneously spins client-side (`onFrame`), steps color from a server-fed
@@ -2095,7 +2095,7 @@ addCommandAlias(
 )
 // The EmbeddedScene client-mount launcher: serves the full `EmbeddedSceneScene.ui` kyo-ui tree (a button,
 // the embedded 3D canvas via `Three.embed`, and a HUD label) into a `<div id="app">`, mounted through
-// `UI.runMount`. Under Option Y the embed is client-owned, so the earth's `onFrame` orbit animates and the
+// `UI.runMount`. The embed is client-owned, so the earth's `onFrame` orbit animates and the
 // sun/earth `onClick` selection fires LOCALLY in the browser, each writing the shared `SignalRef[String]`
 // the HUD observes. Like the pure-animation launchers it links the `kyo-threejs-demos` ESModule bundle.
 addCommandAlias(
@@ -2103,20 +2103,20 @@ addCommandAlias(
     """; kyo-threejs-demos/fastLinkJS ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.Embedded") ; kyo-threejs-demo-runner/run"""
 )
 
-// The Option-Y prove-the-mechanism launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
+// The feed-driven launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
 // that spins client-side AND steps color from a server feed over the WebSocket, and stays up so a human can
 // open the printed URL. Unlike the client-mount launchers above (pure local animation), this also declares a
 // server-owned fed signal (`Three.Feed.serverSignal`) and forks a `Clock` fiber that cycles a palette every
 // ~1s; `Three.Feed.run` forks one observer per fed id, pushing each step as a `HostUpdate` over the WS, so
-// the open page shows BOTH halves of Y on one cube. Bundles the self-contained FeedProve island (three
+// the open page shows client animation and server-fed reactivity on one cube. Bundles the self-contained FeedProve island (three
 // inlined) the page links through `head.moduleScript`, then runs the `democlient.FeedProve` launcher.
 addCommandAlias(
     "demoClientFeedProve",
     """; kyo-threejs-feedprove-island/esbuildBundle ; set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.FeedProve") ; kyo-threejs-demo-runner/run"""
 )
 
-// The Option-Y FLAGSHIP consolidated launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
-// that shows ALL FOUR halves of Y at once (client `onFrame` spin, a server-fed `serverSignal` color that
+// The flagship consolidated launcher, over the PUBLIC `Three.Feed.run` serve path: serves ONE cube
+// that shows ALL FOUR behaviors at once (client `onFrame` spin, a server-fed `serverSignal` color that
 // steps every ~1s, a client `onClick` -> `Three.Feed.emit` the server reflects into a fed scale signal, and
 // a `Three.controls(autoRotate)` camera orbit), and stays up so a human can open the printed URL. Bundles
 // the self-contained Flagship island (three + OrbitControls inlined) the page links through

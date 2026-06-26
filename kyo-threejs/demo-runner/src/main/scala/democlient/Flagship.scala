@@ -5,8 +5,8 @@ import kyo.*
 import scala.scalajs.js
 import scala.scalajs.js.annotation.JSImport
 
-/** Live launcher for the Option-Y FLAGSHIP consolidated demo (design 02-design-r2 G5) over the PUBLIC
-  * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows ALL FOUR halves of Y on the
+/** Live launcher for the flagship consolidated demo over the PUBLIC
+  * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows ALL FOUR behaviors on the
   * SAME cube and STAYS UP so a human can open it.
   *
   *   1. CLIENT animation: the cube spins via a client `onFrame`/RAF loop compiled into the Flagship island
@@ -61,7 +61,7 @@ object Flagship extends ClientDemoApp:
       * connecting both feed mirrors.
       */
     private def head(using Frame): UI.PageHead =
-        UI.PageHead("kyo-threejs Option-Y Flagship", moduleScript = Present(islandPath))
+        UI.PageHead("kyo-threejs Flagship", moduleScript = Present(islandPath))
 
     /** The page body the island mounts into: a `<canvas id="app">` host plus the two server-owned fed
       * signals and the click back-channel.

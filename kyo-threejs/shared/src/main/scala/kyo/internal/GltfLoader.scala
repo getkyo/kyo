@@ -101,8 +101,9 @@ private[kyo] object GltfLoader:
 
     /** Registers the loaded GPU resources for disposal and wraps the scene as an [[kyo.Asset.Gltf]]. */
     private def registerForDisposal(gltf: js.Dynamic)(using Frame): Asset.Gltf < (Sync & Scope) =
+        // Unsafe: the acquire lifts the already-loaded `gltf` handle into the resource's row (no FFI yet);
+        // the release disposes the loaded subtree's GPU resources by traversing and calling .dispose().
         Scope.acquireRelease(Sync.Unsafe.defer(gltf)) { g =>
-            // Unsafe: dispose the loaded subtree's GPU resources by traversing and calling .dispose().
             Sync.Unsafe.defer(disposeSubtree(g.scene))
         }.map(g => toAsset(g))
 
