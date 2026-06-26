@@ -11,7 +11,7 @@ private[kyo] object DomBackend:
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
         // `document.body` is read inside the effect, not at the call site, so building the mount
-        // value stays pure (no DOM access until it runs ; safe to construct under Node/SSR).
+        // value stays pure (no DOM access until it runs, so it is safe to construct under Node/SSR).
         Sync.defer(document.body).map(body => mountInto(ui, body))
 
     /** Mount a UI into a specific DOM element selected by CSS selector. */
