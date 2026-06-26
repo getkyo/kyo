@@ -34,7 +34,7 @@ private[kyo] object UIServer:
             for
                 uiTree <- ui
                 html   <- HtmlRenderer.render(uiTree, Seq.empty)
-                page = HtmlRenderer.renderPage(head.title, html, head.css, base, head.moduleScript)
+                page = HtmlRenderer.renderPage(head.title, html, head.css, base, head.moduleScript, head.importMap)
             yield HttpResponse.ok(page)
                 .addHeader("Content-Type", "text/html; charset=utf-8")
         }

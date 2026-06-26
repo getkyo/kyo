@@ -10,7 +10,8 @@ import kyo.internal.HtmlOp
   * observed from real Chrome pixels.
   *
   *   1. CLIENT scene: a `foreachKeyed` field of colored cubes, one per fed item id, laid out left to right.
-  *      The island mounts it via `Three.runMount` and calls `Three.Feed.connectChunk(listId, mirror)`.
+  *      The page imports the demos bundle's `mountFeedChunk` entry, which mounts it via `Three.runMount`
+  *      and calls `Three.Feed.connectChunk(listId, mirror)`.
   *   2. SERVER feed: the WS pushes `HostPayload.SignalChunk(listId, encoded)` frames stepping the item
   *      list: [0,1,2] -> add 3 -> add 4 -> remove 1 -> reorder. Each push is the whole snapshot; the
   *      client's OWN keyed reconciler diffs it, materializing/disposing cubes so the rendered count tracks

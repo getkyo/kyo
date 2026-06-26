@@ -42,7 +42,8 @@ private[kyo] object HtmlRenderer:
         body: String,
         css: String,
         basePath: String,
-        moduleScript: Maybe[String] = Absent
+        moduleScript: Maybe[String] = Absent,
+        importMap: Seq[(String, String)] = Seq.empty
     ): String =
         val islandScript = moduleScript match
             case Present(src) => s"""\n<script type="module" src="${esc(src)}"></script>"""
@@ -51,7 +52,7 @@ private[kyo] object HtmlRenderer:
            |<html>
            |<head>
            |<meta charset="UTF-8">
-           |<title>${esc(title)}</title>
+           |<title>${esc(title)}</title>${importMapHead(importMap)}
            |<style>$baseCss$css</style>
            |</head>
            |<body>$body
@@ -82,7 +83,7 @@ private[kyo] object HtmlRenderer:
            |<head>
            |<meta charset="utf-8">
            |<meta name="viewport" content="width=device-width, initial-scale=1">
-           |<title>${esc(head.title)}</title>
+           |<title>${esc(head.title)}</title>${importMapHead(head.importMap)}
            |$metaTags$linkTags
            |<style>$baseCss${head.css}</style>
            |$ldBlock</head>
@@ -109,6 +110,42 @@ private[kyo] object HtmlRenderer:
     // is JSON read back by JSON.parse, not HTML re-parsed.
     private def escScript(json: String): String =
         json.replace("<", "\\u003c").replace(">", "\\u003e")
+
+    // Render the page's import map as `<script type="importmap">{"imports": { ... }}</script>`, the
+    // bare-specifier resolution table a linked module script (PageHead.moduleScript) relies on. Returns
+    // the leading-newline element when entries are present, or "" when empty (no import map emitted, the
+    // default). Keys and values are JSON-string-escaped, then the whole body runs through escScript so a
+    // `</script>` substring in any specifier or url cannot close the element early (the data-island rule).
+    private def importMapHead(entries: Seq[(String, String)]): String =
+        if entries.isEmpty then ""
+        else
+            val imports = entries.map((spec, url) => s"${jsonStr(spec)}:${jsonStr(url)}").mkString(",")
+            val json    = s"""{"imports":{$imports}}"""
+            s"""\n<script type="importmap">${escScript(json)}</script>"""
+    end importMapHead
+
+    // Escape a string as a JSON double-quoted string literal (the import-map encoder's leaf): the JSON
+    // parse hazards are backslash and double-quote, plus the C0 control characters JSON forbids raw
+    // (`\n`/`\r`/`\t` get their short escapes, the rest the `\u00XX` form). `<`/`>` are left to escScript.
+    private def jsonStr(s: String): String =
+        val hex = "0123456789abcdef"
+        val sb  = new StringBuilder(s.length + 2)
+        sb.append('"')
+        s.foreach {
+            case '\\' => sb.append("\\\\")
+            case '"'  => sb.append("\\\"")
+            case '\n' => sb.append("\\n")
+            case '\r' => sb.append("\\r")
+            case '\t' => sb.append("\\t")
+            case c if c < ' ' =>
+                sb.append("\\u00")
+                sb.append(hex.charAt((c >> 4) & 0xf))
+                sb.append(hex.charAt(c & 0xf))
+            case c => sb.append(c)
+        }
+        sb.append('"')
+        sb.toString
+    end jsonStr
 
     // ---- Core rendering ----
 

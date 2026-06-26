@@ -3,15 +3,15 @@ package kyo
 import kyo.Browser.ScreenshotFrame
 
 /** Browser proof of the orbit `Three.controls`: a STATIC
-  * object plus a `Three.controls(autoRotate = true)` node, so the island binds a live three.js
+  * object plus a `Three.controls(autoRotate = true)` node, so the mounted scene binds a live three.js
   * `OrbitControls` and the CAMERA orbits the scene automatically. The rendered view changes frame to frame
   * even though nothing in the scene carries an `onFrame`, observed from real Chrome pixels: only the
   * camera moving can change the view of a static object.
   *
   *   1. CLIENT scene: a static cluster of differently-placed, differently-colored cubes plus
-  *      `Three.controls(autoRotate = true)`. The controls-island bundle mounts it via `Three.runMount`,
-  *      which binds `new OrbitControls(camera, canvas)` under the mount Scope and calls `controls.update()`
-  *      each RAF frame, orbiting the camera.
+  *      `Three.controls(autoRotate = true)`. The page imports the demos bundle's `mountControls` entry,
+  *      which mounts it via `Three.runMount`, binding `new OrbitControls(camera, canvas)` under the mount
+  *      Scope and calling `controls.update()` each RAF frame, orbiting the camera.
   *   2. PROOF: the screencast frames change consecutively (the camera orbits the static object). Because no
   *      node has an `onFrame`, the change can only be the camera motion the controls drive.
   *
@@ -87,18 +87,30 @@ class ThreeControlsBrowserTest extends WebGLSceneHarness:
         }
     end saveFrames
 
-    /** Serves the static controls page plus the self-contained controls island bundle (three and
-      * OrbitControls inlined), then hands the page URL to `f`. No WebSocket is needed: orbit controls are
-      * pure client-side.
+    /** Serves the demo bundle, three.js, and the GLTFLoader jsm stack the bundle imports, plus the static
+      * controls page (an import map resolving `three` and the jsm to the served modules), then hands the
+      * page URL to `f`. No WebSocket is needed: orbit controls are pure client-side.
       */
     private def servedControls[A](
         f: String => A < (Async & Scope & Abort[BrowserException])
     )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
         for
-            island <- Sync.defer(readIslandBundle)
+            bundle    <- WebGLSceneHarness.readDemoBundle
+            module    <- WebGLSceneHarness.readThreeSource("three.module.js")
+            core      <- WebGLSceneHarness.readThreeSource("three.core.js")
+            gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
+            bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
+            skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
             server <- HttpServer.init(0, "localhost")(
                 WebGLSceneHarness.htmlHandler(controlsPage),
-                WebGLSceneHarness.jsHandler(islandRoute, island)
+                WebGLSceneHarness.jsHandler("main.js", bundle),
+                WebGLSceneHarness.jsHandler("three.module.js", module),
+                WebGLSceneHarness.jsHandler("three.core.js", core),
+                WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
             )
             result <- f(s"http://localhost:${server.port}/")
         yield result
@@ -106,9 +118,6 @@ class ThreeControlsBrowserTest extends WebGLSceneHarness:
 end ThreeControlsBrowserTest
 
 object ThreeControlsBrowserTest:
-
-    /** The served route of the controls island bundle the page links as a module script. */
-    private val islandRoute: String = "/_kyo/controls-island.js"
 
     /** The recorder window: ~6s, spanning a good arc of the camera orbit. */
     private val recordWindow: Schedule = Schedule.fixed(50.millis).take(120)
@@ -119,37 +128,36 @@ object ThreeControlsBrowserTest:
         ()
     end mkdirp
 
-    /** Reads the bundled controls island ESM (`main.js`, three + OrbitControls inlined) from the
-      * controls-island esbuild output tree.
-      */
-    private def readIslandBundle: String =
-        val target = NodePathJ.join(NodeProcessJ.cwd(), "kyo-threejs", "controls-island", "target")
-        val located = NodeFsMk.readdirSync(target).toSeq.collectFirst {
-            case d
-                if d.startsWith("scala-") &&
-                    NodeFsMk.existsSync(NodePathJ.join(target, d, "esbuild", "main", "out", "main.js")) =>
-                NodePathJ.join(target, d, "esbuild", "main", "out", "main.js")
-        }
-        NodeFsMk.readFileSync(
-            located.getOrElse(sys.error(
-                s"controls island bundle main.js not found under $target; run 'sbt controlsIslandBundle' first"
-            )),
-            "utf8"
-        )
-    end readIslandBundle
-
-    /** The controls page: a `#app` canvas plus a `<script type="module">` linking the self-running controls
-      * island bundle, which mounts the static scene and binds the orbiting OrbitControls on load.
+    /** The controls page: an import map for `three` and the GLTFLoader jsm, a `#app` canvas, and a module
+      * script that imports the demo bundle's `mountControls` entry and calls it. The mount runs the static
+      * scene through `Three.runMount` and binds the orbiting OrbitControls on load.
       */
     private val controlsPage: String =
         s"""<!doctype html>
            |<html>
            |<head><meta charset="utf-8"><title>kyo-threejs Three.controls</title>
+           |<script type="importmap">
+           |{ "imports": {
+           |    "three": "/three.module.js",
+           |    "three/examples/jsm/loaders/GLTFLoader.js": "/three/examples/jsm/loaders/GLTFLoader.js",
+           |    "three/examples/jsm/utils/BufferGeometryUtils.js": "/three/examples/jsm/utils/BufferGeometryUtils.js",
+           |    "three/examples/jsm/utils/SkeletonUtils.js": "/three/examples/jsm/utils/SkeletonUtils.js",
+           |    "three/examples/jsm/controls/OrbitControls.js": "/three/examples/jsm/controls/OrbitControls.js"
+           |} }
+           |</script>
            |<style>html,body{margin:0;background:#101018}#app{display:block}</style>
            |</head>
            |<body>
            |<canvas id="app" width="640" height="480"></canvas>
-           |<script type="module" src="$islandRoute"></script>
+           |<script type="module">
+           |window.__mountError = "";
+           |try {
+           |    const { mountControls } = await import("/main.js");
+           |    mountControls("#app");
+           |} catch (e) {
+           |    window.__mountError = String(e && e.message ? e.message : e);
+           |}
+           |</script>
            |</body>
            |</html>""".stripMargin
 
@@ -159,22 +167,7 @@ object ThreeControlsBrowserTest:
     @js.native
     @JSImport("node:fs", JSImport.Namespace)
     private object NodeFsMk extends js.Object:
-        def mkdirSync(path: String, options: js.Object): Unit    = js.native
-        def readFileSync(path: String, encoding: String): String = js.native
-        def readdirSync(path: String): js.Array[String]          = js.native
-        def existsSync(path: String): Boolean                    = js.native
+        def mkdirSync(path: String, options: js.Object): Unit = js.native
     end NodeFsMk
-
-    @js.native
-    @JSImport("node:path", JSImport.Namespace)
-    private object NodePathJ extends js.Object:
-        def join(parts: String*): String = js.native
-    end NodePathJ
-
-    @js.native
-    @JSImport("node:process", JSImport.Namespace)
-    private object NodeProcessJ extends js.Object:
-        def cwd(): String = js.native
-    end NodeProcessJ
 
 end ThreeControlsBrowserTest

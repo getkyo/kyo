@@ -2,15 +2,13 @@ package democlient
 
 import demo.FlagshipScene
 import kyo.*
-import scala.scalajs.js
-import scala.scalajs.js.annotation.JSImport
 
 /** Live launcher for the flagship consolidated demo over the PUBLIC
   * `Three.Feed` serve path: serves ONE three.js scene that simultaneously shows ALL FOUR behaviors on the
   * SAME cube and STAYS UP so a human can open it.
   *
-  *   1. CLIENT animation: the cube spins via a client `onFrame`/RAF loop compiled into the Flagship island
-  *      bundle. The motion is local and continuous; the server never drives it.
+  *   1. CLIENT animation: the cube spins via a client `onFrame`/RAF loop in the demos bundle's `mountFlagship`
+  *      entry. The motion is local and continuous; the server never drives it.
   *   2. SERVER `serverSignal`: the cube's color binds to a server-fed `SignalRef[Int]`
   *      ([[FlagshipScene.colorId]]). A server fiber cycles a fixed palette every ~1s, so the color steps in
   *      DISCRETE jumps.
@@ -18,36 +16,51 @@ import scala.scalajs.js.annotation.JSImport
   *      `Three.Feed.emit`s a typed `Bump`; the server's [[Three.Feed.onAppEvent]] handler advances a
   *      second server-fed `SignalRef[Int]` ([[FlagshipScene.scaleId]]) bound to the cube's scale, so each
   *      click STEPS the cube larger.
-  *   4. ORBIT controls: `Three.controls(autoRotate = true)` in the scene makes the island bind a live
+  *   4. ORBIT controls: `Three.controls(autoRotate = true)` in the scene makes the mounted scene bind a live
   *      `OrbitControls`, so the camera orbits the cube (a distinct rate from the cube's own spin).
   *
   * This launcher uses ONLY the public API: two `Three.Feed.serverSignal` declarations (the auto-cycled
   * color and the click-driven scale), a `Three.Feed.onAppEvent` handler (the click back-channel), a
-  * server-side background fiber (the palette cycler), and `Three.Feed.run` (the serve entry). The island
-  * inlines three AND OrbitControls (esbuild), so the page needs no import map.
+  * server-side background fiber (the palette cycler), and `Three.Feed.run` (the serve entry). `run` serves
+  * the SSR page that links a mount shim through `head.moduleScript` (a tiny ES module that imports the demos
+  * bundle's `mountFlagship` entry and calls it). The page's `head.importMap` resolves the bundle's bare
+  * `three` and OrbitControls imports to the served three modules, so the plain `fastLinkJS` bundle loads
+  * directly, with no separate bundling step.
   *
-  * Bundle the island first with `sbt flagshipIslandBundle`; the `demoClientFlagship` alias does this.
+  * Link the demos bundle first with `sbt kyo-threejs-demos/fastLinkJS`; the `demoClientFlagship` alias does this.
   */
 object Flagship extends ClientDemoApp:
 
     /** The server color-step interval: the server advances the fed palette color once per this. */
     private val serverStepMs: Long = 1000L
 
-    /** The served route of the Flagship island bundle the page links through `head.moduleScript`. */
-    private val islandPath: String = "/_kyo/flagship-island.js"
+    /** The route of the mount shim the SSR page links through `head.moduleScript`: a tiny ES module that
+      * imports the demos bundle's `mountFlagship` entry and calls it against the host canvas. The bundle's
+      * bare `three` and OrbitControls imports resolve through the page's import map.
+      */
+    private val shimPath: String = "/_kyo/flagship-mount.js"
+
+    /** The mount shim module: import the entry from the served demos bundle and mount it at `#app`. */
+    private val mountShim: String =
+        """import { mountFlagship } from "/main.js";
+          |mountFlagship("#app");
+          |""".stripMargin
 
     run {
         serve(port)
     }
 
-    /** Serves the Flagship page (via [[Three.Feed.run]]) plus the island bundle on `port` (0 = an
-      * ephemeral port), forks the server-side palette cycler, prints the open URL, and awaits forever.
+    /** Serves the Flagship page (via [[Three.Feed.run]]) plus the mount shim, the demos bundle, and three
+      * on `port` (0 = an ephemeral port), forks the server-side palette cycler, prints the open URL, and
+      * awaits forever.
       */
     private def serve(port: Int)(using Frame): Unit < (Async & Scope & Abort[FileException]) =
         for
-            island   <- readFile(islandFile)
+            assets   <- DemoClientServe.demoAssetHandlers
             handlers <- Three.Feed.run("", head)(ui)
-            server   <- HttpServer.init(port, "localhost")((handlers :+ jsHandler(islandPath, island))*)
+            server <- HttpServer.init(port, "localhost")(
+                (handlers ++ (DemoClientServe.jsHandler(shimPath, mountShim) +: assets))*
+            )
             _ <- Console.printLine(
                 s"Flagship running on http://localhost:${server.port}/  " +
                     "(the cube spins client-side, the camera orbits it, its color steps every ~1s from the server feed, and each click grows it via emit)"
@@ -55,15 +68,15 @@ object Flagship extends ClientDemoApp:
             _ <- server.await
         yield ()
 
-    /** The page head that links the self-contained Flagship island bundle. `moduleScript` emits a
-      * `<script type="module" src="/_kyo/flagship-island.js">` into the SSR page; the bundle inlines three
-      * and OrbitControls and self-runs on load, mounting the spinning, orbited cube at `#app` and
-      * connecting both feed mirrors.
+    /** The page head linking the mount shim and carrying the import map that resolves the demos bundle's
+      * bare `three` and OrbitControls imports. `moduleScript` emits a `<script type="module" src="$shimPath">`
+      * into the SSR page; loading the shim imports the demos bundle and mounts the spinning, orbited cube at
+      * `#app`, connecting both feed mirrors.
       */
     private def head(using Frame): UI.PageHead =
-        UI.PageHead("kyo-threejs Flagship", moduleScript = Present(islandPath))
+        UI.PageHead("kyo-threejs Flagship", moduleScript = Present(shimPath), importMap = DemoClientServe.threeImportMap)
 
-    /** The page body the island mounts into: a `<canvas id="app">` host plus the two server-owned fed
+    /** The page body the mount shim mounts into: a `<canvas id="app">` host plus the two server-owned fed
       * signals and the click back-channel.
       *
       * `Three.Feed.serverSignal(colorId, ...)` declares the auto-cycled color feed and forks a background
@@ -105,65 +118,5 @@ object Flagship extends ClientDemoApp:
                 .andThen(Async.sleep(serverStepMs.millis))
                 .andThen(Loop.continue(i + 1))
         }
-
-    private def staticHandler(path: String, contentType: String, source: String)(using
-        Frame
-    ): HttpHandler[Any, "body" ~ String, Nothing] =
-        HttpRoute.getRaw(path).response(_.bodyText).handler { _ =>
-            HttpResponse.ok(source).setHeader("Content-Type", contentType)
-        }
-
-    private def jsHandler(path: String, source: String)(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =
-        staticHandler(path, "text/javascript; charset=utf-8", source)
-
-    /** Reads a UTF-8 source file off disk, surfacing a missing file as a typed `FileNotFoundException` so
-      * the caller reports the absent artifact rather than crash.
-      */
-    private def readFile(path: String)(using Frame): String < (Sync & Abort[FileException]) =
-        Sync.defer(NodeFs.existsSync(path)).map {
-            case true  => Sync.defer(NodeFs.readFileSync(path, "utf8"))
-            case false => Abort.fail(FileNotFoundException(Path(path)))
-        }
-
-    /** The absolute path of the bundled Flagship island ESM `main.js` (the esbuild output). */
-    private lazy val islandFile: String =
-        val islandTarget = NodePath.join(NodeProcess.cwd(), "kyo-threejs", "flagship-island", "target")
-        locate(islandTarget, d => NodePath.join(islandTarget, d, "esbuild", "main", "out", "main.js"))
-            .getOrElse(sys.error(
-                s"Flagship island bundle main.js not found under $islandTarget; run 'sbt flagshipIslandBundle' first"
-            ))
-    end islandFile
-
-    /** Returns `f(dir)` for the first `scala-*` subdirectory of `target` for which the path exists. */
-    private def locate(target: String, f: String => String): Maybe[String] =
-        if !NodeFs.existsSync(target) then Absent
-        else
-            Maybe(
-                NodeFs.readdirSync(target).toSeq
-                    .filter(_.startsWith("scala-"))
-                    .map(f)
-                    .find(NodeFs.existsSync)
-                    .orNull
-            )
-
-    @js.native
-    @JSImport("node:path", JSImport.Namespace)
-    private object NodePath extends js.Object:
-        def join(parts: String*): String = js.native
-    end NodePath
-
-    @js.native
-    @JSImport("node:fs", JSImport.Namespace)
-    private object NodeFs extends js.Object:
-        def readFileSync(path: String, encoding: String): String = js.native
-        def readdirSync(path: String): js.Array[String]          = js.native
-        def existsSync(path: String): Boolean                    = js.native
-    end NodeFs
-
-    @js.native
-    @JSImport("node:process", JSImport.Namespace)
-    private object NodeProcess extends js.Object:
-        def cwd(): String = js.native
-    end NodeProcess
 
 end Flagship

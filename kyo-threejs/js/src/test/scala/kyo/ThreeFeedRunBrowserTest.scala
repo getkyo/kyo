@@ -9,14 +9,15 @@ import kyo.Browser.ScreenshotFrame
   * proves client animation and server-fed reactivity on one cube, but every server-side wire is the locked
   * public surface:
   *
-  *   1. SERVE PATH: `Three.Feed.run("", head)(ui)` returns the SSR page handler (linking the
-  *      self-contained FeedClock island bundle through `head.moduleScript`, carrying the inline kyo-ui
-  *      client that routes each inbound `HostUpdate` into `window.__kyoHostChannels`) and the WebSocket
-  *      route. The `ui` builder declares the fed color signal via `Three.Feed.serverSignal(colorId, ...)`
-  *      and forks a server-side palette cycler; running it inside the WS session registers a feed observer
-  *      that pushes each emission as `HostUpdate(SignalUpdate(colorId, encoded))` over the WS.
-  *   2. CLIENT-side animation: the cube spins via the island's client `onFrame`/RAF loop. The server does
-  *      not drive the spin; the motion is local and continuous.
+  *   1. SERVE PATH: `Three.Feed.run("", head)(ui)` returns the SSR page handler (linking a mount shim
+  *      through `head.moduleScript` that imports the demos bundle's `mountFeedClock` entry, with an
+  *      `head.importMap` resolving the bundle's bare `three` import, and carrying the inline kyo-ui client
+  *      that routes each inbound `HostUpdate` into `window.__kyoHostChannels`) and the WebSocket route. The
+  *      `ui` builder declares the fed color signal via `Three.Feed.serverSignal(colorId, ...)` and forks a
+  *      server-side palette cycler; running it inside the WS session registers a feed observer that pushes
+  *      each emission as `HostUpdate(SignalUpdate(colorId, encoded))` over the WS.
+  *   2. CLIENT-side animation: the cube spins via the mounted scene's client `onFrame`/RAF loop. The server
+  *      does not drive the spin; the motion is local and continuous.
   *   3. SERVER-driven reactivity: the cube material's color steps through the server palette in DISCRETE
   *      ~1s jumps as the cycler advances the fed signal and the run observer feeds each step.
   *
@@ -42,10 +43,10 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
                     Browser.run(launch) {
                         for
                             _ <- Browser.goto(url)
-                            // The public-path page links the self-running island (no page-side mount flag);
-                            // wait until the island has created and rendered the #app canvas (a non-trivial
-                            // distinct-pixel count proves the GL scene painted), then install the per-frame
-                            // sampler over the live page.
+                            // The public-path page links the mount shim (no page-side mount flag); wait until
+                            // the shim has created and rendered the #app canvas (a non-trivial distinct-pixel
+                            // count proves the GL scene painted), then install the per-frame sampler over the
+                            // live page.
                             _ <- Browser.waitFor(
                                 "(function(){var c=document.getElementById('app');return !!(c&&c.width>0&&c.getContext);})()"
                             )
@@ -135,26 +136,45 @@ class ThreeFeedRunBrowserTest extends WebGLSceneHarness:
         }
     end saveFrames
 
-    /** Serves the PUBLIC `Three.Feed.run` handlers plus the self-contained FeedClock island bundle, then
-      * hands the page URL to `f`. The page, the WS route, and the per-id feed observers are all produced
-      * by `Three.Feed.run`; the only extra handler is the static one serving the island bundle bytes the
-      * page links through `head.moduleScript`.
+    /** Serves the PUBLIC `Three.Feed.run` handlers plus the demos bundle, the mount shim the page links
+      * through `head.moduleScript`, and the three.js modules the bundle's import map resolves, then hands
+      * the page URL to `f`. The page, the WS route, and the per-id feed observers are all produced by
+      * `Three.Feed.run`; the extra handlers serve the mount shim, the demos bundle, and three.
       */
     private def servedRun[A](
         f: String => A < (Async & Scope & Abort[BrowserException])
     )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
         for
-            island   <- Sync.defer(readIslandBundle)
-            handlers <- Three.Feed.run("", head)(ui)
-            server   <- HttpServer.init(0, "localhost")((handlers :+ WebGLSceneHarness.jsHandler(islandRoute, island))*)
-            result   <- f(s"http://localhost:${server.port}/")
+            bundle    <- WebGLSceneHarness.readDemoBundle
+            module    <- WebGLSceneHarness.readThreeSource("three.module.js")
+            core      <- WebGLSceneHarness.readThreeSource("three.core.js")
+            gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
+            bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
+            skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
+            handlers  <- Three.Feed.run("", head)(ui)
+            server <- HttpServer.init(0, "localhost")(
+                (handlers ++ Seq(
+                    WebGLSceneHarness.jsHandler(mountShimRoute, mountShim),
+                    WebGLSceneHarness.jsHandler("main.js", bundle),
+                    WebGLSceneHarness.jsHandler("three.module.js", module),
+                    WebGLSceneHarness.jsHandler("three.core.js", core),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
+                ))*
+            )
+            result <- f(s"http://localhost:${server.port}/")
         yield result
 
-    /** The page head linking the self-contained FeedClock island bundle (three inlined; no import map). */
+    /** The page head linking the mount shim and carrying the import map that resolves the demos bundle's
+      * bare `three` (and jsm) imports to the served three modules.
+      */
     private def head(using Frame): UI.PageHead =
-        UI.PageHead("kyo-threejs Three.Feed.run", moduleScript = Present(islandRoute))
+        UI.PageHead("kyo-threejs Three.Feed.run", moduleScript = Present(mountShimRoute), importMap = threeImportMap)
 
-    /** The page body the island mounts into, plus the server-owned fed color signal and its cycler. The
+    /** The page body the mount shim mounts into, plus the server-owned fed color signal and its cycler. The
       * `serverSignal` registration inside the `run` WS session is what wires the feed; a server-side
       * background fiber advances the palette index every ~1s and sets the signal. The driver is forked
       * with the scoped `Fiber.init`, so it binds to the connection Scope and tears down on disconnect.
@@ -197,8 +217,29 @@ object ThreeFeedRunBrowserTest:
     /** The server color-step interval (ms): the server advances the fed palette color once per this. */
     private val serverStepMs: Long = 1000L
 
-    /** The served route of the FeedClock island bundle the page links through `head.moduleScript`. */
-    private val islandRoute: String = "/_kyo/feedclock-island.js"
+    /** The route of the mount shim the SSR page links through `head.moduleScript`: a tiny ES module that
+      * imports the demos bundle's `mountFeedClock` entry and calls it against the host canvas. It is the
+      * no-bundler replacement for the per-app island's main initializer; the bundle's bare `three` import
+      * resolves through the page's import map.
+      */
+    private val mountShimRoute: String = "/_kyo/feedclock-mount.js"
+
+    /** The mount shim module: import the entry from the served demos bundle and mount it at `#app`. */
+    private val mountShim: String =
+        """import { mountFeedClock } from "/main.js";
+          |mountFeedClock("#app");
+          |""".stripMargin
+
+    /** The import map the SSR page emits so the demos bundle's bare `three` (and jsm) imports resolve to
+      * the served three modules.
+      */
+    private val threeImportMap: Seq[(String, String)] = Seq(
+        "three"                                           -> "/three.module.js",
+        "three/examples/jsm/loaders/GLTFLoader.js"        -> "/three/examples/jsm/loaders/GLTFLoader.js",
+        "three/examples/jsm/utils/BufferGeometryUtils.js" -> "/three/examples/jsm/utils/BufferGeometryUtils.js",
+        "three/examples/jsm/utils/SkeletonUtils.js"       -> "/three/examples/jsm/utils/SkeletonUtils.js",
+        "three/examples/jsm/controls/OrbitControls.js"    -> "/three/examples/jsm/controls/OrbitControls.js"
+    )
 
     /** The recorder window: ~5s, spanning several ~1s server color steps. */
     private val recordWindow: Schedule = Schedule.fixed(50.millis).take(100)
@@ -211,26 +252,6 @@ object ThreeFeedRunBrowserTest:
         NodeFsMk.mkdirSync(dir, scala.scalajs.js.Dynamic.literal(recursive = true))
         ()
     end mkdirp
-
-    /** Reads the bundled FeedClock island ESM (`main.js`, three inlined) from the feedclock-island esbuild
-      * output tree. The output lands under
-      * `kyo-threejs/feedclock-island/target/scala-<ver>/esbuild/main/out/main.js`.
-      */
-    private def readIslandBundle: String =
-        val target = NodePathJ.join(NodeProcessJ.cwd(), "kyo-threejs", "feedclock-island", "target")
-        val located = NodeFsMk.readdirSync(target).toSeq.collectFirst {
-            case d
-                if d.startsWith("scala-") &&
-                    NodeFsMk.existsSync(NodePathJ.join(target, d, "esbuild", "main", "out", "main.js")) =>
-                NodePathJ.join(target, d, "esbuild", "main", "out", "main.js")
-        }
-        NodeFsMk.readFileSync(
-            located.getOrElse(sys.error(
-                s"FeedClock island bundle main.js not found under $target; run 'sbt feedClockIslandBundle' first"
-            )),
-            "utf8"
-        )
-    end readIslandBundle
 
     /** The per-frame canvas sampler installed over the live public-path page: copies the `#app` WebGL
       * canvas into a 2D canvas inside requestAnimationFrame and reads its center pixel into
@@ -275,22 +296,7 @@ object ThreeFeedRunBrowserTest:
     @js.native
     @JSImport("node:fs", JSImport.Namespace)
     private object NodeFsMk extends js.Object:
-        def mkdirSync(path: String, options: js.Object): Unit    = js.native
-        def readFileSync(path: String, encoding: String): String = js.native
-        def readdirSync(path: String): js.Array[String]          = js.native
-        def existsSync(path: String): Boolean                    = js.native
+        def mkdirSync(path: String, options: js.Object): Unit = js.native
     end NodeFsMk
-
-    @js.native
-    @JSImport("node:path", JSImport.Namespace)
-    private object NodePathJ extends js.Object:
-        def join(parts: String*): String = js.native
-    end NodePathJ
-
-    @js.native
-    @JSImport("node:process", JSImport.Namespace)
-    private object NodeProcessJ extends js.Object:
-        def cwd(): String = js.native
-    end NodeProcessJ
 
 end ThreeFeedRunBrowserTest

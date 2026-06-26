@@ -198,7 +198,7 @@ object DemoMounts:
         }
 
     /** Runs a client mount on a detached fiber whose ambient `Scope` stays open for the page
-      * lifetime, mirroring the island host-mount boundary: the `Scope` holds the renderer, the frame
+      * lifetime, mirroring the page host-mount boundary: the `Scope` holds the renderer, the frame
       * loop fiber, and the observe fibers, and `Async.never` parks the fiber so the loop runs until
       * the page unloads. A mount failure (a missing canvas, no WebGL context, a glTF load error)
       * surfaces as a `Log.error` rather than an escaped throw.

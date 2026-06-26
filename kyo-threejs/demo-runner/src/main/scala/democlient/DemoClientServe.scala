@@ -25,6 +25,46 @@ object DemoClientServe:
     /** The served route of the GltfViewer model fixture (a minimal self-contained lit cube). */
     val modelPath: String = "/models/cube.gltf"
 
+    /** The import map a `Three.Feed.run` feed page emits so the demos bundle's bare `three` (and jsm)
+      * imports resolve to the served three modules. The same five mappings the client-mount demo pages
+      * carry; OrbitControls is included so a scene that binds `Three.controls` resolves it, and an unused
+      * entry is simply never fetched.
+      */
+    private[democlient] val threeImportMap: Seq[(String, String)] = Seq(
+        "three"                                           -> "/three.module.js",
+        "three/examples/jsm/loaders/GLTFLoader.js"        -> "/three/examples/jsm/loaders/GLTFLoader.js",
+        "three/examples/jsm/utils/BufferGeometryUtils.js" -> "/three/examples/jsm/utils/BufferGeometryUtils.js",
+        "three/examples/jsm/utils/SkeletonUtils.js"       -> "/three/examples/jsm/utils/SkeletonUtils.js",
+        "three/examples/jsm/controls/OrbitControls.js"    -> "/three/examples/jsm/controls/OrbitControls.js"
+    )
+
+    /** Reads and serves the demos bundle (at [[bundlePath]]), the three.js build, and the GLTFLoader jsm
+      * stack a `Three.Feed.run` feed page links and resolves through [[threeImportMap]]. The two feed
+      * launchers ([[democlient.FeedClock]], [[democlient.Flagship]]) compose these with the `Three.Feed.run`
+      * handlers and the mount shim they link through `head.moduleScript`.
+      */
+    private[democlient] def demoAssetHandlers(using
+        Frame
+    ): Seq[HttpHandler[Any, "body" ~ String, Nothing]] < (Sync & Abort[FileException]) =
+        for
+            bundle    <- readFile(bundleFile)
+            module    <- readFile(threeBuild("three.module.js"))
+            core      <- readFile(threeBuild("three.core.js"))
+            gltf      <- readFile(threeJsm("loaders/GLTFLoader.js"))
+            bufUtils  <- readFile(threeJsm("utils/BufferGeometryUtils.js"))
+            skelUtils <- readFile(threeJsm("utils/SkeletonUtils.js"))
+            orbit     <- readFile(threeJsm("controls/OrbitControls.js"))
+        yield Seq(
+            jsHandler(bundlePath, bundle),
+            jsHandler("/three.module.js", module),
+            jsHandler("/three.core.js", core),
+            jsHandler("/three/examples/jsm/loaders/GLTFLoader.js", gltf),
+            jsHandler("/three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+            jsHandler("/three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+            jsHandler("/three/examples/jsm/controls/OrbitControls.js", orbit)
+        )
+    end demoAssetHandlers
+
     /** Serves a demo client-mount page plus the bundle, `three`, the GLTFLoader jsm stack, and the
       * model fixture on `port` (0 = an ephemeral port), prints the open URL with a one-line hint of the
       * motion to expect, and awaits forever. `entry` is the bundle export to import (e.g.
@@ -158,7 +198,7 @@ object DemoClientServe:
             HttpResponse.ok(source).setHeader("Content-Type", contentType)
         }
 
-    private def jsHandler(path: String, source: String)(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =
+    private[democlient] def jsHandler(path: String, source: String)(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =
         staticHandler(path, "text/javascript; charset=utf-8", source)
 
     private def htmlHandler(path: String, html: String)(using Frame): HttpHandler[Any, "body" ~ String, Nothing] =

@@ -554,15 +554,18 @@ val clickable =
         }
 ```
 
-`Three.Feed.run(basePath, head)(ui)` is the serve entry. It returns the HTTP handlers (an SSR page GET and a WebSocket route) you compose with your static handlers via `HttpServer.init`. The page links the client island bundle through `head.moduleScript`; the `ui` builder declares the fed signals and app-event handlers (its `serverSignal`/`onAppEvent` calls record the ids) and renders the page body. Per WebSocket connection the runner runs the builder once, forks one observer per fed id, and routes inbound app events to their handlers; every fiber binds to the connection Scope and tears down on disconnect.
+`Three.Feed.run(basePath, head)(ui)` is the serve entry. It returns the HTTP handlers (an SSR page GET and a WebSocket route) you compose with your static handlers via `HttpServer.init`. The page links the client bundle through `head.moduleScript` and resolves its bare ES module imports through `head.importMap`; the `ui` builder declares the fed signals and app-event handlers (its `serverSignal`/`onAppEvent` calls record the ids) and renders the page body. Per WebSocket connection the runner runs the builder once, forks one observer per fed id, and routes inbound app events to their handlers; every fiber binds to the connection Scope and tears down on disconnect.
 
 ```scala
 import kyo.*
 
 val served =
     for
-        // The page links the per-app island bundle (the client half) through moduleScript.
-        handlers <- Three.Feed.run("", UI.PageHead("3D App", moduleScript = Present("/island.js"))) {
+        // The page links the client bundle through moduleScript and maps its bare `three` import.
+        handlers <- Three.Feed.run(
+            "",
+            UI.PageHead("3D App", moduleScript = Present("/app.js"), importMap = Seq("three" -> "/three.module.js"))
+        ) {
             for
                 color <- Three.Feed.serverSignal[Int]("cube-color", 0xff0000)
                 // A server fiber cycles the fed color; each set is pushed to the client by id.
@@ -573,7 +576,7 @@ val served =
     yield server
 ```
 
-The client half is a per-app Scala.js island: a small `@JSExportTopLevel` main that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). kyo bundles the island plus three.js into one self-contained ESM (esbuild), so the page links a single file with no import map and no separately served three. The kyo-threejs demos ship runnable examples: `sbt demoClientFeedClock` serves one cube that spins client-side and steps color from a server feed, and `sbt demoClientFlagship` serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera).
+The client half is a Scala.js bundle: a small `@JSExportTopLevel` entry (or a `main` that calls it) that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). Link it through `head.moduleScript` and map its bare `three` import through `head.importMap` to a served three module, so a plain `fastLinkJS`/`fullLinkJS` ESModule loads with no separate bundler step. The kyo-threejs demos ship runnable examples: `sbt demoClientFeedClock` serves one cube that spins client-side and steps color from a server feed, and `sbt demoClientFlagship` serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera).
 
 ## Putting it together
 
@@ -683,6 +686,6 @@ The launcher prints a `http://localhost:<port>/` URL; open it to see the scene r
 | `sbt demoClientFeedClock` | FeedClock (client spin + a server-fed color) |
 | `sbt demoClientFlagship` | Flagship (all four halves on one cube) |
 
-The pure-animation aliases (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene alias link the shared `kyo-threejs-demos` bundle and run entirely client-side. The two server-fed aliases (FeedClock, Flagship) additionally bundle their own per-app island and serve it through `Three.Feed.run`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
+The pure-animation aliases (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene alias link the shared `kyo-threejs-demos` bundle and run entirely client-side. The two server-fed aliases (FeedClock, Flagship) link the same bundle and serve it through `Three.Feed.run`: the page links a mount shim that imports the bundle's entry and an import map that resolves `three`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
 
 `ThumbnailGallery` uses `Three.toImage`, which requires a browser WebGL context and cannot run via the Node demo runner. Its rendered output is the committed `docs/images/*.png` thumbnails in this repository. The `toImage` primitive is validated by `ThreeToImageBrowserTest` and `WebGLAcceptanceTest` in a real software-WebGL Chrome.

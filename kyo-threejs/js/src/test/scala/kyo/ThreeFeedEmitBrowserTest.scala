@@ -10,8 +10,9 @@ import kyo.Browser.ScreenshotFrame
   * server-owned fed color and feeds it back, and the cube's color VISIBLY changes, observed from real
   * Chrome pixels.
   *
-  *   1. SERVE PATH: `Three.Feed.run("", head)(ui)` serves the page (linking the emit island bundle) and
-  *      the WS route. The `ui` declares a fed color signal via `serverSignal(colorId)` AND registers an
+  *   1. SERVE PATH: `Three.Feed.run("", head)(ui)` serves the page (linking a mount shim that imports the
+  *      demos bundle's `mountFeedEmit` entry, with an import map resolving its bare `three` import) and the
+  *      WS route. The `ui` declares a fed color signal via `serverSignal(colorId)` AND registers an
   *      app-event handler via `onAppEvent(eventId)` that advances the palette color and sets the fed
   *      signal, so an inbound `AppEvent` steps the color back to the client.
   *   2. CLICK -> emit: a real pointerdown is dispatched at the cube center via CDP; the client raycasts its
@@ -38,14 +39,14 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
                     Browser.run(launch) {
                         for
                             _ <- Browser.goto(url)
-                            // Wait until the island created and rendered the #app canvas, then install the
+                            // Wait until the mount shim created and rendered the #app canvas, then install the
                             // per-frame color sampler over the live page.
                             _ <- Browser.waitFor(
                                 "(function(){var c=document.getElementById('app');return !!(c&&c.width>0&&c.getContext);})()"
                             )
                             // The Three.Feed.run page carries the inline kyo-ui clientJs which opens the WS
                             // and installs window.__kyoPostAppEvent; give it a moment to connect and the
-                            // island to mount before sampling and clicking.
+                            // shim to mount before sampling and clicking.
                             _ <- Async.sleep(1200.millis)
                             _ <- installSampler
                             // Dispatch a real click per palette step at the cube center, each gated on the
@@ -130,7 +131,8 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
         }
     end saveFrames
 
-    /** Serves the PUBLIC `Three.Feed.run` handlers plus the self-contained emit island bundle, then hands
+    /** Serves the PUBLIC `Three.Feed.run` handlers plus the demos bundle, the mount shim the page links
+      * through `head.moduleScript`, and the three.js modules the bundle's import map resolves, then hands
       * the page URL to `f`. The page, the WS route (with the app-event routing), and the per-id feed
       * observers are all produced by `Three.Feed.run`.
       */
@@ -138,17 +140,36 @@ class ThreeFeedEmitBrowserTest extends WebGLSceneHarness:
         f: String => A < (Async & Scope & Abort[BrowserException])
     )(using Frame): A < (Async & Scope & Abort[BrowserException]) =
         for
-            island   <- Sync.defer(readIslandBundle)
-            handlers <- Three.Feed.run("", head)(ui)
-            server   <- HttpServer.init(0, "localhost")((handlers :+ WebGLSceneHarness.jsHandler(islandRoute, island))*)
-            result   <- f(s"http://localhost:${server.port}/")
+            bundle    <- WebGLSceneHarness.readDemoBundle
+            module    <- WebGLSceneHarness.readThreeSource("three.module.js")
+            core      <- WebGLSceneHarness.readThreeSource("three.core.js")
+            gltf      <- WebGLSceneHarness.readThreeJsm("loaders/GLTFLoader.js")
+            bufUtils  <- WebGLSceneHarness.readThreeJsm("utils/BufferGeometryUtils.js")
+            skelUtils <- WebGLSceneHarness.readThreeJsm("utils/SkeletonUtils.js")
+            orbit     <- WebGLSceneHarness.readThreeJsm("controls/OrbitControls.js")
+            handlers  <- Three.Feed.run("", head)(ui)
+            server <- HttpServer.init(0, "localhost")(
+                (handlers ++ Seq(
+                    WebGLSceneHarness.jsHandler(mountShimRoute, mountShim),
+                    WebGLSceneHarness.jsHandler("main.js", bundle),
+                    WebGLSceneHarness.jsHandler("three.module.js", module),
+                    WebGLSceneHarness.jsHandler("three.core.js", core),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/loaders/GLTFLoader.js", gltf),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/BufferGeometryUtils.js", bufUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/utils/SkeletonUtils.js", skelUtils),
+                    WebGLSceneHarness.jsHandler("three/examples/jsm/controls/OrbitControls.js", orbit)
+                ))*
+            )
+            result <- f(s"http://localhost:${server.port}/")
         yield result
 
-    /** The page head linking the self-contained emit island bundle (three inlined; no import map). */
+    /** The page head linking the mount shim and carrying the import map that resolves the demos bundle's
+      * bare `three` (and jsm) imports to the served three modules.
+      */
     private def head(using Frame): UI.PageHead =
-        UI.PageHead("kyo-threejs Three.Feed.emit", moduleScript = Present(islandRoute))
+        UI.PageHead("kyo-threejs Three.Feed.emit", moduleScript = Present(mountShimRoute), importMap = threeImportMap)
 
-    /** The page body the island mounts into, plus the server-owned fed color signal and the app-event
+    /** The page body the mount shim mounts into, plus the server-owned fed color signal and the app-event
       * handler. The `serverSignal` registration declares the fed color; the `onAppEvent` registration is
       * the server leg of the back-channel: each inbound `Bump` advances a palette index and sets the fed
       * color signal, which `run` feeds back over the WS.
@@ -185,8 +206,29 @@ end ThreeFeedEmitBrowserTest
 
 object ThreeFeedEmitBrowserTest:
 
-    /** The served route of the emit island bundle the page links through `head.moduleScript`. */
-    private val islandRoute: String = "/_kyo/emit-island.js"
+    /** The route of the mount shim the SSR page links through `head.moduleScript`: a tiny ES module that
+      * imports the demos bundle's `mountFeedEmit` entry and calls it against the host canvas. It is the
+      * no-bundler replacement for the per-app island's main initializer; the bundle's bare `three` import
+      * resolves through the page's import map.
+      */
+    private val mountShimRoute: String = "/_kyo/emit-mount.js"
+
+    /** The mount shim module: import the entry from the served demos bundle and mount it at `#app`. */
+    private val mountShim: String =
+        """import { mountFeedEmit } from "/main.js";
+          |mountFeedEmit("#app");
+          |""".stripMargin
+
+    /** The import map the SSR page emits so the demos bundle's bare `three` (and jsm) imports resolve to
+      * the served three modules.
+      */
+    private val threeImportMap: Seq[(String, String)] = Seq(
+        "three"                                           -> "/three.module.js",
+        "three/examples/jsm/loaders/GLTFLoader.js"        -> "/three/examples/jsm/loaders/GLTFLoader.js",
+        "three/examples/jsm/utils/BufferGeometryUtils.js" -> "/three/examples/jsm/utils/BufferGeometryUtils.js",
+        "three/examples/jsm/utils/SkeletonUtils.js"       -> "/three/examples/jsm/utils/SkeletonUtils.js",
+        "three/examples/jsm/controls/OrbitControls.js"    -> "/three/examples/jsm/controls/OrbitControls.js"
+    )
 
     /** The dominant-channel names in the server's palette cycle order (red, green, blue, yellow, magenta). */
     private val paletteChannels: Seq[String] = Seq("red", "green", "blue", "yellow", "magenta")
@@ -196,23 +238,6 @@ object ThreeFeedEmitBrowserTest:
         NodeFsMk.mkdirSync(dir, scala.scalajs.js.Dynamic.literal(recursive = true))
         ()
     end mkdirp
-
-    /** Reads the bundled emit island ESM (`main.js`, three inlined) from the emit-island esbuild output. */
-    private def readIslandBundle: String =
-        val target = NodePathJ.join(NodeProcessJ.cwd(), "kyo-threejs", "emit-island", "target")
-        val located = NodeFsMk.readdirSync(target).toSeq.collectFirst {
-            case d
-                if d.startsWith("scala-") &&
-                    NodeFsMk.existsSync(NodePathJ.join(target, d, "esbuild", "main", "out", "main.js")) =>
-                NodePathJ.join(target, d, "esbuild", "main", "out", "main.js")
-        }
-        NodeFsMk.readFileSync(
-            located.getOrElse(sys.error(
-                s"emit island bundle main.js not found under $target; run 'sbt emitIslandBundle' first"
-            )),
-            "utf8"
-        )
-    end readIslandBundle
 
     /** Dispatches a real pointerdown then pointerup at the `#app` canvas center: the capture-phase
       * pointerdown listener `setupPointerDelegation` registers raycasts the centered cube and runs onClick.
@@ -273,22 +298,7 @@ object ThreeFeedEmitBrowserTest:
     @js.native
     @JSImport("node:fs", JSImport.Namespace)
     private object NodeFsMk extends js.Object:
-        def mkdirSync(path: String, options: js.Object): Unit    = js.native
-        def readFileSync(path: String, encoding: String): String = js.native
-        def readdirSync(path: String): js.Array[String]          = js.native
-        def existsSync(path: String): Boolean                    = js.native
+        def mkdirSync(path: String, options: js.Object): Unit = js.native
     end NodeFsMk
-
-    @js.native
-    @JSImport("node:path", JSImport.Namespace)
-    private object NodePathJ extends js.Object:
-        def join(parts: String*): String = js.native
-    end NodePathJ
-
-    @js.native
-    @JSImport("node:process", JSImport.Namespace)
-    private object NodeProcessJ extends js.Object:
-        def cwd(): String = js.native
-    end NodeProcessJ
 
 end ThreeFeedEmitBrowserTest

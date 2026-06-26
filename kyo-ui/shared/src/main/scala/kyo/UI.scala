@@ -329,6 +329,15 @@ object UI:
       * empty (the default) emits none. Both carry [[kyo.UI.DataIsland]] values built by
       * [[kyo.UI.dataIsland]]; the renderer escapes their JSON bodies so a `</script>`
       * substring cannot close the element early.
+      *
+      * `importMap` is an ordered list of `(specifier, url)` entries rendered as one
+      * `<script type="importmap">{"imports": {...}}</script>` in the head, before any
+      * `moduleScript`, so a linked bundle that imports bare ES module specifiers (for example
+      * `three`) resolves each to a served module URL. This is the no-bundler companion to
+      * `moduleScript`: link a plain `fastLinkJS`/`fullLinkJS` ESModule and map its bare npm
+      * imports here, instead of pre-bundling the dependency into the script. Empty (the default)
+      * emits no import map; the renderer escapes the JSON so a `</script>` substring in any
+      * specifier or url cannot close the element early.
       */
     final case class PageHead(
         title: String,
@@ -336,6 +345,7 @@ object UI:
         links: Seq[(String, String)] = Seq.empty,
         css: String = "",
         moduleScript: Maybe[String] = Absent,
+        importMap: Seq[(String, String)] = Seq.empty,
         jsonLd: Maybe[UI.DataIsland] = Absent,
         dataIslands: Seq[UI.DataIsland] = Seq.empty
     ) derives CanEqual

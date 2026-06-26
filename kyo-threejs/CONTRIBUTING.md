@@ -377,14 +377,16 @@ shared dispatcher**: each alias launches exactly one demo, independently.
 
 The **demos source set** (`kyo-threejs/shared/src/test/scala/demo/`) is compiled into two distinct
 build artifacts:
-- `kyo-threejs-demos`: the browser-side bundle (links `kyoThreeIsland`, serves via ESModule; no
-  `node:*` paths, so the linker's dead-code elimination drops the HttpServer code).
+- `kyo-threejs-demos`: the browser-side bundle (exposes the `DemoMounts` `@JSExportTopLevel` mount
+  entries, serves via ESModule; no `node:*` paths, so the linker's dead-code elimination drops the
+  HttpServer code).
 - `kyo-threejs-demo-runner`: the Node-side runner (links the full `KyoApp` main, including
-  `HttpServer`; does not link `kyoThreeIsland`).
+  `HttpServer`; does not link the browser entries).
 
-The `kyo-threejs-demos` bundle must be linked before serving a server-push demo:
-`sbt kyo-threejs-demos/fastLinkJS`. The `DemoServe.islandHandler` reads the bundle from disk at
-request time and returns a 500 with an explanatory message if the link step has not run.
+The `kyo-threejs-demos` bundle must be linked before serving a feed demo:
+`sbt kyo-threejs-demos/fastLinkJS`. The demo launchers (`DemoClientServe`) and the browser tests
+(`WebGLSceneHarness.readDemoBundle`) read the bundle from disk at request time and surface a clear
+error if the link step has not run.
 
 The **gallery** (`ThumbnailGallery`, `shared/src/test/scala/demo/ThumbnailGallery.scala`) renders
 each demo scene to a PNG via `Three.toImage` for visual review and commits the output under

@@ -14,8 +14,6 @@ metals.sbt
 jmh-result.json
 *.jfr
 *.json
-# The per-app island esbuild dependency contracts are tracked source (esbuild + pinned three).
-!kyo-threejs/*-island/esbuild/package.json
 *.gpg
 test-output
 .DS_Store

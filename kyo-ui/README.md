@@ -1245,7 +1245,7 @@ val server: Unit < (Async & Scope) =
 
 The `ui` parameter is `UI < Async`, so you can build a UI inside a `for` comprehension that allocates state. Each connected client gets its own copy of the UI evaluation (a fresh `for` invocation).
 
-A 2-arg overload accepts a `UI.PageHead` so the served page can link a client Scala.js island bundle. The motivating case is a server-push app that embeds a 3D scene (kyo-threejs): the browser must load the island that mounts the host node, and the page HEAD must carry that `<script type="module">`. Pass `head.moduleScript = Present("/island.js")` to link it:
+A 2-arg overload accepts a `UI.PageHead` so the served page can link a client Scala.js island bundle. The motivating case is a server-push app that embeds a 3D scene (kyo-threejs): the browser must load the island that mounts the host node, and the page HEAD must carry that `<script type="module">`. Pass `head.moduleScript = Present("/island.js")` to link it. When the island is a plain `fastLinkJS`/`fullLinkJS` ESModule that imports bare npm modules (such as `three`), also pass `head.importMap` to map each bare specifier to a served module URL, so the page resolves them without a pre-bundling step:
 
 ```scala
 import UI.*
@@ -1258,7 +1258,12 @@ val withIsland: Unit < (Async & Scope) =
             button("+1").id("inc").onClick(counter.getAndUpdate(_ + 1)),
             counter.render(n => span(n.toString).id("count"))
         )
-        head = UI.PageHead(title = "My App", moduleScript = Present("/island.js"))
+        head = UI.PageHead(
+            title = "My App",
+            moduleScript = Present("/island.js"),
+            // Resolves the island's bare ES module imports; empty when the island bundles its own deps.
+            importMap = Seq("three" -> "/three.module.js")
+        )
         uiHandlers <- runHandlers("/app", head)(page)
         _          <- HttpServer.init(uiHandlers*)
     yield ()

@@ -306,7 +306,7 @@ object ThreeFeedClockBrowserTest:
            |window.__hadReceiver = false;
            |// The HostUpdate routing the kyo-ui inline clientJs provides (HtmlRenderer.scala:771-799):
            |// a per-path receiver registry plus a late-registration flush, so a feed pushed before the
-           |// island registers its receiver is buffered and replayed in order.
+           |// scene registers its receiver is buffered and replayed in order.
            |window.__kyoHostChannels = window.__kyoHostChannels || {};
            |window.__kyoHostPending = window.__kyoHostPending || {};
            |window.__kyoHostChannelRegister = function(p, rx) {

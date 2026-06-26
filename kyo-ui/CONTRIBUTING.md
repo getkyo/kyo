@@ -203,6 +203,13 @@ The inline server-push client script (the WS reconnect loop and DOM patcher) is 
 each fed signal id to the WS; it receives every signal's current value on its first feed observation,
 so it needs no separate init round-trip.
 
+`PageHead.importMap` (`Seq[(String, String)]`, default empty) is the no-bundler companion to
+`moduleScript`: when the island is a plain `fastLinkJS`/`fullLinkJS` ESModule that imports bare npm
+specifiers (such as `three`), each `(specifier, url)` entry maps one to a served module URL. The
+renderer emits a single `<script type="importmap">{"imports": {...}}</script>` in the head before the
+`moduleScript`, so the browser resolves the bare imports without a pre-bundling step. Empty (the
+default) emits no import map, the behavior before the field existed.
+
 `UIServer.handlers` (`kyo-ui/shared/src/main/scala/kyo/internal/UIServer.scala`) is the implementation
 `UI.runHandlers` delegates to. `UIServer.pageHandler` exposes the SSR page GET in isolation, for a feed
 runner that serves its own WebSocket route on the same base path while reusing the identical page.
