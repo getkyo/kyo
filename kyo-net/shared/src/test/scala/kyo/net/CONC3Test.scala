@@ -8,11 +8,11 @@ import kyo.net.internal.transport.WriteState
 
 /** Each write handoff is resolved by exactly one winner.
   *
-  * The three write handoffs are: (1) the take handoff (channel delivers a span, onTake CASes Idle -> Flushing), (2) the writable
-  * handoff (socket becomes writable, onWritable CASes AwaitingWritable -> Flushing), and (3) the backpressure-release handoff (the
-  * drain completed, backpressurePromise is completed, onWritable CASes Backpressured -> Flushing). Each is a single-CAS transition; the
-  * loser observes the winner's state and no-ops. No check-A-act-B: the folded state cell is the only read+write, not two separate
-  * fields.
+  * The four write handoffs are: (1) the take handoff (channel delivers a span, onTake CASes Idle -> Flushing), (2) the writable
+  * handoff (socket becomes writable, onWritable CASes AwaitingWritable -> Flushing), (3) the backpressure-release handoff (the drain
+  * completed, backpressurePromise on the handle is completed, onWritable CASes Backpressured -> Flushing), and (4) teardown wins
+  * the CAS race (TornDown terminal). Each is a single-CAS transition; the loser observes the winner's state and no-ops. No
+  * check-A-act-B: the folded state cell is the only read+write, not two separate fields.
   *
   * The single-winner CAS property does not require concurrent threads: two sequential CAS calls with the same expected value prove that
   * exactly one can succeed (after the first wins, the cell state changes and the second's expected-value comparison fails). The
@@ -83,6 +83,32 @@ class CONC3Test extends Test:
 
             assert(!staleCas, "stale writable CAS must fail after teardown set TornDown")
             assert(state.get() == WriteState.TornDown, "state must remain TornDown")
+            succeed
+        }
+
+        // Given: the state is Backpressured (pump parked on tail high-water) and two completers both
+        // attempt the Backpressured -> Flushing handoff (e.g. a drain callback fires twice)
+        // When: each CAS attempt is sequenced deterministically (first wins, second finds cell changed)
+        // Then: exactly one CAS wins; the loser observes the winner's Flushing state and no-ops
+        "each-handoff-resolved-by-one-winner: racing Backpressured -> Flushing completers produce exactly one winner" in {
+            val span     = Span.fromUnsafe(Array.fill[Byte](8)(3))
+            val off      = 4
+            val initial  = WriteState.Backpressured(span, off)
+            val state    = AtomicRef.Unsafe.init[WriteState](initial)
+            val flushing = WriteState.Flushing(span, off)
+
+            var wins = 0
+
+            // First attempt: reads the stored Backpressured instance, CASes to Flushing.
+            // Uses the exact stored reference (reference-equality CAS).
+            if state.compareAndSet(initial, flushing) then wins += 1
+
+            // Second attempt: the first already swapped the cell to Flushing, so this CAS sees
+            // Flushing != initial (Backpressured) and returns false. wins stays at 1.
+            if state.compareAndSet(initial, flushing) then wins += 1
+
+            assert(wins == 1, s"exactly one CAS from Backpressured must succeed, got $wins")
+            assert(state.get() == flushing, s"state must be Flushing after exactly one winner, was ${state.get()}")
             succeed
         }
     }

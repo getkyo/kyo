@@ -63,7 +63,7 @@ class PollerIoDriverBackpressureCloseTest extends Test:
                 val waiter = Promise.Unsafe.init[Unit, Abort[Closed]]()
                 driver.awaitWritable(handle, waiter)
                 assert(
-                    handle.backpressurePromise.asInstanceOf[AnyRef] != null,
+                    handle.backpressurePromise.isDefined,
                     "the waiter must be parked (the tail is at the high-water mark)"
                 )
                 // Drain the engine FIFO so the park's double-check (releaseBackpressureWaiter) has run (it no-ops: the tail is still high), leaving

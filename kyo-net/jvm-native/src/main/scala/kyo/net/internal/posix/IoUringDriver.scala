@@ -305,12 +305,12 @@ final private[net] class IoUringDriver private[posix] (
             // hold the promise on the handle; the CQE re-flush path (onTlsSendComplete / onRawSendComplete) completes it via releaseBackpressureWaiter
             // once the tail falls below the low-water mark. An in-flight send is guaranteed: the tail only reaches the high-water mark through a write
             // whose flush submitted a send SQE (or coalesced behind one), and that SQE's reap re-flushes and re-checks the waiter.
-            handle.backpressurePromise = promise
+            handle.backpressurePromise = Present(promise)
             // Double-check on the FIFO worker: a CQE re-flush may have drained the tail below the low-water mark between the check above and this
             // registration (the reap runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
             // consistent tail snapshot (no race with onTlsSendComplete) and completes the just-registered waiter if the drain already happened, so
-            // the pump is never stranded. A waiter parked while the handle is closing is failed by PosixHandle.freeResources (it completes this
-            // promise with Closed using the frame captured here), so the close-vs-park race never strands the pump.
+            // the pump is never stranded. A waiter parked while the handle is closing is failed by PosixHandle.freeResources, so the close-vs-park
+            // race never strands the pump.
             submitEngineOp(() => handle.releaseBackpressureWaiter())
         else
             // Below the bound: io_uring buffers the unsent bytes in the pending tail, holds AT MOST ONE send SQE in flight per handle, and re-flushes
@@ -422,11 +422,11 @@ final private[net] class IoUringDriver private[posix] (
         else if handle.unsentTailBytes >= PosixHandle.WriteTailHighWater then
             // Write-backpressure bound (CWE-400): the write tail (pendingCipher for TLS, rawPending for raw) has reached the high-water mark because
             // the in-flight send is not draining it fast enough (a slow- or no-read peer). io_uring's write is async and always returns Done after
-            // appending, so without this gate the WritePump would keep pulling spans and the tail would grow without limit toward OOM. Report Partial
-            // so the pump parks on writability instead of appending; the data is not consumed (re-presented unchanged on retry), and awaitWritable
-            // holds the pump until the in-flight send's CQE re-flush drains the tail below the low-water mark (releaseBackpressureWaiter). Checked
-            // before beginWrite so an over-bound write touches no guard.
-            WriteResult.Partial(data, offset)
+            // appending, so without this gate the WritePump would keep pulling spans and the tail would grow without limit toward OOM. Report
+            // TailPartial so the pump parks on the tail-bound backpressure path (Backpressured state) rather than on socket writability; the data
+            // is not consumed (re-presented unchanged on retry), and awaitWritable holds the pump until the in-flight send's CQE re-flush drains
+            // the tail below the low-water mark (releaseBackpressureWaiter). Checked before beginWrite so an over-bound write touches no guard.
+            WriteResult.TailPartial(data, offset)
         else
             handle.tls match
                 case Present(engine) =>
@@ -797,9 +797,8 @@ final private[net] class IoUringDriver private[posix] (
         }
         // Fail any WritePump promise parked at the write-backpressure high-water bound. It is held on the handle (a tail-bound park, not a pending
         // SQE), so it is not in `pending`; releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        val bp = handle.backpressurePromise
-        if bp.asInstanceOf[AnyRef] ne null then bp.completeDiscard(Result.fail(closed))
-        handle.backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+        handle.backpressurePromise.foreach(_.completeDiscard(Result.fail(closed)))
+        handle.backpressurePromise = Absent
     end cancel
 
     /** Listener teardown, sequenced on the reap carrier so a queued accept arm can never outlive the listen fd (the ghost-accept hazard the

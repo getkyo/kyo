@@ -1523,6 +1523,8 @@ final private[net] class PosixTransport private[posix] (
                 case WriteResult.Error => onFailed("server-send-error")
                 case WriteResult.Partial(rem, newOffset) =>
                     awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
+                case WriteResult.TailPartial(rem, newOffset) =>
+                    awaitWritable(handle, cont = () => sendAll(handle, rem, newOffset, cont, onFailed, onPanic), onFailed, onPanic)
         catch
             // Contain ANY throw (not just NonFatal): a driver-carrier throw is routed to onPanic,
             // never allowed to escape the carrier (a carrier escape would abort the process or stall

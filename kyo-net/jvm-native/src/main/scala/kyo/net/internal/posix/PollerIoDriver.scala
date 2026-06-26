@@ -453,13 +453,12 @@ final private[net] class PollerIoDriver private[posix] (
             // ends with flushPending, which arms armWritableForFlush (a socket-readiness re-arm) when it EAGAINs with bytes pending. This branch is
             // reached ONLY from the public WritePump path; the internal flush re-arm and connect call armSocketWritable directly (below), so they
             // are never mis-routed here.
-            handle.backpressurePromise = promise
+            handle.backpressurePromise = Present(promise)
             // Double-check on the FIFO worker: a flush may have drained the tail below the low-water mark between the check above and this
             // registration (flushPending runs on the FIFO worker, this runs on the pump carrier). Routing the re-check through the FIFO observes a
             // consistent tail snapshot (the tail fields are FIFO-worker-owned) and completes the just-registered waiter if the drain already
             // happened, so the pump is never stranded waiting on a drain that has already passed. A waiter parked while the handle is closing is
-            // failed by PosixHandle.freeResources (it completes this promise with Closed using the frame captured here), so the close-vs-park race
-            // never strands the pump.
+            // failed by PosixHandle.freeResources, so the close-vs-park race never strands the pump.
             submitEngineOp(() => handle.releaseBackpressureWaiter())
         else
             armSocketWritable(handle, promise)
@@ -527,13 +526,13 @@ final private[net] class PollerIoDriver private[posix] (
         if data.isEmpty || offset >= data.size then WriteResult.Done
         else if handle.unsentTailBytes >= PosixHandle.WriteTailHighWater then
             // Write-backpressure bound (CWE-400): the TLS write tail (pendingCipher) has reached the high-water mark because the peer is not draining
-            // it fast enough. Do NOT encrypt and append more (which would grow the tail without limit toward OOM); report Partial so the WritePump
-            // parks on writability instead of pulling the next outbound span. The data is not consumed, so it is re-presented unchanged on retry, and
-            // awaitWritable holds the pump until the in-flight flush drains the tail below the low-water mark (releaseBackpressureWaiter). This folds
-            // the async TLS write tail into the same backpressure flow the synchronous raw path already obeys. Checked before beginWrite so an
-            // over-bound write touches no guard / engine. (The raw path never reaches here: the poller's raw send is inline and reports its own
-            // Partial straight from the send syscall, so its tail is always bounded by the kernel send buffer.)
-            WriteResult.Partial(data, offset)
+            // it fast enough. Do NOT encrypt and append more (which would grow the tail without limit toward OOM); report TailPartial so the WritePump
+            // parks on the tail-bound backpressure path (Backpressured state) rather than on socket writability. The data is not consumed, so it is
+            // re-presented unchanged on retry, and awaitWritable holds the pump until the in-flight flush drains the tail below the low-water mark
+            // (releaseBackpressureWaiter). This folds the async TLS write tail into the same backpressure flow the synchronous raw path already obeys.
+            // Checked before beginWrite so an over-bound write touches no guard / engine. (The raw path never reaches here: the poller's raw send is
+            // inline and reports its own Partial straight from the send syscall, so its tail is always bounded by the kernel send buffer.)
+            WriteResult.TailPartial(data, offset)
         else if !handle.beginWrite() then
             // The handle was closed (resources freed) before this write acquired them; bail without touching the engine / buffers (the write
             // twin of dispatchRead's !beginDispatch guard). The pump treats Error as teardown, which is correct for a write on a closed handle.
@@ -841,9 +840,8 @@ final private[net] class PollerIoDriver private[posix] (
         handle.pendingAcceptPromise = Absent
         // Fail any WritePump promise parked at the write-backpressure high-water bound (it is not in pendingWritables: a tail-bound park is held on
         // the handle, not armed on socket readiness). Releasing it with Closed lets the pump tear down rather than hang on a tail that will never drain.
-        val bp = handle.backpressurePromise
-        if bp.asInstanceOf[AnyRef] ne null then bp.completeDiscard(Result.fail(closed))
-        handle.backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+        handle.backpressurePromise.foreach(_.completeDiscard(Result.fail(closed)))
+        handle.backpressurePromise = Absent
     end deregisterFds
 
     def cancel(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =

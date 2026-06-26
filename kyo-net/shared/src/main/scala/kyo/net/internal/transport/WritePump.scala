@@ -10,7 +10,8 @@ import kyo.*
   *   2. Channel delivers a span, `onTake` fires
   *   3. Pump CASes Idle -> Flushing and calls `driver.write(data)`
   *   4. If Done: CAS Flushing -> Idle, register fresh taker for next span
-  *   5. If Partial: CAS Flushing -> AwaitingWritable, register fresh writable promise, retry remaining bytes when writable
+  *   5. If Partial: CAS Flushing -> AwaitingWritable, register fresh writable promise, retry remaining bytes when socket writable
+  *   5. If TailPartial: CAS Flushing -> Backpressured, register fresh promise, retry when drain releases the tail-bound waiter
   *   6. If Error: teardown
   *
   * #### State machine
@@ -103,9 +104,26 @@ final private[kyo] class WritePump[Handle](
                 // is the single winner; a racing teardown that swung TornDown makes this lose and stop.
                 if state.compareAndSet(current, WriteState.Idle) then requestNextTake()
             case WriteResult.Partial(remaining, newOffset) =>
-                // Park on writability with a FRESH promise (no reused promise). Flushing -> AwaitingWritable
+                // Park on socket writability with a FRESH promise (no reused promise). Flushing -> AwaitingWritable
                 // carries the tail inline; the fresh promise's completion runs onWritable.
                 val next = WriteState.AwaitingWritable(remaining, newOffset)
+                if state.compareAndSet(current, next) then
+                    val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
+                    p.onComplete { r =>
+                        import AllowUnsafe.embrace.danger
+                        given Frame = Frame.internal
+                        onWritable(r.asInstanceOf[Result[Closed, Unit]])
+                    }
+                    driver.awaitWritable(handle, p)
+                end if
+            case WriteResult.TailPartial(remaining, newOffset) =>
+                // Park on the write-tail backpressure bound with a FRESH promise. Flushing -> Backpressured
+                // carries the tail inline; the fresh promise is stored on the handle by awaitWritable and
+                // completed by the drain path (releaseBackpressureWaiter) once the tail falls below the
+                // low-water mark. The promise's completion runs onWritable, which CASes Backpressured ->
+                // Flushing. A stale completer (e.g. a second fire of the drain callback) loses the CAS and
+                // no-ops.
+                val next = WriteState.Backpressured(remaining, newOffset)
                 if state.compareAndSet(current, next) then
                     val p = Promise.Unsafe.init[Unit, Abort[Closed]]()
                     p.onComplete { r =>

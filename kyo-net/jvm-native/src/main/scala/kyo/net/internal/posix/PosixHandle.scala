@@ -238,16 +238,18 @@ final private[net] class PosixHandle private (
     @volatile var sendInFlight: Boolean = false
 
     /** The WritePump's writable promise parked because the write-backpressure tail reached [[PosixHandle.WriteTailHighWater]]: the driver returned
-      * `WriteResult.Partial` and the pump suspended on `awaitWritable`, but the kernel send buffer alone is not the readiness signal here (the bound,
-      * not the socket, is what stopped the write), so the promise is held on the handle and completed by the drain path when the tail drops below
-      * [[PosixHandle.WriteTailLowWater]]. Written by `awaitWritable` (the WritePump's carrier) and read/cleared by the drain path (the engine FIFO
-      * worker), causally serialized through the tail-size check: the waiter is registered only when the tail is over the low-water mark, and the drain
-      * completes-and-clears it only after advancing the sent pointer below the mark, so a registration that races a drain either sees the tail still
-      * high (and the next drain completes it) or is itself completed immediately by `awaitWritable`'s own below-mark fast path. The `@volatile`
-      * carries the cross-carrier visibility. The close path fails any parked waiter via `cancel` / the driver teardown, so a slow peer never
-      * strands the pump.
+      * `WriteResult.TailPartial` and the pump entered [[WriteState.Backpressured]], suspended on `awaitWritable`. The kernel send buffer alone is
+      * not the readiness signal here (the tail bound, not the socket, stopped the write), so the promise is held on the handle and completed by the
+      * drain path when the tail drops below [[PosixHandle.WriteTailLowWater]]. Written by `awaitWritable` (the WritePump's carrier) and read/cleared
+      * by the drain path (the engine FIFO worker), causally serialized through the tail-size check: the waiter is registered only when the tail is
+      * over the low-water mark, and the drain completes-and-clears it only after advancing the sent pointer below the mark, so a registration that
+      * races a drain either sees the tail still high (and the next drain completes it) or is itself completed immediately by `awaitWritable`'s own
+      * below-mark fast path. The `@volatile` carries the cross-carrier visibility. The close path fails any parked waiter via `cancel` / the driver
+      * teardown, so a slow peer never strands the pump. The slot is retained here (rather than carrying the promise inside
+      * [[WriteState.Backpressured]]) because the drain path runs on the engine FIFO worker and cannot reach the WritePump's WriteState atomic cell
+      * directly; the handle is the shared bridge between the two carriers.
       */
-    @volatile var backpressurePromise: Promise.Unsafe[Unit, Abort[Closed]] = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+    @volatile var backpressurePromise: Maybe[Promise.Unsafe[Unit, Abort[Closed]]] = Absent
 
     /** Whether the last recv on this fd filled the read buffer exactly (n == readBufferSize). When true, the kernel may still hold residual
       * bytes that an edge-triggered backend will never re-signal (epoll fires once per empty->ready transition; a filled buffer leaves data in
@@ -455,10 +457,11 @@ final private[net] class PosixHandle private (
       * the pump's `onWritable` re-issues the deferred write, which now passes the high-water check (the tail is below low-water) and appends.
       */
     private[posix] def releaseBackpressureWaiter()(using AllowUnsafe): Unit =
-        val p = backpressurePromise
-        if (p.asInstanceOf[AnyRef] ne null) && unsentTailBytes < PosixHandle.WriteTailLowWater then
-            backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
-            p.completeDiscard(Result.succeed(()))
+        if unsentTailBytes < PosixHandle.WriteTailLowWater then
+            backpressurePromise.foreach { p =>
+                backpressurePromise = Absent
+                p.completeDiscard(Result.succeed(()))
+            }
     end releaseBackpressureWaiter
 
     /** Request close of the shared resources. If no op holds them (holder count 0), they are freed immediately. If a read or write is in flight,
@@ -506,12 +509,12 @@ private[net] object PosixHandle:
 
     /** High-water mark (bytes) for a handle's write-backpressure tail ([[PosixHandle.pendingCipher]] / [[PosixHandle.rawPending]]). When the unsent
       * tail has reached this size, the drivers' async-write paths ([[PollerIoDriver.writeTls]], [[IoUringDriver.writeTls]],
-      * [[IoUringDriver.writeRaw]]) stop appending and report `WriteResult.Partial` so the `WritePump` parks on writability rather than pulling the
-      * next outbound span. This bounds the per-connection memory a slow- or no-read peer can pin (CWE-400), folding the async-write tail into the
-      * same outbound-channel + writable-park backpressure flow the synchronous (poller raw) path already obeys. 1 MiB is well above any single
-      * application write or coalesced flush, so the bound never trips on normal traffic; it caps only the pathological accumulate-without-draining
-      * case. Bytes already encrypted past the mark are not dropped: they remain in the tail and drain when the peer reads (the write that crossed the
-      * mark is re-presented after the writable park).
+      * [[IoUringDriver.writeRaw]]) stop appending and report `WriteResult.TailPartial` so the `WritePump` enters [[WriteState.Backpressured]] and
+      * parks until the tail drains, rather than pulling the next outbound span. This bounds the per-connection memory a slow- or no-read peer can
+      * pin (CWE-400), folding the async-write tail into the same outbound-channel + writable-park backpressure flow the synchronous (poller raw)
+      * path already obeys. 1 MiB is well above any single application write or coalesced flush, so the bound never trips on normal traffic; it caps
+      * only the pathological accumulate-without-draining case. Bytes already encrypted past the mark are not dropped: they remain in the tail and
+      * drain when the peer reads (the write that crossed the mark is re-presented after the park).
       */
     final val WriteTailHighWater = 1 << 20
 
@@ -630,8 +633,7 @@ private[net] object PosixHandle:
         // free runs exactly once (guard CAS to Closed), and completeDiscard is idempotent, so a double-fail (here and in cancel or awaitWritable's
         // close-race check) is harmless.
         // `kyo.Closed` is qualified because `PosixHandle.Closed` here is the guard's terminal sentinel constant.
-        val bp = h.backpressurePromise
-        if bp.asInstanceOf[AnyRef] ne null then
+        h.backpressurePromise.foreach { bp =>
             given Frame = Frame.internal
             bp.completeDiscard(
                 Result.fail(kyo.Closed(
@@ -640,8 +642,8 @@ private[net] object PosixHandle:
                     s"fd=${h.readFd}/${h.writeFd} closed while a write was parked on backpressure"
                 ))
             )
-        end if
-        h.backpressurePromise = null.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]]
+        }
+        h.backpressurePromise = Absent
         // Fail (not merely clear) a STARTTLS handshake parked on the stale-recv handoff: if the handle closes mid-upgrade (a deadline reap or a
         // peer reset) the stale recv may never deliver, so completing the parked waiter Closed lets the handshake tear down instead of hanging on
         // it. Swing the one handoff slot to Idle and, if it held a parked Waiter, fail that promise with the frame captured when it parked. A

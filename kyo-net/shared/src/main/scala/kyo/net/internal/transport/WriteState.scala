@@ -7,9 +7,9 @@ import kyo.*
   * The write-pump mode is one immutable state holding the partial-write tail inline, in one atomic
   * cell. Only one transition out of each state wins the CAS, so a second writable that races a take
   * cannot run with a cleared `pending`: there is no separate `pending` field to clear, only a state
-  * to CAS, and the loser observes the winner's state. The `WriteResult.Partial(remaining, offset)`
-  * shape (the FULL span plus the sent-byte offset, no re-slice) is carried inside the tail-bearing
-  * states.
+  * to CAS, and the loser observes the winner's state. Both `WriteResult.Partial` (socket-full park)
+  * and `WriteResult.TailPartial` (tail high-water park) carry the full span and offset inline in
+  * their respective states.
   *
   *   - [[Idle]]: awaiting the next channel take.
   *   - [[Flushing]]: a span is being written; `pending`/`offset` is the outstanding tail.

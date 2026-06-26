@@ -235,9 +235,10 @@ class PollerIoDriverTest extends Test:
                     var itr        = 0
                     while !gotPartial && itr < 512 do
                         driver.write(clientH, chunk, 0) match
-                            case WriteResult.Partial(_, _) => gotPartial = true
-                            case WriteResult.Done          => itr += 1
-                            case WriteResult.Error         => itr = 512 // break on real error
+                            case WriteResult.Partial(_, _)     => gotPartial = true
+                            case WriteResult.TailPartial(_, _) => gotPartial = true
+                            case WriteResult.Done              => itr += 1
+                            case WriteResult.Error             => itr = 512 // break on real error
                     end while
                     // Close the raw fds; the driver handle is not registered so no cancel needed.
                     sock.close(accepted).safe.get.andThen(sock.close(client).safe.get).map { _ =>

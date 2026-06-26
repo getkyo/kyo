@@ -97,9 +97,10 @@ class PosixHandleWriteTailBoundTest extends Test:
                     fifoBarrier(driver).safe.get.map { _ =>
                         val newPeak = math.max(peak, handle.unsentTailBytes)
                         result match
-                            case WriteResult.Done          => loop(k + 1, newPeak)
-                            case WriteResult.Partial(_, _) => (true, newPeak)
-                            case WriteResult.Error         => (false, newPeak)
+                            case WriteResult.Done              => loop(k + 1, newPeak)
+                            case WriteResult.Partial(_, _)     => (true, newPeak)
+                            case WriteResult.TailPartial(_, _) => (true, newPeak)
+                            case WriteResult.Error             => (false, newPeak)
                         end match
                     }
                 }
