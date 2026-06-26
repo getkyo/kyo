@@ -82,7 +82,7 @@ object Config:
         Config(provider.baseUrl, Absent, Absent, provider, modelName, modelMaxTokens)
 
     /** A provider: its display name, base URL, the key env-var name, and the wire completion backend. */
-    trait Provider(
+    abstract class Provider(
         val name: String,
         val baseUrl: String,
         val keyName: String,
