@@ -5,6 +5,10 @@ import kyo.UI.foreach
 
 class CrossComponentItTest extends UITest:
 
+    // These cross-component scenarios drive many sequential CDP round-trips; on Native CI a single
+    // case can exceed the 60s UITest default, so allow more headroom before the leaf times out.
+    override def timeout = 180.seconds
+
     "input value preserved when focus moves away and back" in {
         val app: UI < Async =
             for
