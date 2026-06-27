@@ -392,7 +392,7 @@ object Json:
                 case ir: Codec.IntrospectingReader => ir.readStructure()
                 case other =>
                     throw SchemaNotSerializableException(
-                        s"Schema[Json.JsonSchema] requires a self-describing reader (JSON or YAML); got ${other.getClass.getSimpleName}"
+                        s"Schema[Json.JsonSchema] requires a self-describing reader (such as JSON or YAML); got ${other.getClass.getSimpleName}"
                     )(using reader.frame)
             fromStructureValue(sv)
         end readJsonSchema

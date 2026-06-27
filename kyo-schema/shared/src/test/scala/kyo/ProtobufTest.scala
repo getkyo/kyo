@@ -141,6 +141,40 @@ class ProtobufTest extends kyo.test.Test[Any]:
             assert(decoded == person)
         }
 
+        "strict protobuf decode preserves normal numeric field matching" in {
+            val schema = Schema[MTPerson].denyUnknownFields
+            val person = MTPerson("Alice", 30)
+            val bytes  = Protobuf.encode[MTPerson](person)
+            val result = schema.decode[Protobuf](bytes)
+            assert(result == Result.Success(person))
+        }
+
+        "strict protobuf decode rejects an unknown numeric field" in {
+            val nameId = CodecMacro.fieldId("name")
+            val ageId  = CodecMacro.fieldId("age")
+            val unknownId = LazyList
+                .from(1)
+                .find(id => id != nameId && id != ageId)
+                .get
+
+            val w = new ProtobufWriter
+            w.fieldBytes("name".getBytes(java.nio.charset.StandardCharsets.UTF_8), nameId)
+            w.string("Alice")
+            w.fieldBytes("age".getBytes(java.nio.charset.StandardCharsets.UTF_8), ageId)
+            w.int(30)
+            w.fieldBytes("unknown".getBytes(java.nio.charset.StandardCharsets.UTF_8), unknownId)
+            w.int(7)
+
+            val schema = Schema[MTPerson].denyUnknownFields
+            val result = schema.decode[Protobuf](Span.from(w.resultBytes))
+            result match
+                case Result.Failure(ex: UnknownFieldException) =>
+                    assert(ex.fieldName == unknownId.toString)
+                case other =>
+                    fail(s"Expected UnknownFieldException for protobuf field $unknownId, got $other")
+            end match
+        }
+
         "Protobuf.encode returns non-empty Span[Byte]" in {
             val person = MTPerson("Alice", 30)
             val bytes  = Protobuf.encode(person)
@@ -723,6 +757,120 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
+    "strict protobuf decode via Protobuf.decode rejects unknown field" in {
+        val widerBytes =
+            given Schema[CFPersonWide] = Schema[CFPersonWide]
+            Protobuf.encode(CFPersonWide("Alice", 30, "surplus"))
+        val strictSchema = Schema[CFPerson].denyUnknownFields
+        val result =
+            given Schema[CFPerson] = strictSchema
+            Protobuf.decode[CFPerson](widerBytes)
+        assert(result.isFailure, s"strict protobuf decode must reject unknown field: $result")
+        assert(
+            result.failure.exists(_.isInstanceOf[UnknownFieldException]),
+            s"failure must be UnknownFieldException: $result"
+        )
+    }
+
+    "transformField round-trip via Protobuf.encode and Protobuf.decode" in {
+        val transformSchema = Schema[CFPerson]
+            .transformField(_.age)((v, w) => w.int(v * 10))(r => r.int() / 10)
+        val value = CFPerson("Bob", 3)
+        val bytes =
+            given Schema[CFPerson] = transformSchema
+            Protobuf.encode(value)
+        val result =
+            given Schema[CFPerson] = transformSchema
+            Protobuf.decode[CFPerson](bytes)
+        assert(result == Result.Success(CFPerson("Bob", 3)), s"transform round-trip failed: $result")
+        val nativeBytes =
+            given Schema[CFPerson] = Schema[CFPerson]
+            Protobuf.encode(CFPerson("Bob", 30))
+        assert(bytes.toArray.toSeq == nativeBytes.toArray.toSeq, s"wire bytes must reflect write transform (age=30 on wire)")
+    }
+
+    "strict decode treats a unicode-digit wire key as an unknown name, not a numeric field id" in {
+        // The wire token "١٢٣" (Arabic-Indic digits for 123) must NOT be parsed as field id 123 and
+        // accidentally matched against a known field. It is a name, so strict decode rejects it as
+        // unknown. Pins wireFieldId's strict-ASCII classification (a unicode-digit token returns -1).
+        val schema  = Schema[CFPerson].denyUnknownFields
+        val decoded = schema.decodeString[Json]("""{"name":"a","age":1,"١٢٣":"x"}""")
+        assert(
+            decoded.isFailure && decoded.failure.exists(_.isInstanceOf[UnknownFieldException]),
+            s"a unicode-digit wire key must be rejected as an unknown field, not matched as id 123: $decoded"
+        )
+    }
+
+    "decode default does not overwrite a present field on Protobuf" in {
+        // A binary reader reports a field by its numeric field-id, so the default-injection
+        // suppression must recognize the present field under that id and leave it untouched.
+        val schema = Schema[CFDefaulted].default(_.score)(999)
+        val bytes =
+            given Schema[CFDefaulted] = schema
+            Protobuf.encode(CFDefaulted("a", 7))
+        val decoded =
+            given Schema[CFDefaulted] = schema
+            Protobuf.decode[CFDefaulted](bytes)
+        assert(
+            decoded == Result.Success(CFDefaulted("a", 7)),
+            s"a present field must survive decode, not be overwritten by the configured supplier: $decoded"
+        )
+    }
+
+    "all four field-customization features compose and round-trip through Json and Protobuf" in {
+        // strict + transform + decode-default + whenDefault-omit on one schema, exercised through
+        // BOTH the self-describing (Json) and binary (Protobuf numeric field-id) codecs. The binary
+        // leg is the one that matters: a transform-read rewrites _translatedField on the numeric-key
+        // path, and this proves it does not perturb the strict known-set or the default injection.
+        val schema = Schema[CFAllFeatures]
+            .denyUnknownFields
+            .transformField(_.qty)((v, w) => w.int(v * 10))(r => r.int() / 10)
+            .default(_.code)(999)
+            .omit(_.note).whenDefault
+
+        // note == "skip" equals its compile-time default, so it is omitted on encode and restored on
+        // decode; qty is rewritten to qty*10 on the wire and divided back on read.
+        val value = CFAllFeatures("widget", 5, 7, "skip")
+
+        val json = schema.encodeString[Json](value)
+        assert(!json.contains("\"note\""), s"note must be omitted when it equals its default: $json")
+        assert(json.contains("\"qty\":50"), s"qty must be transformed to 50 on the wire: $json")
+        assert(schema.decodeString[Json](json) == Result.Success(value), s"Json round-trip failed: ${schema.decodeString[Json](json)}")
+
+        val pbBytes =
+            given Schema[CFAllFeatures] = schema
+            Protobuf.encode(value)
+        val pbDecoded =
+            given Schema[CFAllFeatures] = schema
+            Protobuf.decode[CFAllFeatures](pbBytes)
+        assert(pbDecoded == Result.Success(value), s"Protobuf round-trip failed: $pbDecoded")
+
+        // An absent field falls to the configured supplier on both codecs.
+        val jsonMissingCode = schema.decodeString[Json]("""{"tag":"widget","qty":50,"note":"present"}""")
+        assert(
+            jsonMissingCode == Result.Success(CFAllFeatures("widget", 5, 999, "present")),
+            s"Json default supplier must fill absent code: $jsonMissingCode"
+        )
+
+        // strict decode rejects an unknown field on both codecs, despite the active read transform.
+        val jsonUnknown = schema.decodeString[Json]("""{"tag":"w","qty":50,"code":7,"note":"x","extra":"surplus"}""")
+        assert(
+            jsonUnknown.isFailure && jsonUnknown.failure.exists(_.isInstanceOf[UnknownFieldException]),
+            s"Json strict decode must reject the unknown field: $jsonUnknown"
+        )
+
+        val wideBytes =
+            given Schema[CFAllFeaturesWide] = Schema[CFAllFeaturesWide]
+            Protobuf.encode(CFAllFeaturesWide("w", 5, 7, "x", "surplus"))
+        val pbUnknown =
+            given Schema[CFAllFeatures] = schema
+            Protobuf.decode[CFAllFeatures](wideBytes)
+        assert(
+            pbUnknown.isFailure && pbUnknown.failure.exists(_.isInstanceOf[UnknownFieldException]),
+            s"Protobuf strict decode must reject the unknown field: $pbUnknown"
+        )
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions
@@ -749,3 +897,16 @@ enum Protobuf1517Enum derives Schema, CanEqual:
 end Protobuf1517Enum
 
 case class Protobuf1517Holder(inner: Protobuf1517Sealed) derives Schema, CanEqual
+
+case class CFPerson(name: String, age: Int) derives CanEqual, Schema
+
+// All-four-features composition fixtures: note carries a compile-time default so whenDefault-omit
+// has something to compare against; CFAllFeaturesWide shares the first four fields and adds one
+// extra to produce unknown-field wire bytes for the strict-decode leg.
+case class CFAllFeatures(tag: String, qty: Int, code: Int = 0, note: String = "skip") derives CanEqual, Schema
+case class CFAllFeaturesWide(tag: String, qty: Int, code: Int, note: String, extra: String) derives CanEqual, Schema
+
+// Isolates the decode-default Protobuf interaction (no transform confound): a present field
+// reported by its numeric id must not be overwritten by the configured default supplier.
+case class CFDefaulted(name: String, score: Int = 0) derives CanEqual, Schema
+case class CFPersonWide(name: String, age: Int, extra: String) derives CanEqual, Schema
