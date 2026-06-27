@@ -76,7 +76,7 @@ class McpReverseDispatchTest extends Test:
     "server.requestElicitation aborts when no client elicitation handler" in {
         val elicitReq = McpServer.ElicitationRequest(
             message = "Please provide your name.",
-            requestedSchema = Json.JsonSchema.Null
+            requestedSchema = Json.JsonSchema.Null()
         )
         withPair(Seq.empty, Seq.empty) { (server, _) =>
             Abort.run[McpException](server.requestElicitation(elicitReq)).map { result =>
