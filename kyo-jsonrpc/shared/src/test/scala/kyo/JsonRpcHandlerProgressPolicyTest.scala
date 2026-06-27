@@ -458,16 +458,27 @@ class JsonRpcHandlerProgressPolicyTest extends JsonRpcTest:
         }
     }
 
-    "enforceMonotonic=true concurrent: the larger value is always emitted; a smaller value never follows it" in {
+    "enforceMonotonic=true concurrent: the larger value is always emitted; a smaller value never follows it".times(100) in {
         // Contract: monotonically-increasing emissions pass; a value <= the highest already-emitted is
         // dropped. With concurrent calls, the LARGER value always reaches the wire; the smaller may or
-        // may not, depending on which fiber wins the initial CAS. What the contract forbids is the
-        // smaller value appearing AFTER the larger one (that would break monotonicity).
+        // may not, depending on which fiber wins the gate. What the contract forbids is the smaller value
+        // appearing AFTER the larger one (that would break monotonicity). The violation is scheduling-
+        // dependent, so .times(100) reruns the scenario; every run must hold the contract.
+        // Fan out many out-of-order values concurrently so each run has several chances to hit the gate
+        // race (a single small/large pair is a nanosecond window that almost never fires on its own).
         val taskMethod = JsonRpcRoute.request[TaskReq, TaskResp]("task") {
             (_, ctx) =>
-                Async.zip[JsonRpcError, Unit, Unit, Any](
+                Async.zip[JsonRpcError, Unit, Unit, Unit, Unit, Unit, Unit, Unit, Unit, Unit, Unit, Any](
                     sendProgress(ctx, mkProgress(10.0)),
-                    sendProgress(ctx, mkProgress(5.0))
+                    sendProgress(ctx, mkProgress(5.0)),
+                    sendProgress(ctx, mkProgress(8.0)),
+                    sendProgress(ctx, mkProgress(3.0)),
+                    sendProgress(ctx, mkProgress(9.0)),
+                    sendProgress(ctx, mkProgress(2.0)),
+                    sendProgress(ctx, mkProgress(7.0)),
+                    sendProgress(ctx, mkProgress(4.0)),
+                    sendProgress(ctx, mkProgress(6.0)),
+                    sendProgress(ctx, mkProgress(1.0))
                 ).andThen(TaskResp(true))
         }
         JsonRpcTransport.inMemory.map { (ta, tb) =>

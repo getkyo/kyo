@@ -95,59 +95,53 @@ private[kyo] object ProgressEngine:
                 tokenOpt match
                     case Absent         => Absent
                     case Present(token) =>
-                        // Per-invocation monotonicity ref; lives inside closure (not global)
-                        // Unsafe: AtomicRef.Unsafe.init inside AllowUnsafe context
+                        // Per-invocation monotonicity ref and mutex; live inside the closure (not global).
+                        // Unsafe: AtomicRef.Unsafe.init / Meter init inside AllowUnsafe context.
                         val monoRef = AtomicRef.Unsafe.init[Maybe[BigDecimal]](Absent).safe
+                        // Serialises the compare-and-emit so the wire stays monotonic. A lock-free gate decided
+                        // "proceed" separately from the writer-channel put, so two concurrent values could both
+                        // pass the gate and then race on the put, letting a smaller value follow a larger one.
+                        // Holding this mutex across the compare AND the put makes a value reach the wire only if
+                        // it is strictly greater than the highest already emitted.
+                        val monoMutex = Sync.Unsafe.evalOrThrow(Meter.initMutexUnscoped)
                         val sink: Structure.Value => Unit < (Async & Abort[Closed]) =
                             value =>
                                 Sync.defer(Maybe(pendingInbound.get(id))).map {
                                     case Present(_: InboundEntry.Running) =>
-                                        val proceed: Boolean < Sync =
-                                            if policy.enforceMonotonic then
-                                                val newPct: Maybe[BigDecimal] =
-                                                    value match
-                                                        case Structure.Value.Record(fields) =>
-                                                            Maybe.fromOption(
-                                                                fields.iterator.collectFirst {
-                                                                    case ("progress", Structure.Value.BigNum(n))  => n
-                                                                    case ("progress", Structure.Value.Decimal(n)) => BigDecimal(n)
-                                                                    case ("progress", Structure.Value.Integer(n)) => BigDecimal(n)
-                                                                }
-                                                            )
-                                                        case _ => Absent
-                                                newPct match
-                                                    case Absent          => true
-                                                    case Present(newVal) =>
-                                                        // CAS retry loop: a larger value that loses the initial CAS to a
-                                                        // concurrent smaller value re-reads and re-evaluates rather than
-                                                        // dropping, so the highest progress always reaches the wire. A bare
-                                                        // compareAndSet returned false on a lost race and silently dropped
-                                                        // the larger value, emitting only the smaller one.
-                                                        def attempt(): Boolean < Sync =
-                                                            monoRef.get.map { current =>
-                                                                current match
-                                                                    case Present(prev) if newVal <= prev =>
-                                                                        false
-                                                                    case _ =>
-                                                                        monoRef.compareAndSet(current, Present(newVal))
-                                                                            .map(won => if won then true else attempt())
+                                        def emit(): Unit < (Async & Abort[Closed]) =
+                                            policy.encodeProgressParams(token, value).map { encoded =>
+                                                val env = JsonRpcNotification(
+                                                    policy.progressMethod,
+                                                    Present(encoded),
+                                                    extras
+                                                )
+                                                Abort.run[Closed](writerChannel.put(WriterMsg.SendEnvelope(env))).unit
+                                            }
+                                        if policy.enforceMonotonic then
+                                            val newPct: Maybe[BigDecimal] =
+                                                value match
+                                                    case Structure.Value.Record(fields) =>
+                                                        Maybe.fromOption(
+                                                            fields.iterator.collectFirst {
+                                                                case ("progress", Structure.Value.BigNum(n))  => n
+                                                                case ("progress", Structure.Value.Decimal(n)) => BigDecimal(n)
+                                                                case ("progress", Structure.Value.Integer(n)) => BigDecimal(n)
                                                             }
-                                                        attempt()
-                                                end match
-                                            else
-                                                true
-                                        proceed.map {
-                                            case false => Kyo.unit
-                                            case true =>
-                                                policy.encodeProgressParams(token, value).map { encoded =>
-                                                    val env = JsonRpcNotification(
-                                                        policy.progressMethod,
-                                                        Present(encoded),
-                                                        extras
-                                                    )
-                                                    Abort.run[Closed](writerChannel.put(WriterMsg.SendEnvelope(env))).unit
-                                                }
-                                        }
+                                                        )
+                                                    case _ => Absent
+                                            newPct match
+                                                case Absent => emit()
+                                                case Present(newVal) =>
+                                                    monoMutex.run {
+                                                        monoRef.get.map {
+                                                            case Present(prev) if newVal <= prev => Kyo.unit
+                                                            case _ => monoRef.set(Present(newVal)).andThen(emit())
+                                                        }
+                                                    }
+                                            end match
+                                        else
+                                            emit()
+                                        end if
                                     case _ => Kyo.unit
                                 }
                         Present(sink)
