@@ -635,12 +635,14 @@ final private[net] class IoUringDriver private[posix] (
         else if handle.sendInFlight then
             () // a send SQE is already outstanding; its onTlsSendComplete re-flushes any bytes appended meanwhile
         else if handle.rawSendInFlight || rawTailHasUnsent(handle) then
-            // STARTTLS ordering: the raw tail (the handshake's final flight, sent via writeRaw while handle.tls was Absent) has a send in flight
-            // or bytes still queued. Submitting a TLS app-data send now would put two send SQEs on one fd, which io_uring may reap out of order
-            // (liburing #1102, see writeRaw), reordering the wire bytes so the peer reads a byte-shifted record and aborts with bad_record_mac.
-            // Defer: onRawSendComplete re-flushes this TLS tail once the raw tail fully drains. The transition is one-way (handle.tls becomes
-            // Present at onFinished and writes only ever route to writeTls after, so rawPending never grows again), so this defers at most across
-            // the handshake's final flight, never indefinitely.
+            // Cross-tail send wire-order across the STARTTLS (raw->TLS) transition: the raw tail (the handshake's final flight, sent via
+            // writeRaw while handle.tls was Absent) has a send in flight or bytes still queued. Submitting a TLS app-data send here would put
+            // two send SQEs on one fd, which io_uring may reap out of order (liburing #1102, see writeRaw), reordering the wire bytes so the
+            // peer reads a byte-shifted record and aborts with bad_record_mac. Defer: onRawSendComplete re-flushes this TLS tail once the raw
+            // tail fully drains. The transition is one-way (handle.tls becomes Present at onFinished and writes only ever route to writeTls
+            // after, so rawPending never grows again), so this defers at most across the handshake's final flight, never indefinitely. The raw
+            // and TLS send tails are separate handle fields with this cross-tail ordering between them: keep them separate, since a single
+            // undifferentiated send tail loses the ordering and lets the STARTTLS-client bad_record_mac corruption back in.
             ()
         else
             handle.pendingCipher match
@@ -778,9 +780,12 @@ final private[net] class IoUringDriver private[posix] (
                     if handle.rawPendingSent >= buf.size then
                         buf.reset()
                         handle.rawPendingSent = 0
-                        // STARTTLS ordering: the raw tail is now fully drained. Kick the TLS tail in case a post-handshake app-data send was deferred
-                        // in flushTls to keep it strictly after the handshake's final raw flight (so two send SQEs never race on one fd and reorder on
-                        // the wire). A no-op when the TLS tail is empty (the common non-STARTTLS raw connection) or a TLS send is already in flight.
+                        // Cross-tail send wire-order: the raw tail is now fully drained. Kick the TLS tail in case a
+                        // post-handshake app-data send was deferred in flushTls to keep it strictly after the handshake's final raw
+                        // flight (two SQEs on one fd that io_uring can reap out of order reorder the wire bytes -> bad_record_mac).
+                        // A no-op when the TLS tail is empty (the common non-STARTTLS raw connection) or a TLS send is already in
+                        // flight. The raw and TLS tails are separate handle fields: keep them separate, since folding them into one
+                        // undifferentiated tail loses this kick and lets the STARTTLS-client corruption back in.
                         flushTls(handle)
                     else
                         // Bytes remain (a partial send, or plaintext a coalesced write appended while this send was in flight): re-submit a send
