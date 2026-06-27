@@ -332,6 +332,8 @@ import scala.quoted.*
         else if sym.isClassDef && sym.flags.is(Flags.Case) then
             rejectPrivateCaseFields(tpe, sym)
             emitProductSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
+        else if isOrType(tpe) then
+            emitUnionSchemaStatic[A](tpe)
         else
             report.errorAndAbort(
                 s"Cannot derive Schema for ${tpe.show}: not a case class or sealed trait. " +
@@ -339,6 +341,182 @@ import scala.quoted.*
             )
         end if
     end derivedImpl
+
+    /** True iff `tpe` is a Scala type union (`A | B`). */
+    private def isOrType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
+        import quotes.reflect.*
+        tpe.dealias match
+            case _: OrType => true
+            case _         => false
+    end isOrType
+
+    /** Flattens a (possibly nested) union into its member types in declared first-occurrence order
+      * (depth-first, left-to-right), preserving order. A member appearing twice is kept at its
+      * first occurrence only. Does not use Set so declaration order is stable.
+      */
+    private def flattenUnion(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+        val acc  = scala.collection.mutable.ListBuffer.empty[TypeRepr]
+        val seen = scala.collection.mutable.ListBuffer.empty[String]
+        def go(t: TypeRepr): Unit = t.dealias match
+            case OrType(l, r) => go(l); go(r)
+            case other =>
+                val key = other.show
+                if !seen.contains(key) then
+                    seen += key
+                    acc += other
+        go(tpe)
+        acc.toList
+    end flattenUnion
+
+    /** The default wire label for a union member: splits on '.' and takes the last segment,
+      * giving the simple name for both primitives ("scala.Int" -> "Int") and named types.
+      */
+    private def memberLabel(using Quotes)(tpe: quotes.reflect.TypeRepr): String =
+        tpe.show.split('.').last
+    end memberLabel
+
+    /** Emits the `Schema[A]` for a Scala type union `A | B | ...`. Mirrors `emitSealedSchemaStatic`
+      * but enumerates flattened OrType members (order-preserving) instead of `sym.children`: each
+      * member's `Schema` is summoned via `summonInline[Schema[member]]`, the encode branch selects
+      * by a static `isInstanceOf[member]` chain, and the structure is a
+      * `Structure.Type.Sum` whose `variants` carry the member names in declared order and whose
+      * `enumValues` is empty (a union has no case-object enum values).
+      */
+    private def emitUnionSchemaStatic[A: Type](using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[Schema[A]] =
+        import quotes.reflect.*
+        val members     = flattenUnion(tpe)
+        val n           = members.size
+        val memberNames = members.map(memberLabel)
+
+        val labelCounts = memberNames.groupBy(identity).filter(_._2.size > 1)
+        if labelCounts.nonEmpty then
+            val collisions = labelCounts.keys.toList.sorted.mkString(", ")
+            val involved = memberNames.zip(members).collect {
+                case (label, member) if labelCounts.contains(label) =>
+                    s"${member.show} (label \"$label\")"
+            }.mkString(", ")
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: union members produce duplicate wire labels [$collisions]. " +
+                    s"Colliding members: $involved. " +
+                    "Rename the types so each member has a distinct simple name, or wrap them in distinct named types."
+            )
+        end if
+
+        val tagExpr = summonSchemaTag(tpe)
+        val owner   = Symbol.spliceOwner
+
+        // _uself: Schema[A] (lazy), one _u$idx: Schema[Any] (lazy) per member,
+        // one _unb$idx: Array[Byte] per member for the fieldBytes write envelope.
+        val selfSym = Symbol.newVal(owner, "_uself", TypeRepr.of[Schema[A]], Flags.Lazy, Symbol.noSymbol)
+        val variantSyms: List[Symbol] =
+            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_u$idx", TypeRepr.of[Schema[Any]], Flags.Lazy, Symbol.noSymbol))
+        val nameByteSyms: List[Symbol] =
+            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_unb$idx", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol))
+
+        val selfRef: Term = Ref(selfSym)
+
+        // Encode branch: static isInstanceOf[member] per member.
+        // Each arm wraps the member payload in a one-field object envelope (memberName -> memberValue)
+        // mirroring the sealed-sum writeBody. writeWithTransforms -> untaggedEncode strips the outer
+        // envelope, leaving the bare member payload on the wire (the untagged default).
+        // The cast to Any is sound: the isInstanceOf guard ensures the value is of that member type.
+        def writeBody(v: Expr[A], w: Expr[Writer]): Expr[Unit] =
+            val chain: Term = (0 until n).foldRight(
+                '{ kyo.bug("Schema union write: " + $v.asInstanceOf[Any].getClass.getName + " matched no member") }.asTerm
+            ) { (idx, elseTerm) =>
+                val cond = members(idx).asType match
+                    case '[t] => '{ $v.asInstanceOf[Any].isInstanceOf[t] }.asTerm
+                val mName    = Expr(memberNames(idx))
+                val mFieldId = Expr(kyo.internal.CodecMacro.fieldId(memberNames(idx)))
+                val arm = '{
+                    $w.objectStart($mName, 1)
+                    $w.fieldBytes(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
+                    ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
+                    $w.objectEnd()
+                }.asTerm
+                If(cond, arm, elseTerm)
+            }
+            chain.asExprOf[Unit]
+        end writeBody
+
+        val variantDecodersExpr: Expr[Chunk[kyo.Codec.Reader => Any]] =
+            val perMember: List[Expr[kyo.Codec.Reader => Any]] = (0 until n).toList.map { idx =>
+                '{ (r: kyo.Codec.Reader) => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead(r) }
+            }
+            '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perMember) }*)) }
+        end variantDecodersExpr
+
+        // External-format variant dispatcher: reads {memberName: payload} and routes to the
+        // matching member's serializeRead. Used for tagged representations (adjacent, internal,
+        // tuple, tupleFlat) where the representation layer has already resolved the tag and
+        // presents the payload in External wrapper format to rawSerializeRead.
+        def readBody(r: Expr[kyo.Codec.Reader]): Expr[A] =
+            val matchChain: Term = (0 until n).foldRight(
+                '{
+                    val _parsed = $r.lastFieldName()
+                    $r.skip()
+                    throw kyo.UnknownVariantException(Seq.empty, _parsed)(using $r.frame)
+                }.asTerm
+            ) { (idx, elseTerm) =>
+                val cond = '{ $r.matchField(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }) }.asTerm
+                val arm  = '{ ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead($r).asInstanceOf[A] }.asTerm
+                If(cond, arm, elseTerm)
+            }
+            '{
+                kyo.discard($r.objectStart())
+                if ! $r.hasNextField() then
+                    throw kyo.MissingFieldException(Seq.empty, "<member>")(using $r.frame)
+                $r.fieldParse()
+                val _result: A = ${ matchChain.asExprOf[A] }
+                $r.objectEnd()
+                _result
+            }
+        end readBody
+
+        def structureExpr: Expr[Structure.Type] =
+            val variantStructs: List[Expr[kyo.Structure.Variant]] = (0 until n).toList.map { idx =>
+                '{ kyo.Structure.Variant(${ Expr(memberNames(idx)) }, ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.structure) }
+            }
+            '{
+                Structure.Type.Sum(
+                    "Union",
+                    $tagExpr,
+                    kyo.Chunk.empty[Structure.Type],
+                    kyo.Chunk.from[kyo.Structure.Variant](Array[kyo.Structure.Variant](${ Varargs(variantStructs) }*)),
+                    kyo.Chunk.empty[String]
+                )
+            }
+        end structureExpr
+
+        val selfRefExpr: Expr[Schema[A]] = selfRef.asExprOf[Schema[A]]
+        val selfRhs: Expr[Schema[A]] = '{
+            Schema.init[A](
+                writeFn = (v, w) => ${ writeBody('v, 'w) },
+                readFn = r => ${ readBody('r) },
+                variantDecoders = $variantDecodersExpr,
+                representation = Schema.UnionRepresentation.Untagged,
+                structure = ${ structureExpr }
+            )
+        }
+        val selfDef = ValDef(selfSym, Some(selfRhs.asTerm.changeOwner(selfSym)))
+
+        // Name-byte vals (non-lazy; computed once at schema init, consumed by writeBody).
+        val nameBytesValDefs: List[ValDef] = memberNames.zipWithIndex.map { (mn, idx) =>
+            val nameExpr = Expr(mn)
+            ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
+        }
+
+        // Member schema vals (lazy; summon each member's Schema).
+        val variantDefs: List[ValDef] = members.zipWithIndex.map { (memberType, idx) =>
+            memberType.asType match
+                case '[t] =>
+                    val rhs = '{ summonInline[Schema[t]].asInstanceOf[Schema[Any]] }.asTerm
+                    ValDef(variantSyms(idx), Some(rhs.changeOwner(variantSyms(idx))))
+        }
+
+        Block(nameBytesValDefs ++ (selfDef :: variantDefs), selfRef).asExprOf[Schema[A]]
+    end emitUnionSchemaStatic
 
     /** Rejects case classes with private case-fields (would otherwise leak storage names on the wire). */
     private def rejectPrivateCaseFields(using
@@ -701,6 +879,16 @@ import scala.quoted.*
 
         // STRUCTURE: inline Chunk of Structure.Field via by-name fieldType thunks.
         def structureExpr: Expr[Structure.Type] =
+            // Read each field's @doc off the PRIMARY-CONSTRUCTOR PARAMETER symbol (the case-field getter
+            // carries no annotation). Built once before the fields loop so the per-field emission stays
+            // branch-free: one buildProductSchema per derivation, no per-field annotation read.
+            val docSym = TypeRepr.of[kyo.doc].typeSymbol
+            val ctorDocs: Map[String, String] =
+                sym.primaryConstructor.paramSymss.flatten.flatMap { p =>
+                    p.getAnnotation(docSym).collect {
+                        case Apply(_, List(Literal(StringConstant(s)))) => p.name -> s
+                    }
+                }.toMap
             val fieldStructures: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (f, idx) =>
                 val rawType  = tpe.memberType(f)
                 val isOpt    = isMaybeFlags(idx) || isOptionFlags(idx)
@@ -708,6 +896,9 @@ import scala.quoted.*
                 val optExpr  = Expr(isOpt)
                 val defVal   = defaultStructureValuesExpr
                 val idxExpr  = Expr(idx)
+                val docExpr = ctorDocs.get(f.name) match
+                    case Some(s) => '{ kyo.Maybe(${ Expr(s) }) }
+                    case None    => '{ kyo.Maybe.empty[String] }
                 rawType.asType match
                     case '[ft] =>
                         val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[ft]]
@@ -715,7 +906,7 @@ import scala.quoted.*
                             kyo.Structure.Field(
                                 $nameExpr,
                                 $fieldSchemaRef.structure,
-                                kyo.Maybe.empty,
+                                $docExpr,
                                 $defVal($idxExpr)(),
                                 $optExpr
                             )

@@ -278,6 +278,7 @@ lazy val kyoJVM: Project = project
         `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
+        `kyo-ai`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
         `kyo-mcp`.jvm,
@@ -347,6 +348,7 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
+        `kyo-ai`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
         `kyo-mcp`.js,
@@ -396,6 +398,7 @@ lazy val kyoNative = project
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
+        `kyo-ai`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
         `kyo-mcp`.native,
@@ -450,6 +453,7 @@ lazy val kyoWasm = project
         `kyo-http`.wasm,
         `kyo-stats-otlp`.wasm,
         `kyo-flow`.wasm,
+        `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
         `kyo-mcp`.wasm,
@@ -1221,6 +1225,24 @@ lazy val `kyo-http` =
         .jvmSettings(
             mimaCheck(false)
         )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-ai` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ai"))
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }

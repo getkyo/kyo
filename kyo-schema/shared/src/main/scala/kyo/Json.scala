@@ -195,10 +195,10 @@ object Json:
         )
 
         /** Boolean type. */
-        case Bool
+        case Bool(description: Maybe[String] = Maybe.empty)
 
         /** Null type (represents the JSON null value; maps to Unit in Scala). */
-        case Null
+        case Null(description: Maybe[String] = Maybe.empty)
 
         /** Nullable wrapper (JSON Schema `oneOf` with null). */
         case Nullable(inner: JsonSchema)
@@ -345,16 +345,22 @@ object Json:
                     i.description match
                         case Maybe.Present(d) => discard(entries.addOne("description" -> (() => writer.string(d))))
                         case _                => ()
-                case Bool =>
+                case b: Bool =>
                     discard(entries.addOne("type" -> (() => writer.string("boolean"))))
-                case Null =>
+                    b.description match
+                        case Maybe.Present(d) => discard(entries.addOne("description" -> (() => writer.string(d))))
+                        case _                => ()
+                case n: Null =>
                     discard(entries.addOne("type" -> (() => writer.string("null"))))
+                    n.description match
+                        case Maybe.Present(d) => discard(entries.addOne("description" -> (() => writer.string(d))))
+                        case _                => ()
                 case Nullable(inner) =>
                     // JSON Schema convention: nullable as oneOf with the inner schema and the null type.
                     discard(entries.addOne("oneOf" -> { () =>
                         writer.arrayStart(2)
                         writeJsonSchema(inner, writer)
-                        writeJsonSchema(Null, writer)
+                        writeJsonSchema(Null(), writer)
                         writer.arrayEnd()
                     }))
                 case OneOf(variants) =>
@@ -386,7 +392,7 @@ object Json:
                 case ir: Codec.IntrospectingReader => ir.readStructure()
                 case other =>
                     throw SchemaNotSerializableException(
-                        s"Schema[Json.JsonSchema] requires a self-describing reader (JSON or YAML); got ${other.getClass.getSimpleName}"
+                        s"Schema[Json.JsonSchema] requires a self-describing reader (such as JSON or YAML); got ${other.getClass.getSimpleName}"
                     )(using reader.frame)
             fromStructureValue(sv)
         end readJsonSchema
@@ -401,8 +407,8 @@ object Json:
                         case Some(Structure.Value.Str("string"))  => fromStr(byName)
                         case Some(Structure.Value.Str("number"))  => fromNum(byName)
                         case Some(Structure.Value.Str("integer")) => fromInteger(byName)
-                        case Some(Structure.Value.Str("boolean")) => Bool
-                        case Some(Structure.Value.Str("null"))    => Null
+                        case Some(Structure.Value.Str("boolean")) => fromBool(byName)
+                        case Some(Structure.Value.Str("null"))    => fromNull(byName)
                         case _ =>
                             byName.get("oneOf") match
                                 case Some(Structure.Value.Sequence(elems)) => fromOneOf(elems)
@@ -460,6 +466,16 @@ object Json:
                 case _                            => Maybe.empty
             Arr(items, minItems, maxItems, uniqueItems, description)
         end fromArr
+
+        private def fromBool(byName: Map[String, Structure.Value]): Bool =
+            byName.get("description") match
+                case Some(Structure.Value.Str(s)) => Bool(Maybe(s))
+                case _                            => Bool()
+
+        private def fromNull(byName: Map[String, Structure.Value]): Null =
+            byName.get("description") match
+                case Some(Structure.Value.Str(s)) => Null(Maybe(s))
+                case _                            => Null()
 
         private def fromStr(byName: Map[String, Structure.Value]): Str =
             val minLength = byName.get("minLength") match
@@ -582,6 +598,22 @@ object Json:
           */
         inline def from[A](using s: Schema[A]): JsonSchema = fromStructure(s.structure)
 
+        // Attaches a field's @doc to its property node's description, for every JsonSchema case that
+        // carries an optional description field (Obj, Arr, Str, Num, Integer, Bool, Null).
+        private def withDescription(node: JsonSchema, doc: Maybe[String]): JsonSchema =
+            doc match
+                case Maybe.Present(d) =>
+                    node match
+                        case o: Obj     => o.copy(description = Maybe(d))
+                        case a: Arr     => a.copy(description = Maybe(d))
+                        case s: Str     => s.copy(description = Maybe(d))
+                        case n: Num     => n.copy(description = Maybe(d))
+                        case i: Integer => i.copy(description = Maybe(d))
+                        case b: Bool    => b.copy(description = Maybe(d))
+                        case n: Null    => n.copy(description = Maybe(d))
+                        case other      => other
+                case _ => node
+
         /** Derives a JsonSchema from a Structure.Type at runtime. */
         private[kyo] def fromStructure(rt: Structure.Type): JsonSchema =
             fromStructure(rt, Set.empty)
@@ -596,7 +628,7 @@ object Json:
                         case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float |
                             Structure.PrimitiveKind.BigDecimal => Num()
                         case Structure.PrimitiveKind.String | Structure.PrimitiveKind.Char => Str()
-                        case Structure.PrimitiveKind.Boolean                               => Bool
+                        case Structure.PrimitiveKind.Boolean                               => Bool()
                         // Unit maps to an empty object on the wire (see `Schema.unitSchema`). Describing it as
                         // `{"type":"null"}` here would mismatch the actual wire shape AND violate consumers
                         // that require an object-typed schema (e.g. MCP tool `inputSchema`).
@@ -613,7 +645,7 @@ object Json:
                     else
                         val newSeen = seen + name
                         val properties = fields.toList.map { f =>
-                            (f.name, fromStructure(f.fieldType, newSeen))
+                            (f.name, withDescription(fromStructure(f.fieldType, newSeen), f.doc))
                         }
                         val required = fields.toList.collect {
                             case f if f.default.isEmpty && !f.optional => f.name

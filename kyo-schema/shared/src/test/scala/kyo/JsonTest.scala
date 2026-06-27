@@ -1605,7 +1605,7 @@ class JsonTest extends kyo.test.Test[Any]:
             s match
                 case obj: Json.JsonSchema.Obj =>
                     assert(obj.additionalProperties.isDefined)
-                    assert(obj.additionalProperties.get == Json.JsonSchema.Bool)
+                    assert(obj.additionalProperties.get == Json.JsonSchema.Bool())
                 case _ =>
                     fail(s"expected Obj, got $s")
             end match

@@ -626,4 +626,67 @@ class CodecTest extends kyo.test.Test[Any]:
         assert(jsonRoundTrip(value) == value)
     }
 
+    // =========================================================================
+    // Codec.Capabilities projection
+    // =========================================================================
+
+    "capable writer projects Capabilities(true)" in {
+        val writer = new Codec.Writer:
+            override def canWriteTopLevelNonObject: Boolean            = true
+            def objectStart(name: String, size: Int): Unit             = ()
+            def objectEnd(): Unit                                      = ()
+            def arrayStart(size: Int): Unit                            = ()
+            def arrayEnd(): Unit                                       = ()
+            def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit = ()
+            def string(value: String): Unit                            = ()
+            def int(value: Int): Unit                                  = ()
+            def long(value: Long): Unit                                = ()
+            def float(value: Float): Unit                              = ()
+            def double(value: Double): Unit                            = ()
+            def boolean(value: Boolean): Unit                          = ()
+            def short(value: Short): Unit                              = ()
+            def byte(value: Byte): Unit                                = ()
+            def char(value: Char): Unit                                = ()
+            def nil(): Unit                                            = ()
+            def mapStart(size: Int): Unit                              = ()
+            def mapEnd(): Unit                                         = ()
+            def bytes(value: Span[Byte]): Unit                         = ()
+            def bigInt(value: BigInt): Unit                            = ()
+            def bigDecimal(value: BigDecimal): Unit                    = ()
+            def instant(value: java.time.Instant): Unit                = ()
+            def duration(value: java.time.Duration): Unit              = ()
+            def result(): Span[Byte]                                   = Span.empty
+        end writer
+        assert(writer.capabilities == Codec.Capabilities(true))
+    }
+
+    "default writer projects Capabilities(false)" in {
+        val writer = new Codec.Writer:
+            def objectStart(name: String, size: Int): Unit             = ()
+            def objectEnd(): Unit                                      = ()
+            def arrayStart(size: Int): Unit                            = ()
+            def arrayEnd(): Unit                                       = ()
+            def fieldBytes(nameBytes: Array[Byte], fieldId: Int): Unit = ()
+            def string(value: String): Unit                            = ()
+            def int(value: Int): Unit                                  = ()
+            def long(value: Long): Unit                                = ()
+            def float(value: Float): Unit                              = ()
+            def double(value: Double): Unit                            = ()
+            def boolean(value: Boolean): Unit                          = ()
+            def short(value: Short): Unit                              = ()
+            def byte(value: Byte): Unit                                = ()
+            def char(value: Char): Unit                                = ()
+            def nil(): Unit                                            = ()
+            def mapStart(size: Int): Unit                              = ()
+            def mapEnd(): Unit                                         = ()
+            def bytes(value: Span[Byte]): Unit                         = ()
+            def bigInt(value: BigInt): Unit                            = ()
+            def bigDecimal(value: BigDecimal): Unit                    = ()
+            def instant(value: java.time.Instant): Unit                = ()
+            def duration(value: java.time.Duration): Unit              = ()
+            def result(): Span[Byte]                                   = Span.empty
+        end writer
+        assert(writer.capabilities == Codec.Capabilities(false))
+    }
+
 end CodecTest

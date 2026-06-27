@@ -2,6 +2,7 @@ package kyo.internal
 
 import kyo.Codec.Reader
 import kyo.Codec.Writer
+import kyo.Frame
 import kyo.Schema
 import scala.compiletime.erasedValue
 
