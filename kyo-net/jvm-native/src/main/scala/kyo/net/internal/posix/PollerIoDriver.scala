@@ -152,6 +152,15 @@ final private[net] class PollerIoDriver private[posix] (
     // order, and consecutive register commands consume them head-first in that order, so neither is lost.
     private val regIntake = new ConcurrentLinkedQueue[Registration]()
 
+    // The deregister side queue, the deregister twin of regIntake (#362, R-065). The packed long deregister command carries only the fd, not the
+    // handle's HandleId (the 32-bit generation does not fit the spare command bits), but the apply must remove an fd's entries ONLY when the fd is
+    // still owned by the deregistering handle: a deregister whose fd was closed and recycled into a new handle must not evict the new handle's
+    // registration. deregisterFds offers the handle here, paired with each OpDeregister command (offer-then-submit on one carrier, so the poll
+    // carrier sees the handle by the time it observes the command), and the apply matches it by fd (readFd or writeFd) and compares activeFds(fd)
+    // against handle.id.packed, removing nothing on a mismatch. As with regIntake, matching is by fd identity, not FIFO position, tolerating the
+    // independent enqueue orders of the two queues under concurrent producers.
+    private val deregIntake = new ConcurrentLinkedQueue[PosixHandle]()
+
     // Backend interest changes (register / deregister) must run in submission order. epoll_ctl and kqueue's EV_ADD/EV_DELETE are last-write-wins
     // per fd+filter, so an out-of-order deregister can delete a freshly re-armed interest and strand the fd (no readiness event ever fires for
     // data that arrives afterward). The poll loop and every IoDriver method submit their changes here; a single worker fiber drains the FIFO and
@@ -836,8 +845,12 @@ final private[net] class PollerIoDriver private[posix] (
         // rather than waiting up to one poll cycle (EC-1): every pending promise is held on the handle (pendingReadPromise / pendingAcceptPromise /
         // pendingWritablePromise / backpressurePromise), so failing them needs no map access. completeDiscard is idempotent, so if the poll fiber's
         // deregister removal also tried to fail them (it does not), there would be no double-completion hazard.
+        // Pair each OpDeregister with the handle on deregIntake so the apply can id-guard the removal (#362). The offer precedes the submitChange
+        // on this one carrier, so the poll carrier sees the handle by the time it observes the command (the changeQueue offer publishes it).
+        deregIntake.offer(handle)
         submitChange(packCmd(OpDeregister, handle.readFd, fdClosing))
         if handle.writeFd != handle.readFd then
+            deregIntake.offer(handle)
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
@@ -950,6 +963,8 @@ final private[net] class PollerIoDriver private[posix] (
         activeFds.clear()
         missedReads.clear()
         missedEof.clear()
+        // Drop any deregister-intake handles whose OpDeregister command never ran before the driver closed; their promises are failed above.
+        deregIntake.clear()
     end closeTeardown
 
     /** Drain every remaining registration from regIntake into the live pending tables, so [[closeTeardown]]'s foreach loops fail those promises with
@@ -1632,30 +1647,72 @@ final private[net] class PollerIoDriver private[posix] (
         found
     end takeRegistration
 
+    /** Remove and return the first handle in `deregIntake` whose `readFd` or `writeFd` matches `fd` (the deregister twin of [[takeRegistration]],
+      * #362). Each [[deregisterFds]] offers the handle once per OpDeregister command, so a socket (readFd == writeFd) offers once and stdio (0/1)
+      * twice; matching by fd consumes the right entry for each command. Returns `null` when none matches (a deregister whose intake entry was never
+      * offered, which the offer-before-submit ordering prevents in practice). Poll-fiber-confined consumption; the iterator is weakly consistent.
+      */
+    private def takeDeregister(fd: Int): PosixHandle | Null =
+        val it                        = deregIntake.iterator()
+        var found: PosixHandle | Null = null
+        var scanning                  = true
+        while scanning && it.hasNext do
+            val h = it.next()
+            if (h.readFd == fd || h.writeFd == fd) && deregIntake.remove(h) then
+                found = h
+                scanning = false
+            end if
+        end while
+        found
+    end takeDeregister
+
     /** Apply one register command's matching registration to the live poll-fiber-confined tables (single-writer), keyed by `(fd, kind)`. The
       * accept bit disambiguates an OpRegisterRead from awaitAccept vs awaitRead, so a recycled fd reused across an accept and a read is never
       * mismatched. Applies nothing when no registration matches (a cancel removed it before the command ran). The handle's `@volatile` promise/id
       * reads here pair with the await methods' stores (published before the registration offer; the queue offer/take is the happens-before barrier).
       */
-    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe): Long =
+    private def applyRegistration(fd: Int, kind: RegKind)(using AllowUnsafe, Frame): Long =
         Maybe(takeRegistration(fd, kind)) match
             case Present(reg) =>
                 val handle = reg.handle
-                kind match
-                    case RegKind.Read =>
-                        activeFds.put(fd, handle.id.packed)
-                        pendingReads.put(fd, handle)
-                    case RegKind.Accept =>
-                        activeFds.put(fd, handle.id.packed)
-                        pendingAccepts.put(fd, handle)
-                    case RegKind.Write =>
-                        activeFds.put(fd, handle.id.packed)
-                        handle.pendingWritablePromise match
-                            case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id))
-                            case Absent     => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
-                        end match
-                end match
-                handle.id.packed
+                if handle.isClosing() then
+                    // A closing handle must never (re-)claim its fd. The ReadPump always re-arms (ReadPump.requestNextRead), so a read re-arm can
+                    // race the connection close: by the time this registration applies on the poll carrier, the handle's fd may already be closed
+                    // and recycled into a NEW connection. Applying it would overwrite the new owner's activeFds/pendingReads entry and (epoll)
+                    // MOD-re-encode the kernel event under the dead handle's id, so the new connection's reads are evicted and never dispatch (a
+                    // strand). Skip the registration entirely: fail the dangling promise Closed so its consumer tears down instead of hanging, then
+                    // return IdNoCheck so the caller skips backend.registerRead and the missed-edge re-dispatch. This is the register-side dual of
+                    // dispatchRead's beginDispatch guard and the OpDeregister id-guard (#362); a live handle still registers normally below.
+                    val closed = Closed(label, summon[Frame], s"register on closing handle fd=$fd")
+                    kind match
+                        case RegKind.Read =>
+                            handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            handle.pendingReadPromise = Absent
+                        case RegKind.Accept =>
+                            handle.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            handle.pendingAcceptPromise = Absent
+                        case RegKind.Write =>
+                            handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            handle.pendingWritablePromise = Absent
+                    end match
+                    PollScratch.IdNoCheck
+                else
+                    kind match
+                        case RegKind.Read =>
+                            activeFds.put(fd, handle.id.packed)
+                            pendingReads.put(fd, handle)
+                        case RegKind.Accept =>
+                            activeFds.put(fd, handle.id.packed)
+                            pendingAccepts.put(fd, handle)
+                        case RegKind.Write =>
+                            activeFds.put(fd, handle.id.packed)
+                            handle.pendingWritablePromise match
+                                case Present(p) => pendingWritables.put(fd, PendingWritable(p, handle.id))
+                                case Absent => () // the writable was already failed/cleared (cancel raced the registration); nothing to arm
+                            end match
+                    end match
+                    handle.id.packed
+                end if
             case Absent =>
                 // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
                 // arming a fd with no pending op (the pre-fix behavior) would leave an interest with no owner id to tag the knote, and there is no op
@@ -1730,18 +1787,51 @@ final private[net] class PollerIoDriver private[posix] (
                     Maybe(pendingWritables.remove(fd)).foreach(_.promise.completeDiscard(Result.fail(closed)))
             end if
         else
-            // OpDeregister: remove this fd's entries from the four poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer).
-            // The pending promises were already failed synchronously by deregisterFds (held on the handle, not in the maps), so this
-            // only drops the now-cleared entries; a readiness event in the small window before this removal finds a handle whose promise is
-            // already Absent and is handled by the dispatch Absent branch. Pass fdClosing to the backend so kqueue can skip EV_DELETE when the OS
-            // already closed the fd. Clear any missed-readiness entry so a recycled fd does not inherit a stale entry.
-            activeFds.remove(fd)
-            discard(pendingReads.remove(fd))
-            discard(pendingWritables.remove(fd))
-            discard(pendingAccepts.remove(fd))
-            discard(missedReads.remove(fd))
-            discard(missedEof.remove(fd))
-            backend.deregister(pollerFd, fd, fdClosing, pollScratch)
+            // OpDeregister (#362, R-065): remove this fd's entries from the poll-fiber-confined maps HERE, on the poll-loop carrier (single-writer),
+            // but ONLY when activeFds still carries the DEREGISTERING handle's HandleId. The deregistering handle is taken from deregIntake (paired
+            // with this command by deregisterFds). A stale deregister whose fd was closed and recycled into a new handle finds activeFds holding the
+            // NEW handle's id, so the mismatch skips every removal and the kernel deregister, leaving the recycled fd's new registration intact (the
+            // #362 wrong-entry eviction). A live withdrawal (fdClosing == false) never closes the fd, so its id always matches. The pending promises
+            // were already failed synchronously by deregisterFds (held on the handle, not in the maps). Clearing missedReads/missedEof on a matched
+            // deregister stops a recycled fd inheriting a stale entry; on a mismatch they belong to the new handle and are left.
+            Maybe(takeDeregister(fd)) match
+                case Present(h) =>
+                    // Proceed when the fd is still owned by THIS handle (id matches) OR is unowned (no activeFds entry: a cancel before any register,
+                    // or an already-removed registration; the deregister is then idempotent and harmless). Skip ONLY when activeFds carries a
+                    // DIFFERENT, live HandleId: that is the #362 recycled-fd case, where the fd was closed and recycled into a new handle whose
+                    // registration this stale deregister must not evict. -1L is the absent sentinel (no real id.packed is -1; same sentinel isStaleId uses).
+                    val current = activeFds.getOrElse(fd, -1L)
+                    if current == h.id.packed || current == -1L then
+                        activeFds.remove(fd)
+                        discard(pendingReads.remove(fd))
+                        discard(pendingWritables.remove(fd))
+                        discard(pendingAccepts.remove(fd))
+                        discard(missedReads.remove(fd))
+                        discard(missedEof.remove(fd))
+                        backend.deregister(pollerFd, fd, fdClosing, pollScratch)
+                        if fdClosing then
+                            // The fd is being CLOSED, so any pending promise the handle carries must die. deregisterFds already fails them
+                            // synchronously on the close carrier for low latency, but a dispatch's `rearmOwned` (also on THIS poll carrier) can
+                            // re-deposit a read promise AFTER that synchronous read, leaving it orphaned: the STARTTLS upgrade read re-armed on a
+                            // recvNow EAGAIN while a concurrent closeHandle tears the handle down. This apply is serialized with rearmOwned on the
+                            // poll carrier, so failing the promise here catches the re-deposited one and the handshake aborts Closed instead of
+                            // hanging. Gated on fdClosing: a live withdrawal (cancel / detachForUpgrade) keeps the fd open and the upgrade legitimately
+                            // re-arms a read on it, which this must NOT kill; the synchronous fail already handled the read present at cancel time.
+                            // completeDiscard is idempotent with the synchronous fail.
+                            val closed = Closed(label, summon[Frame], s"fd=$fd closed")
+                            h.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            h.pendingReadPromise = Absent
+                            h.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            h.pendingWritablePromise = Absent
+                            h.pendingAcceptPromise.foreach(_.completeDiscard(Result.fail(closed)))
+                            h.pendingAcceptPromise = Absent
+                        end if
+                    end if
+                case Absent =>
+                    // No paired handle (the offer-before-submit ordering prevents this in practice). Safe default: remove nothing rather than risk
+                    // evicting a recycled fd's new owner.
+                    ()
+            end match
         end if
     end dispatchCmd
 

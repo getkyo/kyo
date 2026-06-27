@@ -32,8 +32,9 @@ final private[net] class PosixHandle private (
     val connectTarget: Maybe[(Buffer[Byte], Int)],
     // One-shot claim for closing the fd (see claimFdClose), so the fd shutdown/close happens exactly once even on a recycled fd.
     fdCloseClaimed: AtomicBoolean.Unsafe,
-    // The close-ownership guard (packed holder count + close bit, see CloseBit/HolderMask): the last holder while closing runs closeNow exactly once.
-    guard: AtomicInt.Unsafe,
+    // The cross-direction ownership guard (independent read/write holder bits plus a close bit, the Go fdMutex model): the last holder while
+    // closing runs the deferred release exactly once. A read and a write proceed full-duplex; two reads or two writes serialize.
+    guard: HandleGuard,
     // The single atomic handoff slot for the STARTTLS-on-io_uring stale-recv bytes (see UpgradeHandoff). Replaces the former pair of independent
     // @volatile upgradeCarryover / upgradeReadWaiter slots: those let the reap carrier (IoUringDriver.complete) and the handshake carrier
     // (PosixTransport.driveUpgradeRead) each read-then-act without mutual exclusion, so the reap could stage the carryover while the handshake
@@ -328,87 +329,49 @@ final private[net] class PosixHandle private (
       * a write is encrypting/draining through the engine, all use-after-free. The guard lets every in-flight op and the close hand ownership off
       * so the free happens exactly once and never while ANY op (read or write) holds the resources.
       *
-      * Encoding (single atomic): the low [[PosixHandle.HolderMask]] bits hold the count of in-flight ops (reads + writes) currently holding the
-      * resources, and [[PosixHandle.CloseBit]] records that a close has been requested. The resources are freed exactly once, by whichever op or
-      * close observes the holder count reaching zero with the close bit set, and the guard then never leaves that closed value. Reads acquire via
-      * [[beginDispatch]] (the single poll fiber is the only reader of a given fd, so it never overlaps itself, but it CAN overlap a write); writes
-      * acquire via [[beginWrite]].
+      * The guard is a [[HandleGuard]] (independent read-holder and write-holder counts plus a close bit). The resources are freed exactly once, by
+      * whichever op or close observes both holder counts reaching zero with the close bit set, and the guard then never leaves its terminal value.
+      * Reads acquire via [[beginDispatch]] (the single poll fiber is the only reader of a given fd, so it never overlaps itself, but it CAN overlap a
+      * write); writes acquire via [[beginWrite]]. The separate read and write halves let a read and a write proceed full-duplex.
       */
 
     /** Acquire the shared resources for a read dispatch. Returns `true` when ownership was taken (the dispatch may read [[readBuffer]] and the
       * [[tls]] engine and MUST pair this with [[endDispatch]] on every exit). Returns `false` when a close has been requested: the resources are
       * being or have been freed, so the dispatch must bail without touching them.
       */
-    private[posix] def beginDispatch()(using AllowUnsafe): Boolean = acquire()
+    private[posix] def beginDispatch()(using AllowUnsafe): Boolean = guard.acquireRead()
 
     /** Release the shared resources at the end of a read dispatch. Returns `true` when a close raced this dispatch and this op is the last holder
       * (so the dispatch must complete its promise with `Closed` rather than deliver a result): in that case the deferred free is performed HERE,
       * exactly once. Returns `false` otherwise (no close raced, or another op still holds the resources), leaving the resources live.
       */
-    private[posix] def endDispatch()(using AllowUnsafe): Boolean = release()
+    private[posix] def endDispatch()(using AllowUnsafe): Boolean =
+        val freedHere = guard.release(read = true)
+        if freedHere then PosixHandle.freeResources(this)
+        freedHere
+    end endDispatch
 
     /** Acquire the shared resources for a write. Returns `true` when ownership was taken (the writer may read the [[tls]] engine and allocate off
       * [[readBufferSize]], and MUST pair this with [[endWrite]] on every exit). Returns `false` when a close has been requested: the resources
       * are being or have been freed, so the write must bail without touching them.
       */
-    private[posix] def beginWrite()(using AllowUnsafe): Boolean = acquire()
+    private[posix] def beginWrite()(using AllowUnsafe): Boolean = guard.acquireWrite()
 
     /** Release the shared resources at the end of a write. Returns `true` when a close raced this write and this op is the last holder (so the
       * deferred free is performed HERE, exactly once); `false` otherwise. The write caller does not act on the return (it already produced its
       * `WriteResult`); the return exists for symmetry with [[endDispatch]] and so the free handoff is uniform across both paths.
       */
-    private[posix] def endWrite()(using AllowUnsafe): Boolean = release()
-
-    /** Common acquire: increment the holder count unless a close has been requested. Loops over CAS contention (a concurrent acquire/release on
-      * the other path), which is bounded by the finite set of in-flight ops. Returns `false` once the close bit is set.
-      */
-    private def acquire()(using AllowUnsafe): Boolean =
-        var result = false
-        var done   = false
-        while !done do
-            val g = guard.get()
-            if (g & PosixHandle.CloseBit) != 0 then
-                // Close requested: resources are being/have been freed. Do not acquire.
-                done = true
-            else if guard.compareAndSet(g, g + 1) then
-                result = true
-                done = true
-            end if
-        end while
-        result
-    end acquire
-
-    /** Common release: decrement the holder count, and if this is the last holder AND a close was requested, perform the deferred free exactly
-      * once. Returns `true` only in that free-now case.
-      */
-    private def release()(using AllowUnsafe): Boolean =
-        var freedHere = false
-        var done      = false
-        while !done do
-            val g       = guard.get()
-            val holders = g & PosixHandle.HolderMask
-            val closing = (g & PosixHandle.CloseBit) != 0
-            // Last holder while closing: take the resources to the terminal Closed value and free once.
-            if holders == 1 && closing then
-                if guard.compareAndSet(g, PosixHandle.Closed) then
-                    PosixHandle.freeResources(this)
-                    freedHere = true
-                    done = true
-            else if guard.compareAndSet(g, g - 1) then done = true
-            end if
-        end while
+    private[posix] def endWrite()(using AllowUnsafe): Boolean =
+        val freedHere = guard.release(read = false)
+        if freedHere then PosixHandle.freeResources(this)
         freedHere
-    end release
+    end endWrite
 
     /** Test whether a close has been requested (or resources already freed). Used by the io_uring read CQE path to detect that
       * [[feedAndDecrypt]] triggered [[requestClose]] (fatal TLS record): the io_uring path holds no dispatch guard, so the guard state
-      * is the only observable signal after [[requestClose]] returns. Returns `true` if the close bit is set or the guard is in the
-      * terminal Closed state.
+      * is the only observable signal after [[requestClose]] returns. Returns `true` if the close bit is set or the resources are already freed.
       */
-    private[posix] def isClosing()(using AllowUnsafe): Boolean =
-        val g = guard.get()
-        (g & PosixHandle.CloseBit) != 0 || g == PosixHandle.Closed
-    end isClosing
+    private[posix] def isClosing()(using AllowUnsafe): Boolean = guard.isClosing()
 
     /** The number of bytes currently buffered but not yet sent across this handle's write-backpressure tail (the unsent region of whichever tail is
       * active: [[pendingCipher]] for the TLS write path, [[rawPending]] for the io_uring raw write path). A handle is either TLS or raw, so at most
@@ -450,25 +413,7 @@ final private[net] class PosixHandle private (
       * once the close bit is set (or the resources are already freed).
       */
     private[posix] def requestClose()(using AllowUnsafe): Unit =
-        var done = false
-        while !done do
-            val g = guard.get()
-            if (g & PosixHandle.CloseBit) != 0 || g == PosixHandle.Closed then
-                // Close already requested, or resources already freed: idempotent.
-                done = true
-            else
-                val holders = g & PosixHandle.HolderMask
-                if holders == 0 then
-                    // No op holds the resources: free immediately and go terminal.
-                    if guard.compareAndSet(g, PosixHandle.Closed) then
-                        PosixHandle.freeResources(this)
-                        done = true
-                else
-                    // An op is in flight: set the close bit and defer the free to that op's endDispatch / endWrite.
-                    if guard.compareAndSet(g, g | PosixHandle.CloseBit) then done = true
-                end if
-            end if
-        end while
+        if guard.requestClose() then PosixHandle.freeResources(this)
     end requestClose
 end PosixHandle
 
@@ -506,12 +451,6 @@ private[net] object PosixHandle:
       */
     final val WriteTailLowWater = WriteTailHighWater / 2
 
-    // guard encoding (see PosixHandle.guard): low bits hold the in-flight-op (read + write) holder count, CloseBit records a requested close,
-    // and Closed is the terminal value once the resources are freed (a sentinel distinct from any holders|CloseBit combination).
-    final private val CloseBit   = 1 << 30
-    final private val HolderMask = CloseBit - 1
-    final private val Closed     = -1
-
     /** The single atomic handoff state for the STARTTLS-on-io_uring stale-recv bytes (see [[PosixHandle.upgradeHandoff]]). The stale recv reaped on
       * the io_uring reap carrier ([[IoUringDriver.complete]]) and the handshake-driving carrier ([[PosixTransport.driveUpgradeRead]]) run on
       * different carriers; this one state, swung by CAS, replaces the two separate `@volatile` slots whose independent check-then-act let the two
@@ -544,7 +483,7 @@ private[net] object PosixHandle:
             Absent,
             connectTarget,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
-            guard = AtomicInt.Unsafe.init(0),
+            guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle)
         )
 
@@ -559,7 +498,7 @@ private[net] object PosixHandle:
             Absent,
             Absent,
             fdCloseClaimed = AtomicBoolean.Unsafe.init(false),
-            guard = AtomicInt.Unsafe.init(0),
+            guard = HandleGuard.init(),
             upgradeHandoff = AtomicRef.Unsafe.init(PosixHandle.UpgradeHandoff.Idle)
         )
 
@@ -611,9 +550,8 @@ private[net] object PosixHandle:
         // Fail (not merely clear) any parked write-backpressure promise. The driver's `cancel` fails a promise present at cancel time, but a
         // promise parked in the window AFTER cancel and before this teardown (the close-vs-writable race) would otherwise be left incomplete: its
         // promise never resolves and the WritePump fiber that parked on it hangs forever. Completing it with Closed here releases that fiber. The
-        // free runs exactly once (guard CAS to Closed), and completeDiscard is idempotent, so a double-fail (here and in cancel or awaitWritable's
-        // close-race check) is harmless.
-        // `kyo.Closed` is qualified because `PosixHandle.Closed` here is the guard's terminal sentinel constant.
+        // free runs exactly once (guard CAS to its terminal value), and completeDiscard is idempotent, so a double-fail (here and in cancel or
+        // awaitWritable's close-race check) is harmless.
         h.backpressurePromise.foreach { bp =>
             given Frame = Frame.internal
             bp.completeDiscard(

@@ -114,8 +114,16 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     def isWakeFd(fd: Int, scratch: PollScratch): Boolean = fd.toLong == scratch.wakeUserIdent
 
     def closeWake(scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
-        // No wake fd on kqueue: the EVFILT_USER filter is released when the kqueue fd closes. wakeArmBuf is freed via PollScratch.close.
-        ()
+        // No wake fd on kqueue (the EVFILT_USER filter is released when the kqueue fd closes), but wakeArmBuf IS the wake's mutable changelist:
+        // wake() encodes NOTE_TRIGGER into it on an arbitrary carrier. Free it HERE, as the wake guard's terminal action (closeWakeGuarded, or the
+        // last releaseWake once the closing bit is set and every in-flight wake has released), so the buffer free is mutually exclusive with an
+        // in-flight wake: a triggerWake that won acquireWake before the closing bit holds the guard, so this close is deferred behind its
+        // releaseWake. Null it so the subsequent PollScratch.close does not double-close. Closing it in PollScratch.close (the prior behavior) ran
+        // UNGUARDED and raced a concurrent wake into a use-after-close ("Buffer is closed" on JVM/Native managed, SIGSEGV on a raw Native pointer).
+        if scratch.wakeArmBuf != null then
+            scratch.wakeArmBuf.close()
+            scratch.wakeArmBuf = null
+    end closeWake
 
     /** Encode an interest change into the batch changelist (when kqData is Present) or submit immediately via `keventNow` (when Absent).
       *

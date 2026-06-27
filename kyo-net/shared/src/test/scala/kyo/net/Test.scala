@@ -47,10 +47,28 @@ abstract class Test extends kyo.test.Test[Any]:
       * released regardless of how the scenario completes.
       */
     def eachBackend(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope)))(using Frame): Unit =
+        backendLeaves(_ => Absent)(scenario)
+
+    /** Like [[eachBackend]] but cancels (with the returned reason) the one cell whose backend name `skipCell` maps to `Present`, while every other
+      * cell still runs. Pins a documented PENDING / known-broken reason on a single genuinely-broken cell without dropping coverage on the passing
+      * backends; the skip is keyed by backend name (combine with a platform check inside the predicate to target a backend-and-platform cell). The
+      * skipped cell reports cancelled with the reason, exactly like the not-available cancel.
+      */
+    def eachBackendExcept(scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope)))(
+        skipCell: String => Maybe[String]
+    )(using Frame): Unit =
+        backendLeaves(skipCell)(scenario)
+
+    private def backendLeaves(skipCell: String => Maybe[String])(
+        scenario: Transport => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
+    )(using Frame): Unit =
         TestBackends.all.foreach { entry =>
             s"[${entry.name}]" in {
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
-                else withTransport(entry)(scenario)
+                else
+                    skipCell(entry.name) match
+                        case Present(reason) => cancel(reason)
+                        case Absent          => withTransport(entry)(scenario)
             }
         }
 
@@ -82,11 +100,25 @@ abstract class Test extends kyo.test.Test[Any]:
     )(using Frame): Unit =
         eachBackendTls(TransportConfig.default)(scenario)
 
+    /** Like [[eachBackendTls]] but cancels (with the returned reason) the one (backend, provider) cell `skipCell` maps to `Present`, while every
+      * other cell still runs. Pins a documented PENDING reason on a single genuinely-broken (backend, provider) cell without dropping the passing
+      * pairs' coverage. The skipped cell reports cancelled with the reason, like the not-available / unsupported cancels.
+      */
+    def eachBackendTlsExcept(
+        scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
+    )(skipCell: (String, String) => Maybe[String])(using Frame): Unit =
+        tlsLeaves(TransportConfig.default)(skipCell)(scenario)
+
     /** As [[eachBackendTls]], but builds each cell's transport with `config` instead of `TransportConfig.default`, so a config-driven behavior
       * (e.g. a finite `handshakeTimeout`) is asserted across the same backend x TLS-impl matrix. The cell's provider pin and lifecycle handling
       * are identical to the no-config form.
       */
     def eachBackendTls(config: TransportConfig)(
+        scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
+    )(using Frame): Unit =
+        tlsLeaves(config)((_, _) => Absent)(scenario)
+
+    private def tlsLeaves(config: TransportConfig)(skipCell: (String, String) => Maybe[String])(
         scenario: (Transport, NetTlsConfig, NetTlsConfig) => (kyo.test.AssertScope ?=> Unit < (Async & Abort[Closed] & Scope))
     )(using Frame): Unit =
         import AllowUnsafe.embrace.danger
@@ -98,29 +130,36 @@ abstract class Test extends kyo.test.Test[Any]:
                 if !entry.isAvailable then cancel(s"backend ${entry.name} not available on this host")
                 else if !provider.isAvailable then cancel(s"TLS impl ${provider.name} not available on this host")
                 else
-                    // Build the cell's transport eagerly so its TLS capability can be queried for a clean, visible cancel BEFORE the scenario runs
-                    // (the same eager-cancel placement the availability checks above use). An unsupported cell closes the just-built transport and
-                    // cancels rather than running a mislabeled handshake on a substituted implementation.
-                    val transport = entry.build(config, summon[Frame])
-                    if !transport.supportedTlsProviders.contains(provider.name) then
-                        transport.close()
-                        cancel(s"backend ${entry.name} does not drive TLS impl ${provider.name}")
-                    else
-                        Scope.ensure(Sync.defer(transport.close())).andThen {
-                            TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
-                                val serverTls = NetTlsConfig(
-                                    certChainPath = Present(certPath),
-                                    privateKeyPath = Present(keyPath),
-                                    tlsProvider = Present(provider.name)
-                                )
-                                val clientTls = NetTlsConfig(trustAll = true, tlsProvider = Present(provider.name))
-                                scenario(transport, serverTls, clientTls)
-                            }
-                        }
-                    end if
+                    // Per-cell skip: a test pins a documented reason for ONE genuinely-broken (backend, provider) cell while every other cell still
+                    // runs, so a single bad cell does not drop coverage on the passing pairs. Default is run-everywhere; the skipped cell reports
+                    // cancelled (with the reason), exactly like the not-available / unsupported cancels around it. Checked before the eager build.
+                    skipCell(entry.name, provider.name) match
+                        case Present(reason) => cancel(reason)
+                        case Absent          =>
+                            // Build the cell's transport eagerly so its TLS capability can be queried for a clean, visible cancel BEFORE the scenario
+                            // runs (the same eager-cancel placement the availability checks above use). An unsupported cell closes the just-built
+                            // transport and cancels rather than running a mislabeled handshake on a substituted implementation.
+                            val transport = entry.build(config, summon[Frame])
+                            if !transport.supportedTlsProviders.contains(provider.name) then
+                                transport.close()
+                                cancel(s"backend ${entry.name} does not drive TLS impl ${provider.name}")
+                            else
+                                Scope.ensure(Sync.defer(transport.close())).andThen {
+                                    TlsTestCertShared.writePems.map { case (certPath, keyPath) =>
+                                        val serverTls = NetTlsConfig(
+                                            certChainPath = Present(certPath),
+                                            privateKeyPath = Present(keyPath),
+                                            tlsProvider = Present(provider.name)
+                                        )
+                                        val clientTls = NetTlsConfig(trustAll = true, tlsProvider = Present(provider.name))
+                                        scenario(transport, serverTls, clientTls)
+                                    }
+                                }
+                            end if
+                    end match
             }
         end for
-    end eachBackendTls
+    end tlsLeaves
 
     /** Build the entry's transport with `TransportConfig.default`, register a [[Scope.ensure]] that closes it on scope exit, and run
       * `scenario` against it. The close runs whether the scenario succeeds, fails, or aborts, so no backend leaks its driver pool.

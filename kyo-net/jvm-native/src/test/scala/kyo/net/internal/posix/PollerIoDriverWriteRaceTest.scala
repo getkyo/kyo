@@ -28,8 +28,9 @@ import kyo.net.internal.transport.WriteResult
   * the write op already returned Done and the race is about the close-during-encrypt guard, not the send succeeding.
   *
   * Anti-flakiness: the engine handshakes in-memory via `TlsEngineLoopback.handshake` before the write; `onWritePlain` is a one-shot re-entrant
-  * latch that fires `closeHandle` while `beginWrite` is held. The deferred engine free runs as a separate FIFO op submitted at `endWrite`, so two
-  * `fifoBarrier`s settle it: the first completes after the write op (which submits the free op), the second after the free op itself. No sleep.
+  * latch that fires `closeHandle` while `beginWrite` is held. The deferred engine free is up to three FIFO ops downstream (the write op fires
+  * `closeHandle`, the close op runs `requestClose`/`freeResources`, and the engine free is routed through `engineFreeSink` as a third op), so three
+  * `fifoBarrier`s in sequence settle it on every scheduler. No sleep.
   *
   * Drives a real BoringSSL engine through a `RecordingTlsEngine` decorator and observes `freeCount.get() == 1`, `!usedAfterFree`,
   * `handle.tls.isEmpty`, `result == Done`, `second == Error`, and `spy.closeCounts == 1`.
@@ -38,9 +39,12 @@ class PollerIoDriverWriteRaceTest extends Test:
 
     import AllowUnsafe.embrace.danger
 
-    /** Submit a marker engine op and return a promise that completes when the FIFO worker runs it. Two in sequence settle a deferred free that a
-      * close submits from inside an in-flight write's endWrite: the first completes after the write op (which enqueues the free op), the second
-      * after the free op itself. A deterministic, sleep-free settle point.
+    /** Submit a marker engine op and return a promise that completes when the FIFO worker runs it. A sequence settles the deferred engine free,
+      * which is up to THREE FIFO ops downstream of the write: the write op (writeTls) runs writePlain, which fires closeHandle (enqueuing the close
+      * op); the close op runs requestClose -> freeResources, which routes engine.free through engineFreeSink as a third op. Each barrier settles one
+      * op, so three in sequence guarantee the free has run regardless of whether the poll carrier had already drained the write op before the first
+      * barrier was enqueued (the scheduler-dependent window that made a two-barrier settle flake on Native's green threads). A deterministic,
+      * sleep-free settle point.
       */
     private def fifoBarrier(driver: PollerIoDriver)(using AllowUnsafe): Promise.Unsafe[Unit, Any] =
         val p = Promise.Unsafe.init[Unit, Any]()
@@ -101,8 +105,10 @@ class PollerIoDriverWriteRaceTest extends Test:
                     // runs, then endWrite releases the guard and submits the deferred engine free as a separate FIFO op. drainCiphertext
                     // runs on the live engine. The write returns Done synchronously.
                     result <- Sync.defer(driver.write(handle, Span(1.toByte, 2.toByte, 3.toByte), 0))
-                    // Settle the deferred free: barrier 1 completes after the write op (which submitted the free op); barrier 2 after the
-                    // free op runs.
+                    // Settle the deferred free deterministically: the free is up to three FIFO ops downstream of the write (write op -> close op ->
+                    // free op), so three barriers in sequence guarantee it has run on every scheduler, including Native's green threads where the
+                    // poll carrier may not have drained the write op before the first barrier was enqueued.
+                    _ <- fifoBarrier(driver).safe.get
                     _ <- fifoBarrier(driver).safe.get
                     _ <- fifoBarrier(driver).safe.get
                     _ = assert(engine.freeCount.get() == 1, s"closeHandle must free the engine exactly once, was ${engine.freeCount.get()}")

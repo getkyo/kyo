@@ -231,7 +231,9 @@ final private[net] class PollScratch(
         armBuf.close()
         kqueueData.foreach(_.close())
         if wakeDrainBuf != null then wakeDrainBuf.close()
-        if wakeArmBuf != null then wakeArmBuf.close()
+        // wakeArmBuf is NOT closed here: it is the wake's mutable buffer (kqueue wake() encodes NOTE_TRIGGER into it on an arbitrary carrier), so its
+        // free is owned by backend.closeWake, run as the wake guard's terminal action mutually exclusive with any in-flight wake. closeWakeGuarded
+        // (called from freeScratch just before this) performs or defers it; closing it here too would race a concurrent wake into a use-after-close.
         // fds and flags are heap arrays, collected by GC. wakeFd (epoll eventfd) is closed by the backend's closeWake via the driver close path.
     end close
 end PollScratch

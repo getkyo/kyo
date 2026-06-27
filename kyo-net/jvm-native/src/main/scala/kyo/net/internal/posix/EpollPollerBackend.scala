@@ -149,6 +149,12 @@ private[net] object EpollPollerBackend extends PollerBackend:
         if scratch.wakeFd >= 0 then
             discard(ep.close(scratch.wakeFd))
             scratch.wakeFd = -1
+        // Free the wake registration arm buffer here too (the wake guard's terminal action), so its lifecycle matches kqueue's wakeArmBuf and
+        // PollScratch.close no longer owns it. epoll's wake() uses eventfd_write (no buffer), so wakeArmBuf is only touched once at registerWake and
+        // is not raced; freeing it under the guard is simply uniform with kqueue.
+        if scratch.wakeArmBuf != null then
+            scratch.wakeArmBuf.close()
+            scratch.wakeArmBuf = null
     end closeWake
 
     def poll(pollerFd: Int, timeoutMs: Int, changelist: kyo.ffi.Buffer[Byte], nChanges: Int, scratch: PollScratch)(using

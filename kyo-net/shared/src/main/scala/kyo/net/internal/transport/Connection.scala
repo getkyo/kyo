@@ -160,23 +160,39 @@ end Connection
 
 private[kyo] object Connection:
 
-    /** Create a connection. Does not start pumps; call `start()` after creation. */
+    /** Create a connection. Does not start pumps; call `start()` after creation.
+      *
+      * `canRelease` is the per-backend teardown predicate that gates the `TeardownState.AwaitingInFlight -> Released` transition (the io_uring
+      * in-flight count == 0; the poller guard holders == 0; the NIO key flushed; the JS handle destroyed). It defaults to `() => true` because the
+      * posix and JS drivers defer the actual fd close internally (the io_uring `pendingCloses` in-flight gate, the poller `HandleGuard` holder
+      * gate): for those backends `driver.closeHandle` is called eagerly and the in-flight deferral is realized inside the driver, so the connection
+      * releases promptly and the predicate is the trivial one. A backend that needs the connection itself to hold the release until its predicate
+      * clears supplies a non-trivial one.
+      */
     def init[Handle](
         handle: Handle,
         driver: IoDriver[Handle],
         channelCapacity: Int,
-        onClose: () => Unit = () => ()
+        onClose: () => Unit = () => (),
+        canRelease: () => Boolean = () => true
     )(using AllowUnsafe, Frame): Connection[Handle] =
         val inbound  = Channel.Unsafe.init[Span[Byte]](channelCapacity)
         val outbound = Channel.Unsafe.init[Span[Byte]](channelCapacity)
         val state    = AtomicRef.Unsafe.init[ConnectionState](ConnectionState.Created)
-        // Guards the handle teardown (cancel + closeHandle) so it runs exactly once: the
-        // Closing -> Closed CAS. It is reached only after the WritePump has finished with the
-        // outbound channel (it took the closing-channel's Closed and ran its own teardown, which
-        // re-enters closeFn), so the socket fd is closed only once every queued span has actually
-        // been written, not merely taken off the channel.
-        def teardownHandle(): Unit =
-            if state.compareAndSet(ConnectionState.Closing, ConnectionState.Closed) then
+        // The teardown handoff as one named machine (the four per-backend exactly-once teardown dances unified): Live -> ReleaseRequested (the
+        // close won) -> AwaitingInFlight (the WRITE-side drain finished) -> Released (the fd closed exactly once, resources freed exactly once).
+        // The single CAS into Released is the exactly-once gate (INV-13); it is reached only after the WritePump has finished with the outbound
+        // channel (the WRITE-side drain), so the fd is closed only once every queued span has actually been written, not merely taken off the
+        // channel. The inbound (read-side) drain NEVER gates this transition (INV-12 absence half): a pooled connection with no reader would
+        // otherwise leak the peer-FIN'd fd in CLOSE_WAIT.
+        val teardown = AtomicRef.Unsafe.init[TeardownState](TeardownState.Live)
+        // The AwaitingInFlight -> Released transition: gated on the per-backend canRelease predicate, performed by exactly one carrier (the CAS),
+        // running cancel + closeHandle + onClose once. When canRelease is false the release is held; for the posix/JS backends canRelease is the
+        // trivial () => true and the in-flight deferral happens inside driver.closeHandle.
+        def releaseHandle(): Unit =
+            if canRelease() && teardown.compareAndSet(TeardownState.AwaitingInFlight, TeardownState.Released) then
+                // Reflect the lifecycle terminal too, so isOpen reads Closed; the Released CAS above is the exactly-once gate, not this.
+                discard(state.compareAndSet(ConnectionState.Closing, ConnectionState.Closed))
                 driver.cancel(handle)
                 driver.closeHandle(handle)
                 // Notify the owning transport that this connection's handle is gone, so it drops the connection from its open-connection
@@ -192,10 +208,12 @@ private[kyo] object Connection:
             if state.compareAndSet(ConnectionState.Established, ConnectionState.Closing)
                 || state.compareAndSet(ConnectionState.Created, ConnectionState.Closing)
             then
+                // Live -> ReleaseRequested: the close won; parked waiters are being unblocked by the drains below.
+                discard(teardown.compareAndSet(TeardownState.Live, TeardownState.ReleaseRequested))
                 // closeAwaitEmpty, not close: a consumer that has not yet drained the bytes the ReadPump staged before EOF can still take them
                 // (takes drain a closing channel until empty), so a close initiated on the read side does not discard buffered inbound bytes as
                 // close()'s dropped backlog would. The handle teardown below does not wait for that drain, so the fd is reclaimed even if the
-                // consumer never reads the rest (a pooled connection with no reader).
+                // consumer never reads the rest (a pooled connection with no reader). This inbound (read-side) drain NEVER gates the release.
                 discard(inbound.closeAwaitEmpty())
                 // Mirror the ReadPump's inbound drain on the outbound side: closeAwaitEmpty marks the channel closing-for-writes (new offers
                 // fail Closed) while the WritePump keeps taking the already-queued spans until the channel is empty. A peer half-close
@@ -212,18 +230,23 @@ private[kyo] object Connection:
                 // own call, so the transport's close() (which closes every still-registered connection just before the pool teardown) reclaims
                 // the fd while the driver's reap loop is still alive, instead of leaving the teardown to race an async re-entry. When the
                 // outbound has queued writes, the drain fiber is still pending, so the WritePump re-entry below flushes the tail first.
-                if outboundDrained.done() then teardownHandle()
+                if outboundDrained.done() then
+                    // ReleaseRequested -> AwaitingInFlight: the WRITE-side drain is done; attempt the gated release.
+                    discard(teardown.compareAndSet(TeardownState.ReleaseRequested, TeardownState.AwaitingInFlight))
+                    releaseHandle()
+                end if
             else if state.get() == ConnectionState.Closing then
                 // Re-entrant close after closeFn itself initiated the close (the state is Closing).
                 // The WritePump reached this by taking Closed from the closing outbound channel after
                 // it had nothing left to write (the half-close flush completed), or by its
                 // write/writable wait failing (the peer is gone, or driver.close from the owning Scope
                 // failed every pending writable as the safety net). Either way the outbound side is
-                // finished, so tear down the handle. This re-entry, not the drain fiber, is what bounds
-                // close(): a half-close that can drain reaches it after the flush, and a full close
-                // whose outbound can never drain reaches it once the peer's RST or the Scope's
-                // driver.close fails the parked writable, so close() never waits forever.
-                teardownHandle()
+                // finished, so advance to AwaitingInFlight and tear down the handle. This re-entry, not
+                // the drain fiber, is what bounds close(): a half-close that can drain reaches it after
+                // the flush, and a full close whose outbound can never drain reaches it once the peer's
+                // RST or the Scope's driver.close fails the parked writable, so close() never waits forever.
+                discard(teardown.compareAndSet(TeardownState.ReleaseRequested, TeardownState.AwaitingInFlight))
+                releaseHandle()
             end if
 
         val readPump  = new ReadPump(handle, driver, inbound, closeFn)

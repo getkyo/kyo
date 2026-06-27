@@ -211,10 +211,6 @@ final private[net] class IoUringDriver private[posix] (
     // value when a leaf hangs means the reap loop is dead/stuck; an advancing value means it is live but a pending completion is not delivered.
     @volatile private var diagReapCycles: Long = 0L
 
-    // TEMP DIAG: records why the ring was torn down (external close() vs the reap loop exiting on a submit_and_wait rc), folded into the
-    // "driver closed" Closed message so a failing handshake names the cause with zero hot-path I/O. Remove once the teardown race is fixed.
-    @volatile private var closeReason: String = "none"
-
     // Bound on consecutive `-EINTR` retries for one logical read or send. POSIX recv(2)/send(2): a non-blocking call interrupted by a signal
     // before any byte is transferred completes with `-EINTR` and MUST be retried (no data was moved, the socket is unchanged), exactly as
     // PollerIoDriver retries EINTR in place (commit 5498ada6b) and as the accept path already retries it. The retry is bounded so a pathological
@@ -243,7 +239,7 @@ final private[net] class IoUringDriver private[posix] (
             // on a ring being torn down is a use-after-free (#177), and once closing, the reap-loop exit drains this op and fails the promise. The
             // reap loop's own -EINTR re-submit calls submitRecv directly, already on the reap carrier.
             submitEngineOp { () =>
-                if closedFlag.get() then promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"driver closed [$closeReason]")))
+                if closedFlag.get() then promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
                 else submitRecv(handle, promise, eintrRetries = 0)
             }
         end if
@@ -342,7 +338,7 @@ final private[net] class IoUringDriver private[posix] (
                 register(key, PendingOp.Connect(promise, handle))
                 if closedFlag.get() then
                     unregister(key)
-                    promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"driver closed [$closeReason]")))
+                    promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
                 else
                     uring.kyo_uring_get_sqe(ring) match
                         case Present(sqe) =>
@@ -396,7 +392,7 @@ final private[net] class IoUringDriver private[posix] (
             unregister(key)
             noAddr.close()
             noLen.close()
-            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"driver closed [$closeReason]")))
+            promise.completeDiscard(Result.fail(Closed(label, summon[Frame], "driver closed")))
         else if handle.isClosing() then
             // The listener was torn down (closeListener ran requestClose on this carrier before this arm drained): its fd is closed and the
             // number may already name a different socket, so arming would accept on that socket and steal its connections. Reject instead.
@@ -939,6 +935,21 @@ final private[net] class IoUringDriver private[posix] (
         // PosixHandle.close (freeResources) clears the raw pending tail; the close-after-drain handshake already ensured no raw send is in flight.
         // Drop the handle from the SQ-full re-flush set so a closed handle is never re-flushed.
         discard(stalledRaw.remove(handle))
+        // Drop any recv/accept/connect this handle parked on a full SQ (#349): a parked op left in stalledSubmits is re-armed by the next
+        // reArmStalledSubmits turn, which would submit an SQE on this now-closed fd (EBADF, or worse a recv on the fd's recycled successor). Fail
+        // each parked op's promise Closed and release its pinned buffers before the fd close. closeNow runs on the reap carrier, the sole producer
+        // and consumer of stalledSubmits, so iterating + removing here is race-free without a lock. Identity is by HandleId, so a stale op from an
+        // earlier handle that reused this fd number is left for its own close.
+        val parkedClosed = Closed(label, summon[Frame], "connection closed")
+        val stalledIt    = stalledSubmits.iterator()
+        while stalledIt.hasNext do
+            val op = stalledIt.next()
+            if op.handle.id.packed == handle.id.packed then
+                stalledIt.remove()
+                op.failPromise(parkedClosed)
+                op.releaseBuffer()
+            end if
+        end while
         // Drop the handle's send-EINTR retry count so the map does not retain an entry for a closed handle.
         discard(sendEintrRetries.remove(handle.id.packed))
         // Close the socket fd: io_uring has no prep_close and PosixHandle.close frees only the buffers, so the fd is closed here through
@@ -963,7 +974,6 @@ final private[net] class IoUringDriver private[posix] (
 
     def close()(using AllowUnsafe, Frame): Unit =
         if closedFlag.compareAndSet(false, true) then
-            closeReason = "external-close"
             // Wake the reap loop so a wait parked INDEFINITELY on the wake observes closedFlag and tears the ring down promptly; without this an
             // indefinite park would only end on an unrelated CQE. The eventfd write is unconditional, so the close wake always lands. Harmless when
             // no reap loop is parked (never started): the eventfd is closed by teardownRing below, guarded against this write.
@@ -999,7 +1009,7 @@ final private[net] class IoUringDriver private[posix] (
       */
     private def teardownRing()(using AllowUnsafe, Frame): Unit =
         if teardownDone.compareAndSet(false, true) then
-            val closed = Closed(label, summon[Frame], s"driver closed [$closeReason]")
+            val closed = Closed(label, summon[Frame], "driver closed")
             // Snapshot the still-pending requested closes before the maps are torn down; force-complete them after the ring exits (below). closeNow
             // removes from pendingCloses, so iterating a copy is race-free.
             val orphanedCloses = new java.util.ArrayList[PosixHandle](pendingCloses.values())
@@ -1230,7 +1240,6 @@ final private[net] class IoUringDriver private[posix] (
                         // rc never tears down the whole ring (every connection on it). The loop stops
                         // only on closedFlag (checked below) or a genuinely FATAL ring rc.
                         if rc != 0 && !reapRcContinues(rc) then
-                            closeReason = s"reap-rc=$rc"
                             running = false
                         else
                             if rc == 0 then
@@ -1245,11 +1254,9 @@ final private[net] class IoUringDriver private[posix] (
                             // so a recv/accept/connect/send parked on SQ-full re-arms now rather than stranding until some other CQE arrives.
                             reArmStalled()
                         end if
-                    case Present(Result.Failure(e)) =>
-                        closeReason = s"reap-fiber-failure=$e"
+                    case Present(Result.Failure(_)) =>
                         running = false
-                    case Present(Result.Panic(e)) =>
-                        closeReason = s"reap-fiber-panic=$e"
+                    case Present(Result.Panic(_)) =>
                         running = false
                     case Absent => ()
                 end match
@@ -1489,7 +1496,7 @@ final private[net] class IoUringDriver private[posix] (
                                     promise.completeDiscard(Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(arr))))
                         else if res == 0 then
                             // Peer close via a bare TCP FIN (no close_notify, else the clean-close branch above delivered CleanClose first): record
-                            // the truncation condition so closeReason reports Truncated, then deliver PeerFin.
+                            // the peer-EOF half-close state, then deliver PeerFin.
                             h.halfClose = HalfCloseState.PeerEof
                             promise.completeDiscard(Result.succeed(ReadOutcome.PeerFin))
                         else
