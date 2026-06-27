@@ -797,7 +797,7 @@ class RouteUtilTest extends kyo.BaseHttpTest:
         // directly into ContentType.Json.
         "Unit JSON body - empty body short-circuits to success" in {
             val unitBodyField: HttpRoute.Field["body" ~ Unit] =
-                HttpRoute.Field.Body("body", HttpRoute.ContentType.Json(Schema.unitSchema, Json.JsonSchema.Bool), "")
+                HttpRoute.Field.Body("body", HttpRoute.ContentType.Json(Schema.unitSchema, Json.JsonSchema.Bool()), "")
             val route = HttpRoute["body" ~ Unit, Any, Nothing](
                 HttpMethod.POST,
                 HttpRoute.RequestDef["body" ~ Unit](HttpPath.Literal("unit-action"), Chunk(unitBodyField))

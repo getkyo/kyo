@@ -701,6 +701,16 @@ import scala.quoted.*
 
         // STRUCTURE: inline Chunk of Structure.Field via by-name fieldType thunks.
         def structureExpr: Expr[Structure.Type] =
+            // Read each field's @doc off the PRIMARY-CONSTRUCTOR PARAMETER symbol (the case-field getter
+            // carries no annotation). Built once before the fields loop so the per-field emission stays
+            // branch-free: one buildProductSchema per derivation, no per-field annotation read.
+            val docSym = TypeRepr.of[kyo.doc].typeSymbol
+            val ctorDocs: Map[String, String] =
+                sym.primaryConstructor.paramSymss.flatten.flatMap { p =>
+                    p.getAnnotation(docSym).collect {
+                        case Apply(_, List(Literal(StringConstant(s)))) => p.name -> s
+                    }
+                }.toMap
             val fieldStructures: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (f, idx) =>
                 val rawType  = tpe.memberType(f)
                 val isOpt    = isMaybeFlags(idx) || isOptionFlags(idx)
@@ -708,6 +718,9 @@ import scala.quoted.*
                 val optExpr  = Expr(isOpt)
                 val defVal   = defaultStructureValuesExpr
                 val idxExpr  = Expr(idx)
+                val docExpr = ctorDocs.get(f.name) match
+                    case Some(s) => '{ kyo.Maybe(${ Expr(s) }) }
+                    case None    => '{ kyo.Maybe.empty[String] }
                 rawType.asType match
                     case '[ft] =>
                         val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[ft]]
@@ -715,7 +728,7 @@ import scala.quoted.*
                             kyo.Structure.Field(
                                 $nameExpr,
                                 $fieldSchemaRef.structure,
-                                kyo.Maybe.empty,
+                                $docExpr,
                                 $defVal($idxExpr)(),
                                 $optExpr
                             )

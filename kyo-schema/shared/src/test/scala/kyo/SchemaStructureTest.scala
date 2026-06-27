@@ -1672,28 +1672,28 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
 
         "Bool encodes as JSON Schema boolean type" in {
-            val v    = JsonSchema.Bool
+            val v    = JsonSchema.Bool()
             val json = Json.encode(v)
             assert(json.contains("\"boolean\""))
             assert(!json.contains("\"Bool\""))
         }
 
         "Bool round-trips through JSON" in {
-            val v       = JsonSchema.Bool
+            val v       = JsonSchema.Bool()
             val encoded = Json.encode(v)
             val decoded = Json.decode[JsonSchema](encoded).getOrThrow
             assert(decoded == v)
         }
 
         "Null encodes as JSON Schema null type" in {
-            val v    = JsonSchema.Null
+            val v    = JsonSchema.Null()
             val json = Json.encode(v)
             assert(json.contains("\"null\""))
             assert(!json.contains("\"Null\""))
         }
 
         "Null round-trips through JSON" in {
-            val v       = JsonSchema.Null
+            val v       = JsonSchema.Null()
             val encoded = Json.encode(v)
             val decoded = Json.decode[JsonSchema](encoded).getOrThrow
             assert(decoded == v)
