@@ -71,6 +71,8 @@ class IoUringProbeDepthTest extends Test:
         def kyo_uring_eventfd_write(fd: Int)(using AllowUnsafe): Int                                                    = 0
         def kyo_uring_eventfd_read(fd: Int)(using AllowUnsafe): Int                                                     = 0
         def kyo_uring_eventfd_close(fd: Int)(using AllowUnsafe): Int                                                    = 0
+        // This test exercises only the depth-probe; the feature-bits surface is never invoked here.
+        def kyo_uring_get_features(ring: Buffer[Byte])(using AllowUnsafe): Int = 0
     end CapturingBindings
 
     private def productionDepth: Int = math.max(256, TransportConfig.default.ioPoolSize * 64)

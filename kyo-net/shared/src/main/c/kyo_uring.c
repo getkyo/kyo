@@ -101,6 +101,14 @@ int kyo_uring_kernel_version(void) {
     return major * 1000 + minor;
 }
 
+/* Read the kernel feature bits from an already-initialized ring (ring->features, set by io_uring_queue_init).
+ * IORING_FEAT_NODROP (bit 1, = 2, kernel >= 5.5): the kernel never drops a CQE; it applies backpressure on
+ * submit instead. When set, the wake eventfd's multishot CQE cannot be lost under any load, making the
+ * indefinite park safe by kernel contract. */
+unsigned int kyo_uring_get_features(struct io_uring* ring) {
+    return ring->features;
+}
+
 /* CQE flags word. IORING_CQE_F_MORE (= 2) set means more completions are coming on this key before it is removed. */
 int kyo_uring_cqe_get_flags(long cqe) {
     return ((struct io_uring_cqe*)(intptr_t)cqe)->flags;

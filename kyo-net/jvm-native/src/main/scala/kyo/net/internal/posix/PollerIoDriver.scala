@@ -1000,7 +1000,7 @@ final private[net] class PollerIoDriver private[posix] (
         end if
     end close
 
-    /** Drain all ready events from one bounded poll result, dispatching reads, writables, and error-only events in order.
+    /** Drain all ready events from one poll result, dispatching reads, writables, and error-only events in order.
       *
       * Called from the `while`-loop body of `pollLoop` after `backend.poll` completes (inline on JVM/Native, via `onComplete` on JS). Each event:
       *   - Dispatches read-ready events to `dispatchRead` (or `dispatchAccept` for listen fds); under edge-triggered the fd is persistently

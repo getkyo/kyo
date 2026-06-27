@@ -81,7 +81,7 @@ class LIVE1Test extends Test:
         // This models the lost-wake class: the park returns empty (no data yet), the pump re-arms,
         // and eventually the data arrives. The bounded fallback / reassert backstop makes the re-arm
         // happen; the pump must not permanently stall.
-        "floor-recovery: bytes delivered after N suppressed arms" in {
+        "rearm-convergence: bytes delivered after N suppressed arms" in {
             val deliveredBytes = Array[Byte](7, 8, 9)
             val suppressCount  = 4 // simulate 4 suppressed arms before the data arrives
             var armCount       = 0

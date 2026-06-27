@@ -35,7 +35,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
 
     // The kyo-ffi kevent binding takes Timespec by value, not by pointer, so NULL (the C sentinel for "block indefinitely") cannot be
     // passed directly. A very large but valid Timespec approximates indefinite: the EVFILT_USER wake event fires immediately regardless
-    // of the timeout, so the practical behavior is identical to NULL for the poll loop's use case. Int.MaxValue seconds ~= 24.8 days.
+    // of the timeout, so the practical behavior is identical to NULL for the poll loop's use case. Int.MaxValue / 1000 seconds ~= 24.8 days.
     private val IndefiniteTimeout: Timespec = Timespec(Int.MaxValue.toLong / 1000L, 0L)
 
     private def kq(using AllowUnsafe): KqueueBindings = Ffi.load[KqueueBindings]

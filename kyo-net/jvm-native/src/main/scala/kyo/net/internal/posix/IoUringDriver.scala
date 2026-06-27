@@ -142,19 +142,24 @@ final private[net] class IoUringDriver private[posix] (
     // (submitEngineOp: an app fiber arming a recv, a write, a close) cannot enter the SQ itself; it enqueues the op and writes `wakeFd`. A
     // multishot IORING_OP_POLL_ADD armed on `wakeFd` then fires a CQE, returning the parked submit_and_wait so the reap loop drains the queue.
     // This is what lets the reap wait block INDEFINITELY (like NIO's selector.select() + wakeup()) instead of polling a bounded timeout to
-    // discover queued submissions, which head-of-line-blocked them behind the wait under load. `wakeFd` is -1 when eventfd creation failed; the
-    // loop then falls back to the bounded park (only the prompt-wake latency is lost). The eventfd write is unconditional (the counter coalesces
+    // discover queued submissions, which head-of-line-blocked them behind the wait under load. `wakeFd` creation is a liveness requirement:
+    // `init` throws when eventfd creation fails (the indefinite park has no signal to return without it; symmetric with the poller's
+    // `registerWake` fatal). The eventfd write is unconditional (the counter coalesces
     // concurrent writes in the kernel); a coalescing gate is deliberately NOT used, because it could suppress a write at the instant the loop is
     // parking and lose the wake. `wakeGuard` makes the eventfd close (at teardown) mutually exclusive with any in-flight write (mirrors the
     // poller's WakeHolder guard: the lazyFdDelete cross-fd recycling hazard).
     wakeFd: Int,
-    wakeGuard: AtomicInt.Unsafe
+    wakeGuard: AtomicInt.Unsafe,
+    // True when IORING_FEAT_NODROP (bit 1, kernel >= 5.5) was confirmed at ring init: the kernel guarantees no CQE is dropped,
+    // applying backpressure on submit instead. When true, the wake eventfd's multishot CQE is non-loseable by kernel contract,
+    // making the indefinite park safe. When false (kernel < 5.5), fall back to the bounded ReapTimeoutNs floor so a lost CQE
+    // can never hang the loop indefinitely.
+    nodropAvailable: Boolean
 ) extends IoDriver[PosixHandle], TlsEngineIo:
 
     // Whether the wake multishot POLL_ADD is currently armed on the ring. Reap-carrier-only (armWake runs in reapLoop and completeMultishot, both
-    // on the reap carrier), so a plain var is single-owner. The reap wait blocks indefinitely ONLY while this is true; if the wake is not armed
-    // (creation failed, or a re-arm has not yet succeeded after a CQ-full multishot termination) the loop uses the bounded park so a lost wake can
-    // never hang it.
+    // on the reap carrier), so a plain var is single-owner. The reap wait parks indefinitely only when this is true, NODROP is confirmed, and no
+    // ops are stalled; a re-arm has not yet succeeded (SQ-full) leaves it false, and the loop uses the bounded park until the arm lands.
     private var wakePollArmed = false
 
     // Concurrent-collection audit: the raw java.util.concurrent maps and the ConcurrentLinkedQueue below are retained
@@ -1080,7 +1085,7 @@ final private[net] class IoUringDriver private[posix] (
 
     /** Arm (or re-arm) the multishot `IORING_OP_POLL_ADD` watch on the wake eventfd. Reap-carrier-only (the SQ is single-producer). On SQ-full
       * (`get_sqe` Absent) it leaves `wakePollArmed` false; the reap loop then parks with the bounded fallback (never indefinitely without an armed
-      * wake) and retries the arm on a later turn. A no-op when there is no wake eventfd.
+      * wake) and retries the arm on a later turn.
       */
     private def armWake()(using AllowUnsafe): Unit =
         if wakeFd >= 0 && !wakePollArmed then
@@ -1199,13 +1204,14 @@ final private[net] class IoUringDriver private[posix] (
             // we park every op is genuinely in flight and a real CQE (or the wake eventfd) returns the wait. io_uring_submit submits the whole SQ
             // ring (the wake POLL_ADD included), so the park is never entered with an unsubmitted op outstanding.
             flushSubmits()
-            // Park CONDITIONALLY: INDEFINITELY when the wake multishot is armed (`wakePollArmed = true`), bounded by `ReapTimeoutNs`
-            // when not armed (the re-arm-retry window, e.g. when the SQ was full at armWake time). An indefinite park is safe because
-            // the wake mechanism is non-loseable: `wakeFd` is an eventfd whose counter persists until drained, so any `wakeReapLoop()`
-            // write that lands before or during the park increments the counter and the armed POLL_ADD fires once the CQ has room.
-            // The bounded fallback (`!wakePollArmed`) ensures a missing arm never hangs the loop: each bounded turn re-arms and parks
-            // shorter if still SQ-full. The wake CQE returns the park EARLY for prompt response to any cross-carrier submission.
-            val timeout = if wakePollArmed then Long.MaxValue else ReapTimeoutNs
+            // Park INDEFINITELY only when all three conditions hold: (1) the wake multishot is armed (`wakePollArmed = true`), (2)
+            // IORING_FEAT_NODROP is confirmed (`nodropAvailable`; the kernel never drops a CQE, so the wake CQE is non-loseable and
+            // the indefinite park is safe by contract), and (3) no ops are stalled on a full SQ (`!hasStalled`; a stalled op has no
+            // pending CQE to re-drive it so a bounded turn is needed to run reArmStalled). Use ReapTimeoutNs in every other case:
+            // `!wakePollArmed` (the re-arm-retry window, e.g. SQ-full at armWake time), `!nodropAvailable` (kernel < 5.5, CQE drops
+            // are possible), or `hasStalled` (parked ops must not wait indefinitely for an unreachable CQE to free the SQ).
+            val hasStalled = !stalledRaw.isEmpty || !stalledSubmits.isEmpty
+            val timeout    = if wakePollArmed && !hasStalled && nodropAvailable then Long.MaxValue else ReapTimeoutNs
             val waitFiber =
                 uring.kyo_uring_submit_and_wait_timeout(ring, cqePtr, timeout) // conditional park; the wake eventfd returns it early
             if waitFiber.done() then
@@ -1222,7 +1228,14 @@ final private[net] class IoUringDriver private[posix] (
                             closeReason = s"reap-rc=$rc"
                             running = false
                         else
-                            if rc == 0 then drainReady(cqePtr.get(0))
+                            if rc == 0 then
+                                drainReady(cqePtr.get(0))
+                                // Defensive re-arm: if drainReady saw a !more CQE (the kernel terminated the multishot on CQ-ring-full
+                                // and cleared wakePollArmed), immediately queue a fresh arm. The re-arm SQE is submitted on the next
+                                // flushSubmits, closing the window where a stale wakePollArmed=false would cause a bounded park even
+                                // though the multishot is actually gone. Belt-and-suspenders alongside the NODROP + stalled-ops guard.
+                                armWake()
+                            end if
                             // Re-arm parked ops every turn (a CQE arrived, or a benign rc: an empty turn). The fused submit+wait freed the SQ slots,
                             // so a recv/accept/connect/send parked on SQ-full re-arms now rather than stranding until some other CQE arrives.
                             reArmStalled()
@@ -1244,7 +1257,10 @@ final private[net] class IoUringDriver private[posix] (
                     case Result.Success(w) =>
                         val rc = w.eval
                         if rc == 0 || reapRcContinues(rc) then
-                            if rc == 0 then drainReady(cqePtr.get(0))
+                            if rc == 0 then
+                                drainReady(cqePtr.get(0))
+                                armWake() // defensive re-arm (JS path), mirrors the inline-path armWake after drainReady
+                            end if
                             // Re-arm parked ops every turn (CQE or a benign rc), as in the inline path: SQ space is freed by submit, not by reaping.
                             reArmStalled()
                             if !closedFlag.get() then discard(Fiber.Unsafe.init { reapLoop() })
@@ -1746,10 +1762,22 @@ private[net] object IoUringDriver:
       * and the test construction helpers so the unsafe allocation lives in one place.
       */
     private[posix] def init(uring: IoUringBindings, ring: Buffer[Byte], sockets: SocketBindings)(using AllowUnsafe): IoUringDriver =
-        // Wake eventfd for the reap loop (EFD_NONBLOCK | EFD_CLOEXEC). Best-effort: a negative rc (creation failed) leaves the reap loop on the
-        // bounded fallback park. Created here so the reap loop can arm its multishot POLL_ADD watch on it at start, letting the wait block
-        // indefinitely and be returned promptly by a cross-carrier submission's eventfd write.
+        // Wake eventfd for the reap loop (EFD_NONBLOCK | EFD_CLOEXEC). Fatal on failure: without the eventfd a cross-carrier submission
+        // has no signal to return the parked indefinite wait, making the loop unrecoverable. Symmetric with the poller's registerWake fatal
+        // at start(). On failure the ring is torn down cleanly before throwing so the caller does not leak an initialized ring.
         val wakeFd = uring.kyo_uring_eventfd_create(0, PosixConstants.EFD_NONBLOCK | PosixConstants.EFD_CLOEXEC)
+        if wakeFd < 0 then
+            uring.io_uring_queue_exit(ring)
+            ring.close()
+            throw new IllegalStateException(
+                "IoUringDriver: eventfd creation failed; the wake eventfd is a liveness requirement for the indefinite park"
+            )
+        end if
+        // IORING_FEAT_NODROP (bit 1, kernel >= 5.5): the kernel guarantees no CQE is dropped, applying backpressure on submit instead.
+        // When set, the wake eventfd's multishot CQE cannot be lost under any load, making the indefinite park safe by contract.
+        // When absent (kernel < 5.5), the reap loop falls back to the bounded ReapTimeoutNs floor so a lost CQE cannot hang it.
+        val features        = uring.kyo_uring_get_features(ring)
+        val nodropAvailable = (features & IoUringDriver.FeatNodrop) != 0
         new IoUringDriver(
             uring = uring,
             ring = ring,
@@ -1762,7 +1790,8 @@ private[net] object IoUringDriver:
             pendingSubmits = AtomicLong.Unsafe.init(0L),
             cqePtr = Buffer.alloc[Long](1),
             wakeFd = wakeFd,
-            wakeGuard = AtomicInt.Unsafe.init(0)
+            wakeGuard = AtomicInt.Unsafe.init(0),
+            nodropAvailable = nodropAvailable
         )
     end init
 
@@ -1784,5 +1813,10 @@ private[net] object IoUringDriver:
     // io_uring SETUP flag values (liburing, stable). Used only after the kernel-version probe confirms support.
     private val SetupCoopTaskrun: Int = 1 << 8 // IORING_SETUP_COOP_TASKRUN  (5.19)
     private val SetupTaskrunFlag: Int = 1 << 9 // IORING_SETUP_TASKRUN_FLAG  (5.19)
+
+    // IORING_FEAT_NODROP (bit 1, kernel >= 5.5): the kernel guarantees no CQE is dropped; it applies backpressure on submit
+    // instead. When set, the indefinite park is safe by contract: no wake CQE can be lost so no cross-carrier submission can
+    // be stranded. Exposed as private[posix] so RecordingIoUringBindings can compute nodropAvailable for test assertions.
+    private[posix] val FeatNodrop: Int = 1 << 1
 
 end IoUringDriver

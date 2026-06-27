@@ -15,17 +15,18 @@ import kyo.net.internal.transport.WriteResult
   * on a non-Linux host, a kernel without io_uring, or a host where the production-depth ring init fails (e.g. a container with a low
   * `io_uring.max` cgroup cap), the leaf cancels cleanly. On native Linux (no cgroup cap) the ring inits and the leaf drives the real ring.
   *
-  * The completion / cancel / bounded-wait machinery is driven against a real ring through a [[RecordingIoUringBindings]] spy: every ring op
+  * The completion / cancel / park machinery is driven against a real ring through a [[RecordingIoUringBindings]] spy: every ring op
   * delegates to the real bindings and the kernel actually completes it; the spy only observes (the per-write send buffer, the keys set on
-  * submitted SQEs, the bounded-wait timeout, and a latch fired when each CQE is reaped). No completion value is scripted: a recv that ends in
+  * submitted SQEs, the wait timeout, and a latch fired when each CQE is reaped). No completion value is scripted: a recv that ends in
   * Closed does so because a real peer reset the connection (ECONNRESET), an EOF because a real peer closed, an SQ-full park because a real depth-1
   * ring genuinely has no free SQE.
   *
   * Covers: the completion contract (echo bytes equal, res==0 EOF, res<0 Closed naming the real errno, an SQ-full recv parked then re-armed to
-  * deliver); the bounded ~100ms reap wait (never indefinite; a timeout turn keeps looping); the close ordering (an in-flight buffer is never freed
-  * until its CQE is reaped; closeHandle cancels then defers PosixHandle.close until the handle drains; per-write buffer closed only on reap; shared
-  * arena); and the accept contract (positive CQE yields the accepted fd; a failed accept yields Closed naming the errno; an SQ-full accept parked
-  * then re-armed to complete; re-arm across two accepts).
+  * deliver); the conditional park (indefinite when wake-armed with NODROP confirmed and no stalled ops; bounded ReapTimeoutNs as fallback for
+  * older kernels, unarmed wake, or stalled ops); the close ordering (an in-flight buffer is never freed until its CQE is reaped; closeHandle
+  * cancels then defers PosixHandle.close until the handle drains; per-write buffer closed only on reap; shared arena); and the accept contract
+  * (positive CQE yields the accepted fd; a failed accept yields Closed naming the errno; an SQ-full accept parked then re-armed to complete;
+  * re-arm across two accepts).
   */
 class IoUringDriverTest extends Test:
 
@@ -336,18 +337,28 @@ class IoUringDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "the reap wait uses a bounded liveness-floor timeout, woken early by the wake" in {
+        "the reap wait parks indefinitely when wake is armed and NODROP confirmed, bounded as fallback" in {
             PosixTestSockets.assumeUring()
             withRecordingDriver(256) { (drv, recording) =>
-                // The reap wait is ALWAYS bounded (ReapTimeoutNs = 100ms), never indefinite. The driver still creates a real wake eventfd and arms a
-                // multishot IORING_OP_POLL_ADD on it, so a cross-carrier submission returns the wait EARLY for prompt response; the bounded timeout is
-                // the LIVENESS FLOOR that recovers a dropped or stale wake CQE within 100ms. An indefinite wait relied on the wake CQE always
-                // arriving; under sustained load a lost wake stranded the reap forever (the .times(100) io_uring/boringssl hang). 100ms is a bounded
-                // park (like the readiness pollers' poll(..., 100, ...)), not a busy-poll spin. firstWait fires once the first reap wait is entered;
-                // inspect the timeout it passed to the real submit_and_wait.
+                // The reap wait is INDEFINITE (Long.MaxValue) when the wake multishot is armed, IORING_FEAT_NODROP is confirmed (kernel >= 5.5,
+                // CQE drops are impossible by contract), and no ops are stalled on SQ-full. It falls back to ReapTimeoutNs (100ms) when any of
+                // those conditions does not hold: NODROP absent (kernel < 5.5), wake not yet armed (SQ-full at armWake), or stalled ops pending.
+                // firstWait fires once the first reap wait is entered; inspect the timeout it passed to the real submit_and_wait.
                 recording.firstWait.safe.get.map { _ =>
                     val t = recording.lastWaitTimeoutNs
-                    assert(t == 100000000L, s"reap wait must use the bounded 100ms liveness-floor timeout (ReapTimeoutNs), got $t ns")
+                    if recording.nodropAvailable then
+                        // NODROP confirmed: the first wait after armWake succeeds must be indefinite (wake armed, no stalled ops yet).
+                        assert(
+                            t == Long.MaxValue,
+                            s"NODROP confirmed: reap wait must be indefinite (Long.MaxValue) when wake armed, got $t ns"
+                        )
+                    else
+                        // NODROP absent (kernel < 5.5): bounded fallback protects against lost CQEs on this kernel.
+                        assert(
+                            t == 100000000L,
+                            s"NODROP absent: reap wait must use bounded ReapTimeoutNs (100ms) as liveness fallback, got $t ns"
+                        )
+                    end if
                 }
             }.map(_ => succeed)
         }

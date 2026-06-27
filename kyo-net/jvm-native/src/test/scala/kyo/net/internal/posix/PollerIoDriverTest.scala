@@ -377,7 +377,7 @@ class PollerIoDriverTest extends Test:
 
         "registerWake failure fails start() with a clear error, not a permanent stall" in {
             assumePoller()
-            // The driver now parks with timeoutMs = -1; without a wakeup mechanism there is no way to return the park. start() must
+            // The driver parks with timeoutMs = -1; without a wakeup mechanism there is no way to return the park. start() must
             // fail loud rather than start a loop that wedges on the first park with no way to recover.
             val real     = PollerBackend.default()
             val pollerFd = real.create()

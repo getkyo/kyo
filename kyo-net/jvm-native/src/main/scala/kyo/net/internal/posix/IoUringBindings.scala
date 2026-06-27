@@ -121,6 +121,13 @@ private[net] trait IoUringBindings extends Ffi:
       */
     def kyo_uring_kernel_version()(using AllowUnsafe): Int
 
+    /** Read the kernel feature bits from an already-initialized ring (`ring->features`, set by `io_uring_queue_init`).
+      * `IORING_FEAT_NODROP` (bit 1, kernel >= 5.5): the kernel never drops a CQE; it applies backpressure on submit
+      * instead. When set, the wake eventfd's multishot CQE cannot be lost under any load, making the indefinite park
+      * safe by kernel contract.
+      */
+    def kyo_uring_get_features(ring: Buffer[Byte])(using AllowUnsafe): Int
+
     /** Multishot accept: `IORING_OP_ACCEPT | IORING_ACCEPT_MULTISHOT`. One submission re-fires an accept CQE for each incoming connection
       * until a completion arrives without `IORING_CQE_F_MORE`, at which point the key is removed and re-armed.
       */

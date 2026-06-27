@@ -577,10 +577,10 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         try
             // Indefinite select: blocks until an event arrives or selector.wakeup() is called. The select()
             // returns early when any key becomes ready, when close() closes the selector (ClosedSelectorException),
-            // or when wakeup() is called (e.g. by armInterest after enqueuing a registration). The bounded
+            // or when wakeup() is called (e.g. by armInterest after enqueuing a registration). The
             // reassertPendingInterest() call below is the liveness backstop for lost interest bits: any armed op
-            // whose bit was cleared by a cross-carrier race is re-asserted on this cycle and a wakeup is posted
-            // so the next select() sees it. This mirrors the epoll/kqueue poller's indefinite kevent + wake.
+            // whose bit was cleared by a cross-carrier race is re-asserted on this cycle. This mirrors the
+            // epoll/kqueue poller's indefinite kevent + wake.
             val n = selector.select()
             // Post-select re-check: clear the pending flag now that select() has returned.
             discard(wakeupPending.compareAndSet(true, false))
@@ -591,7 +591,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             drainPendingRegistrations()
             // Re-assert armed interest from the pending-op maps (the source of truth): restores any OP_READ/OP_WRITE/OP_CONNECT bit dropped by a
             // cross-carrier interestOps race (a dispatch-clear racing an arm) or a coalesced/lost wakeup. This is the liveness backstop:
-            // an armed op whose interest bit was lost is re-armed within one cycle and a wakeup is posted so the indefinite select() returns.
+            // an armed op whose interest bit was lost is re-armed within one cycle so it is visible on the next select().
             reassertPendingInterest()
             if n > 0 then
                 zeroKeyReturns = 0
