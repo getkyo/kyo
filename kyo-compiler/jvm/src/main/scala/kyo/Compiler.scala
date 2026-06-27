@@ -11,7 +11,7 @@ import upickle.default.*
   * shapes. kyo-compiler drives that published presentation compiler to produce every answer; it does
   * not implement a compiler of its own. Its companion `object Compiler` holds the [[Compiler.Pool]]
   * manager, the [[Compiler.Toolchain]]/[[Compiler.Config]]/[[Compiler.Pool.Settings]] configuration
-  * types, the neutral offset-based result types, and the [[CompilerException]] failure leaf.
+  * types, the neutral offset-based result types, and the [[CompilerException]] failure hierarchy.
   *
   * Bound to exactly one `(toolchain, classpath, scalacOptions)` configuration; it resolves symbols
   * against that classpath and cannot serve a file from another config. Document text is passed per
@@ -62,7 +62,7 @@ end Compiler
   * The companion of the [[Compiler]] handle and the module entry point: it carries the
   * [[Compiler.Pool]] manager, the [[Compiler.Toolchain]]/[[Compiler.Config]]/[[Compiler.Pool.Settings]]
   * configuration types, the [[Compiler.AsMessage]] wire-codec alias, the neutral offset-based result
-  * types, the opaque [[Compiler.Uri]], and the [[CompilerException]] failure leaf. Everything
+  * types, the opaque [[Compiler.Uri]], and the [[CompilerException]] failure hierarchy. Everything
   * except the six handle ops nests here.
   *
   * @see Compiler.Pool.init for the lifecycle entry point

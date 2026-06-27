@@ -1196,7 +1196,7 @@ lazy val `kyo-compiler` =
     crossProject(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-compiler"))
-        .dependsOn(`kyo-core`, `kyo-aeron`)
+        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
         .withKyoTest
         .settings(
             `kyo-settings`,

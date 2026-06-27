@@ -20,15 +20,15 @@ val config = Compiler.Config(
     sourceRoots = Chunk.empty
 )
 
-def withCompiler[A](f: Compiler => A < (Async & Abort[CompilerError]))(using
+def withCompiler[A](f: Compiler => A < (Async & Abort[CompilerException]))(using
     Frame
-): A < (Async & Abort[CompilerError]) =
+): A < (Async & Abort[CompilerException]) =
     Scope.run(Compiler.Pool.init().map(pool => pool.compiler(config).map(f)))
 end withCompiler
 ```
 -->
 
-A `Compiler` is a warm, per-config handle to the Scala 3 presentation compiler (`scala.meta.pc`, implemented by `dotty.tools.pc`). It exposes six IDE-intelligence ops over a single buffer: `compile` for diagnostics, `completions`, `hover`, `signatureHelp`, `symbol` for go-to-symbol, and `didClose` to drop a buffer's cache. Each op returns a neutral, offset-based result inside `Async & Abort[CompilerError]`. You pass the document text on every call (a uri, the text, and for position queries an offset); the handle keeps no buffer of its own and leans on the compiler's content-keyed typecheck cache. Offsets are UTF-16 code units into that text, so line/column mapping and cross-file go-to-definition stay the caller's job, and the surface stays free of `java.net.URI` and lsp4j. Every op is cancellable by interrupting the calling fiber, and ops on one handle run one at a time, because even a query mutates the compiler's lazy denotations.
+A `Compiler` is a warm, per-config handle to the Scala 3 presentation compiler (`scala.meta.pc`, implemented by `dotty.tools.pc`). It exposes six IDE-intelligence ops over a single buffer: `compile` for diagnostics, `completions`, `hover`, `signatureHelp`, `symbol` for go-to-symbol, and `didClose` to drop a buffer's cache. Each op returns a neutral, offset-based result inside `Async & Abort[CompilerException]`. You pass the document text on every call (a uri, the text, and for position queries an offset); the handle keeps no buffer of its own and leans on the compiler's content-keyed typecheck cache. Offsets are UTF-16 code units into that text, so line/column mapping and cross-file go-to-definition stay the caller's job, and the surface stays free of `java.net.URI` and lsp4j. Every op is cancellable by interrupting the calling fiber, and ops on one handle run one at a time, because even a query mutates the compiler's lazy denotations.
 
 You never construct a `Compiler` directly. You open a `Compiler.Pool` (Scope-managed) and ask it for the handle bound to a build `Config` with `pool.compiler(config)`. The pool owns the live compiler instances: it resolves each one lazily and single-flight on its first op, caps concurrency two ways (a global compile cap across all configs plus per-instance serialization), evicts and closes idle instances by LRU, and isolates configs from each other. A config that differs in any field (toolchain, classpath, scalac options, source roots) is a distinct instance. Whether a config runs in this JVM or in a forked worker JVM is chosen internally from the `isolate` policy and a Scala-version-match rule; the caller never names a backend. On scope close every live instance is closed and every forked worker is force-killed.
 
@@ -36,7 +36,7 @@ kyo-compiler is JVM-only: the presentation compiler is a JVM artifact, and the m
 
 ```scala
 // config, uri, and text are defined once; the sections below build them up.
-val diagnostics: Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerError]) =
+val diagnostics: Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerException]) =
     Scope.run {
         Compiler.Pool.init().map { pool =>
             pool.compiler(config).map { compiler =>
@@ -65,7 +65,7 @@ val opened: Compiler < Async =
     }
 ```
 
-`pool.compiler(config)` types as `Compiler < Sync`: resolving the handle is a cheap synchronous step, and after `Scope.run` discharges the pool's `Scope` the opened handle is a `Compiler < Async`. The heavier `Async` work shows up only when you call an op on the handle (the opening hook above shows the op result type, `Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerError])`).
+`pool.compiler(config)` types as `Compiler < Sync`: resolving the handle is a cheap synchronous step, and after `Scope.run` discharges the pool's `Scope` the opened handle is a `Compiler < Async`. The heavier `Async` work shows up only when you call an op on the handle (the opening hook above shows the op result type, `Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerException])`).
 
 > **Note:** `pool.compiler(config)` creates no instance. The cold start (and for a forked worker the spawn, which can take up to about 30 seconds) lands on the first op, not on `compiler(...)`. A program can resolve a handle eagerly and pay nothing until it queries.
 
@@ -75,7 +75,7 @@ val opened: Compiler < Async =
 
 ### Pool settings
 
-`Compiler.Pool.Settings` is the pool-wide policy: the default backend choice (`isolate`), the global compile cap (`maxConcurrentCompiles`), the live-instance bound before LRU eviction (`maxLiveCompilers`), and how long an unused instance stays warm (`idleEviction`). `Settings.default` is the value `init` uses when you pass nothing.
+`Compiler.Pool.Settings` is the pool-wide policy: the default backend choice (`isolate`), the global compile cap (`maxConcurrentCompiles`), the live-instance bound before LRU eviction (`maxLiveCompilers`), how long an unused instance stays warm (`idleEviction`), how long a forked worker has to answer its readiness probe before it is treated as failed to start (`readyTimeout`), and how long one op may run before the pool reclaims the instance as genuinely stuck (`stuckTimeout`). Each timeout has a corresponding typed failure in the `CompilerException` hierarchy: `readyTimeout` surfaces as `CompilerWorkerReadyException`, and `stuckTimeout` surfaces as `CompilerUnresponsiveException`. `Settings.default` is the value `init` uses when you pass nothing.
 
 ```scala
 val settings = Compiler.Pool.Settings(
@@ -132,7 +132,7 @@ Because the config is the identity key, a program that varies the config per fil
 
 ## Querying a buffer
 
-Once you hold a handle, the six ops are how you ask the compiler about a buffer. Every op takes the document text on the call, returns a neutral offset-based result, and carries `CompilerError` on its `Abort` row. Group them by what you are asking: what is wrong, what can I type here, what is this, where is it defined, and forget this buffer.
+Once you hold a handle, the six ops are how you ask the compiler about a buffer. Every op takes the document text on the call, returns a neutral offset-based result, and carries `CompilerException` on its `Abort` row. Group them by what you are asking: what is wrong, what can I type here, what is this, where is it defined, and forget this buffer.
 
 Position queries take an `offset: Int`, a UTF-16 code-unit index into `text`, the same unit `String.length` and `String.indexOf` count in. The examples derive offsets with `text.indexOf(...)` so the index is unambiguous.
 
@@ -145,10 +145,10 @@ The examples below use a small helper, `withCompiler(f)`, which is `Scope.run(Co
 `compile(uri, text)` typechecks the buffer and returns a `Chunk[Compiler.Diagnostic]`. An empty chunk means a clean buffer.
 
 ```scala
-val onBuffer: Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerError]) =
+val onBuffer: Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerException]) =
     withCompiler(_.compile(uri, text))
 
-val onClean: Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerError]) =
+val onClean: Chunk[Compiler.Diagnostic] < (Async & Abort[CompilerException]) =
     withCompiler(_.compile(uri, "object Main"))
 ```
 
@@ -170,7 +170,7 @@ assert(sample.code == Absent)
 `completions(uri, text, offset)` returns the candidates valid at an offset as a `Chunk[Compiler.Completion]`; an empty chunk means none.
 
 ```scala
-val candidates: Chunk[Compiler.Completion] < (Async & Abort[CompilerError]) =
+val candidates: Chunk[Compiler.Completion] < (Async & Abort[CompilerException]) =
     withCompiler(_.completions(uri, text, completionOffset))
 ```
 
@@ -181,10 +181,10 @@ val candidates: Chunk[Compiler.Completion] < (Async & Abort[CompilerError]) =
 Both `hover` and `signatureHelp` describe what is under the cursor, and they answer different questions. When the cursor sits on a name and you want its type and rendered documentation, use `hover`. When the cursor sits inside a call's argument list and you want the parameter currently being filled, use `signatureHelp`: its `activeParam` indexes into `params`.
 
 ```scala
-val info: Maybe[Compiler.Hover] < (Async & Abort[CompilerError]) =
+val info: Maybe[Compiler.Hover] < (Async & Abort[CompilerException]) =
     withCompiler(_.hover(uri, text, symbolOffset))
 
-val help: Maybe[Compiler.Signature] < (Async & Abort[CompilerError]) =
+val help: Maybe[Compiler.Signature] < (Async & Abort[CompilerException]) =
     withCompiler(_.signatureHelp(uri, text, signatureOffset))
 ```
 
@@ -195,7 +195,7 @@ Both return a `Maybe`: `Absent` means there is nothing to show at that offset. A
 `symbol(uri, text, offset)` returns the symbol at an offset as a `Maybe[Compiler.SymbolInfo]`.
 
 ```scala
-val sym: Maybe[Compiler.SymbolInfo] < (Async & Abort[CompilerError]) =
+val sym: Maybe[Compiler.SymbolInfo] < (Async & Abort[CompilerException]) =
     withCompiler(_.symbol(uri, text, symbolOffset))
 ```
 
@@ -208,11 +208,11 @@ A `Compiler.SymbolInfo` carries the `name`, the fully-qualified `fullName`, a `S
 `didClose(uri)` tells the compiler to drop its per-uri cache, for when an editor closes a document.
 
 ```scala
-val dropped: Unit < (Async & Abort[CompilerError]) =
+val dropped: Unit < (Async & Abort[CompilerException]) =
     withCompiler(_.didClose(uri))
 ```
 
-> **Unlike** a purely local cache eviction, `didClose` returns `Unit` but still round-trips to the backend, so a comms failure surfaces as `Abort[CompilerError]`. A `Unit` op can still fail.
+> **Unlike** a purely local cache eviction, `didClose` returns `Unit` but still round-trips to the backend, so a comms failure surfaces as `Abort[CompilerException]`. A `Unit` op can still fail.
 
 ## Neutral results on the wire
 
@@ -271,32 +271,46 @@ Throughput is bounded by both meters at once. An op holds its per-instance mutex
 
 There is one instance per distinct `Config`. Once live instances exceed `maxLiveCompilers`, the least-recently-used one is evicted and closed; a later op on the evicted config recreates it (cold start again, and for a worker the recreate force-kills the old JVM and spawns a fresh one). Because the config is the identity key, many slightly different configs silently churn instances and re-pay cold start, so keep the config set small and stable. An `idleEviction` window decides how long an unused instance stays warm before the LRU evicts it on idle alone.
 
-### `CompilerError`: the failure leaf
+### `CompilerException`: the typed failure hierarchy
 
-Every op's `Abort` row is `CompilerError`, an enum with exactly two cases. `InitializationFailed(message)` means the backend, the presentation compiler, or a forked worker could not start. `Fatal(message)` means a running op or its transport failed. The first points at config or environment (a missing classpath, a worker that could not spawn); the second points at the op or the wire.
+`CompilerException` (extends `KyoException`) is the type on every op's `Abort` row. Two sealed traits categorize the failure by what the caller was doing:
+
+- `CompilerInitializationFailure`: a per-config compiler could not start. Leaves:
+    - `CompilerStartException(scalaVersion, cause)`: the in-process pc failed to instantiate for that version.
+    - `CompilerWorkerSpawnException(scalaVersion, cause)`: the forked worker JVM failed to launch or its IPC client to connect.
+    - `CompilerWorkerReadyException(scalaVersion, timeout)`: the worker launched but did not pass its readiness probe within `Settings.readyTimeout`.
+- `CompilerOperationFailure`: a request against a live compiler failed. Leaves:
+    - `CompilerExecutionException(cause)`: the pc raised while running the request. (This is the one operation leaf that crosses the worker IPC wire; on the far side its `cause` is rebuilt as a plain `RuntimeException` from the rendered stack.)
+    - `CompilerTransportException(cause)`: the worker IPC session broke mid-request.
+    - `CompilerUnresponsiveException(timeout)`: the request outran `Settings.stuckTimeout` and the worker was reclaimed.
+    - `CompilerClosedException()`: the pool was closed while the request was in flight.
+
+Each leaf carries typed fields with its message built from them, so a caller matches an operation super-trait to discriminate broadly or a leaf to discriminate precisely.
 
 ```scala
 val described: String < Async =
-    Abort.run[CompilerError](withCompiler(_.compile(uri, text))).map {
+    Abort.run[CompilerException](withCompiler(_.compile(uri, text))).map {
         case Result.Success(diags) =>
             s"${diags.size} diagnostics"
-        case Result.Failure(CompilerError.InitializationFailed(message)) =>
-            s"backend did not start: $message"
-        case Result.Failure(CompilerError.Fatal(message)) =>
-            s"op failed: $message"
+        case Result.Failure(e: CompilerInitializationFailure) =>
+            s"backend did not start: ${e.getMessage}"
+        case Result.Failure(CompilerUnresponsiveException(timeout)) =>
+            s"op timed out after ${timeout.show} and was reclaimed"
+        case Result.Failure(e: CompilerOperationFailure) =>
+            s"op failed: ${e.getMessage}"
         case Result.Panic(error) =>
             s"unexpected: $error"
     }
 ```
 
-A version-mismatched config whose worker cannot load its classpath surfaces as `Result.Failure(CompilerError.InitializationFailed("...worker..."))`; a pc that throws mid-op surfaces as `Result.Failure(CompilerError.Fatal(...))`, never an escaped throw.
+A version-mismatched config whose worker cannot start surfaces as a `CompilerInitializationFailure` leaf (such as `CompilerWorkerSpawnException` or `CompilerWorkerReadyException`). A pc that throws mid-op surfaces as `CompilerExecutionException` (a `CompilerOperationFailure`), never an escaped throw.
 
 ## Putting it together
 
 The sections above introduced each piece in isolation. This example opens one pool, resolves a handle for `config`, then compiles the buffer, asks for completions at the end of `xs.su`, and drops the cache, all inside one `Scope.run` so the pool and any worker are cleaned up on exit.
 
 ```scala
-val session: (Chunk[Compiler.Diagnostic], Chunk[Compiler.Completion]) < (Async & Abort[CompilerError]) =
+val session: (Chunk[Compiler.Diagnostic], Chunk[Compiler.Completion]) < (Async & Abort[CompilerException]) =
     Scope.run {
         Compiler.Pool.init().map { pool =>
             pool.compiler(config).map { compiler =>
@@ -315,7 +329,7 @@ Distinct configs run in parallel under the global cap. Here two configs differ o
 ```scala
 val strict = config.copy(scalacOptions = Chunk("-Wunused:all"))
 
-val both: (Chunk[Compiler.Diagnostic], Chunk[Compiler.Diagnostic]) < (Async & Abort[CompilerError]) =
+val both: (Chunk[Compiler.Diagnostic], Chunk[Compiler.Diagnostic]) < (Async & Abort[CompilerException]) =
     Scope.run {
         Compiler.Pool.init().map { pool =>
             for
@@ -326,3 +340,10 @@ val both: (Chunk[Compiler.Diagnostic], Chunk[Compiler.Diagnostic]) < (Async & Ab
         }
     }
 ```
+
+## Demos
+
+Runnable end-to-end demos live in [`jvm/src/test/scala/demo`](jvm/src/test/scala/demo). Run any with `sbt 'kyo-compilerJVM/Test/runMain demo.<Name>'`.
+
+- [**IdeSessionDemo**](jvm/src/test/scala/demo/IdeSessionDemo.scala): a code editor's language-server backend driving the real Scala 3 presentation compiler over one open buffer end to end: open an empty file, type code that does not compile, fix it in place, then ask for completions, hover, signature help, and the symbol under the cursor, and finally close and reopen the buffer, with every answer checked against a concrete value the pc must produce.
+- [**CompilerAgentDemo**](jvm/src/test/scala/demo/CompilerAgentDemo.scala): a kyo-ai LLM coding assistant that compiles its own Scala. Its `compile_scala` tool hands snippets to a warm in-process `Compiler` and returns the real typechecker's `Diagnostic` values, and its `ask_user` tool reads the console, so the model loops write -> compile -> read diagnostics -> fix until clean. Needs a provider key: `ANTHROPIC_API_KEY=... sbt 'kyo-compilerJVM/Test/runMain demo.CompilerAgentDemo'`.
