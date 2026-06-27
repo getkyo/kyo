@@ -15,11 +15,16 @@ package kyo
   *   - `ioPoolSize`, sizes the io_uring submission-queue depth on the Linux io_uring backend, where the depth is `max(256, ioPoolSize * 64)`.
   *     It has no effect on the epoll, kqueue, NIO, or Node backends, and does NOT set a thread count: every backend runs a single I/O
   *     event-loop driver per transport. Defaults to `max(1, cores / 2)`.
+  *   - `connectTimeout`, deadline for a client TCP connect to complete. When finite, the transport arms a `Clock`-driven deadline as the
+  *     connect is issued and fails the connect with `NetConnectTimeoutException` if the OS does not deliver a connect outcome (connected or
+  *     refused) within the deadline. Bounds the client-side connect independently of the server accept handshake. Defaults to `30.seconds`.
+  *     Set to `Duration.Infinity` to use the OS TCP timeout instead.
   *   - `handshakeTimeout`, deadline for a server-side accept TLS handshake to complete. A client that finishes the TCP accept but then
   *     stalls the TLS handshake (sends nothing, or a partial ClientHello, and never finishes) would otherwise pin the accepted connection
   *     indefinitely (a slowloris handshake-stall denial of service, CWE-400). When finite, the server reaps such a connection at the deadline.
   *     Defaults to `Duration.Infinity` (off), preserving the original behavior; read/write/idle deadlines stay caller-composable via
-  *     `Async.timeout`. Applies to the server only (the client's connect+handshake deadline is `HttpClientConfig.connectTimeout`).
+  *     `Async.timeout`. Applies to the server only (the client's connect deadline is `connectTimeout`; combined connect+TLS deadline is
+  *     `HttpClientConfig.connectTimeout`).
   *
   * @see
   *   [[kyo.HttpServerConfig]] Accepts an `HttpTransportConfig` via the `transportConfig` field
@@ -31,12 +36,18 @@ case class HttpTransportConfig(
     readChunkSize: Int,
     maxHeaderSize: Int,
     ioPoolSize: Int,
+    connectTimeout: Duration = 30.seconds,
     handshakeTimeout: Duration = Duration.Infinity
 ) derives CanEqual:
+    require(
+        connectTimeout > Duration.Zero || connectTimeout == Duration.Infinity,
+        s"connectTimeout must be positive or Infinity: $connectTimeout"
+    )
     def channelCapacity(v: Int): HttpTransportConfig       = copy(channelCapacity = v)
     def readChunkSize(v: Int): HttpTransportConfig         = copy(readChunkSize = v)
     def maxHeaderSize(v: Int): HttpTransportConfig         = copy(maxHeaderSize = v)
     def ioPoolSize(v: Int): HttpTransportConfig            = copy(ioPoolSize = v)
+    def connectTimeout(v: Duration): HttpTransportConfig   = copy(connectTimeout = v)
     def handshakeTimeout(v: Duration): HttpTransportConfig = copy(handshakeTimeout = v)
 end HttpTransportConfig
 
@@ -46,6 +57,7 @@ object HttpTransportConfig:
         readChunkSize = 8192,
         maxHeaderSize = 65536,
         ioPoolSize = Math.max(1, Runtime.getRuntime.availableProcessors() / 2),
+        connectTimeout = 30.seconds,
         handshakeTimeout = Duration.Infinity
     )
 end HttpTransportConfig

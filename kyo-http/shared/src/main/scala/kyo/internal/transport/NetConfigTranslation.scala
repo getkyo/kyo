@@ -35,18 +35,19 @@ private[kyo] object NetConfigTranslation:
             case NetAddress.Tcp(host, port) => HttpAddress.Tcp(host, port)
             case NetAddress.Unix(path)      => HttpAddress.Unix(path)
 
-    /** Translate kyo-http's `HttpTransportConfig` to kyo-net's `TransportConfig` (the four byte-transport fields; the names match). Used to
+    /** Translate kyo-http's `HttpTransportConfig` to kyo-net's `TransportConfig` (the five byte-transport fields; the names match). Used to
       * build a per-config transport via `NetPlatform.transport` when a server/client customizes its transport tuning, so fields like
-      * `handshakeTimeout` (the slowloris-handshake DoS guard) and `channelCapacity`/`readChunkSize` actually take effect instead of being
-      * silently ignored under the process-global default transport. `maxHeaderSize` is intentionally NOT mapped: it is an HTTP-parser limit
-      * that kyo-http enforces itself (server dispatch and client connection), not a byte-transport concern, so kyo.net.TransportConfig has
-      * no such field.
+      * `connectTimeout` (the client TCP connect deadline), `handshakeTimeout` (the slowloris-handshake DoS guard), and
+      * `channelCapacity`/`readChunkSize` actually take effect instead of being silently ignored under the process-global default transport.
+      * `maxHeaderSize` is intentionally NOT mapped: it is an HTTP-parser limit that kyo-http enforces itself (server dispatch and client
+      * connection), not a byte-transport concern, so kyo.net.TransportConfig has no such field.
       */
     def toNetTransportConfig(c: HttpTransportConfig): TransportConfig =
         TransportConfig(
             channelCapacity = c.channelCapacity,
             readChunkSize = c.readChunkSize,
             ioPoolSize = c.ioPoolSize,
+            connectTimeout = c.connectTimeout,
             handshakeTimeout = c.handshakeTimeout
         )
 

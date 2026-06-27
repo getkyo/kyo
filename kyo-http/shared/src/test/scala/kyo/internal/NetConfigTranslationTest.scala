@@ -105,17 +105,24 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
 
     "toNetTransportConfig" - {
 
-        "copies the four byte-transport fields by name" in {
+        "copies the five byte-transport fields by name" in {
             val http = HttpTransportConfig.default
                 .channelCapacity(7)
                 .readChunkSize(2048)
                 .ioPoolSize(3)
+                .connectTimeout(15.seconds)
                 .handshakeTimeout(250.millis)
             val result = NetConfigTranslation.toNetTransportConfig(http)
             assert(result.channelCapacity == 7)
             assert(result.readChunkSize == 2048)
             assert(result.ioPoolSize == 3)
+            assert(result.connectTimeout == 15.seconds)
             assert(result.handshakeTimeout == 250.millis)
+        }
+
+        "carries the finite connectTimeout the client connect deadline depends on" in {
+            val result = NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default.connectTimeout(5.seconds))
+            assert(result.connectTimeout == 5.seconds)
         }
 
         "carries the finite handshakeTimeout the slowloris guard depends on" in {
@@ -124,15 +131,26 @@ class NetConfigTranslationTest extends kyo.test.Test[Any]:
         }
 
         "does not map maxHeaderSize: kyo.net.TransportConfig has no such field (HTTP-parser concern, kept in kyo-http)" in {
-            // A custom maxHeaderSize must not leak into the net config, and must not perturb the four mapped fields.
+            // A custom maxHeaderSize must not leak into the net config, and must not perturb the five mapped fields.
             val http   = HttpTransportConfig.default.maxHeaderSize(4096)
             val result = NetConfigTranslation.toNetTransportConfig(http)
-            assert(result == TransportConfig.default)
+            assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
+            assert(result.ioPoolSize == HttpTransportConfig.default.ioPoolSize)
+            assert(result.connectTimeout == HttpTransportConfig.default.connectTimeout)
+            assert(result.handshakeTimeout == HttpTransportConfig.default.handshakeTimeout)
         }
 
-        "default input equals TransportConfig.default" in {
+        "default input maps the five byte-transport fields from HttpTransportConfig.default" in {
+            // HttpTransportConfig.default.handshakeTimeout is Duration.Infinity (off by default, caller-composable via Async.timeout),
+            // while TransportConfig.default.handshakeTimeout is 30.seconds. The two configs intentionally differ on this field:
+            // the HTTP layer preserves backward-compatible behavior; kyo-net enables the slowloris guard by default.
             val result = NetConfigTranslation.toNetTransportConfig(HttpTransportConfig.default)
-            assert(result == TransportConfig.default)
+            assert(result.channelCapacity == HttpTransportConfig.default.channelCapacity)
+            assert(result.readChunkSize == HttpTransportConfig.default.readChunkSize)
+            assert(result.ioPoolSize == HttpTransportConfig.default.ioPoolSize)
+            assert(result.connectTimeout == HttpTransportConfig.default.connectTimeout)
+            assert(result.handshakeTimeout == HttpTransportConfig.default.handshakeTimeout)
         }
 
     }

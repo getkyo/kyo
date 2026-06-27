@@ -22,6 +22,7 @@ class HttpTransportConfigTest extends BaseHttpTest:
         assert(config.channelCapacity == 4)
         assert(config.readChunkSize == 8192)
         assert(config.maxHeaderSize == 65536)
+        assert(config.connectTimeout == 30.seconds)
         assert(config.handshakeTimeout == Duration.Infinity)
     }
 
@@ -30,10 +31,12 @@ class HttpTransportConfigTest extends BaseHttpTest:
             .channelCapacity(8)
             .readChunkSize(4096)
             .maxHeaderSize(32768)
+            .connectTimeout(15.seconds)
             .handshakeTimeout(250.millis)
         assert(config.channelCapacity == 8)
         assert(config.readChunkSize == 4096)
         assert(config.maxHeaderSize == 32768)
+        assert(config.connectTimeout == 15.seconds)
         assert(config.handshakeTimeout == 250.millis)
     }
 
