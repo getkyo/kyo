@@ -113,7 +113,7 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
         // under CPU contention (few carriers). A dedicated thread keeps the loop off the carrier pool entirely: every fiber the loop completes is
         // scheduled through the external-submit path (Worker.current() == null) onto a real carrier, so nothing strands. The thread is a daemon, so
         // it never blocks a clean JVM exit and is exempt from the non-daemon-thread leak check; it exits when close() sets closedFlag and closes the
-        // selector (which unblocks an in-flight select() and is observed at the next loop check, bounded by SelectTimeoutMs). The returned
+        // selector (which unblocks an in-flight indefinite select() via ClosedSelectorException). The returned
         // Fiber.Unsafe completes when the loop thread exits.
         val donePromise = Promise.Unsafe.init[Unit, Any]()
         val thread =
@@ -575,10 +575,13 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
 
     private def pollOnce()(using AllowUnsafe): Boolean =
         try
-            val t0 = java.lang.System.nanoTime()
-            // Bounded select (not blocking-forever): the loop wakes at least every SelectTimeoutMs to re-assert armed interest from the pending-op
-            // maps, so a lost wakeup or a cross-carrier interest-clear cannot strand an armed read/write indefinitely. A bounded park, not a spin.
-            val n = selector.select(NioIoDriver.SelectTimeoutMs)
+            // Indefinite select: blocks until an event arrives or selector.wakeup() is called. The select()
+            // returns early when any key becomes ready, when close() closes the selector (ClosedSelectorException),
+            // or when wakeup() is called (e.g. by armInterest after enqueuing a registration). The bounded
+            // reassertPendingInterest() call below is the liveness backstop for lost interest bits: any armed op
+            // whose bit was cleared by a cross-carrier race is re-asserted on this cycle and a wakeup is posted
+            // so the next select() sees it. This mirrors the epoll/kqueue poller's indefinite kevent + wake.
+            val n = selector.select()
             // Post-select re-check: clear the pending flag now that select() has returned.
             discard(wakeupPending.compareAndSet(true, false))
             // Drain deferred registrations now that select() has flushed the selector's cancelled-key set: any
@@ -587,8 +590,8 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
             // interest armed (awaitX) and reported on the next cycle.
             drainPendingRegistrations()
             // Re-assert armed interest from the pending-op maps (the source of truth): restores any OP_READ/OP_WRITE/OP_CONNECT bit dropped by a
-            // cross-carrier interestOps race (a dispatch-clear racing an arm) or a coalesced/lost wakeup. This is what makes the bounded select
-            // liveness-preserving: an armed op whose interest bit was lost is re-armed within one cycle instead of stranding the connection.
+            // cross-carrier interestOps race (a dispatch-clear racing an arm) or a coalesced/lost wakeup. This is the liveness backstop:
+            // an armed op whose interest bit was lost is re-armed within one cycle and a wakeup is posted so the indefinite select() returns.
             reassertPendingInterest()
             if n > 0 then
                 zeroKeyReturns = 0
@@ -596,17 +599,13 @@ final private[kyo] class NioIoDriver private (private var selector: Selector)
                 Log.live.unsafe.debug(s"$label select returned $n ready keys")
                 dispatchReadyKeys()
             else
-                // Distinguish a genuine selector spin (immediate zero-key return) from a normal idle bounded-timeout return: only an immediate
-                // zero-return counts toward the spin-rebuild heuristic; an idle timeout (~SelectTimeoutMs elapsed) is expected and resets it.
-                val elapsedMs = (java.lang.System.nanoTime() - t0) / 1000000L
-                if elapsedMs < NioIoDriver.SelectTimeoutMs / 2 then
-                    zeroKeyReturns += 1
-                    if shouldRebuild(zeroKeyReturns) then
-                        given Frame = Frame.internal
-                        Log.live.unsafe.debug(s"$label selector spin detected ($zeroKeyReturns zero-key returns), rebuilding selector")
-                        rebuildSelector()
-                    end if
-                else
+                // All zero-key returns from an indefinite select() are wakeup-driven (readiness change, wakeup() call, or spurious return).
+                // Every zero-key return counts toward the spin-rebuild heuristic so a stuck selector is detected regardless of elapsed time.
+                zeroKeyReturns += 1
+                if shouldRebuild(zeroKeyReturns) then
+                    given Frame = Frame.internal
+                    Log.live.unsafe.debug(s"$label selector spin detected ($zeroKeyReturns zero-key returns), rebuilding selector")
+                    rebuildSelector()
                     zeroKeyReturns = 0
                 end if
             end if
@@ -1147,10 +1146,8 @@ private[kyo] object NioIoDriver:
     /** Number of consecutive zero-key `select()` returns that trigger a selector rebuild. */
     private[net] val SelectorRebuildThreshold: Int = 512
 
-    /** Bounded `select(timeout)` budget for the poll loop (milliseconds). The loop wakes at least this often to re-assert armed interest from the
-      * pending-op maps, so a lost wakeup or a cross-carrier interest-clear can never strand an armed read/write indefinitely (the liveness the
-      * readiness pollers get from their bounded `poll(..., 100, ...)`). A bounded park, not a busy-spin: it blocks in `select` and returns early on
-      * any event.
+    /** Retained for diagnostic and test use. The selector loop calls `selector.select()` with no timeout; `reassertPendingInterest()` +
+      * `selector.wakeup()` is the liveness mechanism rather than a bounded timeout floor.
       */
     private[net] val SelectTimeoutMs: Long = 100L
 

@@ -606,8 +606,13 @@ final class RecordingPollerBackend(real: PollerBackend) extends PollerBackend:
     // mid-flight and drive a concurrent close into the wake-fd guard. null means none set; CAS to null before firing so it fires exactly once.
     @volatile var onWakeEnter: () => Unit = null
 
+    // When true, the next registerWake returns false (forced failure) without calling real. CAS to false on use so it fires once.
+    val forceRegisterWakeFail: java.util.concurrent.atomic.AtomicBoolean =
+        new java.util.concurrent.atomic.AtomicBoolean(false)
+
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean =
-        real.registerWake(pollerFd, scratch)
+        if forceRegisterWakeFail.compareAndSet(true, false) then false
+        else real.registerWake(pollerFd, scratch)
 
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
         discard(wakeCount.getAndIncrement())

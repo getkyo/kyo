@@ -18,8 +18,8 @@ import kyo.net.internal.transport.WriteResult
   * and the kqueue arm only on macOS/BSD; the other is skipped because its syscalls are absent.
   *
   * Covers: the IoDriver completion contract (echo bytes equal, peer-close EOF, peer-reset Closed); the per-direction keying (reads key on
-  * `readFd`, writes on `writeFd`); the close ordering (closeHandle cancels before close; stale recycled-fd events are dropped); and the bounded
-  * ~100ms poll wait (never indefinite).
+  * `readFd`, writes on `writeFd`); the close ordering (closeHandle cancels before close; stale recycled-fd events are dropped); and the
+  * indefinite poll wait (the wake mechanism returns it early when work arrives).
   */
 class PollerIoDriverTest extends Test:
 
@@ -352,7 +352,7 @@ class PollerIoDriverTest extends Test:
             }.map(_ => succeed)
         }
 
-        "pollOnce uses a bounded ~100ms timeout, never an indefinite -1 (probe)" in {
+        "pollOnce uses an indefinite -1 timeout when the wake mechanism is armed (probe)" in {
             assumePoller()
             // Drive a real driver against a RecordingPollerBackend over the real epoll/kqueue that captures the timeout passed to poll and
             // otherwise delegates. The real backend's create() allocates the real poller fd.
@@ -368,9 +368,30 @@ class PollerIoDriverTest extends Test:
             polled.safe.get.andThen {
                 driver.close()
                 val t = spy.lastPollTimeoutMs
-                assert(t == 100, s"poll timeout was $t ms, expected a bounded 100; -1 (indefinite) is forbidden")
-                assert(t != -1, "poll timeout must never be -1 (indefinite)")
+                assert(
+                    t == -1,
+                    s"poll timeout was $t ms, expected -1 (indefinite); the wake mechanism must make bounded floors unnecessary"
+                )
             }
+        }
+
+        "registerWake failure fails start() with a clear error, not a permanent stall" in {
+            assumePoller()
+            // The driver now parks with timeoutMs = -1; without a wakeup mechanism there is no way to return the park. start() must
+            // fail loud rather than start a loop that wedges on the first park with no way to recover.
+            val real     = PollerBackend.default()
+            val pollerFd = real.create()
+            val spy      = RecordingPollerBackend(real)
+            spy.forceRegisterWakeFail.set(true)
+            val driver = TestDrivers.forBackend(spy, pollerFd)
+            val ex     = intercept[IllegalStateException](discard(driver.start()))
+            assert(
+                ex.getMessage.contains("registerWake"),
+                s"error message should name the failed operation, got: ${ex.getMessage}"
+            )
+            // The driver never started (start() threw before spawning the loop), so close() takes the never-started path.
+            driver.close()
+            succeed
         }
     }
 

@@ -42,7 +42,7 @@ private[net] trait EpollBindings extends Ffi:
 
     /** `int eventfd(unsigned int initval, int flags)`. Creates the poll-loop wakeup eventfd (counter object). Created with `EFD_NONBLOCK |
       * EFD_CLOEXEC` and registered in the epoll set for read interest; a write to it makes a parked `epoll_wait` return so the change FIFO is
-      * drained without waiting out the bounded park. Returns the fd or -1 with `errno`. Non-blocking downcall (returns the rc inline).
+      * drained at once rather than waiting for the next I/O event. Returns the fd or -1 with `errno`. Non-blocking downcall (returns the rc inline).
       */
     def eventfd(initval: Int, flags: Int)(using AllowUnsafe): Ffi.Outcome[Int]
 

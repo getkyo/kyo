@@ -50,9 +50,10 @@ private[net] trait PollerBackend:
       */
     def disableWrite(pollerFd: Int, fd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit = ()
 
-    /** Fill the `scratch.fds` and `scratch.flags` arrays with decoded event data after a bounded `timeoutMs` wait. The `@Ffi.blocking`
-      * `epoll_wait` / `kevent` runs inline on JVM/Native (fiber is already `done()` on return) and on a libuv worker on JS (fiber is
-      * genuinely pending). The driver's `while`-loop body consumes it via `done()`/`poll()` or `onComplete`; it never calls `.safe.get`.
+    /** Fill the `scratch.fds` and `scratch.flags` arrays with decoded event data after a `timeoutMs` wait (`timeoutMs < 0` means
+      * indefinite: blocks until an event or a wake arrives). The `@Ffi.blocking` `epoll_wait` / `kevent` runs inline on JVM/Native
+      * (fiber is already `done()` on return) and on a libuv worker on JS (fiber is genuinely pending). The driver's `while`-loop body
+      * consumes it via `done()`/`poll()` or `onComplete`; it never calls `.safe.get`.
       *
       * `scratch.eventsBuffer` (epoll) or `scratch.kqueueData.get.eventsBuffer` (kqueue) is the reused raw event buffer, filled in-place.
       * Returns the ready count `n` (0 if no events, negative on error). Ownership: `eventsBuffer`, `fds`, and `flags` in `scratch` are
@@ -67,19 +68,19 @@ private[net] trait PollerBackend:
         Frame
     ): Fiber.Unsafe[Int, Any]
 
-    /** Arm the poll-loop wakeup so a [[wake]] call makes a parked [[poll]] return promptly (instead of waiting out the bounded timeout). Called
-      * once at driver start, after [[newPollScratch]]. epoll: create an eventfd and register it in the epoll set for read interest, storing it
-      * on `scratch.wakeFd`. kqueue: register an `EVFILT_USER` filter (EV_ADD | EV_CLEAR) on the fixed `scratch.wakeUserIdent`. Initializes the
-      * scratch wake buffers. Returns true on success; false (best-effort) if the wakeup could not be armed, in which case the driver still works
-      * via the bounded-park drain (only the prompt-wake latency improvement is lost). Idempotent is NOT required (called exactly once at start).
+    /** Arm the poll-loop wakeup so a [[wake]] call makes a parked [[poll]] return. Called once at driver start, after [[newPollScratch]]. epoll:
+      * create an eventfd and register it in the epoll set for read interest, storing it on `scratch.wakeFd`. kqueue: register an `EVFILT_USER`
+      * filter (EV_ADD | EV_CLEAR) on the fixed `scratch.wakeUserIdent`. Initializes the scratch wake buffers. Returns true on success; false on
+      * failure (e.g. fd exhaustion). The caller treats false as a fatal error: the poll parks indefinitely, so the wakeup is a liveness
+      * requirement, not a latency optimization. Idempotent is NOT required (called exactly once at start).
       */
     def registerWake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Boolean
 
-    /** Trigger the poll-loop wakeup: make a parked [[poll]] on `pollerFd` return now so the driver drains its change/engine FIFOs without waiting
-      * out the bounded park. Thread-safe and callable from any carrier (it is the cross-carrier wake): epoll writes the eventfd counter (an atomic
-      * syscall, no shared buffer); kqueue submits a one-element `NOTE_TRIGGER` changelist via the non-blocking `keventNow` into `scratch.wakeArmBuf`
-      * (the caller serializes access to that buffer through the driver's `wakePending` CAS, so at most one trigger is in flight). A no-op if the
-      * wakeup was not armed ([[registerWake]] returned false) or `scratch.wakeFd`/the filter is gone after close.
+    /** Trigger the poll-loop wakeup: make a parked [[poll]] on `pollerFd` return now so the driver drains its change/engine FIFOs. Thread-safe and
+      * callable from any carrier (it is the cross-carrier wake): epoll writes the eventfd counter (an atomic syscall, no shared buffer); kqueue
+      * submits a one-element `NOTE_TRIGGER` changelist via the non-blocking `keventNow` into `scratch.wakeArmBuf` (the caller serializes access to
+      * that buffer through the driver's `wakePending` CAS, so at most one trigger is in flight). A no-op if `scratch.wakeFd` or the filter is gone
+      * after close (the wake-fd teardown guard catches the close-while-in-flight race).
       */
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit
 

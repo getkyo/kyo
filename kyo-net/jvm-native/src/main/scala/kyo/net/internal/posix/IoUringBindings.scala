@@ -90,7 +90,7 @@ private[net] trait IoUringBindings extends Ffi:
 
     /** Multishot poll: `IORING_OP_POLL_ADD | IORING_POLL_ADD_MULTI`. One submission re-fires a CQE every time `fd` becomes ready for
       * `pollMask` (e.g. `POLLIN`), staying armed across completions (each carries `IORING_CQE_F_MORE`). Armed on the driver's wake eventfd so a
-      * cross-carrier `kyo_uring_eventfd_write` returns the parked reap wait promptly instead of waiting out a bounded park.
+      * cross-carrier `kyo_uring_eventfd_write` returns the parked reap wait promptly instead of leaving the reap loop parked indefinitely.
       */
     def kyo_uring_prep_poll_multishot(sqe: Ffi.Handle[IoUringSqe], fd: Int, pollMask: Int)(using AllowUnsafe): Unit
 

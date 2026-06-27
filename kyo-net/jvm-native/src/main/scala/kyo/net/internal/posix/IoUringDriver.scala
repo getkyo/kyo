@@ -89,13 +89,14 @@ end PendingOp
   * single reap loop drains the completion queue and fulfils the keyed promise. It presents the unchanged completion
   * `IoDriver[PosixHandle]` contract, identical to the poller arm from the caller's perspective.
   *
-  * #### Bounded reap loop
+  * #### Reap loop
   *
-  * The reap loop runs on a dedicated carrier spawned by `start()` via `Fiber.Unsafe.init`. Each cycle uses `kyo_uring_submit_and_wait_timeout`
-  * to flush accumulated SQEs AND wait for the next CQE in a single `io_uring_enter` syscall (bounded to ~100ms), then drains every
-  * already-ready CQE with `kyo_uring_peek_cqe`. On JVM/Native the wait fiber completes synchronously and the loop continues via the `while`
-  * body without growing the stack. On JS the wait fiber is genuinely pending; the loop exits the `while`, registers an `onComplete` callback,
-  * and re-enters via a fresh `Fiber.Unsafe.init` on the next event-loop tick. A timeout with no CQE is a normal empty turn, not an error.
+  * The reap loop runs on a dedicated daemon Thread started by `start()`. Each cycle uses `kyo_uring_submit_and_wait_timeout`
+  * to flush accumulated SQEs AND wait for the next CQE in a single `io_uring_enter` syscall (indefinite when the wake eventfd multishot
+  * is armed; bounded to `ReapTimeoutNs` during the re-arm-retry window), then drains every already-ready CQE with `kyo_uring_peek_cqe`.
+  * On JVM/Native the wait fiber completes synchronously and the loop continues via the `while` body without growing the stack. On JS the
+  * wait fiber is genuinely pending; the loop exits the `while`, registers an `onComplete` callback, and re-enters via a fresh
+  * `Fiber.Unsafe.init` on the next event-loop tick. A timeout or transient rc is a normal empty turn, not an error.
   *
   * #### UAF-safe close
   *
@@ -119,9 +120,10 @@ final private[net] class IoUringDriver private[posix] (
     ring: Buffer[Byte],
     sockets: SocketBindings,
     closedFlag: AtomicBoolean.Unsafe,
-    // The ring and cqePtr are touched by the reap carrier inside its in-flight kyo_uring_submit_and_wait_timeout (which holds both segments for
-    // up to ReapTimeoutNs) and by user carriers in kyo_uring_get_sqe. Their teardown must therefore be SINGLE-OWNER: when the reap loop was
-    // started, only the reap carrier (on its own exit, after the wait has returned) frees them; close() then merely signals via closedFlag.
+    // The ring and cqePtr are touched by the reap carrier inside its in-flight kyo_uring_submit_and_wait_timeout (indefinitely when wake-armed,
+    // or for up to ReapTimeoutNs during the re-arm window) and by user carriers in kyo_uring_get_sqe. Their teardown must therefore be
+    // SINGLE-OWNER: when the reap loop was started, only the reap carrier (on its own exit, after the wait has returned) frees them; close()
+    // then merely signals via closedFlag.
     // `started` records whether a reap carrier exists to own that teardown; `teardownDone` makes the actual free idempotent across the two
     // paths (reap-loop exit when started, close() inline when never started). See #177.
     started: AtomicBoolean.Unsafe,
@@ -957,7 +959,8 @@ final private[net] class IoUringDriver private[posix] (
             // no reap loop is parked (never started): the eventfd is closed by teardownRing below, guarded against this write.
             wakeReapLoop()
             // Single-owner teardown (#177): the reap carrier may be parked inside kyo_uring_submit_and_wait_timeout, holding the ring and cqePtr
-            // segments for up to ReapTimeoutNs. Freeing them here, on a different carrier, while that wait is in flight is a use-after-free
+            // segments (indefinitely when wake-armed, or for up to ReapTimeoutNs during the re-arm window). Freeing them here, on a different
+            // carrier, while that wait is in flight is a use-after-free
             // ("Session is acquired by 1 clients" at cqePtr.close on JVM; SIGSEGV in kyo_uring_get_sqe on Native). So when a reap carrier
             // exists, only SIGNAL: it observes closedFlag, exits its loop after the current wait returns, and tears the ring down on its own
             // carrier where no ring op is in flight. When the loop was never started (a driver built but closed before start()), no wait is in
@@ -1164,11 +1167,12 @@ final private[net] class IoUringDriver private[posix] (
     // IORING_CQE_F_MORE = (1U << 1) = 2. When set on a CQE, the submission is still live and will fire more CQEs (multishot lifecycle).
     private val CqeFMore = 2
 
-    /** Run the reap loop on the current carrier. Submits accumulated SQEs and waits at most ~100ms for a CQE via the fused submit-and-wait
-      * enter, then drains every ready CQE and completes the keyed promises. On JVM/Native the wait fiber is already done() on return; the while
-      * loop continues inline without stack growth. On JS the wait fiber is genuinely pending: the while loop exits, an onComplete callback
-      * re-enters via a fresh `Fiber.Unsafe.init`. The `cqePtr` buffer is the driver field allocated once at construction; it is safe because
-      * reapLoop and drainReady run sequentially on the same carrier (drainReady is called inline before the next wait).
+    /** Run the reap loop on the current carrier. Submits accumulated SQEs and parks indefinitely when the wake is armed (the common case), or
+      * for up to ReapTimeoutNs during the re-arm window, via the fused submit-and-wait enter, then drains every ready CQE and completes the
+      * keyed promises. On JVM/Native the wait fiber is already done() on return; the while loop continues inline without stack growth. On JS
+      * the wait fiber is genuinely pending: the while loop exits, an onComplete callback re-enters via a fresh `Fiber.Unsafe.init`. The
+      * `cqePtr` buffer is the driver field allocated once at construction; it is safe because reapLoop and drainReady run sequentially on
+      * the same carrier (drainReady is called inline before the next wait).
       */
     private def reapLoop()(using AllowUnsafe, Frame): Unit =
         var running = !closedFlag.get()
@@ -1195,29 +1199,31 @@ final private[net] class IoUringDriver private[posix] (
             // we park every op is genuinely in flight and a real CQE (or the wake eventfd) returns the wait. io_uring_submit submits the whole SQ
             // ring (the wake POLL_ADD included), so the park is never entered with an unsubmitted op outstanding.
             flushSubmits()
-            // Always a BOUNDED park (ReapTimeoutNs), never indefinite. The wake eventfd still returns the park EARLY for prompt response to a
-            // cross-carrier submission, but the bounded timeout is the LIVENESS FLOOR. An indefinite park (the old `wakePollArmed && !hasStalled`
-            // case) relied on the wake multishot POLL_ADD's CQE always arriving; under sustained concurrent load a dropped or stale wake CQE (e.g. a
-            // CQ-overflow that loses the POLL's `!more`, leaving wakePollArmed stale while the poll is actually disarmed) then stranded the reap
-            // forever -- it never drained the engine queue again, hanging every connection whose recv/send arm sat there (the .times(100)
-            // io_uring/boringssl hang: all carriers idle, the reap parked in submit_and_wait, the take never completed). Bounding the wait recovers
-            // any lost wake within ReapTimeoutNs, the same robustness the readiness pollers get from their bounded poll(..., 100, ...): the wake is a
-            // prompt-response optimization, not a correctness dependency. reArmStalled still retries parked SQ-full ops each turn.
-            val timeout = ReapTimeoutNs
+            // Park CONDITIONALLY: INDEFINITELY when the wake multishot is armed (`wakePollArmed = true`), bounded by `ReapTimeoutNs`
+            // when not armed (the re-arm-retry window, e.g. when the SQ was full at armWake time). An indefinite park is safe because
+            // the wake mechanism is non-loseable: `wakeFd` is an eventfd whose counter persists until drained, so any `wakeReapLoop()`
+            // write that lands before or during the park increments the counter and the armed POLL_ADD fires once the CQ has room.
+            // The bounded fallback (`!wakePollArmed`) ensures a missing arm never hangs the loop: each bounded turn re-arms and parks
+            // shorter if still SQ-full. The wake CQE returns the park EARLY for prompt response to any cross-carrier submission.
+            val timeout = if wakePollArmed then Long.MaxValue else ReapTimeoutNs
             val waitFiber =
-                uring.kyo_uring_submit_and_wait_timeout(ring, cqePtr, timeout) // bounded park; the wake eventfd returns it early
+                uring.kyo_uring_submit_and_wait_timeout(ring, cqePtr, timeout) // conditional park; the wake eventfd returns it early
             if waitFiber.done() then
                 // JVM/Native inline-completion path: extract result and continue the while loop without growing the stack.
                 // rc is a raw signed Int; isTimeout operates on the raw negative -ETIME (a POSIX-clamped -1 would lose the errno identity).
                 waitFiber.poll() match
                     case Present(Result.Success(w)) =>
                         val rc = w.eval
-                        if rc != 0 && !isTimeout(rc) then
+                        // A transient -EINTR/-EAGAIN/-EBUSY is a reap-side park that must be RETRIED,
+                        // not a ring fault: classify it benign (continue, like -ETIME) so a transient
+                        // rc never tears down the whole ring (every connection on it). The loop stops
+                        // only on closedFlag (checked below) or a genuinely FATAL ring rc.
+                        if rc != 0 && !reapRcContinues(rc) then
                             closeReason = s"reap-rc=$rc"
                             running = false
                         else
                             if rc == 0 then drainReady(cqePtr.get(0))
-                            // Re-arm parked ops every turn (a CQE arrived, or -ETIME: an empty turn). The fused submit+wait freed the SQ slots,
+                            // Re-arm parked ops every turn (a CQE arrived, or a benign rc: an empty turn). The fused submit+wait freed the SQ slots,
                             // so a recv/accept/connect/send parked on SQ-full re-arms now rather than stranding until some other CQE arrives.
                             reArmStalled()
                         end if
@@ -1237,9 +1243,9 @@ final private[net] class IoUringDriver private[posix] (
                 waitFiber.onComplete {
                     case Result.Success(w) =>
                         val rc = w.eval
-                        if rc == 0 || isTimeout(rc) then
+                        if rc == 0 || reapRcContinues(rc) then
                             if rc == 0 then drainReady(cqePtr.get(0))
-                            // Re-arm parked ops every turn (CQE or -ETIME), as in the inline path: SQ space is freed by submit, not by reaping.
+                            // Re-arm parked ops every turn (CQE or a benign rc), as in the inline path: SQ space is freed by submit, not by reaping.
                             reArmStalled()
                             if !closedFlag.get() then discard(Fiber.Unsafe.init { reapLoop() })
                         end if
@@ -1586,8 +1592,9 @@ final private[net] class IoUringDriver private[posix] (
       * `io_uring_wait_cqes` (the reap wait) itself submits, so any SQE prepared off the reap carrier would race the wait's flush and be lost
       * (a dropped op whose CQE never arrives, a 15s hang) or corrupt a coalesced handshake record (`bad_record_mac`). So read/write/connect/accept
       * arming and the TLS engine ops all enqueue here; [[reapLoop]] drains the queue at the top of each cycle, before it flushes and waits. The
-      * queue is the only cross-carrier handoff; running the op is single-owner. An op enqueued while the reap carrier is parked in the bounded
-      * wait runs when that wait next returns (on a CQE or the ~100ms timeout).
+      * queue is the only cross-carrier handoff; running the op is single-owner. An op enqueued while the reap carrier is parked indefinitely
+      * is returned promptly by `wakeReapLoop()`, which writes the wake eventfd and returns the indefinite park at once rather than waiting
+      * for an unrelated CQE.
       */
     override def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit =
         discard(engineQueue.offer(op))
@@ -1629,6 +1636,18 @@ final private[net] class IoUringDriver private[posix] (
       */
     private def isTimeout(waitResult: Int): Boolean =
         waitResult == -PosixConstants.ETIME || waitResult == PosixConstants.ETIME
+
+    /** Whether a reap-park return code is a TRANSIENT condition the loop must RETRY rather than a
+      * fatal ring fault: `-ETIME` (empty turn), `-EINTR` (a signal interrupted the wait), `-EAGAIN`
+      * (resource momentarily unavailable), `-EBUSY` (the ring is momentarily busy). On any of these
+      * the loop continues; it tears the ring down only on `closedFlag` or a genuinely fatal rc, so a
+      * transient rc never kills the ring every connection shares.
+      */
+    private def reapRcContinues(waitResult: Int): Boolean =
+        isTimeout(waitResult)
+            || waitResult == -PosixConstants.EINTR
+            || waitResult == -PosixConstants.EAGAIN
+            || waitResult == -PosixConstants.EBUSY
 
     /** Current count of consecutive `-EINTR` send CQE completions for `handle` (0 when none has occurred since the last non-EINTR send).
       * Engine-FIFO-worker-only, the single owner of [[sendEintrRetries]].

@@ -15,8 +15,8 @@ import kyo.ffi.Ffi
   * `kqueue` is a plain (non-blocking) downcall. Interest changes ([[registerRead]] / [[registerWrite]] / [[deregister]]) are batched into a
   * changelist and submitted atomically alongside the poll wait: `drainChanges` accumulates up to `MaxChanges * KEvent.size` bytes into
   * `scratch.kqueueData.get.changelistBuf` and passes it with `nChanges` to [[poll]], which forwards them to `kevent`. This reduces K interest
-  * changes to 1 syscall per poll cycle. [[poll]] uses the `@Ffi.blocking` `kevent` (a non-zero timeout that genuinely waits for events); the
-  * poll loop suspends across that bounded wait.
+  * changes to 1 syscall per poll cycle. [[poll]] uses the `@Ffi.blocking` `kevent` (a negative timeout that waits indefinitely for events);
+  * the poll loop suspends across that indefinite wait.
   *
   * Each `struct kevent` is encoded into and decoded out of a raw `Buffer[Byte]` through the manual [[KEvent$]] codec (the changelist and
   * eventlist buffers in `scratch.kqueueData.get`, the per-driver [[KqueuePollData]] allocated by [[newPollScratch]]), exactly as the epoll arm
@@ -25,11 +25,18 @@ import kyo.ffi.Ffi
   *
   * The poll path uses a 1-element memo keyed on `timeoutMs`. The memo lives in the per-driver [[KqueuePollData]] inside the passed-in
   * [[PollScratch]] (field `kqueueData`), which is allocated once per driver via [[newPollScratch]] and owned exclusively by that driver's
-  * poll-loop carrier. The poll loop always calls `poll()` with the same `timeoutMs` (100), so after the first call every subsequent poll
-  * reuses the cached [[Timespec]] with no per-poll allocation. Storing the memo in the per-driver scratch makes it genuinely single-owner:
-  * one driver's poll-loop carrier never touches another driver's [[KqueuePollData]].
+  * poll-loop carrier. The poll loop always calls `poll()` with the same `timeoutMs` (-1 for indefinite), so after the first call every
+  * subsequent poll reuses the cached [[Timespec]] with no per-poll allocation. `timeoutMs < 0` maps to [[IndefiniteTimeout]] (a large
+  * but valid [[Timespec]]) rather than a C NULL pointer, because the kyo-ffi kevent binding does not accept a null reference. The
+  * [[EVFILT_USER]] wake event returns the kevent call promptly regardless of the timeout. Storing the memo in the per-driver scratch
+  * makes it genuinely single-owner: one driver's poll-loop carrier never touches another driver's [[KqueuePollData]].
   */
 private[net] object KqueuePollerBackend extends PollerBackend:
+
+    // The kyo-ffi kevent binding takes Timespec by value, not by pointer, so NULL (the C sentinel for "block indefinitely") cannot be
+    // passed directly. A very large but valid Timespec approximates indefinite: the EVFILT_USER wake event fires immediately regardless
+    // of the timeout, so the practical behavior is identical to NULL for the poll loop's use case. Int.MaxValue seconds ~= 24.8 days.
+    private val IndefiniteTimeout: Timespec = Timespec(Int.MaxValue.toLong / 1000L, 0L)
 
     private def kq(using AllowUnsafe): KqueueBindings = Ffi.load[KqueueBindings]
 
@@ -194,7 +201,8 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         data: KqueuePollData
     )(using AllowUnsafe, Frame): Fiber.Unsafe[Int, Any] =
         val timeout =
-            if data.pollMemoMs == timeoutMs then data.pollMemoTs
+            if timeoutMs < 0 then IndefiniteTimeout
+            else if data.pollMemoMs == timeoutMs then data.pollMemoTs
             else
                 val ts = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
                 data.pollMemoMs = timeoutMs
@@ -271,7 +279,7 @@ private[net] object KqueuePollerBackend extends PollerBackend:
         val ids         = scratch.ids
         val emptyChange = Buffer.alloc[Byte](0)
         val events      = Buffer.alloc[Byte](MaxEvents * KEvent.size)
-        val timeout     = Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
+        val timeout = if timeoutMs < 0 then IndefiniteTimeout else Timespec(timeoutMs.toLong / 1000L, (timeoutMs.toLong % 1000L) * 1000000L)
         kq.kevent(pollerFd, emptyChange, 0, events, MaxEvents, timeout).map { ready =>
             try
                 val raw = ready.value
