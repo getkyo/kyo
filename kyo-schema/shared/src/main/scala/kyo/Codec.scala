@@ -108,6 +108,17 @@ object Codec:
           */
         def droppedFieldsMask(n: Int): Long = 0L
 
+        /** Returns a bitmask of absent fields that this reader can materialize from a typed empty seed.
+          *
+          * The macro-generated case-class decoder supplies `defaultableFieldsMask` with bit `i` set when constructor field `i` is a
+          * non-optional collection or map field that has a typed empty seed. A reader can return some or all of those bits when the wire
+          * format defines absence as the empty value for those field shapes, as Protobuf does for repeated and map fields.
+          *
+          * Self-describing codecs keep the default `0L`, so a missing required collection or map field still fails required-field validation.
+          * Only the low-order `n` bits are relevant; bits beyond that are ignored by the caller.
+          */
+        def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long = 0L
+
         /** Parse the next field name and record it as internal state for [[matchField]] and [[lastFieldName]].
           *
           * Implementations should advance the wire stream past the field name (and any delimiters such as JSON's `:`) so subsequent value

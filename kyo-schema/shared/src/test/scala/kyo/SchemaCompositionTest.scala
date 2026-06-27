@@ -12,7 +12,7 @@ class SchemaCompositionTest extends kyo.test.Test[Any]:
         "sealed-trait variant with .discriminator round-trips correctly" in {
             val schema                    = Schema[DiscriminatedShape].discriminator("type")
             val value: DiscriminatedShape = ShapeA(42)
-            val bytes: Span[Byte]         = Protobuf.encode(value)(using schema)
+            val bytes: Span[Byte]         = Protobuf.encode(value)(using summon[Protobuf], schema)
             val result: Result[DecodeException, DiscriminatedShape] =
                 Protobuf.decode[DiscriminatedShape](bytes)(using summon[Protobuf], schema)
             assert(result == Result.succeed(value))

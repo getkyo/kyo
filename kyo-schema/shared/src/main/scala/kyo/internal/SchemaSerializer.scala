@@ -1148,6 +1148,13 @@ private[kyo] object SchemaSerializer:
 
         override def release(): Unit = inner.release()
 
+        override def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long =
+            delegateReader match
+                case Present(reader) => reader.absentDefaultedFieldsMask(n, defaultableFieldsMask)
+                case _               => inner.absentDefaultedFieldsMask(n, defaultableFieldsMask)
+            end match
+        end absentDefaultedFieldsMask
+
     end DelegatingWrapperReader
 
     /** A [[Reader]] wrapper that transforms flat discriminator format back to wrapper format for sealed trait deserialization.
@@ -1663,6 +1670,9 @@ private[kyo] object SchemaSerializer:
             if n >= 64 then _droppedMask | innerMask
             else (_droppedMask & ((1L << n) - 1L)) | innerMask
         end droppedFieldsMask
+
+        override def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long =
+            inner.absentDefaultedFieldsMask(n, defaultableFieldsMask)
 
         override def initFields(n: Int): Array[AnyRef] = inner.initFields(n)
 

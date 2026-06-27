@@ -550,9 +550,9 @@ import scala.quoted.*
       * Each per-field schema resolves via `summonInline[Schema[ft]]` at the generated-code typer phase;
       * the in-flight `derived$Schema` is visible by forward-reference, so recursive products close the
       * cycle. The read body seeds defaults / `Maybe.empty` / `None`, tracks a `Long` required-field
-      * bitmap, ORs in `droppedFieldsMask` before the required check, and throws `MissingFieldException`
-      * (carrying `reader.frame`) for a missing required field. Used by both `derivedImpl`
-      * (`derives Schema`) and the `metaApplyImpl` Focus path.
+      * bitmap, ORs in reader-supplied pre-satisfied field masks before the required check, and throws
+      * `MissingFieldException` (carrying `reader.frame`) for a missing required field. Used by both
+      * `derivedImpl` (`derives Schema`) and the `metaApplyImpl` Focus path.
       */
     private def emitProductSchemaStatic[A: Type](using
         Quotes
@@ -735,10 +735,21 @@ import scala.quoted.*
         // READ: static per-field name-matched loop.
         def readBody(r: Expr[Reader]): Expr[A] =
             val requiredMask: Long = fields.zipWithIndex.foldLeft(0L) { case (m, (_, idx)) =>
-                if !hasDefaultFlags(idx) && !isMaybeFlags(idx) && !isOptionFlags(idx) then m | (1L << idx)
+                if !hasDefaultFlags(idx) && !isMaybeFlags(idx) && !isOptionFlags(idx) then
+                    m | (1L << idx)
                 else m
             }
             val fieldNames: List[String] = fields.map(_.name)
+
+            val absentDefaultableMaskExpr: Expr[Long] =
+                fields.indices.foldLeft('{ 0L }) { (mask, idx) =>
+                    if hasDefaultFlags(idx) || isMaybeFlags(idx) || isOptionFlags(idx) then mask
+                    else
+                        effectiveSchemaTypes(idx).asType match
+                            case '[t] =>
+                                val s = fieldSchemaExprTyped[t](idx)
+                                '{ $mask | kyo.internal.absentDefaultMask($s, ${ Expr(1L << idx) }) }
+                }
 
             val seedExprs: List[Expr[Any]] = fields.zipWithIndex.map { (f, idx) =>
                 val ft = tpe.memberType(f)
@@ -754,8 +765,10 @@ import scala.quoted.*
                     ft.asType match
                         case '[t] => '{ Option.empty[Any].asInstanceOf[t] }
                 else
-                    ft.asType match
-                        case '[t] => '{ null.asInstanceOf[t] }
+                    effectiveSchemaTypes(idx).asType match
+                        case '[t] =>
+                            val s = fieldSchemaExprTyped[t](idx)
+                            '{ kyo.internal.absentDefaultSeed($s) }
                 end if
             }
 
@@ -836,7 +849,10 @@ import scala.quoted.*
                     val maskExpr  = Expr(requiredMask)
                     val nExpr     = Expr(n)
                     Some('{
-                        val _combined = $seenRef | $r.droppedFieldsMask($nExpr)
+                        val _combined =
+                            $seenRef |
+                                $r.droppedFieldsMask($nExpr) |
+                                $r.absentDefaultedFieldsMask($nExpr, $absentDefaultableMaskExpr)
                         if (_combined & $maskExpr) != $maskExpr then
                             val _missing = java.lang.Long.numberOfTrailingZeros((~_combined) & $maskExpr).toInt
                             val _names   = $namesExpr

@@ -3,6 +3,7 @@ package kyo.internal
 import kyo.Codec.Reader
 import kyo.Codec.Writer
 import kyo.Frame
+import kyo.Present
 import kyo.Schema
 import scala.compiletime.erasedValue
 
@@ -51,3 +52,13 @@ inline def readField[A](inline s: Schema[A], r: Reader): A =
         case _: Byte    => r.byte().asInstanceOf[A]
         case _: Char    => r.char().asInstanceOf[A]
         case _          => s.serializeRead(r)
+
+inline def absentDefaultSeed[A](inline s: Schema[A]): A =
+    s.absentDefaultValue match
+        case Present(value) => value
+        case _              => null.asInstanceOf[A]
+
+inline def absentDefaultMask[A](inline s: Schema[A], bit: Long): Long =
+    s.absentDefaultValue match
+        case Present(_) => bit
+        case _          => 0L

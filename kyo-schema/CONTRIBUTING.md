@@ -396,6 +396,53 @@ def fieldId(name: String): Int =
     (MurmurHash3.stringHash(name) & 0x1fffff) + 1
 ```
 
+### Conformance modes (Strict and Permissive)
+
+`Protobuf.Config.conformance` is a CODEC-level concern, not a Schema slot. The schema derives the same structure in both modes; the codec gate is at encode time.
+
+`Conformance.Strict` (the default): encode rejects any map whose key type is not a proto3-native scalar (an integral, `Boolean`, `String`, or an opaque/value-class whose `Schema` reduces to one of those). Rejection throws `SchemaNotSerializableException` with a message prefixed `"non-canonical proto3 map key: "`. No bytes are written before the throw.
+
+`Conformance.Permissive`: all map key types are permitted. Non-canonical keys use the entry-message encoding and round-trip through this codec; they are not standard proto3 `map<K,V>` externally.
+
+The `given Protobuf = Protobuf()` zero-argument instance is Strict. Permissive requires an explicit config:
+
+```scala
+given Protobuf = Protobuf(Protobuf.Config(conformance = Protobuf.Conformance.Permissive))
+```
+
+### fieldNumberAudit and FieldNumberInfo
+
+`Protobuf.fieldNumberAudit[A]` is pure and total: no encode, no decode, no throw. It returns `Chunk[FieldNumberInfo]`, one row per message field, in declaration order, depth-first for nested messages.
+
+`FieldNumberInfo` fields:
+- `path`: dotted path from the root message (e.g., `"inner.id"` for a nested field)
+- `name`: leaf field name
+- `number`: the wire field number this codec uses (MurmurHash3 formula or a leaf-name override)
+- `pinned`: true when a single-segment (leaf field-name) `Schema.fieldId` override is in effect and is wire-functional; nested-path (multi-segment) overrides are a consistent no-op (`pinned` stays false), deferred to getkyo/kyo#1719
+- `inReservedRange`: true when `number` is in proto3's reserved band 19000-19999, which external `protoc` rejects
+
+The field-id formula is fixed and identical across `CodecMacro.fieldId`, `fieldNumberAudit`, and `protoSchema`:
+
+```
+(MurmurHash3.stringHash(name) & 0x1fffff) + 1
+```
+
+### Packed and unpacked repeated scalars
+
+Scalar repeated fields (`List[Int]`, `Vector[Double]`, `Set[Boolean]`, and so on) are emitted as a single packed length-delimited record (wire type 2). Non-scalar repeated fields (repeated messages, repeated strings, repeated bytes) stay per-element. The reader accepts both packed (wire type 2) and unpacked (element's primitive wire type) forms, so data from proto3 producers that emit unpacked decodes correctly.
+
+This dual-handling invariant must be preserved: adding a new scalar reader arm must accept both forms.
+
+### protoSchema emits wire-true field numbers
+
+`Protobuf.protoSchema[A]` emits the MurmurHash3-derived field number for every message field, the same number the codec writes on the wire. Hash-derived fields carry a line-end provenance comment. A pinned field (leaf-name `Schema.fieldId` override) carries no provenance comment. A field in proto3's reserved range 19000-19999 carries a WARNING comment unconditionally.
+
+Structural slots (oneof variant numbers, MapEntry key=1/value=2) are not affected and keep their structural assignments.
+
+### Leaf-name Schema.fieldId pin is wire-functional
+
+A single-segment `Schema.fieldId` override (e.g., `Schema[User].fieldId(_.id)(1)`) is wire-functional: encode writes the pinned number on the wire, decode matches it, and `protoSchema`/`fieldNumberAudit` report it. Pinning is keyed by field NAME and is global: pinning `id` to 1 assigns field 1 to every field named `id` across all messages in that schema tree. Nested-path overrides (multi-segment, e.g., `_.inner.id`) are a consistent no-op across all five surfaces, deferred to getkyo/kyo#1719.
+
 ## Extension Recipes
 
 ### Add a Schema for a new primitive

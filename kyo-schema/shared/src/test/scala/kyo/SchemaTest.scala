@@ -2385,7 +2385,7 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
-    "unconfigured schema is byte-identical and missing collection is failure" in {
+    "unconfigured schema is byte-identical and self-describing codecs require missing collections" in {
         val schema  = Schema[Cart]
         val value   = Cart(Chunk("a", "b"), Maybe("hello"))
         val encoded = schema.encodeString[Json](value)
@@ -2394,12 +2394,11 @@ class SchemaTest extends kyo.test.Test[Any]:
         assert(schema.fieldDefaults.isEmpty)
         assert(schema.fieldTransforms.isEmpty)
 
-        val missingItems = """{"note":"hi"}"""
-        val decoded      = schema.decodeString[Json](missingItems)
-        val missingField = decoded match
-            case Result.Failure(_: MissingFieldException) => true
-            case _                                        => false
-        assert(missingField)
+        val missingItems = schema.decodeString[Json]("""{"note":"hi"}""")
+        assert(missingItems.failure.exists(_.isInstanceOf[MissingFieldException]), s"expected missing items failure, got: $missingItems")
+
+        val missingTags = Schema[CartWithMap].decodeString[Json]("""{"name":"cart"}""")
+        assert(missingTags.failure.exists(_.isInstanceOf[MissingFieldException]), s"expected missing tags failure, got: $missingTags")
     }
 
     "omit policy survives a subsequent copyWith-routed builder" in {
@@ -2902,7 +2901,7 @@ object SfA:
 object SfB:
     case class Dup(y: Int) derives CanEqual, Schema
 
-case class Cart(items: Chunk[String], note: Maybe[String]) derives Schema
+case class Cart(items: Chunk[String], note: Maybe[String]) derives Schema, CanEqual
 
 case class StrictPerson(id: Int, name: String) derives CanEqual, Schema
 case class StrictRename(firstName: String, lastName: String) derives CanEqual, Schema

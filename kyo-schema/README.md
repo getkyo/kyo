@@ -649,6 +649,18 @@ val schema =
 
 `Protobuf.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
 
+Maps encode as a standard proto3 `map<K, V>`: each entry is a `MapEntry` message (key at field 1, value at field 2) repeated under the map field. A key type proto3 admits as a map key (an integral, `Boolean`, or `String` scalar, or an opaque type / value class whose `Schema` reduces to one) yields an interoperable `map<K, V>`. Any other key type (a message, `Float`, or `Double` key) cannot form a proto3-native `map<K, V>`. Under the default `Conformance.Strict` mode, encoding such a map raises `SchemaNotSerializableException` with a message prefixed `"non-canonical proto3 map key: "`. Under `Conformance.Permissive`, the map uses an entry-message encoding that round-trips through this codec but is not standard proto3 externally, and `protoSchema` describes the field as `repeated <Name>Entry` rather than the invalid `map<...>` syntax.
+
+Repeated and map fields follow proto3 emptiness: an empty `List`/`Seq`/`Map`/... emits no bytes, and an absent repeated or map field decodes to the empty collection rather than failing, so collection fields are not required on the wire.
+
+Repeated scalar fields (`List[Int]`, `Vector[Double]`, `Set[Boolean]`, and so on) are packed into a single length-delimited record, matching proto3's canonical form. The reader accepts both packed and unpacked forms. Self-consistent round-trips (kyo encode then decode) always work; an externally-produced zero-length packed scalar record is byte-identical to an empty string element on the same field number, so that specific external wire form is not distinguished.
+
+The proto3 conformance mode is `Conformance.Strict` by default: the zero-argument `given Protobuf` rejects any shape that cannot be encoded in canonical proto3. To allow the non-canonical extensions that still round-trip through this codec, supply an explicit instance:
+
+```scala
+given Protobuf = Protobuf(Protobuf.Config(conformance = Protobuf.Conformance.Permissive))
+```
+
 `Protobuf.protoSchema[A]` generates a `.proto` definition as a string:
 
 ```scala
@@ -656,20 +668,35 @@ val proto = Protobuf.protoSchema[User]
 // syntax = "proto3";
 //
 // message Address {
-//   string city = 1;
-//   string zip = 2;
+//   string city = 1842612;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string zip = 739203;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 //
 // message User {
-//   sint32 id = 1;
-//   string name = 2;
-//   string email = 3;
-//   string password = 4;
-//   Address address = 5;
+//   sint32 id = 1243642;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string name = 1790876;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string email = 1459300;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string password = 508918;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   Address address = 1702831;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 ```
 
-The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
+The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is the MurmurHash3-derived value for that field name, the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1842612, 739203, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
+
+`Protobuf.fieldNumberAudit[A]` returns one `FieldNumberInfo` per message field, depth-first, reporting the wire field number, a `pinned` flag, and an `inReservedRange` flag without performing any encode or decode:
+
+```scala
+val audit = Protobuf.fieldNumberAudit[User]
+// Chunk.Indexed(
+//   FieldNumberInfo(id,id,1243642,false,false),       // numbers are hash-derived for these field names
+//   FieldNumberInfo(name,name,1790876,false,false),
+//   FieldNumberInfo(email,email,1459300,false,false),
+//   FieldNumberInfo(password,password,508918,false,false),
+//   FieldNumberInfo(address,address,1702831,false,false),
+//   FieldNumberInfo(address.city,city,1842612,false,false),
+//   FieldNumberInfo(address.zip,zip,739203,false,false)
+// )
+```
 
 A few shapes that proto3 cannot express raise `IllegalArgumentException` at encode or `protoSchema` time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
 
