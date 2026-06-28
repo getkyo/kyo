@@ -57,7 +57,7 @@ object CompatPlugin extends AutoPlugin {
         val ZioLib: CompatBackendAxis =
             _root_.io.getkyo.compat.CompatBackendAxis("zio", "Zio", "-zio", Set("jvm", "js", "native"))
         val CeLib: CompatBackendAxis =
-            _root_.io.getkyo.compat.CompatBackendAxis("ce", "Ce", "-ce", Set("jvm", "js"))
+            _root_.io.getkyo.compat.CompatBackendAxis("ce", "Ce", "-ce", Set("jvm", "js", "native"))
         val OxLib: CompatBackendAxis =
             _root_.io.getkyo.compat.CompatBackendAxis("ox", "Ox", "-ox", Set("jvm"))
         val TwitterFutureLib: CompatBackendAxis =
