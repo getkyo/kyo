@@ -240,9 +240,9 @@ class TopicTest extends kyo.test.Test[Any]:
                 }
             }
 
-            "maintains message order for large batches (pendingUntilFixed)".pendingUntilFixed(
-                "large-batch publish currently panics; message ordering is not yet verifiable"
-            ) in {
+            "maintains message order for large batches" in {
+                // A 200-message batch serializes past one aeron frame, so it exercises the offer +
+                // fragment-reassembly path; every message must arrive once and in publish order.
                 val count    = 200
                 val messages = Seq.tabulate(count)(Message(_))
                 Topic.run {
@@ -250,11 +250,9 @@ class TopicTest extends kyo.test.Test[Any]:
                         started <- Latch.init(1)
                         fiber   <- Fiber.initUnscoped(started.release.andThen(Topic.stream[Message](uri).take(count).run))
                         _       <- started.await
-                        result  <- Abort.run(Topic.publish[Message](uri)(Stream.init(messages)))
-                    yield
-                        // pendingUntilFixed: today the publish panics, so this assert fails -> the leaf reports Pending;
-                        // once the panic is fixed the assert passes -> Failed, the tripwire to remove the marker.
-                        assert(!result.isPanic, "large-batch publish should not panic once ordering is fixed")
+                        _       <- Fiber.initUnscoped(Topic.publish[Message](uri)(Stream.init(messages)))
+                        results <- fiber.get
+                    yield assert(results == messages)
                 }
             }
 

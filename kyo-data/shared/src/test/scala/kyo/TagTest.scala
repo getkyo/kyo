@@ -1180,6 +1180,34 @@ class TagTest extends kyo.test.Test[Any]:
         }
     }
 
+    "hash content-stability" - {
+
+        "intersection order is canonical (the hash is content-derived, not identity)" in {
+            trait HA
+            trait HB
+            assert(Tag[HA & HB].hash == Tag[HB & HA].hash)
+        }
+
+        "repeated calls produce the same hash" in {
+            trait HC
+            assert((1 to 10).map(_ => Tag[HC].hash).distinct.size == 1)
+        }
+
+        "distinct types have distinct hashes" in {
+            assert(Tag[Int].hash != Tag[String].hash)
+            assert(Tag[List[Int]].hash != Tag[List[String]].hash)
+        }
+
+        // kyo-aeron derives aeron stream ids from `Tag.hash`, so a publish and a subscribe of the same
+        // type in separate JVM processes must hash identically. Pinning to constants is the in-JVM proxy:
+        // the hash is the content-stable String hashCode of the encoded tag, so it reproduces these
+        // values on any JVM. An identity-derived hash would vary across processes and break that.
+        "is pinned to its content-derived constant (process-independent determinism)" in {
+            assert(Tag[Int].hash == 618500523, s"Tag[Int].hash = ${Tag[Int].hash}")
+            assert(Tag[String].hash == 1473269625, s"Tag[String].hash = ${Tag[String].hash}")
+        }
+    }
+
     // TODO: fix this to use `pendingUntilFixed` instead of `ignore`
     given RegisterFunction = (name, test, pending) =>
         if pending then name.ignore in test

@@ -274,6 +274,7 @@ lazy val kyoJVM: Project = project
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
+        `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
@@ -1187,6 +1188,27 @@ lazy val `kyo-aeron` =
                 "io.aeron"     % "aeron-driver" % "1.51.0",
                 "io.aeron"     % "aeron-client" % "1.51.0",
                 "com.lihaoyi" %% "upickle"      % "4.4.3"
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+
+lazy val `kyo-compiler` =
+    crossProject(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compiler"))
+        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            fork := true,
+            javaOptions ++= Seq(
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+            ),
+            libraryDependencies ++= Seq(
+                "org.scala-lang" %% "scala3-presentation-compiler" % scalaVersion.value
             )
         )
         .jvmSettings(mimaCheck(false))

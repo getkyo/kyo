@@ -124,13 +124,21 @@ object Tag:
           */
         def erased: Tag[Any] = self.asInstanceOf[Tag[Any]]
 
-        /** Computes a hash code for this Tag based on its type structure. This hash is used in the caching system for subtype checking.
+        /** A content-stable hash of this Tag's type, stable across JVM processes.
+          *
+          * Taken from the tag's own `hashCode`: the encoded `String` form for a static tag (a JVM-spec
+          * deterministic `String.hashCode`) or the structural `Dynamic` hash for a runtime tag (a
+          * `MurmurHash3.caseClassHash` over its encoded string and sub-tag hashes). It is deliberately
+          * NOT the decoded `Type`'s `hashCode`, which is identity-influenced by the `Array`-backed
+          * `Span` fields and so is stable only within a single JVM. Cross-JVM stability is required
+          * because kyo-aeron derives aeron stream ids from this hash, so a publish and a subscribe of
+          * the same type in separate JVMs must hash identically.
           *
           * @return
-          *   A hash code for this Tag
+          *   A content-stable hash code for this Tag's type
           */
         def hash: Int =
-            self.tpe.hashCode()
+            self.hashCode
 
         /** Retrieves the decoded Type representation of this Tag. If the Tag is already a Type, it is returned directly. If it's an encoded
           * string, it is decoded (with caching) and then returned.

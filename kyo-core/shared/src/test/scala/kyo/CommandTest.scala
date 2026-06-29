@@ -271,6 +271,15 @@ class CommandTest extends kyo.test.Test[Any]:
         }
     }
 
+    "spawnUnscoped returns a live process the caller owns and must close" in {
+        for
+            proc <- trueCmd.spawnUnscoped
+            code <- proc.waitFor
+            _    <- proc.destroyForcibly
+        yield assert(code == ExitCode.Success)
+        end for
+    }
+
     // ---------------------------------------------------------------------------
     // Command.Unsafe
     // ---------------------------------------------------------------------------
