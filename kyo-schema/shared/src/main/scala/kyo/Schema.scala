@@ -86,6 +86,8 @@ abstract class Schema[A] @publicInBinary private[kyo] (
 
     @publicInBinary private[kyo] def flattenedReadFields: Chunk[(String, String)] = Chunk.empty
 
+    @publicInBinary private[kyo] def absentDefaultValue: Maybe[A] = Maybe.empty
+
     // --- Abstract codec and focus methods. Each concrete Schema[A] overrides
     // these via `Schema.init` / `Schema.initFocused`, which inline the caller's
     // lambda expression directly into the method body: no Function closure is
@@ -992,10 +994,24 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     def fieldIds: Dict[String, Int] =
         Dict.from(sourceFields.map(f => f.name -> fieldId(f.name)).toMap)
 
+    /** Leaf-name field-id overrides (single-segment focus paths) projected to a name-keyed map for
+      * the Protobuf wire resolver. Multi-segment (nested-path) overrides are not projected: the
+      * derived write path uses one stable hash id per leaf name, so only leaf-name pins are
+      * wire-functional.
+      */
+    private[kyo] def fieldIdNameOverrides: Map[String, Int] =
+        fieldIdOverrides.collect { case (Seq(name), id) => name -> id }
+
     /** Sets a custom field ID for a field identified by a Focus lambda.
       *
       * Use this when you need a specific field ID for interoperability with existing binary schemas (e.g., matching an existing `.proto`
-      * definition). This is for documentation/introspection purposes - the actual codec uses hash-based IDs computed at compile time.
+      * definition). A single-segment (top-level field) override is wire-functional for the Protobuf codec: encode emits it, decode
+      * matches it, and protoSchema / fieldNumberAudit report it. A nested-path override is a consistent no-op
+      * across encode, decode, protoSchema, and fieldNumberAudit, deferred to getkyo/kyo#1719.
+      *
+      * Pinning is keyed by field NAME and is therefore GLOBAL: pinning `id` sets the field number for
+      * EVERY field named `id` across all messages. This is consistent with the default scheme, where the
+      * field number is already `MurmurHash3(name)`, so all same-named fields already share a number.
       *
       * {{{
       * Schema[User].fieldId(_.age)(42)  // Sets field ID 42 for the 'age' field
@@ -1460,12 +1476,14 @@ object Schema:
         denyUnknownFieldsEnabled: Boolean = false,
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
+        absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
         // Container givens pass `inner.structure` as the structure argument; lazy evaluation
         // prevents initialization cycles for recursive structure type graphs.
-        lazy val _structure = structure
+        lazy val _structure          = structure
+        lazy val _absentDefaultValue = absentDefaultValue
         new Schema[A](
             segments,
             examples,
@@ -1503,6 +1521,7 @@ object Schema:
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
+            @publicInBinary override private[kyo] def absentDefaultValue: Maybe[A]         = _absentDefaultValue
             override def structure: Structure.Type                                         = _structure
         end new
     end init
@@ -1605,6 +1624,7 @@ object Schema:
         denyUnknownFieldsEnabled: Boolean = false,
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
+        absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
@@ -1640,6 +1660,7 @@ object Schema:
             denyUnknownFieldsEnabled = denyUnknownFieldsEnabled,
             fieldDefaults = fieldDefaults,
             fieldTransforms = fieldTransforms,
+            absentDefaultValue = absentDefaultValue,
             structure = structure
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
@@ -2173,6 +2194,7 @@ object Schema:
         Schema.init[Span[Byte]](
             writeFn = (v, w) => w.bytes(v),
             readFn = _.bytes(),
+            absentDefaultValue = Maybe(Span.empty[Byte]),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
         )
 
@@ -2282,6 +2304,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(List.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "List",
@@ -2313,6 +2336,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Vector.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Vector",
@@ -2344,6 +2368,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Set.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Set",
@@ -2375,6 +2400,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Chunk.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Chunk",
@@ -2406,6 +2432,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Seq.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Seq",
@@ -2437,6 +2464,7 @@ object Schema:
                 reader.arrayEnd()
                 Span.from(builder.result())
             ,
+            absentDefaultValue = Maybe(Span.empty[A]),
             structure = Structure.Type.Collection(
                 "Span",
                 Tag[Span[A]].asInstanceOf[Tag[Any]],
@@ -2519,6 +2547,7 @@ object Schema:
                 reader.mapEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Map.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Map",
@@ -2528,6 +2557,64 @@ object Schema:
             )
         )
     end stringMapSchema
+
+    /** Schema for Map[K, V] with non-String keys.
+      *
+      * `stringMapSchema` is the more specific given for `Map[String, V]` (object encoding); this
+      * general given covers every other key type so `Map[Int, V]` and friends derive and round-trip
+      * on all codecs. Each entry is written as a two-field record (`key`, `value`): the Protobuf
+      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
+      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      */
+    given mapSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Map[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        Schema.init[Map[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { (k, v) =>
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
+                    kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
+                    vSchema.serializeWrite(v, writer)
+                    writer.objectEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Map.newBuilder[K, V]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "key"
+                        val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "value"
+                        val v = vSchema.serializeRead(reader)
+                        reader.objectEnd()
+                        builder += (k -> v)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+            ,
+            absentDefaultValue = Maybe(Map.empty[K, V]),
+            // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                kSchema.structure,
+                vSchema.structure
+            )
+        )
+    end mapSchema
 
     // --- Tuple Schemas ---
 
@@ -2920,9 +3007,11 @@ object Schema:
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
         flattenedReadFields0: Chunk[(String, String)] = Chunk.empty,
+        absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
-        lazy val _structure = structure
+        lazy val _structure          = structure
+        lazy val _absentDefaultValue = absentDefaultValue
         new Schema[A](
             segments,
             examples,
@@ -2962,6 +3051,7 @@ object Schema:
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
+            @publicInBinary override private[kyo] def absentDefaultValue: Maybe[A]         = _absentDefaultValue
             override def structure: Structure.Type                                         = _structure
         end new
     end createWithFocused
@@ -3000,6 +3090,7 @@ object Schema:
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = self.fieldTransforms,
         fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = self.fieldMaterializedDefaults,
         flattenedReadFields: Chunk[(String, String)] = self.flattenedReadFields,
+        absentDefaultValue: => Maybe[A] = self.absentDefaultValue,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
         createWithFocused[A, self.Focused](
@@ -3033,6 +3124,7 @@ object Schema:
             fieldTransforms = fieldTransforms,
             fieldMaterializedDefaults = fieldMaterializedDefaults,
             flattenedReadFields0 = flattenedReadFields,
+            absentDefaultValue = absentDefaultValue,
             structure = structure
         )
 

@@ -1136,8 +1136,10 @@ class StructureTest extends kyo.test.Test[Any]:
         }
 
         "protobuf mapStart/mapEnd" in {
-            // At the top level, mapStart/mapEnd are equivalent to objectStart/objectEnd
+            // A map is a repeated MapEntry message under its field number (proto3 map<K, V>), so the
+            // map must sit under a field. Each entry holds the key at field 1 and the value at field 2.
             val w = new ProtobufWriter
+            w.field("m", 5)
             w.mapStart(2)
             w.field("key1", 0)
             w.string("value1")
@@ -1146,14 +1148,15 @@ class StructureTest extends kyo.test.Test[Any]:
             w.mapEnd()
             val bytes = w.resultBytes
             assert(bytes.nonEmpty)
-            // Verify we can read it back
+            // Read it back: the enclosing field() consumes the first entry's tag, then the map drives entries.
             val r = new ProtobufReader(bytes)
+            val _ = r.field()
             val _ = r.mapStart()
             assert(r.hasNextEntry())
-            val _ = r.field()
+            assert(r.field() == "key1")
             assert(r.string() == "value1")
             assert(r.hasNextEntry())
-            val _ = r.field()
+            assert(r.field() == "key2")
             assert(r.int() == 42)
             assert(!r.hasNextEntry())
             r.mapEnd()
