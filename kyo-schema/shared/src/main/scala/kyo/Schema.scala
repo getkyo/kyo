@@ -998,16 +998,52 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * the Protobuf wire resolver. Multi-segment (nested-path) overrides are not projected: the
       * derived write path uses one stable hash id per leaf name, so only leaf-name pins are
       * wire-functional.
+      *
+      * A renamed field is resolved to a single number: its explicit leaf-name pin when one is set,
+      * otherwise the rename-invariant hash of its effective wire name. That number is registered
+      * under BOTH names the codec presents for the field, because the two sides key the lookup
+      * differently: the encode side presents the effective wire name to the writer, while the decode
+      * side and `Protobuf.fieldNumberAudit` resolve the field by its source name. Registering both
+      * keys lets a pin override the rename hash on every surface; an unpinned, non-renamed field gets
+      * no entry, so its `fieldNumberAudit` row stays `pinned == false`.
       */
     private[kyo] def fieldIdNameOverrides: Map[String, Int] =
-        fieldIdOverrides.collect { case (Seq(name), id) => name -> id }
+        val baseOverrides = fieldIdOverrides.collect { case (Seq(name), id) => name -> id }
+        if renamedFields.isEmpty then baseOverrides
+        else
+            val forwardMap = renamedFields.toMap
+            @scala.annotation.tailrec
+            def resolveTarget(name: String): String =
+                forwardMap.get(name) match
+                    case Some(next) => resolveTarget(next)
+                    case None       => name
+            val renamedEntries: Map[String, Int] =
+                sourceFields.flatMap { sf =>
+                    if forwardMap.contains(sf.name) then
+                        val wireName = resolveTarget(sf.name)
+                        val number   = baseOverrides.getOrElse(sf.name, kyo.internal.CodecMacro.fieldId(wireName))
+                        Seq(sf.name -> number, wireName -> number)
+                    else Nil
+                }.toMap
+            baseOverrides ++ renamedEntries
+        end if
+    end fieldIdNameOverrides
+
+    /** The explicit single-segment field-id overrides, projected to a name set. These are the leaf
+      * field names carrying a real user pin, set programmatically via `Schema.fieldId` or
+      * declaratively via `@proto.fieldNumber(n)`. Rename-derived entries from `fieldIdNameOverrides`
+      * are excluded: a `@rename` is not a pin.
+      */
+    private[kyo] def pinnedFieldNames: Set[String] =
+        fieldIdOverrides.collect { case (Seq(name), _) => name }.toSet
 
     /** Sets a custom field ID for a field identified by a Focus lambda.
       *
       * Use this when you need a specific field ID for interoperability with existing binary schemas (e.g., matching an existing `.proto`
       * definition). A single-segment (top-level field) override is wire-functional for the Protobuf codec: encode emits it, decode
-      * matches it, and protoSchema / fieldNumberAudit report it. A nested-path override is a consistent no-op
-      * across encode, decode, protoSchema, and fieldNumberAudit, deferred to getkyo/kyo#1719.
+      * matches it, and protoSchema / fieldNumberAudit report it. The `@proto.fieldNumber(n)` annotation desugars onto the same
+      * single-segment override during derivation. A nested-path override is a consistent no-op across encode, decode, protoSchema,
+      * and fieldNumberAudit.
       *
       * Pinning is keyed by field NAME and is therefore GLOBAL: pinning `id` sets the field number for
       * EVERY field named `id` across all messages. This is consistent with the default scheme, where the
@@ -1477,6 +1513,8 @@ object Schema:
         fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
         fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
         absentDefaultValue: => Maybe[A] = Maybe.empty,
+        fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
+        variantEffectivePrimaries: Set[String] = Set.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
@@ -1484,6 +1522,21 @@ object Schema:
         // prevents initialization cycles for recursive structure type graphs.
         lazy val _structure          = structure
         lazy val _absentDefaultValue = absentDefaultValue
+        // Annotation-baked aliases arrive in variantNaming at Schema.init time (the macro
+        // sets them before the Schema object exists, unlike programmatic .alias() which
+        // calls checkFieldAliases at the builder invocation site). Run the same checks here
+        // so collisions raise immediately rather than silently passing through as a
+        // last-write-wins map and surfacing as MissingFieldException at decode time.
+        // Empty alias lists are no-ops; the lazy structure is never forced by these checks.
+        // variantEffectivePrimaries is the compile-time-baked set of effective variant wire
+        // names (accounting for @rename on each variant) passed by the macro; it matches the
+        // set that the programmatic .variantAlias builder computes via effectiveVariantWires,
+        // without forcing the lazy _structure and breaking recursive-schema init cycles.
+        if variantNaming.fieldAliases.nonEmpty then
+            val primaries = Schema.effectiveFieldWireNames(sourceFields, renamedFields, variantNaming)
+            Schema.checkFieldAliases(Chunk.empty, variantNaming.fieldAliases, primaries)(using Frame.internal)
+        if variantNaming.variantAliases.nonEmpty then
+            Schema.checkVariantAliases(variantEffectivePrimaries, variantNaming.variantAliases)(using Frame.internal)
         new Schema[A](
             segments,
             examples,
@@ -1509,7 +1562,7 @@ object Schema:
             denyUnknownFieldsEnabled,
             fieldDefaults,
             fieldTransforms,
-            Chunk.empty
+            fieldMaterializedDefaults
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
@@ -2005,8 +2058,8 @@ object Schema:
       */
     private[kyo] def variantScalaNames(structure: Structure.Type): Chunk[String] =
         structure match
-            case Structure.Type.Sum(_, _, _, variants, _) => variants.map(_.name)
-            case _                                        => Chunk.empty
+            case Structure.Type.Sum(_, _, _, variants, _, _) => variants.map(_.name)
+            case _                                           => Chunk.empty
 
     /** The effective wire name of each variant: the explicit pair if present, else the
       * convention-derived name if a case is set, else the raw Scala name. Mirrors the

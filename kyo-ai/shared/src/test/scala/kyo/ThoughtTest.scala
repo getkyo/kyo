@@ -3,6 +3,7 @@ package kyo
 import kyo.Json.JsonSchema
 import kyo.Thought.Position
 import kyo.Thought.internal.Info
+import kyo.schema.doc
 
 class ThoughtTest extends kyo.test.Test[Any]:
 

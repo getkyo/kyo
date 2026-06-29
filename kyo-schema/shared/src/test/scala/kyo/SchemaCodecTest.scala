@@ -2029,7 +2029,7 @@ class SchemaCodecTest extends kyo.test.Test[Any]:
                 val decoded = roundTrip(v)(using summon[Schema[Structure.Type]])
                 assert(decoded.name == v.name)
                 decoded match
-                    case Structure.Type.Product(_, _, _, fields) =>
+                    case Structure.Type.Product(_, _, _, fields, _) =>
                         assert(fields.size == 2)
                         assert(fields(0).name == "name")
                         assert(fields(1).name == "age")

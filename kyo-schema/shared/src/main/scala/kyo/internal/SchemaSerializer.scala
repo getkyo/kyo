@@ -876,7 +876,7 @@ private[kyo] object SchemaSerializer:
         // The discriminant is the Structure.Type.Sum name: union derivation always
         // produces "Union", while nominal sums always use the sealed type's own name.
         schema.structure match
-            case Structure.Type.Sum(name, _, _, _, _) if name == "Union" =>
+            case Structure.Type.Sum(name, _, _, _, _, _) if name == "Union" =>
                 readUnionMultiProbe(schema, reader)
             case _ =>
                 given Frame = reader.frame
@@ -972,11 +972,11 @@ private[kyo] object SchemaSerializer:
       */
     private def tupleFlatFieldNames(structure: Structure.Type): Map[String, Chunk[String]] =
         structure match
-            case Structure.Type.Sum(_, _, _, variants, _) =>
+            case Structure.Type.Sum(_, _, _, variants, _, _) =>
                 variants.map { variant =>
                     val fieldNames = variant.variantType match
-                        case Structure.Type.Product(_, _, _, fields) => fields.map(_.name)
-                        case _                                       => Chunk.empty[String]
+                        case Structure.Type.Product(_, _, _, fields, _) => fields.map(_.name)
+                        case _                                          => Chunk.empty[String]
                     variant.name -> fieldNames
                 }.toMap
             case _ => Map.empty

@@ -155,7 +155,7 @@ class NestedTransformTest extends kyo.test.Test[Any]:
             val wrapperStructure = summon[Schema[NTWrapper]].structure
             val sealedTStructure = summon[Schema[NTSealedT]].structure
             wrapperStructure match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(
                         Structure.Type.compatible(fields(0).fieldType, sealedTStructure),
                         s"expected fields(0).fieldType compatible with sealedTStructure but fieldType=${fields(0).fieldType}"

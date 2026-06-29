@@ -5,6 +5,7 @@
 <!-- doctest:setup
 ```scala
 import kyo.*
+import kyo.schema.doc
 ```
 -->
 
