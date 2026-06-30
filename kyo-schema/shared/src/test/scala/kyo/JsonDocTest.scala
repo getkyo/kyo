@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Json.JsonSchema
+import kyo.schema.doc
 
 class JsonDocTest extends kyo.test.Test[Any]:
 

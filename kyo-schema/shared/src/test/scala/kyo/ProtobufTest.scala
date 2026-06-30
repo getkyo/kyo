@@ -5,6 +5,7 @@ import kyo.Schema.*
 import kyo.internal.CodecMacro
 import kyo.internal.ProtobufReader
 import kyo.internal.ProtobufWriter
+import kyo.schema.*
 import scala.annotation.tailrec
 
 class ProtobufTest extends kyo.test.Test[Any]:
@@ -1563,6 +1564,36 @@ class ProtobufTest extends kyo.test.Test[Any]:
 
     }
 
+    "rename round-trip" - {
+
+        "programmatic rename field encodes and decodes via Protobuf" in {
+            given Schema[PBRenameSimple] =
+                Schema[PBRenameSimple].rename("id", "wire_id").asInstanceOf[Schema[PBRenameSimple]]
+            val value  = PBRenameSimple(42, "hello")
+            val bytes  = Protobuf.encode(value)
+            val result = Protobuf.decode[PBRenameSimple](bytes)
+            assert(result == Result.Success(value), s"programmatic rename round-trip failed: $result")
+        }
+
+        "@rename annotation field encodes and decodes via Protobuf" in {
+            val value  = PBRenameAnnotated(42, "hello")
+            val bytes  = Protobuf.encode(value)
+            val result = Protobuf.decode[PBRenameAnnotated](bytes)
+            assert(result == Result.Success(value), s"@rename annotation round-trip failed: $result")
+        }
+
+        "programmatic rename composes with explicit fieldId pin" in {
+            val pinnedThenRenamed: Schema[PBRenameSimple] =
+                Schema[PBRenameSimple].fieldId(_.id)(7).rename("id", "wire_id").asInstanceOf[Schema[PBRenameSimple]]
+            given Schema[PBRenameSimple] = pinnedThenRenamed
+            val value                    = PBRenameSimple(99, "compose")
+            val bytes                    = Protobuf.encode(value)
+            val result                   = Protobuf.decode[PBRenameSimple](bytes)
+            assert(result == Result.Success(value), s"rename+fieldId compose round-trip failed: $result")
+        }
+
+    }
+
 end ProtobufTest
 
 // Top-level to avoid issues with derives Schema inside nested definitions
@@ -1691,3 +1722,7 @@ case class PBReservedPinnedHolder(x: Int) derives Schema, CanEqual
 
 // Fixture for empty-string element regression tests.
 case class PB1716SeqStr(items: Seq[String]) derives Schema, CanEqual
+
+// Fixtures for rename Protobuf round-trip regression tests.
+case class PBRenameSimple(id: Int, label: String) derives Schema, CanEqual
+case class PBRenameAnnotated(@rename("wire_id") id: Int, @rename("wire_label") label: String) derives Schema, CanEqual

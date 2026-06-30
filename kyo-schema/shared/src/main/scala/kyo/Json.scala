@@ -640,7 +640,7 @@ object Json:
                 case Structure.Type.Collection(_, _, elem) =>
                     Arr(fromStructure(elem, seen))
 
-                case Structure.Type.Product(name, _, _, fields) =>
+                case Structure.Type.Product(name, _, _, fields, _) =>
                     if seen.contains(name) then Obj(List.empty, List.empty)
                     else
                         val newSeen = seen + name
@@ -652,7 +652,7 @@ object Json:
                         }
                         Obj(properties, required)
 
-                case Structure.Type.Sum(name, _, _, variants, _) =>
+                case Structure.Type.Sum(name, _, _, variants, _, _) =>
                     if seen.contains(name) then Obj(List.empty, List.empty)
                     else
                         val newSeen = seen + name

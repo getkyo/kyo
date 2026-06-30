@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.schema.doc
+
 class FocusMacroDocTest extends kyo.test.Test[Any]:
 
     given CanEqual[Any, Any] = CanEqual.derived
@@ -9,7 +11,7 @@ class FocusMacroDocTest extends kyo.test.Test[Any]:
     "a @doc field's Structure.Field.doc is Present" in {
         val schema = Schema[City]
         schema.structure match
-            case Structure.Type.Product(_, _, _, fields) =>
+            case Structure.Type.Product(_, _, _, fields, _) =>
                 val countryField = fields.toList.find(_.name == "country").get
                 assert(countryField.doc == Maybe.Present("ISO country code"))
             case other =>
@@ -20,7 +22,7 @@ class FocusMacroDocTest extends kyo.test.Test[Any]:
     "a field with no @doc has doc == Maybe.empty" in {
         val schema = Schema[City]
         schema.structure match
-            case Structure.Type.Product(_, _, _, fields) =>
+            case Structure.Type.Product(_, _, _, fields, _) =>
                 val nameField = fields.toList.find(_.name == "name").get
                 assert(nameField.doc == Maybe.empty)
             case other =>
@@ -43,7 +45,7 @@ class FocusMacroDocTest extends kyo.test.Test[Any]:
         assert(decoded == original)
         val schema = Schema[MultiDoc]
         schema.structure match
-            case Structure.Type.Product(_, _, _, fields) =>
+            case Structure.Type.Product(_, _, _, fields, _) =>
                 assert(fields.toList.find(_.name == "a").get.doc == Maybe.Present("first"))
                 assert(fields.toList.find(_.name == "b").get.doc == Maybe.Present("second"))
                 assert(fields.toList.find(_.name == "c").get.doc == Maybe.Present("third"))
@@ -62,7 +64,7 @@ class FocusMacroDocTest extends kyo.test.Test[Any]:
         val decoded = Json.decode[Node](encoded).getOrThrow
         assert(decoded == tree)
         Schema[Node].structure match
-            case Structure.Type.Product(_, _, _, fields) =>
+            case Structure.Type.Product(_, _, _, fields, _) =>
                 val valueField = fields.toList.find(_.name == "value").get
                 assert(valueField.doc == Maybe.Present("payload"))
             case other =>

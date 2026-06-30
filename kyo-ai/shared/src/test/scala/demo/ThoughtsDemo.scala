@@ -1,6 +1,7 @@
 package demo
 
 import kyo.*
+import kyo.schema.doc
 
 /** Structured reasoning: the model must produce a typed reasoning field before its answer.
   *

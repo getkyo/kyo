@@ -3,6 +3,7 @@ package kyo
 import kyo.Json
 import kyo.Json.JsonSchema
 import kyo.Schema
+import kyo.schema.doc
 import scala.reflect.ClassTag
 
 /** Structured self-prompting woven into the model's required output schema.

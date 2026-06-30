@@ -204,7 +204,7 @@ object Protobuf:
       * @see [[FieldNumberInfo]]
       */
     inline def fieldNumberAudit[A](using schema: Schema[A], frame: Frame): Chunk[FieldNumberInfo] =
-        auditStructure(schema.structure, schema.fieldIdNameOverrides)
+        auditStructure(schema.structure, schema.fieldIdNameOverrides, schema.pinnedFieldNames)
 
     /** Field-number provenance for one field of a message tree.
       *
@@ -214,8 +214,9 @@ object Protobuf:
       * @param name     the leaf field name
       * @param number   the wire field number this codec uses
       * @param pinned   true when a single-segment (leaf field-name) `Schema` field-id override is
-      *   set and is wire-functional; a nested-path (multi-segment) override is a consistent no-op
-      *   (`pinned` stays false), deferred to getkyo/kyo#1719
+      *   set and is wire-functional, whether pinned programmatically via `Schema.fieldId` or
+      *   declaratively via `@proto.fieldNumber(n)`; a nested-path (multi-segment) override is a
+      *   consistent no-op (`pinned` stays false)
       * @param inReservedRange true if `number` is in proto3's reserved field-number band
       *   19000-19999, which external tooling rejects; pin a stable number to avoid it
       * @see [[Protobuf.fieldNumberAudit]]
@@ -228,7 +229,7 @@ object Protobuf:
         inReservedRange: Boolean
     ) derives CanEqual
 
-    private[kyo] def auditStructure(rt: Structure.Type, overrides: Map[String, Int]): Chunk[FieldNumberInfo] =
+    private[kyo] def auditStructure(rt: Structure.Type, overrides: Map[String, Int], pinnedNames: Set[String]): Chunk[FieldNumberInfo] =
         val buf                              = scala.collection.mutable.ArrayBuffer.empty[FieldNumberInfo]
         def resolve(name: String): Int       = overrides.getOrElse(name, kyo.internal.CodecMacro.fieldId(name))
         def isReservedRange(n: Int): Boolean = n >= 19000 && n <= 19999
@@ -255,7 +256,7 @@ object Protobuf:
                                 val name   = field.name
                                 val path   = if prefix.isEmpty then name else s"$prefix.$name"
                                 val number = resolve(name)
-                                buf += FieldNumberInfo(path, name, number, overrides.contains(name), isReservedRange(number))
+                                buf += FieldNumberInfo(path, name, number, pinnedNames.contains(name), isReservedRange(number))
                                 field.fieldType match
                                     case np: Structure.Type.Product             => children += Frame(path, np, nextAncestry)
                                     case ns: Structure.Type.Sum                 => children += Frame(path, ns, nextAncestry)
@@ -333,7 +334,7 @@ object Protobuf:
                 else
                     val visited = state.copy(seen = state.seen + name)
                     tpe match
-                        case Structure.Type.Sum(name, _, _, variants, _) =>
+                        case Structure.Type.Sum(name, _, _, variants, _, _) =>
                             val sb = new StringBuilder
                             sb.append(s"message $name {\n")
                             sb.append("  oneof value {\n")
@@ -350,7 +351,7 @@ object Protobuf:
                             sb.append("}\n")
                             afterVariants.copy(messages = sb.toString :: afterVariants.messages)
 
-                        case Structure.Type.Product(name, _, _, fields) =>
+                        case Structure.Type.Product(name, _, _, fields, _) =>
                             val sb = new StringBuilder
                             sb.append(s"message $name {\n")
                             val afterFields = fields.toList.foldLeft(visited) { case (acc, field) =>
