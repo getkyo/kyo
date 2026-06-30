@@ -96,13 +96,30 @@ private[net] object KqueuePollerBackend extends PollerBackend:
     end registerWake
 
     def wake(pollerFd: Int, scratch: PollScratch)(using AllowUnsafe, Frame): Unit =
-        // Fire the EVFILT_USER filter with NOTE_TRIGGER so a parked kevent returns. The caller serializes access to wakeArmBuf via the driver's
-        // wakePending CAS (at most one trigger in flight), so re-encoding it here is race-free. keventNow is the non-blocking register-only syscall.
+        // Fire the EVFILT_USER filter with NOTE_TRIGGER so a parked kevent returns. keventNow is the non-blocking register-only syscall.
+        //
+        // submitChange's wake is CAS-coalesced (PollerIoDriver.wakePending guarantees at most one in-flight trigger), but submitEngineOp's
+        // wake is UNCONDITIONAL (the B' write-stall fix: a coalesced wake can be skipped against a stale wakePending, permanently stranding
+        // a TLS write's only delivery attempt), so a submitChange wake and a submitEngineOp wake from two different connections' carrier
+        // threads can now reach this method at the same time. The reused `scratch.wakeArmBuf` is single-writer (the arm path registers it
+        // once at driver start), so it must not be the encode target of two concurrent wakes. Rather than lock it (kyo-net is uniformly
+        // lock-free; no `synchronized` anywhere else in this module), each call encodes into a FRESH buffer, mirroring the existing
+        // fresh-per-call pattern in `change`/`changeNow` above: two concurrent wakes never touch the same memory, so there is nothing to
+        // race. Wakes are rare relative to the data-plane read/write syscalls this driver issues, so the per-wake allocation is negligible.
+        //
+        // wakeArmBuf's nullness (set by registerWake, never cleared) is still the "is the wake mechanism armed" guard, exactly as before:
+        // a driver whose poll loop never started (registerWake never ran, e.g. PollerFifoBackstopRecoveryTest's direct-submit tests) must
+        // not attempt a keventNow on an unregistered EVFILT_USER identifier. The buffer ITSELF is no longer the encode target.
         if scratch.wakeArmBuf != null then
+            val armBuf      = Buffer.alloc[Byte](KEvent.size)
             val emptyEvents = Buffer.alloc[Byte](0)
-            KEvent.encodeUser(scratch.wakeArmBuf, scratch.wakeUserIdent, 0, PosixConstants.NOTE_TRIGGER)
-            discard(kq.keventNow(pollerFd, scratch.wakeArmBuf, 1, emptyEvents, 0, ZeroTimeout))
-            emptyEvents.close()
+            try
+                KEvent.encodeUser(armBuf, scratch.wakeUserIdent, 0, PosixConstants.NOTE_TRIGGER)
+                discard(kq.keventNow(pollerFd, armBuf, 1, emptyEvents, 0, ZeroTimeout))
+            finally
+                armBuf.close()
+                emptyEvents.close()
+            end try
         end if
     end wake
 
