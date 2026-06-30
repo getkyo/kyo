@@ -22,21 +22,27 @@ class TransportStartTlsConcurrentTest extends Test:
     /** A server that, per accepted connection, waits for the 1-byte signal, replies ready, upgrades to TLS in `serverTls`, then echoes. */
     private def startTlsEchoServer(transport: Transport, serverTls: NetTlsConfig)(using Frame): Listener < (Async & Abort[Closed]) =
         transport.listen("127.0.0.1", 0, 256) { serverConn =>
+            val sid = serverConn.hashCode
+            java.lang.System.err.println(s"ZZTRACE SRV handler-entry sid=$sid")
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
                         serverConn.inbound.safe.take.flatMap { _ =>
+                            java.lang.System.err.println(s"ZZTRACE SRV signal-read sid=$sid")
                             serverConn.outbound.safe.put(upgradeReady).andThen {
+                                java.lang.System.err.println(s"ZZTRACE SRV ready-sent sid=$sid")
                                 transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
-                                    Loop.foreach {
-                                        tlsConn.inbound.safe.take.flatMap(data =>
-                                            tlsConn.outbound.safe.put(data).andThen(Loop.continue)
-                                        )
+                                    Sync.defer(java.lang.System.err.println(s"ZZTRACE SRV upgraded sid=$sid")).andThen {
+                                        Loop.foreach {
+                                            tlsConn.inbound.safe.take.flatMap(data =>
+                                                tlsConn.outbound.safe.put(data).andThen(Loop.continue)
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
-                    }.unit
+                    }.map(r => java.lang.System.err.println(s"ZZTRACE SRV fiber-end sid=$sid result=$r")).unit
                 }
             })
         }.safe.get
@@ -49,25 +55,27 @@ class TransportStartTlsConcurrentTest extends Test:
         }
 
     /** One client: connect plaintext, signal, await ready, upgrade to TLS, send `msg`, read the echo back, return whether it round-tripped. */
-    private def runClient(transport: Transport, port: Int, clientTls: NetTlsConfig, msg: Array[Byte])(using
+    private def runClient(transport: Transport, port: Int, clientTls: NetTlsConfig, msg: Array[Byte], idx: Int)(using
         Frame
     ): Boolean < (Async & Abort[Closed]) =
         for
             conn     <- transport.connect("127.0.0.1", port).safe.get
+            _        <- Sync.defer(java.lang.System.err.println(s"ZZTRACE CLI connected idx=$idx cid=${conn.hashCode}"))
             _        <- conn.outbound.safe.put(upgradeRequest)
+            _        <- Sync.defer(java.lang.System.err.println(s"ZZTRACE CLI signal-sent idx=$idx cid=${conn.hashCode}"))
             _        <- conn.inbound.safe.take
+            _        <- Sync.defer(java.lang.System.err.println(s"ZZTRACE CLI ready idx=$idx cid=${conn.hashCode}"))
             tlsConn  <- transport.upgradeToTls(conn, clientTls, 16).safe.get
+            _        <- Sync.defer(java.lang.System.err.println(s"ZZTRACE CLI upgraded idx=$idx"))
             _        <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg))
+            _        <- Sync.defer(java.lang.System.err.println(s"ZZTRACE CLI sent idx=$idx"))
             received <- collectToLen(tlsConn, msg.length)
         yield
             tlsConn.close()
+            java.lang.System.err.println(s"ZZTRACE CLI echoed idx=$idx")
             java.util.Arrays.equals(received.take(msg.length), msg)
 
-    // PENDING-P10 (nio/jdk cell ONLY, backend-targeted skip): concurrent STARTTLS upgrades race the pump on the shared handle; the nio/jdk cell
-    // times out (the documented NIO upgrade-handoff race, P8-CONC5NIO). The io_uring/epoll/kqueue cells PASS. Same family as
-    // StartTlsUpgradeCloseRaceTest; P10's poll/selector-carrier confinement of the upgrade read fixes it and un-pends this. The skipCell below
-    // cancels ONLY the (nio, jdk) cell, so every other (passing) cell keeps running. See control/p9-fix-log.md (the P9->P10 carry-forward entry).
-    "many concurrent STARTTLS upgrades on one transport all succeed and round-trip" - eachBackendTlsExcept {
+    "many concurrent STARTTLS upgrades on one transport all succeed and round-trip" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             val cli = clientTls.copy(sniHostname = Present("localhost"))
             startTlsEchoServer(transport, serverTls).map { listener =>
@@ -77,9 +85,24 @@ class TransportStartTlsConcurrentTest extends Test:
                     // bytes are distinct (header + index-derived fill) so the round-trip equality check confirms no cross-connection misrouting.
                     val header = s"starttls-concurrent-$i-".getBytes("UTF-8")
                     val msg    = header ++ Array.fill[Byte](24576)((i % 251 + 1).toByte)
-                    Abort.run[Closed](runClient(transport, listener.port, cli, msg)).map {
-                        case Result.Success(ok) => ok
-                        case _                  => false
+                    Abort.run[Closed](runClient(transport, listener.port, cli, msg, i)).map {
+                        case Result.Success(ok) =>
+                            if !ok then java.lang.System.err.println(s"ZZTRACE CLI mismatch idx=$i")
+                            ok
+                        case other =>
+                            val causes = other match
+                                case Result.Failure(t: Throwable) =>
+                                    var c: Throwable = t
+                                    val sb           = new StringBuilder
+                                    while c ne null do
+                                        val msg = Option(c.getMessage).getOrElse("").replace("\n", " | ")
+                                        sb.append(" <- ").append(c.getClass.getName).append(": ").append(msg)
+                                        c = c.getCause
+                                    end while
+                                    sb.toString
+                                case _ => other.toString.replace("\n", " | ")
+                            java.lang.System.err.println(s"ZZTRACE CLI failed idx=$i causes=$causes")
+                            false
                     }
                 }.map { results =>
                     listener.close()
@@ -87,12 +110,6 @@ class TransportStartTlsConcurrentTest extends Test:
                     assert(failed == 0, s"$failed of $concurrency concurrent STARTTLS upgrades failed to upgrade and round-trip")
                 }
             }
-    } { (backend, provider) =>
-        if backend == "nio" && provider == "jdk" then
-            Present(
-                "PENDING-P10: upgrade-handshake races concurrent ops on the shared handle; fixed by P10 poll-carrier confinement, see p9-fix-log"
-            )
-        else Absent
     }
 
 end TransportStartTlsConcurrentTest

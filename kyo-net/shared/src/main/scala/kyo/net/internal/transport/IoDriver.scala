@@ -47,6 +47,15 @@ abstract private[kyo] class IoDriver[Handle]:
       */
     def awaitRead(handle: Handle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit
 
+    /** Request a read armed by the STARTTLS handshake itself (the ciphertext recv it drives during an upgrade), distinct from the application
+      * ReadPump's [[awaitRead]]. Behaves exactly like `awaitRead` except that the io_uring driver tags the recv so its reap keeps a stray
+      * plaintext-pump recv (reaping during the upgrade window) off the raw read path (routing it through the upgrade handoff) while still feeding
+      * the handshake's own recv to the engine. The default delegates to `awaitRead`: the pollers need no distinction (their reads are synchronous,
+      * with no reaped-recv routing ambiguity), so only the io_uring driver overrides it.
+      */
+    def awaitReadHandshake(handle: Handle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
+        awaitRead(handle, promise)
+
     /** Request writable notification. The driver completes the promise when the handle becomes writable.
       *
       * Used after `write` returns `Partial` to know when to retry.
@@ -86,6 +95,15 @@ abstract private[kyo] class IoDriver[Handle]:
     def detachForUpgrade(handle: Handle)(using AllowUnsafe, Frame): Unit =
         cancel(handle)
 
+    /** Called by the plaintext [[kyo.net.internal.transport.ReadPump]] when bytes it read off the socket cannot be delivered because the inbound
+      * channel is already closed. The default DROPS them: the connection is closing, so the bytes are discarded with the teardown. The NIO driver
+      * overrides this for the STARTTLS handoff: while a handle is upgrading, the close that failed the offer is `detachForUpgrade`'s inbound close,
+      * so these bytes are the peer's first TLS flight (e.g. the ClientHello) the pump pulled off the socket a moment before the upgrade detached.
+      * Dropping them strands the handshake (it reads the socket, which no longer holds them); the NIO override salvages them for the handshake to
+      * replay. Captured at the offer-failure point, so it is robust to the read/detach interleaving regardless of when the upgrade flag was observed.
+      */
+    def onInboundClosedDuringRead(handle: Handle, bytes: Span[Byte])(using AllowUnsafe, Frame): Unit = ()
+
     /** Tear down a listener: cancel its pending accept and close its listen fd via `closeFd`, sequenced so that no accept registration for
       * `handle` can ever run against a RECYCLED fd number. The default (readiness drivers, where `cancel` clears the accept state
       * synchronously) cancels and then closes the fd immediately, today's behavior. The io_uring driver overrides this to run the whole
@@ -106,6 +124,33 @@ abstract private[kyo] class IoDriver[Handle]:
       * the upgrade reads normally.
       */
     def hasInFlightRead(handle: Handle)(using AllowUnsafe): Boolean = false
+
+    /** Arm the I/O carrier as the sole producer of a STARTTLS upgrade's ciphertext reads, so the handshake never reads the socket itself. While
+      * a handle is upgrading on a readiness poller the handshake parks a waiter on the handle's upgrade handoff slot and calls this; the poll
+      * carrier then reads each peer flight and fulfils the waiter, the readiness-driver analog of the io_uring stale recv the reap carrier
+      * delivers. Confining every recv to the one I/O carrier removes the cross-carrier recv race a synchronous `recvNow` on the handshake fiber
+      * would otherwise have with the poll carrier's own read of the same fd. The default is a no-op: io_uring already has a kernel-owned recv in
+      * flight (the upgrade reads through the handoff slot the reap fulfils, not a fresh arm), and JS reads via its data callback, so neither needs
+      * a poll-carrier producer.
+      */
+    def armUpgradeProducerRead(handle: Handle)(using AllowUnsafe, Frame): Unit = ()
+
+    /** Retire the STARTTLS upgrade producer at handshake completion, the counterpart to [[armUpgradeProducerRead]]. On a readiness poller that
+      * kept a standing producer read armed across the upgrade (so every peer flight was read on the one I/O carrier), this drops that arm before
+      * the upgraded connection's pumps start, so no post-completion readiness dispatch routes the connection's first application bytes to the dead
+      * producer instead of the ReadPump. The default is a no-op: io_uring and JS never armed a standing producer (they read through the handoff
+      * slot the reap/data callback fulfils), so there is nothing to retire.
+      */
+    def stopUpgradeProducer(handle: Handle)(using AllowUnsafe): Unit = ()
+
+    /** Force the next read arm for `handle` to re-evaluate socket readiness, recovering a peer flight ALREADY buffered when the arm registers.
+      * Called at STARTTLS completion (before the upgraded connection's pumps start) so the first ReadPump read picks up the peer's first
+      * application flight even when it arrived before the read armed. Only the epoll readiness driver needs this: epoll is edge-triggered and skips
+      * the `epoll_ctl(MOD)` on an unchanged-mask re-arm (register-once), so an already-buffered flight produces no new edge and the read would
+      * strand. The default is a no-op: kqueue re-evaluates readiness on every `EV_ADD`, the JDK NIO selector is level-triggered (a ready channel is
+      * re-reported), and io_uring is completion-based, so none of them can miss a buffered flight on a re-arm.
+      */
+    def forceReadRecovery(handle: Handle)(using AllowUnsafe, Frame): Unit = ()
 
     /** Whether the TLS handshake may use the synchronous `recvNow` probe (a direct `recv(2)`) to read ciphertext off the socket. The readiness
       * drivers (epoll/kqueue, JS Node) read synchronously and hold no kernel-owned recv, so the probe is safe and returns true (the default). The

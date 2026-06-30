@@ -226,6 +226,12 @@ run_in_container() {
     # Forward the BoringSSL-staging flag; when set the container builds the vendored BoringSSL before the command so kyo-net's TLS tests run
     # against real libssl/libcrypto instead of cancelling.
     [ -n "${STAGE_BORINGSSL:-}" ] && envs+=(-e "STAGE_BORINGSSL=$STAGE_BORINGSSL")
+    # Forward the kyo-net per-backend test isolation flag (KYO_NET_ONLY=<backend>), the per-TLS-provider isolation flag
+    # (KYO_NET_TLS_ONLY=<provider>), and the success-leaves-only flag (KYO_NET_SUCCESS_ONLY=1) so a podman run can
+    # validate/sample a single (backend x provider) cell in isolation. Unset by default (all backends/providers), so a normal run is unaffected.
+    [ -n "${KYO_NET_ONLY:-}" ] && envs+=(-e "KYO_NET_ONLY=$KYO_NET_ONLY")
+    [ -n "${KYO_NET_TLS_ONLY:-}" ] && envs+=(-e "KYO_NET_TLS_ONLY=$KYO_NET_TLS_ONLY")
+    [ -n "${KYO_NET_SUCCESS_ONLY:-}" ] && envs+=(-e "KYO_NET_SUCCESS_ONLY=$KYO_NET_SUCCESS_ONLY")
     if [ "$ENV_KIND" = "podman-ci" ]; then
         args+=(--memory "$CI_MEMORY" --cpus "$CI_CPUS")
         envs+=(-e CI=true -e SBT_TASK_LIMIT=1

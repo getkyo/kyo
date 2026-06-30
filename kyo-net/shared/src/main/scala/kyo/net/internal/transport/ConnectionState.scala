@@ -14,6 +14,7 @@ package kyo.net.internal.transport
   *   - [[Closing]]: a close was initiated; the outbound side is draining before teardown.
   *   - [[Closed]]: terminal; the handle has been released exactly once.
   */
+// TODO move to Connection.State
 private[kyo] enum ConnectionState derives CanEqual:
     case Created
     case Established

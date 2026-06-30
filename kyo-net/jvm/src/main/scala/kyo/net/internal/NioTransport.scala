@@ -220,6 +220,9 @@ final private[kyo] class NioTransport private (
         handle.tls.foreach { tlsState =>
             connection.closeReasonFn = Present(() => NioTransport.closeReasonFor(connection, tlsState))
         }
+        // Deliver any application plaintext the handshake decrypted during a STARTTLS upgrade (peer data coalesced with its final flight) BEFORE
+        // the pumps start, so it precedes anything the ReadPump reads next. A no-op for a fresh handshake (nothing captured).
+        deliverUpgradeAppData(handle, connection.inbound)
         connection.start()
         val completed = promise.complete(Result.succeed(connection))
         if !completed then
@@ -472,6 +475,9 @@ final private[kyo] class NioTransport private (
             end if
             val sslContext = NioTransport.createSslContext(tls, isServer)
             val engine     = sslContext.createSSLEngine(host, port)
+            java.lang.System.err.println(
+                s"ZZTRACE NIO engineNew ch=${channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} ctxId=${java.lang.System.identityHashCode(sslContext)} isServer=$isServer existing=${existingHandle.isDefined}"
+            )
             engine.setUseClientMode(!isServer)
             // Enforce the configured [minVersion, maxVersion] range. The raw SSLEngine enables a broad default protocol set, so without pinning a
             // version-mismatched peer would silently negotiate a common version (CWE-326). Mirrors SslEngineProvider via the shared
@@ -541,6 +547,32 @@ final private[kyo] class NioTransport private (
                     if span.nonEmpty then discard(netInBuf.put(span.toArrayUnsafe))
                 }
             }
+            // STARTTLS handoff (upgrade path only): the handshake now takes over reading from the retiring plaintext pump. Set handshakeReading so a
+            // dispatched read completes the handshake's read (rather than being salvaged), then feed any of the peer's first flight the pump salvaged
+            // during the plaintext phase (e.g. the ClientHello) into the engine. The salvage follows preRead in the byte stream (preRead is what the
+            // pump staged before the upgrade window opened; the salvage is what it pulled off the socket during it). handshakeReading is set BEFORE the
+            // drain so the selector carrier completes rather than re-salvages a read that lands while the drain runs.
+            if existingHandle.isDefined then
+                handle.handshakeReading = true
+                val drained = driver.drainUpgradeSalvage(handle)
+                java.lang.System.err.println(
+                    s"ZZTRACE NIO startTls ch=${handle.channel.hashCode()} isServer=$isServer drainedSalvage=${drained.map(_.length).getOrElse(-1)} preRead=${preRead.map(_.foldLeft(0)(_ + _.size)).getOrElse(0)}"
+                )
+                drained.foreach(arr => discard(netInBuf.put(arr)))
+                java.lang.System.err.println(
+                    s"ZZTRACE NIO seedHdr ch=${handle.channel.hashCode()} netInPos=${netInBuf.position()} hdr=${
+                            (0 until math.min(5, netInBuf.position())).map(i => f"${netInBuf.get(i) & 0xff}%02x").mkString
+                        }"
+                )
+                // The upgrade producer is armed ON DEMAND by the handshake itself: driveHandshake's NEED_UNWRAP park (below) calls
+                // armUpgradeProducerRead for each read it needs, so the selector carrier reads exactly one peer flight per park and is idle once the
+                // handshake stops parking at FINISHED. No standing self-re-arming producer is bootstrapped here: a standing producer over-reads past
+                // FINISHED (it cannot know which read is the handshake's last) and races the FINISHED hand-off to the upgraded connection's ReadPump,
+                // which under load corrupts the post-FINISHED record (the dropped-upgrade regression). Every demand arm is selector-confined
+                // (armUpgradeProducerRead defers to the poll carrier via pendingUpgradeArms with an unconditional wakeup, never a cross-carrier
+                // interestOps read-modify-write). handshakeReading is set above so any read dispatched during the window routes to the producer path;
+                // the first park installs the first producer arm.
+            end if
 
             driveHandshake(handle, tlsState, host, port, connectPromise)
         catch
@@ -550,6 +582,76 @@ final private[kyo] class NioTransport private (
                 connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
         end try
     end startTlsHandshake
+
+    /** Capture application plaintext the handshake's unwrap produced during a STARTTLS upgrade window. When a peer sends application data coalesced
+      * with (or right after) its final handshake flight, the selector-carrier upgrade producer reads it and `driveHandshake`'s unwrap decrypts it
+      * into appInBuf; it belongs to the upgraded connection, not the handshake, so stash it on the handle (delivered to the upgraded inbound at
+      * [[completeConnect]]) instead of discarding it. A no-op for a fresh (non-upgrade) handshake or when the unwrap produced no application plaintext.
+      */
+    private def captureUpgradeAppData(handle: NioHandle, appInBuf: ByteBuffer, produced: Int)(using AllowUnsafe): Unit =
+        if handle.upgrading && produced > 0 then
+            appInBuf.flip()
+            val arr = new Array[Byte](produced)
+            appInBuf.get(arr)
+            @tailrec def append(): Unit =
+                val cur = handle.upgradeAppData.get()
+                if !handle.upgradeAppData.compareAndSet(cur, cur.append(arr)) then append()
+            append()
+        end if
+    end captureUpgradeAppData
+
+    /** Deliver application plaintext captured during a STARTTLS upgrade ([[captureUpgradeAppData]]) to the upgraded connection's inbound, in order,
+      * BEFORE the ReadPump starts so it precedes any data the pump reads next. A no-op when nothing was captured (the common case / fresh handshake).
+      */
+    private def deliverUpgradeAppData(handle: NioHandle, inbound: Channel.Unsafe[Span[Byte]])(using AllowUnsafe, Frame): Unit =
+        val captured = handle.upgradeAppData.getAndSet(Chunk.empty)
+        val total    = captured.foldLeft(0)(_ + _.length)
+        if total > 0 then
+            java.lang.System.err.println(s"ZZTRACE NIO deliverAppData ch=${handle.channel.hashCode()} total=$total chunks=${captured.size}")
+        captured.foreach(arr => if arr.length > 0 then discard(inbound.offer(Span.fromUnsafe(arr))))
+    end deliverUpgradeAppData
+
+    /** Drain any ciphertext left when the handshake reached FINISHED into application plaintext for the upgraded connection. The main source is
+      * (1) the peer's first application record arriving coalesced with its final handshake flight, sitting unconsumed in netInBuf. A backstop source is
+      * (2) a residual [[NioHandle.upgradeHandoff]] Carryover (demand-driven, the producer stops at the last handshake read so it does not normally read
+      * a post-FINISHED flight; the Carryover drain remains for safety). Both are ciphertext the upgraded connection owns: unwrap them here (on the
+      * carrier that completed the handshake, after the producer is retired so nothing stages more) and stash the plaintext, delivered to the inbound in
+      * [[completeConnect]] before the ReadPump starts. Without this the coalesced bytes strand: the engine holds no socket event for already-read
+      * ciphertext. A no-op for a fresh (non-upgrade) handshake.
+      */
+    private def drainUpgradeLeftover(handle: NioHandle, tlsState: NioTlsState)(using AllowUnsafe): Unit =
+        if handle.upgrading then
+            import NioHandle.UpgradeHandoff
+            val carry = handle.upgradeHandoff.getAndSet(UpgradeHandoff.Idle) match
+                case staged: UpgradeHandoff.Carryover => staged.bytes
+                case _                                => Array.emptyByteArray
+            tlsState.netInBuf.flip() // read mode: expose any coalesced leftover
+            val leftover = tlsState.netInBuf.remaining()
+            java.lang.System.err.println(
+                s"ZZTRACE NIO drainLeftover ch=${handle.channel.hashCode()} carry=${carry.length} leftover=$leftover"
+            )
+            if leftover > 0 || carry.length > 0 then
+                // Concatenate leftover (earlier in the stream) then the Carryover into one exact-sized buffer, so a record split across the two is
+                // reassembled and no fixed-size netInBuf overflow is possible for a large coalesced echo.
+                val combined = ByteBuffer.allocate(leftover + carry.length)
+                discard(combined.put(tlsState.netInBuf))
+                discard(combined.put(carry))
+                combined.flip()
+                tlsState.netInBuf.clear()
+                var more = combined.hasRemaining
+                while more do
+                    tlsState.appInBuf.clear()
+                    val res = tlsState.engine.unwrap(combined, tlsState.appInBuf)
+                    captureUpgradeAppData(handle, tlsState.appInBuf, res.bytesProduced())
+                    more = (res.getStatus eq SSLEngineResult.Status.OK) && res.bytesConsumed() > 0 && combined.hasRemaining
+                end while
+                // A trailing partial record (BUFFER_UNDERFLOW) returns to netInBuf for the ReadPump to complete with its next socket read.
+                if combined.hasRemaining then discard(tlsState.netInBuf.put(combined))
+            else
+                discard(tlsState.netInBuf.clear())
+            end if
+        end if
+    end drainUpgradeLeftover
 
     /** Drive TLS handshake via callback-driven promise chains.
       *
@@ -572,9 +674,16 @@ final private[kyo] class NioTransport private (
             // needMoreData: true = fall through to read from network, false = handled
             val needMoreData =
                 if tlsState.netInBuf.hasRemaining then
+                    val p0 = tlsState.netInBuf.position()
+                    java.lang.System.err.println(
+                        s"ZZTRACE NIO hsTopUnwrap ch=${handle.channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} hsStatus=${engine.getHandshakeStatus} remaining=${tlsState.netInBuf.remaining()} hdr=${
+                                (0 until math.min(5, tlsState.netInBuf.remaining())).map(i => f"${tlsState.netInBuf.get(p0 + i) & 0xff}%02x").mkString
+                            }"
+                    )
                     tlsState.appInBuf.clear()
                     try
                         val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
+                        captureUpgradeAppData(handle, tlsState.appInBuf, res.bytesProduced())
                         tlsState.netInBuf.compact()
                         val status = res.getStatus
                         if status eq SSLEngineResult.Status.OK then
@@ -592,6 +701,9 @@ final private[kyo] class NioTransport private (
                         end if
                     catch
                         case e: Exception =>
+                            java.lang.System.err.println(
+                                s"ZZTRACE NIO hsFailTop ch=${handle.channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} hsStatus=${engine.getHandshakeStatus} cause=${e.getClass.getSimpleName}:${e.getMessage} clientMode=${engine.getUseClientMode} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
+                            )
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
                             false
                     end try
@@ -602,43 +714,117 @@ final private[kyo] class NioTransport private (
             end needMoreData
 
             if needMoreData then
-                // Need more data from network
-                val readPromise = new IOPromise[Closed, ReadOutcome]
-                readPromise.onComplete { result =>
-                    result match
-                        case Result.Success(outcome) =>
-                            outcome match
-                                case ReadOutcome.Bytes(bytes) =>
-                                    // Feed raw ciphertext to engine
-                                    val arr = bytes.toArrayUnsafe
-                                    tlsState.netInBuf.put(arr)
-                                    tlsState.netInBuf.flip()
-                                    tlsState.appInBuf.clear()
-                                    try
-                                        val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
-                                        tlsState.netInBuf.compact()
-                                        val status = res.getStatus
-                                        if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
-                                            driveHandshake(handle, tlsState, host, port, connectPromise)
-                                        else if status eq SSLEngineResult.Status.CLOSED then
-                                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                                        else // BUFFER_OVERFLOW
-                                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                                        end if
-                                    catch
-                                        case e: Exception =>
-                                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
-                                    end try
-                                case _ =>
-                                    // PeerFin, LocalShutdown, CleanClose, WouldBlock, Failed: all end the handshake.
-                                    connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
-                            end match
-                        case Result.Failure(e) =>
+                // Feed one peer ciphertext flight into the engine, unwrap, and re-drive the handshake (or fail on a bad status). Shared by the
+                // non-upgrade read path and the STARTTLS upgrade handoff path below.
+                def feedCipher(arr: Array[Byte]): Unit =
+                    // Record-boundary scan: walk the fed bytes as a sequence of TLS records (type/version/len) so a trailing record riding behind the
+                    // ClientHello (the bad_record_mac source) is visible. Stops at the first malformed/short header.
+                    val recScan =
+                        val sb  = new StringBuilder
+                        var off = 0
+                        while off + 5 <= arr.length do
+                            val t   = arr(off) & 0xff
+                            val v   = ((arr(off + 1) & 0xff) << 8) | (arr(off + 2) & 0xff)
+                            val len = ((arr(off + 3) & 0xff) << 8) | (arr(off + 4) & 0xff)
+                            sb.append(f"[t=$t%02x v=$v%04x len=$len@$off]")
+                            off += 5 + len
+                        end while
+                        if off != arr.length then sb.append(s"<tail=${arr.length - off}>")
+                        sb.toString()
+                    end recScan
+                    java.lang.System.err.println(
+                        s"ZZTRACE NIO feed ch=${handle.channel.hashCode()} engineId=${java.lang.System.identityHashCode(engine)} clientMode=${engine.getUseClientMode} hsStatus=${engine.getHandshakeStatus} len=${arr.length} netInPos=${tlsState.netInBuf.position()} recs=$recScan"
+                    )
+                    tlsState.netInBuf.put(arr)
+                    tlsState.netInBuf.flip()
+                    tlsState.appInBuf.clear()
+                    try
+                        val res = engine.unwrap(tlsState.netInBuf, tlsState.appInBuf)
+                        captureUpgradeAppData(handle, tlsState.appInBuf, res.bytesProduced())
+                        tlsState.netInBuf.compact()
+                        val status = res.getStatus
+                        if (status eq SSLEngineResult.Status.OK) || (status eq SSLEngineResult.Status.BUFFER_UNDERFLOW) then
+                            driveHandshake(handle, tlsState, host, port, connectPromise)
+                        else if status eq SSLEngineResult.Status.CLOSED then
+                            java.lang.System.err.println(
+                                s"ZZTRACE NIO hsFail ch=${handle.channel.hashCode()} cause=CLOSED clientMode=${engine.getUseClientMode} inputLen=${arr.length} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
+                            )
+                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                        else // BUFFER_OVERFLOW
+                            java.lang.System.err.println(
+                                s"ZZTRACE NIO hsFail ch=${handle.channel.hashCode()} cause=BUFFER_OVERFLOW clientMode=${engine.getUseClientMode} inputLen=${arr.length} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
+                            )
+                            connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+                        end if
+                    catch
+                        case e: Exception =>
+                            java.lang.System.err.println(
+                                s"ZZTRACE NIO hsFail ch=${handle.channel.hashCode()} cause=${e.getClass.getSimpleName}:${e.getMessage} clientMode=${engine.getUseClientMode} inputLen=${arr.length} upgrading=${handle.upgrading} hsReading=${handle.handshakeReading}"
+                            )
                             connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
-                        case Result.Panic(t) =>
-                            connectPromise.completeDiscard(Result.panic(t))
-                }
-                driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                    end try
+                end feedCipher
+                def failClosed(): Unit = connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, "")))
+
+                if handle.upgrading then
+                    // STARTTLS confinement: the selector carrier is the sole reader and OP_READ owner during the upgrade, so the handshake never arms
+                    // OP_READ from this carrier (which would race the selector's interestOps read-modify-write and lose the bit / wakeup, the upgrade
+                    // residual). Park a waiter on the handle's upgrade handoff slot; the selector carrier reads the peer flight and fulfils it (or has
+                    // staged a Carryover when it read first), and `armUpgradeProducerRead` triggers it. The waiter resolves on the SELECTOR carrier, so
+                    // its re-drive (and the next park's arm) run there too: every per-read arm after the first is selector-confined by construction.
+                    import NioHandle.UpgradeHandoff
+                    val waiterPromise = new IOPromise[Closed, Span[Byte]]
+                    waiterPromise.onComplete {
+                        case Result.Success(bytes) => if bytes.isEmpty then failClosed() else feedCipher(bytes.toArrayUnsafe)
+                        case Result.Failure(_)     => failClosed()
+                        case Result.Panic(t)       => connectPromise.completeDiscard(Result.panic(t))
+                    }
+                    val waiter = UpgradeHandoff.Waiter(waiterPromise.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]], summon[Frame])
+                    java.lang.System.err.println(
+                        s"ZZTRACE NIO park ch=${handle.channel.hashCode()} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
+                    )
+                    handle.upgradeHandoff.get() match
+                        case staged: UpgradeHandoff.Carryover =>
+                            val carryCas = handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle)
+                            java.lang.System.err.println(
+                                s"ZZTRACE NIO carryA ch=${handle.channel.hashCode()} cas=$carryCas len=${staged.bytes.length}"
+                            )
+                            feedCipher(staged.bytes)
+                        case _ =>
+                            // Park the waiter, then arm the producer ON DEMAND for this one read. armUpgradeProducerRead defers the arm to the poll
+                            // carrier via pendingUpgradeArms with an unconditional selector.wakeup() (never a cross-carrier interestOps RMW), so the
+                            // selector reads the next peer flight and fulfils this waiter through the slot. The producer reads exactly one flight per
+                            // park and does NOT re-arm itself, so it never over-reads past the handshake's need (the dropped-upgrade root). A CAS loss
+                            // means the producer staged a Carryover between the get above and this CAS; consume it (no arm needed, feedCipher re-drives
+                            // and the next park re-arms).
+                            if handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
+                                driver.armUpgradeProducerRead(handle)
+                            else
+                                handle.upgradeHandoff.get() match
+                                    case staged: UpgradeHandoff.Carryover =>
+                                        val carryCas = handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle)
+                                        java.lang.System.err.println(
+                                            s"ZZTRACE NIO carryB ch=${handle.channel.hashCode()} cas=$carryCas len=${staged.bytes.length}"
+                                        )
+                                        feedCipher(staged.bytes)
+                                    case _ => ()
+                    end match
+                else
+                    // Non-upgrade handshake: read normally (the selector completes the read promise; no cross-carrier upgrade arm exists).
+                    val readPromise = new IOPromise[Closed, ReadOutcome]
+                    readPromise.onComplete { result =>
+                        result match
+                            case Result.Success(outcome) =>
+                                outcome match
+                                    case ReadOutcome.Bytes(bytes) => feedCipher(bytes.toArrayUnsafe)
+                                    case _                        => failClosed()
+                            case Result.Failure(e) =>
+                                connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
+                            case Result.Panic(t) =>
+                                connectPromise.completeDiscard(Result.panic(t))
+                    }
+                    driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+                end if
             end if
         else if hs eq SSLEngineResult.HandshakeStatus.NEED_WRAP then
             try
@@ -674,6 +860,26 @@ final private[kyo] class NioTransport private (
                     connectPromise.completeDiscard(Result.fail(NetTlsHandshakeException(host, port, e)))
         else // FINISHED or NOT_HANDSHAKING
             Log.live.unsafe.debug(s"NioTransport TLS handshake complete channel=${handle.channel.hashCode()}")
+            // Handshake done: close the STARTTLS handoff window so the upgraded connection's pumps read normally from here. The ordering below is
+            // race-safe whether this branch runs on the selector carrier (inline waiter completion) or a scheduler carrier (async completion):
+            //   1. handshakeReading=false first, so no further read routes to the producer path (dispatchRead's upgrade gate); demand-driven, the
+            //      producer never self-re-arms, so the last handshake read was the last producer read and nothing reads into the slot after this.
+            //   2. stopUpgradeProducer clears any still-armed producer cell + OP_READ + pendingReads (a no-op in the common demand-driven case where
+            //      the last read already retired the cell), so no later readiness dispatch reads into the slot; pendingReads removal is the gate.
+            //   3. drainUpgradeLeftover, still while upgrading is true (captureUpgradeAppData keys off it), pulls any application record the peer
+            //      coalesced with its final handshake flight (left in netInBuf), plus any residual slot Carryover (a backstop), and stashes the plaintext.
+            // A no-op for a fresh (non-upgrade) handshake that never set the flags or armed a producer.
+            handle.handshakeReading = false
+            driver.stopUpgradeProducer(handle)
+            drainUpgradeLeftover(handle, tlsState)
+            val wasUpgrade = handle.upgrading
+            handle.upgrading = false
+            // STARTTLS only: the upgraded connection's first ReadPump read arm (in completeConnect -> connection.start) sets OP_READ via a
+            // cross-carrier interestOps read-modify-write that can lose to the selector's own write; into a selector that quiesces between
+            // repeated upgrades the guarded wakeup can coalesce so the reassert backstop never runs and the read strands. Mark the handle so that
+            // first arm forces an unconditional selector.wakeup(), guaranteeing one poll cycle where reassertPendingInterest re-applies OP_READ
+            // on the selector carrier. A no-op for a fresh (non-upgrade) connect (wasUpgrade=false), whose connect already cycles the selector.
+            handle.forceReadArmWakeup = wasUpgrade
             engine.setEnableSessionCreation(false) // disable renegotiation
             // Switch handle to TLS mode: driver will now unwrap/wrap inline
             handle.tls = Present(tlsState)
@@ -988,9 +1194,24 @@ final private[kyo] class NioTransport private (
             // (e.g. a verifying client with no reference identity rejecting the upgrade). On success completeConnect wraps the channel in a new
             // tracked Connection that owns it, so the success arm skips the close.
             promise.onComplete {
-                case Result.Success(_) => ()
-                case _                 => closeQuietly(handle.channel)
+                case Result.Success(_) =>
+                    // The handshake's FINISHED branch already cleared the handoff flags before completeConnect; ensure they are clear.
+                    handle.upgrading = false
+                    handle.handshakeReading = false
+                case _ =>
+                    // Failure / interrupt: close the handoff window so a torn-down handle never lingers mid-upgrade, then release the fd.
+                    handle.upgrading = false
+                    handle.handshakeReading = false
+                    closeQuietly(handle.channel)
             }
+            // Mark the handle upgrading BEFORE detach so the selector carrier recognizes the window: while set, a plaintext read the pump pulls off
+            // the socket is STASHED into the handle's salvage (NioIoDriver.dispatchReadPlain / onInboundClosedDuringRead) rather than completing the
+            // pump's promise (which would drop the peer's first TLS flight) or re-arming (which would steal the handshake's read). Mirrors
+            // PosixHandle.upgradeActive being set before detach. Cleared at handshake completion / failure.
+            handle.upgrading = true
+            java.lang.System.err.println(
+                s"ZZTRACE NIO upgradeBegin ch=${handle.channel.hashCode()} isServerOrigin=${nioConn.isServerOrigin}"
+            )
             // Step 1: detach the handle, closing inbound/outbound channels and cancelling selector
             // registration, but does NOT close the underlying SocketChannel.
             // Capture any bytes the ReadPump already pulled off the socket and staged in the inbound

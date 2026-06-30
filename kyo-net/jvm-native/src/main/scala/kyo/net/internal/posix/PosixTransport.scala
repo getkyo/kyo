@@ -576,6 +576,9 @@ final private[net] class PosixTransport private[posix] (
                     end try
                 end while
                 val bytes = acc.toByteArray
+                java.lang.System.err.println(
+                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} deliverHsPlaintext fd=${handle.readFd} bytes=${bytes.length} mightMore=${handle.readMightHaveMore} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
+                )
                 if bytes.length > 0 then discard(inbound.offer(Span.fromUnsafe(bytes)))
         end match
     end deliverHandshakePlaintext
@@ -1225,16 +1228,23 @@ final private[net] class PosixTransport private[posix] (
             case posixConn: InternalConnection[PosixHandle] @unchecked if posixConn.handle.isInstanceOf[PosixHandle] =>
                 val out    = new IOPromise[NetException, Connection]
                 val handle = posixConn.handle
-                // io_uring only: arm the stale-recv handoff BEFORE detach closes the inbound channel. The plaintext ReadPump left a recv SQE kernel-
-                // owned (io_uring cannot cancel it) that will consume the peer's first post-signal flight; its CQE reaps on the reap carrier. If that
-                // CQE reaps in the window between detach's inbound.close() and the upgradeActive set, with upgradeActive still false the reap routes
-                // the flight to the torn-down ReadPump promise and the closed inbound drops it, stranding the handshake (the residual stall). Setting
-                // upgradeActive before detach makes the reap always route the flight into upgradeHandoff (a Carryover, or a fulfilled Waiter) instead.
-                // On the pollers recv is synchronous (no kernel-owned stale recv), so this stays false and the handshake reads normally.
-                if !handle.driver.inlineRecvSafe then handle.upgradeActive = true
+                // Arm the upgrade window BEFORE detach closes the inbound channel, on EVERY backend. Two distinct uses keyed on the same flag:
+                //   - io_uring: the plaintext ReadPump left a recv SQE kernel-owned (io_uring cannot cancel it) that will consume the peer's first
+                //     post-signal flight; its CQE reaps on the reap carrier. If that CQE reaps in the window between detach's inbound.close() and the
+                //     upgradeActive set, with upgradeActive still false the reap routes the flight to the torn-down ReadPump promise and the closed
+                //     inbound drops it, stranding the handshake. Setting it before detach makes the reap always route the flight into upgradeHandoff
+                //     (a Carryover, or a fulfilled Waiter) instead.
+                //   - pollers: recv is synchronous (no kernel-owned stale recv), but the pump's read re-arm can still race detachForUpgrade and
+                //     register the fd's read side ahead of the handshake. While upgradeActive && !handshakeReading the poll carrier rejects that stray
+                //     re-arm (PollerIoDriver's registration apply), so the peer's first TLS flight reaches the handshake, not the pump. handshakeReading
+                //     flips when the handshake takes the read (awaitReadCiphertext).
+                handle.upgradeActive = true
+                handle.upgrading =
+                    true // durable across the whole window (upgradeActive clears mid-handshake); io_uring read-routing reads it
                 posixConn.detachForUpgrade() match
                     case Absent =>
                         handle.upgradeActive = false // already detached: no upgrade runs, undo the pre-detach arm
+                        handle.upgrading = false
                         out.completeDiscard(Result.fail(NetAlreadyDetachedException()))
                     case Present(staged) =>
                         // buildEngine fails closed (throws Closed) when a verifying STARTTLS client has no reference identity (no sniHostname),
@@ -1268,18 +1278,29 @@ final private[net] class PosixTransport private[posix] (
                         // driveUpgradeRead runs (FIFO on the reap carrier), in `pending` if its SQE went out or in `stalledSubmits` if it parked on a
                         // full SQ, and a stray ReadPump re-arm racing the upgrade was gated away and reached neither. Making the decision here on the
                         // upgrade carrier instead would be a TOCTOU (a hasInFlightRead snapshot could miss a not-yet-registered stale recv).
-                        // On the pollers upgradeActive was never set (inlineRecvSafe), so this carries through as false and the handshake reads normally.
+                        // On a poller the poll carrier is the standing producer for every upgrade read (driveUpgradeRead parks a waiter it fulfils via
+                        // armUpgradeProducerRead), so upgradeActive stays set across the whole handshake; it is cleared at completion (onFinished below).
                         driveHandshake(
                             handle,
                             engine,
                             onFinished = () =>
-                                // Safety net: clear upgradeActive before attaching the engine and starting the pumps. driveUpgradeRead clears it on
-                                // every read-driven path (consume / waiter resolve / no-stale-recv arm), but a handshake that completes purely from
-                                // staged ciphertext (feedStaged / feedCoalescedHandshake) never reaches driveUpgradeRead, so it would otherwise stay
-                                // set and misroute the upgraded connection's first TLS recv through the (now empty) upgrade handoff. onFinished runs on
-                                // the reap carrier, so this clear happens-before the new ReadPump's recv is armed by upgraded.start().
+                                // Clear the upgrade flags before attaching the engine and starting the pumps. io_uring's driveUpgradeRead clears
+                                // upgradeActive after its single stale recv, but the poller keeps it set across the upgrade (the poll carrier is the
+                                // standing producer), and a handshake that completes purely from staged ciphertext (feedStaged / feedCoalescedHandshake)
+                                // never reaches driveUpgradeRead at all, so onFinished is the single clear point that covers every path. It runs on the
+                                // I/O carrier, so this clear happens-before the new ReadPump's recv is armed by upgraded.start(). handshakeReading is
+                                // cleared here too so the poller admits the upgraded connection's ReadPump read arm (the failure paths clear both via
+                                // PosixHandle.close).
+                                java.lang.System.err.println(
+                                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} onFinished fd=${handle.readFd} slot=${handle.upgradeHandoff.get().getClass.getSimpleName} rmhm=${handle.readMightHaveMore} hasBufferedPlaintext=${engine.hasBufferedPlaintext}"
+                                )
                                 handle.upgradeActive = false
+                                handle.handshakeReading = false
                                 handle.tls = Present(engine)
+                                // Clear the durable upgrade-window marker AFTER tls becomes Present, so the io_uring reap never observes
+                                // upgrading=false while tls is still Absent (which would route a reaping recv to the raw plainReadComplete path).
+                                // Volatile-write ordering: a reaper that sees upgrading=false also sees tls=Present, so it takes the TLS branch.
+                                handle.upgrading = false
                                 // Track the upgraded connection under handle.id, replacing the now-detached plaintext entry on the same handle so
                                 // close() reclaims the TLS fd (detachForUpgrade left the plaintext connection registered: it keeps the fd open).
                                 val upgraded = InternalConnection.init(
@@ -1294,18 +1315,49 @@ final private[net] class PosixTransport private[posix] (
                                 // produced by STARTTLS could not report its RFC 5929 channel-binding hash (certHashFn stays null ->
                                 // serverCertificateHash returns Absent). The re-upgrade function keeps the same role this upgrade ran in.
                                 wireUpgraded(upgraded, isServer)
+                                // Post-FINISHED slot drain: a peer flight (a TLS 1.3 NewSessionTicket, or any post-handshake record) can land in the
+                                // upgradeHandoff slot during the FINISHED transition with no parked waiter to consume it (the handshake stopped parking).
+                                // Feed it to the engine BEFORE deliverHandshakePlaintext so the engine's record sequence stays intact (an un-fed
+                                // post-FINISHED record desyncs the sequence and the next record fails to decrypt) and deliverHandshakePlaintext then
+                                // flushes any application bytes it produced. The posix analog of nio's drainUpgradeLeftover; a no-op when the slot is Idle.
+                                handle.upgradeHandoff.get() match
+                                    case staged: PosixHandle.UpgradeHandoff.Carryover =>
+                                        discard(handle.upgradeHandoff.compareAndSet(staged, PosixHandle.UpgradeHandoff.Idle))
+                                        val drainBuf = Buffer.fromArray[Byte](staged.bytes)
+                                        try discard(engine.feedCiphertext(drainBuf, staged.bytes.length))
+                                        finally drainBuf.close()
+                                    case _ => ()
+                                end match
                                 // Deliver any application plaintext the handshake already decrypted before the pumps start, so a record
                                 // that arrived with the handshake's final flight is not stranded in the engine (see completeConnect).
                                 deliverHandshakePlaintext(handle, upgraded.inbound)
+                                // Force the first ReadPump read to re-evaluate socket readiness: the peer's first application flight (e.g. the
+                                // STARTTLS echo) can arrive in the socket BEFORE upgraded.start() arms the read, and on epoll the register-once
+                                // re-arm skips the MOD so that buffered flight gets no new edge and the read strands. A no-op on every other backend.
+                                handle.driver.forceReadRecovery(handle)
+                                // Open the kqueue post-upgrade read window: a TLS 1.3 NewSessionTicket (or any post-handshake record) lands between
+                                // here and the echo, reads as 0 plaintext, and the bare re-arm trusts an EV_CLEAR edge for the echo that kqueue can
+                                // lose. While set, dispatchReadTls re-issues the kqueue read registration (EV_ADD re-evaluates) on a 0-plaintext
+                                // drained re-arm; it clears on the first application read. A no-op on epoll/io_uring (gated at the use site).
+                                handle.postUpgradeReadWindow = true
+                                java.lang.System.err.println(
+                                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} preUpgradedStart fd=${handle.readFd} isOpen=${upgraded.isOpen}"
+                                )
                                 upgraded.start()
+                                java.lang.System.err.println(
+                                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} postUpgradedStart fd=${handle.readFd} isOpen=${upgraded.isOpen}"
+                                )
                                 out.completeDiscard(Result.succeed(upgraded: Connection))
                             ,
                             onFailed = cause =>
-                                releaseFailedUpgrade(handle, engine)
                                 val causeMsg: String | Throwable = cause match
                                     case hf: HandshakeFailure.EngineThrew => hf.cause
                                     case hf: HandshakeFailure             => hf.toString
                                     case st: (String | Throwable)         => st
+                                java.lang.System.err.println(
+                                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} hsFail fd=${handle.readFd} cause=$causeMsg upgradeActive=${handle.upgradeActive} hsReading=${handle.handshakeReading} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
+                                )
+                                releaseFailedUpgrade(handle, engine)
                                 out.completeDiscard(Result.fail(NetTlsHandshakeException(upgradeHost(tls, isServer), -1, causeMsg)))
                             ,
                             onPanic = e =>
@@ -1445,15 +1497,29 @@ final private[net] class PosixTransport private[posix] (
         // Throwable values (send errors, recv errors, EOF), so the adapter correctly routes them.
         val onFailedStr: (String | Throwable) => Unit = st => onFailed(st)
         def step(): Unit =
+            if handle.upgradeActive || handle.upgrading then
+                java.lang.System.err.println(
+                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} hsStepSubmit fd=${handle.readFd}"
+                )
+            end if
             // Submit one coarse-grained thunk: run handshakeStep + drainCiphertext inside the FIFO worker so no concurrent
             // read or write op can touch the engine during this step. The send and recv calls stay outside the thunk.
             handle.driver.submitEngineOp { () =>
+                java.lang.System.err.println(
+                    s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} hsThunkEntry fd=${handle.readFd} isReaped=${isReaped()} upgradeActive=${handle.upgradeActive} upgrading=${handle.upgrading}"
+                )
                 // Reap guard: a deadline reap that ran ahead of this thunk on the FIFO worker has already freed the engine; skip rather
                 // than call handshakeStep on freed native state (the disarm guard already ensured onFinished / onFailed will not fire).
                 if isReaped() then ()
                 else
                     try
-                        HandshakeState.fromCode(engine.handshakeStep()) match
+                        val hsState = HandshakeState.fromCode(engine.handshakeStep())
+                        if handle.upgradeActive || handle.upgrading then
+                            java.lang.System.err.println(
+                                s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} hsStep fd=${handle.readFd} state=${hsState.getClass.getSimpleName}"
+                            )
+                        end if
+                        hsState match
                             case HandshakeState.Done =>
                                 // Handshake complete: drain any final ciphertext (engine op, inside thunk), then call onFinished (outside thunk).
                                 drainAllDirect(handle, engine, cont = onFinished, onFailedStr, onPanic)
@@ -1495,6 +1561,7 @@ final private[net] class PosixTransport private[posix] (
                         // (the engine FIFO outer catch) so omitting NonFatal here is safe.
                         case e: Throwable => onFailed(HandshakeFailure.EngineThrew(e))
                     end try
+                end if
             }
         end step
         try step()
@@ -1522,6 +1589,11 @@ final private[net] class PosixTransport private[posix] (
                 if n <= 0 then cont()
                 else
                     val arr = Span.fromUnsafe(Buffer.copyToArray[Byte](out, 0, n))
+                    if handle.upgradeActive || handle.upgrading then
+                        java.lang.System.err.println(
+                            s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} hsSend fd=${handle.readFd} n=$n"
+                        )
+                    end if
                     // sendAll calls the socket send (a syscall) + may arm awaitWritable: both stay outside the engine thunk.
                     sendAll(handle, arr, 0, cont = () => drainAllDirect(handle, engine, cont, onFailed, onPanic), onFailed, onPanic)
                 end if
@@ -1594,15 +1666,14 @@ final private[net] class PosixTransport private[posix] (
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
-        // STARTTLS on io_uring: a stale recv (armed by the plaintext pump before detachForUpgrade) is still kernel-owned and will consume the peer's
-        // first flight. Route it through the handle carry-over rather than issuing a second, racing recv; once it is consumed (upgradeActive cleared)
-        // later reads fall to the normal recvNow path. See PosixHandle.upgradeActive and IoUringDriver.complete.
+        // Route the handshake's ciphertext read. During a STARTTLS upgrade (upgradeActive) the read is confined to the I/O carrier on EVERY backend,
+        // so the handshake fiber never issues its own recv that could race the I/O carrier's read of the same fd: io_uring consumes its kernel-owned
+        // stale recv through the handoff slot, and the readiness pollers make the poll carrier the sole reader (driveUpgradeRead parks a waiter the poll
+        // carrier fulfils via armUpgradeProducerRead). Outside an upgrade, a poller reads synchronously (recvNow) and io_uring arms a recv.
         if handle.upgradeActive then driveUpgradeRead(handle, engine, cont, onFailed, onPanic, isReaped)
         else if handle.driver.inlineRecvSafe then recvNowAndFeed(handle, engine, cont, onFailed, onPanic, isReaped)
-        else
-            // io_uring: the synchronous recvNow probe is unsafe here (a direct recv(2) races kernel-owned io_uring recvs on the same fd, corrupting a
-            // handshake record under load, see IoDriver.inlineRecvSafe). Read the next ciphertext flight through io_uring's recv (awaitRead) only.
-            awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
+        else awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
+        end if
     end recvAndFeed
 
     /** Feed `arr` (ciphertext read off the socket) into the handshake engine on the engine FIFO, then continue the handshake. Shared by the
@@ -1633,9 +1704,12 @@ final private[net] class PosixTransport private[posix] (
         }
     end feedCiphertextThenCont
 
-    /** The STARTTLS upgrade read path on io_uring: consume the stale recv's bytes via the handle carry-over, or park the upgrade-read waiter for the
-      * stale recv's completion to fulfil ([[IoUringDriver]]'s `complete` upgrade branch). It never issues its own recv, so it cannot race the stale
-      * recv for the same byte stream. Exactly one stale recv exists, so after its bytes flow the next read takes the normal recvNow path.
+    /** The STARTTLS upgrade read path, confining every ciphertext recv to the I/O carrier so the handshake fiber never races it. The handshake
+      * consumes bytes the I/O carrier delivered through the handle's [[PosixHandle.upgradeHandoff]] slot, or parks a fiber waiter the I/O carrier
+      * fulfils, and never issues its own recv. On io_uring the producer is the reap carrier delivering the one kernel-owned stale recv
+      * ([[IoUringDriver]]'s `complete` upgrade branch); on a readiness poller the producer is the poll carrier, armed via
+      * [[IoDriver.armUpgradeProducerRead]], reading each peer flight. io_uring clears [[PosixHandle.upgradeActive]] after its single stale recv;
+      * the poller keeps it set across the whole upgrade (the poll carrier is the standing producer for every read) and clears it at completion.
       */
     private def driveUpgradeRead(
         handle: PosixHandle,
@@ -1647,50 +1721,81 @@ final private[net] class PosixTransport private[posix] (
     )(using AllowUnsafe, Frame): Unit =
         import PosixHandle.UpgradeHandoff
 
-        // Claim the stale recv's bytes the reap carrier staged: swing the slot to Idle and feed them to the engine.
+        // On io_uring the plaintext ReadPump leaves stale recv(s) kernel-owned across the detach; clear upgradeActive only once the LAST has been
+        // consumed (no recv remains in flight for this handle), so EVERY stale recv routes through upgradeHandoff in order. The detach-vs-rearm race
+        // can leave MORE THAN ONE stale recv (the kernel-owned one whose promise the detach cancelled PLUS a fresh one the pump re-armed before the
+        // upgrade flag was observed, see IoUringDriver.awaitRead's note): clearing after just the first (the old "exactly one stale recv" assumption)
+        // let the second reap at upgradeActive=false and deliver its handshake bytes to the detached ReadPump promise via complete()'s plaintext
+        // branch, dropping a chunk of the flight and failing the handshake with an EngineError under repeated/concurrent upgrades. The hasInFlightRead
+        // scan is authoritative on the reap carrier (where this runs), serialized with every recv registration and reap. A poller's poll carrier is the
+        // standing producer for EVERY handshake read, so upgradeActive must stay set across the whole upgrade (cleared at completion in driveHandshake's
+        // onFinished); the clear is gated on the backend (only the kernel-owned-stale-recv backend clears it here).
+        // Claim staged bytes the I/O carrier delivered: swing the slot to Idle and feed them to the engine. Single-source: upgradeActive stays set for
+        // the whole upgrade (cleared only at onFinished), so every recv -- the kernel-owned stale one AND the handshake's own producer recv -- routes
+        // through the upgradeHandoff slot (the reap's upgradeActive branch). It is NOT cleared mid-handshake: clearing it early reopened a second read
+        // source (the handshake's handshakeOwned recv then bypassed the slot and fed the engine directly), which orphaned a staged Carryover under
+        // contention (the io_uring upgrade strand).
         def consume(arr: Array[Byte]): Unit =
-            handle.upgradeActive = false
             feedCiphertextThenCont(handle, engine, arr, cont, onPanic, isReaped)
 
-        // Build the fiber-parking waiter the reap carrier fulfils when it delivers the stale recv's bytes. Parking suspends a fiber, never a thread.
-        // The stale recv is delivered exactly once, so clear upgradeActive when the waiter resolves: subsequent handshake reads then arm a normal
-        // recv (recvAndFeed routes past driveUpgradeRead) rather than parking a second waiter that nothing would fulfil. Cleared on the reap carrier
-        // here (the only writer once the handshake has parked), so the engine FIFO's next upgradeActive read sees false.
+        // Build the fiber-parking waiter the I/O carrier fulfils when it delivers a peer flight. Parking suspends a fiber, never a thread.
         val waiter =
             val p = new IOPromise[Closed, Span[Byte]]
             p.onComplete {
                 case Result.Success(bytes) =>
-                    handle.upgradeActive = false
                     // An empty read is EOF mid-handshake: the peer closed before completing it. Surface that as the failure cause (rendered as a
                     // ": peer closed during read" suffix) so a bare close is distinguishable from a received fatal alert (which carries its own
                     // engine-level failure, never this phrase): the dropped-alert symptom PosixTransportHandshakeAlertTest guards against.
                     if bytes.isEmpty then onFailed("peer closed during read")
                     else feedCiphertextThenCont(handle, engine, bytes.toArrayUnsafe, cont, onPanic, isReaped)
                 case Result.Failure(closed) =>
-                    handle.upgradeActive = false
                     onFailed(closed)
                 case Result.Panic(e) =>
-                    handle.upgradeActive = false
                     onPanic(e)
             }
             UpgradeHandoff.Waiter(p.asInstanceOf[Promise.Unsafe[Span[Byte], Abort[Closed]]], summon[Frame])
         end waiter
 
+        java.lang.System.err.println(
+            s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} driveUpgradeRead fd=${handle.readFd} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
+        )
         handle.upgradeHandoff.get() match
             case staged: UpgradeHandoff.Carryover =>
-                // The reap already staged the bytes; claim them by CAS to Idle against the exact instance read (reference equality, since the reap
-                // stages exactly once this cannot lose to another reap) and consume.
+                // The I/O carrier already staged the bytes; claim them by CAS to Idle against the exact instance read (reference equality, since each
+                // delivery stages once this cannot lose to another) and consume.
                 discard(handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle))
                 consume(staged.bytes)
+            case _ if handle.driver.inlineRecvSafe =>
+                // Poller: the poll carrier is the sole reader. Park the waiter, then arm the poll-carrier producer (armUpgradeProducerRead) which reads
+                // the next peer flight and fulfils this waiter. The handshake never reads the socket itself, so it cannot race the poll carrier's recv.
+                // A CAS-loss means the producer staged a Carryover between the get above and this CAS (a missed-edge re-dispatch ran ahead of the park);
+                // a single re-read consumes it, never spun on.
+                if handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
+                    handle.driver.armUpgradeProducerRead(handle)
+                else
+                    handle.upgradeHandoff.get() match
+                        case staged: UpgradeHandoff.Carryover =>
+                            discard(handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle))
+                            consume(staged.bytes)
+                        case _ => ()
+                end if
             case _ if !handle.driver.hasInFlightRead(handle) =>
-                // No bytes staged AND no stale recv kernel-owned for this fd: there is no plaintext-ReadPump recv coming, so nothing will ever fulfil
-                // a parked waiter. This is the decision the upgrade carrier could not make race-free (its hasInFlightRead snapshot could miss a
-                // ReadPump re-arm still queued for the reap carrier); made HERE on the reap carrier it is serialized with every recv registration and
-                // reap, so `pending` is authoritative. Clear upgradeActive and arm a normal io_uring recv for the peer's first flight (the next read
-                // routes straight to awaitReadCiphertext since upgradeActive is now false).
-                handle.upgradeActive = false
-                awaitReadCiphertext(handle, engine, cont, onFailed, onPanic, isReaped)
+                // io_uring, no bytes staged AND no stale recv kernel-owned for this fd: arm the handshake's OWN producer recv through the slot (single
+                // source). upgradeActive stays SET, so the reap routes that recv's CQE to the upgradeHandoff slot and fulfils this parked waiter, exactly
+                // as a stale recv would; the handshake never feeds a recv promise directly, so there is no second read source to orphan a staged Carryover
+                // (the dual-source upgrade strand the earlier clear-and-awaitReadCiphertext path created). Same shape as the poller branch above.
+                java.lang.System.err.println(s"ZZTRACE-IOU driveUpgradeRead noStaleRecv->parkWaiter+armProducer fd=${handle.readFd}")
+                if handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, waiter) then
+                    handle.driver.armUpgradeProducerRead(handle)
+                else
+                    handle.upgradeHandoff.get() match
+                        case staged: UpgradeHandoff.Carryover =>
+                            discard(handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Idle))
+                            consume(staged.bytes)
+                        case _ => ()
+                end if
             case _ =>
+                java.lang.System.err.println(s"ZZTRACE-IOU driveUpgradeRead staleRecvInFlight->parkWaiter fd=${handle.readFd}")
                 // A stale recv is in flight (no carryover yet): park the waiter for its CQE to fulfil. Both the stale recv's reap and this run on the
                 // reap carrier, so the staging cannot interleave mid-park; the CAS-loss re-read stays as a defensive belt for any future cross-carrier
                 // staging path (a Carryover that appeared between the get above and this CAS is consumed by a single re-read, never spun on).
@@ -1715,6 +1820,7 @@ final private[net] class PosixTransport private[posix] (
         try
             val result = sockets.recvNow(handle.readFd, handle.readBuffer, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
             val n      = result.value.toInt
+            if handle.upgradeActive then java.lang.System.err.println(s"ZZTRACE recvNow fd=${handle.readFd} n=$n err=${result.errorCode}")
             if n > 0 then
                 val cipherArr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
                 // feedCiphertext is an engine op: submit it through the FIFO so it is serialized against concurrent ops.
@@ -1766,12 +1872,22 @@ final private[net] class PosixTransport private[posix] (
         onPanic: Throwable => Unit,
         isReaped: () => Boolean
     )(using AllowUnsafe, Frame): Unit =
+        java.lang.System.err.println(
+            s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} awaitReadCiphertext arm fd=${handle.readFd} upgradeActive=${handle.upgradeActive}"
+        )
         val readPromise = new IOPromise[Closed, ReadOutcome]
         readPromise.onComplete {
             case Result.Success(outcome) =>
                 outcome match
                     case ReadOutcome.Bytes(bytes) =>
                         val arr = bytes.toArrayUnsafe
+                        java.lang.System.err.println(
+                            s"${
+                                    if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"
+                                } awaitReadCiphertext recv fd=${handle.readFd} n=${arr.length} recType=${
+                                    if arr.length > 0 then arr(0) & 0xff else -1
+                                }"
+                        )
                         // feedCiphertext is an engine op: submit through the FIFO. The continuation runs inside the FIFO thunk.
                         handle.driver.submitEngineOp { () =>
                             // Reap guard (#243): a deadline reap that ran ahead of this thunk on the FIFO worker freed the engine; skip the feed.
@@ -1798,7 +1914,15 @@ final private[net] class PosixTransport private[posix] (
             case Result.Failure(closed) => onFailed(closed)
             case Result.Panic(e)        => onPanic(e)
         }
-        handle.driver.awaitRead(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
+        // STARTTLS poller confinement: this is the handshake taking read ownership from the retiring plaintext pump. Mark handshakeReading so the poll
+        // carrier admits this read arm (PollerIoDriver) while still rejecting the pump's stray re-arm. Gated on upgradeActive so it is a no-op on a
+        // fresh (non-upgrade) handshake and on io_uring (driveUpgradeRead clears upgradeActive before reaching here).
+        if handle.upgradeActive then handle.handshakeReading = true
+        if handle.upgradeActive then java.lang.System.err.println(s"ZZTRACE hsArm fd=${handle.readFd}")
+        // awaitReadHandshake (not awaitRead): on io_uring this tags the recv handshakeOwned so the reap exempts the handshake's own ciphertext read
+        // from the upgrade-window stale-recv handoff routing (a non-handshake recv reaping while `upgrading` is set is the stray pump recv); the
+        // pollers route it identically to awaitRead.
+        handle.driver.awaitReadHandshake(handle, readPromise.asInstanceOf[Promise.Unsafe[ReadOutcome, Abort[Closed]]])
     end awaitReadCiphertext
 
 end PosixTransport

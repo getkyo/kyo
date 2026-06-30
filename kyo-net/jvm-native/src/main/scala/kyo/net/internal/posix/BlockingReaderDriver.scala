@@ -71,6 +71,7 @@ final private[net] class BlockingReaderDriver private (real: IoDriver[PosixHandl
                         promise.completeDiscard(Result.panic(t))
                     case Absent => ()
             else
+                // TODO if this is JS specific, why is it in jvm-native source folder?
                 // JS path: the @Ffi.blocking fiber is genuinely pending. Register onComplete to deliver
                 // the result when the libuv worker completes the read.
                 readFiber.onComplete {

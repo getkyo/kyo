@@ -46,6 +46,7 @@ final private[kyo] class ReadPump[Handle](
         // the actual runtime type; it is erased-safe since IOPromise type params are not reified.
         import AllowUnsafe.embrace.danger
         given Frame = Frame.internal
+        // TODO the cast seems unnecessary?
         this.asInstanceOf[kyo.scheduler.IOPromise[Closed, ReadOutcome]].poll() match
             case Present(Result.Success(outcome)) =>
                 outcome match
@@ -67,37 +68,45 @@ final private[kyo] class ReadPump[Handle](
     end onComplete
 
     private def offerToChannel(bytes: Span[Byte])(using AllowUnsafe, Frame): Unit =
-        channel.offer(bytes) match
+        val offerResult = channel.offer(bytes)
+        java.lang.System.err.println(
+            s"ZZTRACE PUMP offer handle=${driver.handleLabel(handle)} ch=${channel.hashCode()} bytes=${bytes.size} result=$offerResult pendingTakes=${channel.pendingTakes()} empty=${channel.empty()}"
+        )
+        offerResult match
             case Result.Success(true) =>
                 // Channel accepted, request next read
                 requestNextRead()
             case Result.Success(false) =>
-                // Channel full: backpressure. Park on the put; when the channel accepts, the callback requests the next read.
+                // Channel full: backpressure. Park on the put; when the channel accepts, the callback requests the next read. A STARTTLS upgrade
+                // can close the inbound channel while these bytes are still parked in the put (they carry the peer's first TLS flight): on that
+                // Closed failure the driver hook salvages them for the handshake instead of losing them (default no-op for an ordinary close).
                 val putFiber = channel.putFiber(bytes)
-                putFiber.onComplete(backpressureCallback)
+                putFiber.onComplete { result =>
+                    // Unsafe: this is the channel putFiber completion callback boundary; it runs off the fiber and has no AllowUnsafe in scope.
+                    import AllowUnsafe.embrace.danger
+                    given Frame = Frame.internal
+                    result match
+                        case Result.Success(_)         => requestNextRead()
+                        case Result.Failure(_: Closed) => driver.onInboundClosedDuringRead(handle, bytes)
+                        case Result.Panic(_)           => teardown()
+                    end match
+                }
             case Result.Failure(_: Closed) =>
-                // Channel closed
+                // The inbound channel is closed: normally these bytes are discarded with the teardown. But a STARTTLS upgrade closes inbound while
+                // this read may carry the peer's first TLS flight off the socket; the driver hook salvages those bytes for the handshake instead of
+                // losing them (default no-op for an ordinary close). See IoDriver.onInboundClosedDuringRead.
+                driver.onInboundClosedDuringRead(handle, bytes)
                 teardown()
         end match
     end offerToChannel
 
-    private val backpressureCallback: Result[Closed, Any] => Unit = result =>
-        // Unsafe: this is the channel putFiber completion callback boundary; it runs off the fiber and has no AllowUnsafe in scope.
-        import AllowUnsafe.embrace.danger
-        given Frame = Frame.internal
-        result match
-            case Result.Success(_)         => requestNextRead()
-            case Result.Failure(_: Closed) => () // channel closed, teardown already happened or will happen
-            case Result.Panic(_)           => teardown()
-        end match
-
     private def requestNextRead()(using AllowUnsafe, Frame): Unit =
-        // Always re-arm. A STARTTLS upgrade needs no pump-gating flag: detachForUpgrade (the
-        // Established -> Upgrading transition) fails the pump's in-flight read and closes its
-        // channels, so the pump tears down rather than re-arming; and on NIO the read-arm owner cell
-        // is a per-arm ReadArmCell whose orphan guarantee is object identity: each armRead allocates a
-        // fresh ReadArmCell, so even a re-arm that races the handshake holds a distinct cell object and
-        // cannot match the handshake's CAS on the current owner slot.
+        // Always re-arm. A re-arm that races a STARTTLS upgrade on the same handle is intercepted at the driver's read
+        // layer, not gated here: on NIO the selector carrier stashes the read into the handle's upgrade salvage while
+        // `upgrading && !handshakeReading` (NioIoDriver.dispatchReadPlain), and on the pollers the poll carrier rejects the
+        // stray read registration while `upgradeActive && !handshakeReading` (PollerIoDriver). Either way the pump's bytes are
+        // salvaged or its promise failed for teardown, so the re-arm can neither steal the read from the handshake nor drop
+        // the peer's first TLS flight.
         discard(becomeAvailable())
         driver.awaitRead(handle, self)
     end requestNextRead

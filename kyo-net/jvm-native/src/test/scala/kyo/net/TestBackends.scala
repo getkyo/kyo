@@ -38,7 +38,11 @@ object TestBackends:
       */
     val all: Seq[Entry] =
         import AllowUnsafe.embrace.danger
-        IoBackendPlatform.registered.map { entry =>
+        // ZZTRACE validation aid: KYO_NET_ONLY=<backend> restricts the matrix to one backend so a single backend's residual can be
+        // validated to N clean iters without another backend's still-open strand aborting the chain first. Inert by default (unset =
+        // all backends), so it is safe even if not reverted; stripped with the ZZTRACE at final all-green.
+        val only = sys.env.get("KYO_NET_ONLY")
+        IoBackendPlatform.registered.filter(entry => only.forall(_ == entry.name)).map { entry =>
             Entry(
                 name = entry.name,
                 isAvailable = entry.isAvailable,

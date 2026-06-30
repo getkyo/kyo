@@ -59,4 +59,49 @@ class ConnectDeadlineStrandTest extends Test:
         }
     }
 
+    "a concurrent burst of connects all complete: none spuriously fails or times out" in {
+        given Frame = Frame.internal
+        // Concurrency exposes two connect-arm hazards the sequential guard above cannot: (1) a caller-carrier registerChannel racing the poll
+        // carrier's selector rebuild (selector spin under a burst) throws ClosedSelectorException, which surfaced as an empty-cause
+        // NetConnectException; (2) the OP_CONNECT arm's guarded wakeup coalescing under the burst loses the connect-completion edge, which
+        // surfaced as NetConnectTimeoutException at the connect deadline. A burst of simultaneous connects against one listener that accepts and
+        // immediately closes drives both: every connect MUST complete (succeed; a peer that already closed yields a clean connected-then-EOF, not
+        // a connect failure). Any NetConnectException / NetConnectTimeoutException is a dropped connect arm. The generous 2s deadline isolates
+        // delivery correctness from deadline tightness so this is not host-load-flaky.
+        val transport   = NetPlatform.transport(TransportConfig.default.copy(connectTimeout = 2.seconds))
+        val concurrency = 128
+        transport.listen("127.0.0.1", 0, 256) { conn => conn.close() }.safe.get.map { listener =>
+            Async.foreach(0 until concurrency, concurrency) { _ =>
+                Abort.run[NetException](transport.connect("127.0.0.1", listener.port).safe.get).map {
+                    case Result.Success(conn) =>
+                        conn.close()
+                        Absent
+                    case Result.Failure(e) => Present(e.getClass.getSimpleName)
+                    case Result.Panic(e)   => Present(s"panic:${e.getClass.getSimpleName}")
+                }
+            }.map { outcomes =>
+                listener.close()
+                transport.close()
+                val failures       = outcomes.flatMap(_.toList)
+                val connectExc     = failures.count(_ == "NetConnectException")
+                val connectTimeout = failures.count(_ == "NetConnectTimeoutException")
+                // Per-mode assertions so each fix is attributable: Fix A (deferred-register on ClosedSelectorException) drives NetConnectException
+                // to 0; the deferred-connect-after-rebuild force-dispatch drives NetConnectTimeoutException to 0. A non-zero in either means that
+                // arm of the fix is incomplete.
+                assert(
+                    connectExc == 0,
+                    s"$connectExc of $concurrency concurrent connects failed with NetConnectException (registerChannel/rebuild race)"
+                )
+                assert(
+                    connectTimeout == 0,
+                    s"$connectTimeout of $concurrency concurrent connects failed with NetConnectTimeoutException (lost/dropped OP_CONNECT readiness)"
+                )
+                assert(
+                    failures.isEmpty,
+                    s"${failures.size} of $concurrency concurrent connects failed: ${failures.distinct.mkString(", ")}"
+                )
+            }
+        }
+    }
+
 end ConnectDeadlineStrandTest

@@ -19,6 +19,7 @@ import kyo.*
   * time; it does not PROVE physical on-loop execution after a handoff (a runtime/spawn fact), which
   * is the honest ceiling of this confinement.
   */
+// TODO it seems this file is dead code?
 final private[kyo] class LoopConfined[A](initial: A, owner: LoopToken):
     private var value: A = initial
 

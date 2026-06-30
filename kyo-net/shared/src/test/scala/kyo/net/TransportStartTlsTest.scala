@@ -16,22 +16,43 @@ class TransportStartTlsTest extends Test:
     private val upgradeRequest: Span[Byte] = Span.from(Array[Byte]('U'))
     private val upgradeReady: Span[Byte]   = Span.from(Array[Byte]('R'))
 
+    // Focused corrupt-delivery repro gate: when KYO_NET_SUCCESS_ONLY=1 (or -Dkyo.net.successLeavesOnly=true) the expected-failure (reject) leaves
+    // cancel every cell, so the suite runs only the success/round-trip upgrade leaves. Then any handshake EngineError or strand is the upgrade-handoff
+    // delivery bug rather than an expected reject, making it directly attributable without a per-leaf trace tag. Default (unset) runs every leaf.
+    private val successLeavesOnly: Boolean =
+        sys.env.get("KYO_NET_SUCCESS_ONLY").contains("1") || sys.props.get("kyo.net.successLeavesOnly").contains("true")
+    private val rejectSkip: (String, String) => Maybe[String] =
+        (_, _) => if successLeavesOnly then Present("focused corrupt-delivery repro: reject leaf excluded") else Absent
+
     /** A server that waits for the upgrade signal, replies ready, upgrades to TLS in `serverTls`, then echoes its inbound stream. */
     private def startTlsEchoServer(transport: Transport, serverTls: NetTlsConfig)(using Frame): Listener < (Async & Abort[Closed]) =
         transport.listen("127.0.0.1", 0, 128) { serverConn =>
+            java.lang.System.err.println(s"ZZTRACE TEST server-handler-entry conn=${serverConn.hashCode}")
             discard(Sync.Unsafe.evalOrThrow {
                 Fiber.initUnscoped {
                     Abort.run[Closed] {
                         serverConn.inbound.safe.take.flatMap { _ =>
                             serverConn.outbound.safe.put(upgradeReady).andThen {
                                 transport.upgradeToTls(serverConn, serverTls, 16).safe.get.flatMap { tlsConn =>
+                                    java.lang.System.err.println(s"ZZTRACE TEST server-upgraded ch=${tlsConn.inbound.hashCode}")
                                     Loop.foreach {
-                                        tlsConn.inbound.safe.take.flatMap(data => tlsConn.outbound.safe.put(data).andThen(Loop.continue))
+                                        tlsConn.inbound.safe.take.flatMap { data =>
+                                            java.lang.System.err.println(
+                                                s"ZZTRACE TEST server-take ch=${tlsConn.inbound.hashCode} len=${data.size}"
+                                            )
+                                            tlsConn.outbound.safe.put(data).map { _ =>
+                                                java.lang.System.err.println(
+                                                    s"ZZTRACE TEST server-put ch=${tlsConn.inbound.hashCode} len=${data.size}"
+                                                )
+                                            }.andThen(Loop.continue)
+                                        }
                                     }
                                 }
                             }
                         }
-                    }.unit
+                    }.map { result =>
+                        java.lang.System.err.println(s"ZZTRACE TEST server-fiber-end conn=${serverConn.hashCode} result=$result")
+                    }
                 }
             })
         }.safe.get
@@ -41,12 +62,20 @@ class TransportStartTlsTest extends Test:
         Frame
     ): Array[Byte] < (Async & Abort[Closed]) =
         for
-            conn     <- transport.connect("127.0.0.1", port).safe.get
-            _        <- conn.outbound.safe.put(upgradeRequest)
-            _        <- conn.inbound.safe.take
-            tlsConn  <- transport.upgradeToTls(conn, clientTls, 16).safe.get
-            _        <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg))
-            received <- tlsConn.inbound.safe.take
+            conn <- transport.connect("127.0.0.1", port).safe.get
+            _    <- conn.outbound.safe.put(upgradeRequest)
+            _    <- conn.inbound.safe.take
+            tlsConn <- transport.upgradeToTls(conn, clientTls, 16).safe.get.map { c =>
+                java.lang.System.err.println(s"ZZTRACE TEST client-upgraded ch=${c.inbound.hashCode}")
+                c
+            }
+            _ <- tlsConn.outbound.safe.put(Span.fromUnsafe(msg)).map { _ =>
+                java.lang.System.err.println(s"ZZTRACE TEST client-sent ch=${tlsConn.inbound.hashCode}")
+            }
+            received <- tlsConn.inbound.safe.take.map { r =>
+                java.lang.System.err.println(s"ZZTRACE TEST client-take ch=${tlsConn.inbound.hashCode} len=${r.size}")
+                r
+            }
         yield received.toArray
 
     /** The cell's server config, additionally demanding a client certificate signed by the (self-signed) test cert. */
@@ -59,14 +88,7 @@ class TransportStartTlsTest extends Test:
             else conn.inbound.safe.take.map(chunk => Loop.continue(acc ++ chunk.toArray))
         }
 
-    // PENDING-P10 (nio/jdk cells, backend-targeted skip on every upgrade-then-use leaf below): a leaf that performs a SUCCESSFUL STARTTLS upgrade and
-    // then USES the upgraded connection (round-trips a payload, reads the cert hash) strands intermittently on nio/jdk. The upgrade hands the kept-open
-    // fd from the plaintext ReadPump to the TLS handshake on the SAME NioHandle read mechanism; under the Linux epoll-backed JDK selector timing the
-    // handshake read races the original-plaintext close/teardown (the preRead-handoff DROP + cross-carrier readArm CAS family, P8-CONC5NIO), so the cell
-    // times out while io_uring/epoll/kqueue PASS. NIO is untouched by P9 (not a regression). The rejection / failed-upgrade leaves are NOT affected:
-    // they are bounded by their own Async.timeout and assert failure, so a strand still satisfies the assertion. P10's poll/selector-carrier confinement
-    // of the upgrade read fixes the whole path and un-pends every nio/jdk cell below; each skipCell cancels ONLY the (nio, jdk) cell. See p9-fix-log.md.
-    "a plaintext connection upgrades to TLS on both peers and round-trips an encrypted message" - eachBackendTlsExcept {
+    "a plaintext connection upgrades to TLS on both peers and round-trips an encrypted message" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             val cli = clientTls.copy(sniHostname = Present("localhost"))
             startTlsEchoServer(transport, serverTls).map { listener =>
@@ -75,16 +97,43 @@ class TransportStartTlsTest extends Test:
                     assert(new String(echoed, "UTF-8") == "hello-tls")
                 }
             }
-    } { (backend, provider) =>
-        if backend == "nio" && provider == "jdk" then
-            Present(
-                "PENDING-P10: nio/jdk STARTTLS upgrade-handoff path (preRead-handoff drop / selector-carrier confinement); fixed + un-pended in P10, see p9-fix-log"
-            )
-        else Absent
     }
 
-    // PENDING-P10 nio/jdk upgrade-handoff path (see the note above the first upgrade leaf); the skipCell cancels ONLY the (nio, jdk) cell.
-    "a STARTTLS upgrade with mutual TLS (client presents its certificate) round-trips" - eachBackendTlsExcept {
+    "repeated STARTTLS upgrades on one transport each round-trip (upgrade-handoff drop regression)" - eachBackendTls {
+        (transport, serverTls, clientTls) =>
+            // The upgrade-handoff race (the retiring plaintext pump dropping or stealing the peer's first TLS flight on the shared handle) is
+            // probabilistic: a single upgrade can pass by luck. Looping the tight connect -> signal -> upgrade-immediately -> round-trip cycle makes it
+            // surface reliably: every round must echo, or a dropped ClientHello strands the handshake and the bounding timeout fails the leaf. This is
+            // the deterministic regression guard for the upgrade-handoff drop the selector/poll-carrier confinement closes on every non-io_uring backend.
+            val cli    = clientTls.copy(sniHostname = Present("localhost"))
+            val rounds = 20
+            startTlsEchoServer(transport, serverTls).map { listener =>
+                Abort.run[Timeout] {
+                    Async.timeout(60.seconds) {
+                        Loop.indexed { i =>
+                            if i >= rounds then Loop.done(())
+                            else
+                                val msg = s"handoff-$i".getBytes("UTF-8")
+                                java.lang.System.err.println(s"ZZTRACE TEST round=$i begin-connect")
+                                startTlsClient(transport, listener.port, cli, msg).map { echoed =>
+                                    java.lang.System.err.println(s"ZZTRACE TEST round=$i client-returned len=${echoed.length}")
+                                    assert(
+                                        new String(echoed, "UTF-8") == s"handoff-$i",
+                                        s"round $i must round-trip after the STARTTLS upgrade"
+                                    )
+                                    Loop.continue
+                                }
+                        }
+                    }
+                }.map { outcome =>
+                    java.lang.System.err.println(s"ZZTRACE TEST leaf-end outcome=$outcome")
+                    listener.close()
+                    assert(outcome.isSuccess, s"all $rounds STARTTLS upgrades must round-trip without stranding; got $outcome")
+                }
+            }
+    }
+
+    "a STARTTLS upgrade with mutual TLS (client presents its certificate) round-trips" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             val clientWithCert = clientTls.copy(
                 certChainPath = serverTls.certChainPath,
@@ -97,15 +146,9 @@ class TransportStartTlsTest extends Test:
                     assert(new String(echoed, "UTF-8") == "hello-mtls")
                 }
             }
-    } { (backend, provider) =>
-        if backend == "nio" && provider == "jdk" then
-            Present(
-                "PENDING-P10: nio/jdk STARTTLS upgrade-handoff path (preRead-handoff drop / selector-carrier confinement); fixed + un-pended in P10, see p9-fix-log"
-            )
-        else Absent
     }
 
-    "a STARTTLS mutual-TLS server rejects a client that presents no certificate (no round-trip)" - eachBackendTls {
+    "a STARTTLS mutual-TLS server rejects a client that presents no certificate (no round-trip)" - eachBackendTlsExcept {
         (transport, serverTls, clientTls) =>
             val clientNoCert = clientTls.copy(sniHostname = Present("localhost"))
             startTlsEchoServer(transport, serverMtls(serverTls)).map { listener =>
@@ -119,9 +162,9 @@ class TransportStartTlsTest extends Test:
                     )
                 }
             }
-    }
+    }(rejectSkip)
 
-    "a STARTTLS upgrade against a server that never starts TLS fails" - eachBackendTls { (transport, _, clientTls) =>
+    "a STARTTLS upgrade against a server that never starts TLS fails" - eachBackendTlsExcept { (transport, _, clientTls) =>
         val cli = clientTls.copy(sniHostname = Present("localhost"))
         // A plaintext server that reads the upgrade signal then closes, never performing a TLS handshake. The client's upgrade must fail.
         transport.listen("127.0.0.1", 0, 128) { serverConn =>
@@ -146,10 +189,9 @@ class TransportStartTlsTest extends Test:
                 assert(outcome.isFailure, s"a STARTTLS upgrade against a non-TLS server must fail on this cell, got $outcome")
             }
         }
-    }
+    }(rejectSkip)
 
-    // PENDING-P10 nio/jdk upgrade-handoff path (see the note above the first upgrade leaf); the skipCell cancels ONLY the (nio, jdk) cell.
-    "after a STARTTLS upgrade the original plaintext connection is closed and a multi-record payload round-trips" - eachBackendTlsExcept {
+    "after a STARTTLS upgrade the original plaintext connection is closed and a multi-record payload round-trips" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             val cli     = clientTls.copy(sniHostname = Present("localhost"))
             val payload = Array.fill[Byte](32768)(42) // spans multiple TLS records (max record ~16KB)
@@ -174,16 +216,9 @@ class TransportStartTlsTest extends Test:
                     )
                 end for
             }
-    } { (backend, provider) =>
-        if backend == "nio" && provider == "jdk" then
-            Present(
-                "PENDING-P10: nio/jdk STARTTLS upgrade-handoff path (preRead-handoff drop / selector-carrier confinement); fixed + un-pended in P10, see p9-fix-log"
-            )
-        else Absent
     }
 
-    // PENDING-P10 nio/jdk upgrade-handoff path (see the note above the first upgrade leaf); the skipCell cancels ONLY the (nio, jdk) cell.
-    "a STARTTLS upgrade with hostname verification accepts a matching server certificate" - eachBackendTlsExcept {
+    "a STARTTLS upgrade with hostname verification accepts a matching server certificate" - eachBackendTls {
         (transport, serverTls, clientTls) =>
             // Verifying client (not trustAll): pin the cert as CA and verify "localhost", which the localhost cert's SAN covers, so it accepts.
             val cli = clientTls.copy(trustAll = false, caCertPath = serverTls.certChainPath, sniHostname = Present("localhost"))
@@ -193,15 +228,9 @@ class TransportStartTlsTest extends Test:
                     assert(new String(echoed, "UTF-8") == "hello-verified")
                 }
             }
-    } { (backend, provider) =>
-        if backend == "nio" && provider == "jdk" then
-            Present(
-                "PENDING-P10: nio/jdk STARTTLS upgrade-handoff path (preRead-handoff drop / selector-carrier confinement); fixed + un-pended in P10, see p9-fix-log"
-            )
-        else Absent
     }
 
-    "a STARTTLS upgrade by a verifying client with no reference identity (empty host) fails closed" - eachBackendTls {
+    "a STARTTLS upgrade by a verifying client with no reference identity (empty host) fails closed" - eachBackendTlsExcept {
         (transport, serverTls, clientTls) =>
             // A verifying client (trustAll = false) pins the cert as CA so the chain validates, but leaves sniHostname Absent, so upgradeToTls
             // drives the handshake with host = "", i.e. no reference identity. A chain-valid certificate with no bound name is never acceptable
@@ -218,9 +247,9 @@ class TransportStartTlsTest extends Test:
                     )
                 }
             }
-    }
+    }(rejectSkip)
 
-    "a STARTTLS upgrade with hostname verification rejects a name-mismatched server certificate" - eachBackendTls {
+    "a STARTTLS upgrade with hostname verification rejects a name-mismatched server certificate" - eachBackendTlsExcept {
         (transport, serverTls, clientTls) =>
             // The server presents a wronghost.example cert (a fixture distinct from the harness cert), so build fresh configs carrying the cell's
             // provider pin. The client trusts it as CA but verifies "localhost", so the name mismatch must reject on every implementation.
@@ -241,10 +270,9 @@ class TransportStartTlsTest extends Test:
                     }
                 }
             }
-    }
+    }(rejectSkip)
 
-    // PENDING-P10 nio/jdk upgrade-handoff path (see the note above the first upgrade leaf); the skipCell cancels ONLY the (nio, jdk) cell.
-    "a STARTTLS-upgraded connection reports the server certificate hash" - eachBackendTlsExcept { (transport, serverTls, clientTls) =>
+    "a STARTTLS-upgraded connection reports the server certificate hash" - eachBackendTls { (transport, serverTls, clientTls) =>
         // After a STARTTLS upgrade the client connection must expose the server's RFC 5929 channel-binding hash, exactly as a connect-time TLS
         // connection does, proving the TLS engine is attached to the upgraded handle. The hash is the SHA-256 of the server certificate (32 bytes).
         val cli = clientTls.copy(sniHostname = Present("localhost"))
@@ -265,12 +293,6 @@ class TransportStartTlsTest extends Test:
                     case Absent     => fail("an upgraded TLS connection must report the server certificate hash (RFC 5929 channel binding)")
             end for
         }
-    } { (backend, provider) =>
-        if backend == "nio" && provider == "jdk" then
-            Present(
-                "PENDING-P10: nio/jdk STARTTLS upgrade-handoff path (preRead-handoff drop / selector-carrier confinement); fixed + un-pended in P10, see p9-fix-log"
-            )
-        else Absent
     }
 
 end TransportStartTlsTest

@@ -84,6 +84,34 @@ final private[net] class PosixHandle private (
       */
     @volatile var upgradeActive: Boolean = false
 
+    /** STARTTLS upgrade-window marker (io_uring read routing): set true at detachForUpgrade (with [[upgradeActive]]) and cleared at handshake
+      * completion (onFinished, when [[tls]] becomes Present). Unlike [[upgradeActive]] (which clears mid-handshake, before the handshake arms its own
+      * ciphertext recv), this stays true across the WHOLE window, including the gap after upgradeActive clears but before tls is installed. The
+      * io_uring reap uses it to keep any stray plaintext-ReadPump recv that reaps in that gap off the raw plainReadComplete path (routing it through
+      * [[upgradeHandoff]] instead): a TLS 1.3 NewSessionTicket can arrive post-FINISHED-pre-onFinished and would otherwise be delivered as raw
+      * plaintext (the upgrade-handoff drop). The handshake's OWN ciphertext recv is exempt via the recv's `handshakeOwned` tag, so it still feeds the
+      * engine. Unused on the pollers (their reads are synchronous, no reaped-recv routing). Cleared in freeResources.
+      */
+    @volatile var upgrading: Boolean = false
+
+    /** STARTTLS poller confinement: set true once the handshake takes read ownership from the retiring plaintext ReadPump (PosixTransport's
+      * awaitReadCiphertext, before the first post-detach read arm). While `upgradeActive && !handshakeReading` the poll carrier REJECTS an
+      * OpRegisterRead for this fd's read side ([[PollerIoDriver]]'s registration apply): that registration is the pump's stray re-arm racing
+      * detachForUpgrade, and admitting it would let the next readability event deliver the peer's first TLS flight to the pump instead of the
+      * handshake. Once handshakeReading is set, the handshake's own read arm is admitted. Unused on io_uring (its upgrade read routes through the
+      * [[upgradeHandoff]] slot, not this flag). Cleared with [[upgradeActive]] at handshake completion / failure.
+      */
+    @volatile var handshakeReading: Boolean = false
+
+    /** STARTTLS post-completion window (kqueue edge recovery): set true at handshake completion (onFinished) and cleared on the first
+      * application-plaintext read after the upgrade. While set, a post-upgrade TLS read that yielded 0 plaintext and drained to EAGAIN re-issues
+      * the kqueue read registration (EV_ADD re-evaluates current readiness) instead of relying on the EV_CLEAR knote re-firing for the next flight.
+      * Needed because a TLS 1.3 NewSessionTicket (or any post-handshake record) lands between FINISHED and the peer's first application flight (the
+      * echo); the record reads as 0 plaintext, and the bare re-arm trusts an EV_CLEAR edge that kqueue can lose, stranding the echo. Bounded to this
+      * window so steady-state reads keep the bare re-arm (no per-read kevent). kqueue-only at the use site; ignored by epoll/io_uring.
+      */
+    @volatile var postUpgradeReadWindow: Boolean = false
+
     // The half-close state, written by the loop carrier only and read by closeReason. @volatile
     // carries the loop-carrier write to the closeReason reader; closeReason is a total function of
     // this one state, so the close reason is derived from a single consistent value.
@@ -576,6 +604,9 @@ private[net] object PosixHandle:
             case _ => ()
         end match
         h.upgradeActive = false
+        h.upgrading = false
+        h.handshakeReading = false
+        h.postUpgradeReadWindow = false
         // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
         h.pendingReadPromise = Absent
         h.pendingAcceptPromise = Absent

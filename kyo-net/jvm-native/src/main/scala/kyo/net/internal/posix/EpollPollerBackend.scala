@@ -96,10 +96,17 @@ private[net] object EpollPollerBackend extends PollerBackend:
             // Already registered. Skip the MOD when the effective mask is unchanged AND the caller does not need a readiness re-report; otherwise
             // issue the MOD (epoll_ctl(MOD) re-evaluates readiness and re-queues a currently-ready fd even for an unchanged mask).
             val prevEtInterest = prevUnion | PosixConstants.EPOLLET | PosixConstants.EPOLLRDHUP
-            if etInterest == prevEtInterest && !reReport then 0
-            else ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value
+            if etInterest == prevEtInterest && !reReport then
+                java.lang.System.err.println(s"ZZTRACE-EPOLLW epollArm fd=$fd op=MOD-SKIP reReport=$reReport mask=$etInterest")
+                0
+            else
+                val modRc = ep.epoll_ctl(pollerFd, PosixConstants.EPOLL_CTL_MOD, fd, armBuf).value
+                java.lang.System.err.println(s"ZZTRACE-EPOLLW epollArm fd=$fd op=MOD reReport=$reReport rc=$modRc")
+                modRc
             end if
-        else added.value
+        else
+            java.lang.System.err.println(s"ZZTRACE-EPOLLW epollArm fd=$fd op=ADD rc=${added.value}")
+            added.value
         end if
     end arm
 

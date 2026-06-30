@@ -50,12 +50,64 @@ final private[kyo] class NioHandle private (
     // carry the same promise, the two wrapper objects are distinct, so the stale CAS fails.
     // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
     val readArm: AtomicRef.Unsafe[Maybe[ReadArmCell]] = AtomicRef.Unsafe.init(Absent)
+
+    // STARTTLS handoff guard. Set true for the duration of a STARTTLS upgrade on this handle (from before the plaintext detach until the
+    // handshake completes). While set, a plaintext read whose delivery the upgrade's inbound close has already failed is SALVAGED
+    // (onInboundClosedDuringRead) instead of dropped: those bytes are the peer's first TLS flight, which the handshake needs. Mirrors
+    // PosixHandle.upgradeActive.
+    @volatile var upgrading: Boolean = false
+    // Set true once the TLS handshake takes over reading (startTlsHandshake, after the plaintext detach). It splits the upgrade window into two
+    // phases. PLAINTEXT phase (`upgrading && !handshakeReading`): a dispatched socket read is SALVAGED, never delivered to the plaintext pump's
+    // read promise, so the retiring pump cannot complete-and-re-arm and STEAL the read from the handshake (nor offer to the closed inbound and
+    // DROP the peer's first flight). HANDSHAKE phase (`handshakeReading`): the pump is gone and a dispatched read completes the handshake's read
+    // normally. Cleared with `upgrading` at handshake completion.
+    @volatile var handshakeReading: Boolean = false
+    // Set true at STARTTLS completion (the FINISHED branch) so the upgraded connection's FIRST ReadPump read arm forces an unconditional
+    // selector.wakeup(). That arm's OP_READ set is a cross-carrier interestOps read-modify-write that can be lost to the selector's own write
+    // (the JDK selector is level-triggered, so a lost OP_READ means the channel is simply never reported); the normal recovery is the poll
+    // carrier's reassertPendingInterest, but on the tight repeated-upgrade loop the selector quiesces between rounds and the guarded (coalesced)
+    // wakeup can skip, so reassert never runs and the read strands. The unconditional wakeup guarantees one poll cycle, where reassert re-applies
+    // OP_READ on the selector carrier. Consumed (cleared) by the first armRead after completion. Mirrors PosixHandle's epoll forceReadRecovery.
+    @volatile var forceReadArmWakeup: Boolean = false
+    // Bytes the plaintext ReadPump pulled off the socket during the upgrade window but could not deliver (the inbound channel was already closed
+    // by the upgrade detach), the peer's first TLS flight (e.g. the ClientHello). Salvaged here rather than dropped, and drained exactly once by
+    // the handshake (startTlsHandshake feeds it into the engine's netInBuf before the first handshake read).
+    // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
+    val upgradeSalvage: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
+
+    // STARTTLS upgrade-read handoff slot (the structural confinement). During an upgrade the SELECTOR carrier is the sole reader and interest owner:
+    // dispatchReadPlain reads the peer flight and hands it to the handshake through this one slot, so the handshake fiber never arms OP_READ itself
+    // (which would race the selector's own interestOps read-modify-write and lose the bit, stranding the handshake). The handshake parks a Waiter
+    // here; the selector fulfils it, or stages a Carryover when it read before the handshake parked. Both sides CAS the one slot so exactly one wins
+    // each transition. NioIoDriver.cleanupPending swings it to Idle and fails any parked Waiter Closed. Mirrors PosixHandle.upgradeHandoff.
+    // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
+    val upgradeHandoff: AtomicRef.Unsafe[NioHandle.UpgradeHandoff] = AtomicRef.Unsafe.init(NioHandle.UpgradeHandoff.Idle)
+
+    // Application plaintext the TLS handshake's unwrap decrypted while still in the upgrade window: when a peer sends application data coalesced
+    // with (or right after) its final handshake flight, driveHandshake's unwrap yields that plaintext into appInBuf. It belongs to the upgraded
+    // connection, not the handshake, so it is captured here instead of discarded and delivered to the upgraded connection's inbound at handshake
+    // completion (completeConnect), the NIO analog of PosixTransport.deliverHandshakePlaintext. Empty for a fresh (non-upgrade) handshake.
+    // Unsafe: AtomicRef.Unsafe initialized at object-construction time inside the class body.
+    val upgradeAppData: AtomicRef.Unsafe[Chunk[Array[Byte]]] = AtomicRef.Unsafe.init[Chunk[Array[Byte]]](Chunk.empty)
 end NioHandle
 
 /** Factory and lifecycle operations for `NioHandle`. */
 private[kyo] object NioHandle:
 
     val DefaultReadBufferSize: Int = 8192
+
+    /** The STARTTLS upgrade-read handoff state (see [[NioHandle.upgradeHandoff]]). The selector carrier (the producer, [[NioIoDriver]]'s
+      * `dispatchReadPlain`) and the handshake carrier (the consumer, [[NioTransport]]'s `driveHandshake`) run on different carriers; this one
+      * state, swung by CAS, lets exactly one side win each transition so the bytes always meet the parked waiter:
+      *   - [[Idle]]: neither side has acted yet.
+      *   - [[Carryover]]: the selector read a peer flight before the handshake parked; the handshake's next read consumes it.
+      *   - [[Waiter]]: the handshake parked before the selector read; the selector fulfils this fiber-parking promise with the bytes.
+      */
+    private[kyo] enum UpgradeHandoff:
+        case Idle
+        case Carryover(bytes: Array[Byte])
+        case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
+    end UpgradeHandoff
 
     /** Create a plain-TCP handle with an allocated direct read buffer. */
     def init(channel: SocketChannel, bufferSize: Int)(using AllowUnsafe): NioHandle =

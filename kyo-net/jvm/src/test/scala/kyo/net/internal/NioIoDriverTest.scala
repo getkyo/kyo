@@ -898,6 +898,57 @@ class NioIoDriverTest extends Test:
         end try
     }
 
+    "registerChannelDeferredOnClosedSelectorDuringRebuild" in {
+        // Reproduce-first for the concurrent-connect-burst connect failure: a caller-carrier registerChannel races the poll carrier's
+        // rebuildSelector, which closes the old selector (NioIoDriver selector.close() then selector = newSelector). Under a connect burst the
+        // selector spins and rebuilds; a registerChannel reading the closed old selector throws ClosedSelectorException. The pre-fix driver
+        // returned false on that, so NioTransport.awaitConnect failed the connect with an empty-cause NetConnectException. The fix routes that
+        // close (while the driver is still live, closedFlag false) through the same deferred path the CancelledKeyException race uses: enqueue +
+        // wakeup + return success, and drainPendingRegistrations re-registers on the live selector with interest reconstructed from the pending-op
+        // maps. The loopback connect is ALREADY complete here (openLoopbackPair calls finishConnect), so this also exercises the
+        // deferred-connect-after-rebuild edge: a connect that completed during the deferral window must still complete, which needs the drain-time
+        // dispatchConnect force-dispatch (the selector does not re-surface OP_CONNECT for an interest registered after the channel became ready).
+        //
+        // Three assertions, two fail-before points: registerChannel DEFERS (true; pre-fix the defer was false -> connect dropped), OP_CONNECT is
+        // reconstructed on the restored selector (not interest 0), and the connect promise actually COMPLETES after the drain (pre-fix the force-
+        // dispatch was absent -> OP_CONNECT armed but never dispatched -> the promise hangs = the deferred-connect-after-rebuild TIMEOUT).
+        given Frame      = Frame.internal
+        val driver       = NioIoDriver.init()
+        val (client, sv) = openLoopbackPair()
+        val handle       = NioHandle.init(client, 4096)
+        try
+            // Live registration + an armed connect, so OP_CONNECT is recorded in the pending-op map (the source of truth the deferred drain reads).
+            assert(driver.registerChannel(handle))
+            val pc = new IOPromise[Closed, Unit]
+            driver.awaitConnect(handle, pc.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+            assert((driver.interestOpsFor(client) & SelectionKey.OP_CONNECT) != 0)
+
+            // Reproduce the rebuild window: close the current selector (driver still live, closedFlag false), then re-register the channel as a
+            // caller carrier would mid-rebuild. With the fix this DEFERS (true + enqueue); pre-fix it returned false (connect dropped).
+            driver.closeSelectorForTest()
+            val deferred = driver.registerChannel(handle)
+            assert(deferred, "registerChannel must defer (not fail) when the selector is closed mid-rebuild on a live driver")
+            assert(driver.pendingRegistrationCount == 1)
+
+            // Restore the selector (the rebuild swap) and drain (the poll carrier's per-cycle drainPendingRegistrations): the deferred channel is
+            // re-registered on the live selector with OP_CONNECT reconstructed from pendingConnects, NOT interest 0, and the drain force-dispatches
+            // a connect probe so an already-completed connect is delivered rather than stranding.
+            driver.restoreSelectorForTest()
+            assert(driver.pendingRegistrationCount == 0)
+            assert(
+                pc.done(),
+                "the deferred connect must complete after the drain: the OS connect finished during the deferral, so the drain's dispatchConnect " +
+                    "force-dispatch must deliver it (else OP_CONNECT is armed but never re-surfaced and the connect strands to its deadline)"
+            )
+            assert(pc.poll() == Present(Result.succeed(())))
+            succeed
+        finally
+            driver.closeHandle(handle)
+            sv.close()
+            driver.close()
+        end try
+    }
+
     "registerChannelDeferredThenStartedDeliversAcrossManyChannels" in {
         // Strengthen the deferred-path guard across MANY channels in one driver: every channel is registered, its key cancelled, then
         // re-registered (each hitting the deferred path), each arms a read during the deferred window, and after the loop starts every read must

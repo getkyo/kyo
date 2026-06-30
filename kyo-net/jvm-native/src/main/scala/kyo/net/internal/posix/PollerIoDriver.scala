@@ -461,6 +461,43 @@ final private[net] class PollerIoDriver private[posix] (
         submitChange(packCmd(OpRegisterRead, handle.readFd))
     end awaitRead
 
+    /** STARTTLS upgrade confinement: make the poll carrier the sole producer of the upgrade's ciphertext reads. The handshake parked a waiter on
+      * [[PosixHandle.upgradeHandoff]] and calls this; we arm a read whose dispatch ([[dispatchReadPlain]], gated on [[PosixHandle.upgradeActive]])
+      * reads the peer flight on the poll carrier and fulfils that waiter through the slot, never completing this promise with bytes. The promise is a
+      * vehicle to hold the read armed and to be failed on close; it is never observed by the handshake. Setting [[PosixHandle.handshakeReading]]
+      * admits this arm past [[applyRegistration]]'s stray-pump-rearm guard (the retiring plaintext ReadPump's own re-arm is rejected while
+      * `upgradeActive && !handshakeReading`). Demand-driven: the handshake calls this once per read, so the producer arms one read per peer flight.
+      */
+    override def armUpgradeProducerRead(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        val producer = Promise.Unsafe.init[ReadOutcome, Abort[Closed]]()
+        handle.pendingReadPromise = Present(producer)
+        handle.handshakeReading = true
+        java.lang.System.err.println(
+            s"ZZTRACE-EPOLLW armUP fd=${handle.readFd} id=${handle.id.packed} rmhm=${handle.readMightHaveMore} missed=${missedReads.contains(handle.readFd)} registered=${activeFds.contains(handle.readFd)} wakePending=${wakePending.get()}"
+        )
+        // Edge-triggered recovery for the upgrade producer, on BOTH poller backends: a peer handshake flight ALREADY buffered when this arms
+        // produces no fresh readiness edge that would re-dispatch the read, so the read never fires and the upgrade strands to the leaf timeout.
+        // On epoll the register-once optimization skips the epoll_ctl(MOD) on an unchanged mask, so no new EPOLLET edge is queued. On kqueue the
+        // read interest is EV_CLEAR (edge-triggered): the standing registration does not re-report bytes buffered before the arm, and a re-arm that
+        // does not flip the armed mask carries no fresh edge either. Seed missedReads so the registration's apply force-dispatches one read: it
+        // drains a buffered flight now, or EAGAINs and stays armed for the next edge, reusing the consumer-paced-drain recovery the normal read path
+        // drives via readMightHaveMore. The speculative read is the canonical edge-triggered contract (drain to EAGAIN); a redundant dispatch with
+        // no bytes hits EAGAIN and re-arms harmlessly, so it is safe on both backends.
+        discard(missedReads.add(handle.readFd))
+        regIntake.offer(Registration(handle, RegKind.Read))
+        submitChange(packCmd(OpRegisterRead, handle.readFd))
+    end armUpgradeProducerRead
+
+    /** Force the first post-upgrade ReadPump arm to re-evaluate readiness so an application flight already buffered when the upgraded connection
+      * starts is not stranded waiting for a fresh edge that never comes. Both poller backends are edge-triggered and need it: epoll's register-once
+      * skips the MOD on the already-registered fd (no new EPOLLET edge), and kqueue's EV_CLEAR standing registration does not re-report bytes buffered
+      * before the arm. Seed missedReads so the arm's apply force-dispatches one read, the same recovery [[armUpgradeProducerRead]] uses for the
+      * producer arms. Runs on the poll carrier from `onFinished` (the handshake completes on the poll carrier), so the missedReads write stays
+      * poll-fiber-confined.
+      */
+    override def forceReadRecovery(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        discard(missedReads.add(handle.readFd))
+
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
             // Tail-bound park (CWE-400): the WritePump suspended because the TLS write tail hit the high-water mark, NOT because the kernel send
@@ -767,6 +804,12 @@ final private[net] class PollerIoDriver private[posix] (
                     else handle.pendingCipherSent += sent   // strictly-positive progress; the loop terminates
                     end if
                 end while
+                // B-diagnostic (write-side, on the echo SENDER): how much of this flight's ciphertext reached the wire. fullyDrained=true means the
+                // peer DID send the rest, so an unread record on the reader is an edge-miss; fullyDrained=false (tail parked on EAGAIN) plus a stuck
+                // reader points at a write-strand/backpressure deadlock. Stripped with the ZZTRACE at final all-green.
+                java.lang.System.err.println(
+                    s"ZZTRACE-EPOLL flushTls fd=${handle.writeFd} pendingSize=${buf.size} sent=${handle.pendingCipherSent} fullyDrained=${handle.pendingCipherSent >= buf.size}"
+                )
                 if handle.pendingCipherSent >= buf.size then
                     // Fully drained (or the tail was discarded on a hard error, leaving size 0): reset so the next write starts clean and a
                     // later flush sees nothing pending.
@@ -854,6 +897,11 @@ final private[net] class PollerIoDriver private[posix] (
             submitChange(packCmd(OpDeregister, handle.writeFd, fdClosing))
         end if
         val closed = Closed(label, summon[Frame], s"fd=${handle.readFd}/${handle.writeFd} canceled")
+        if handle.upgradeActive then
+            java.lang.System.err.println(
+                s"ZZTRACE deregFds fd=${handle.readFd} fdClosing=$fdClosing readPromise=${handle.pendingReadPromise.isDefined} hsReading=${handle.handshakeReading}"
+            )
+        end if
         handle.pendingReadPromise.foreach(_.completeDiscard(Result.fail(closed)))
         handle.pendingReadPromise = Absent
         handle.pendingWritablePromise.foreach(_.completeDiscard(Result.fail(closed)))
@@ -1159,6 +1207,11 @@ final private[net] class PollerIoDriver private[posix] (
         Maybe(pendingReads.remove(fd)) match
             case Present(handle) =>
                 val promise = handle.pendingReadPromise
+                if handle.upgradeActive then
+                    java.lang.System.err.println(
+                        s"ZZTRACE dispatch fd=$fd tls=${handle.tls.isDefined} hsReading=${handle.handshakeReading} hasPromise=${promise.isDefined}"
+                    )
+                end if
                 if isStaleId(handle.readFd, handle.id) then
                     // Stale event: this fd was closed and recycled into a different handle. Drop it; do not deliver to the new handle.
                     promise.foreach(_.completeDiscard(Result.fail(Closed(label, summon[Frame], s"stale read event fd=$fd"))))
@@ -1175,7 +1228,12 @@ final private[net] class PollerIoDriver private[posix] (
                         case Present(p) =>
                             handle.tls match
                                 case Present(engine) => dispatchReadTls(fd, p, handle, engine, eofPending)
-                                case Absent          => dispatchReadPlain(fd, p, handle, eofPending)
+                                case Absent          =>
+                                    // During a STARTTLS upgrade the engine is not yet attached (tls stays Absent until handshake completion), so the
+                                    // upgrade's ciphertext reads land here. Route them to the producer path, which delivers the peer flight into the
+                                    // handle's upgradeHandoff slot for the parked handshake waiter instead of completing this read promise.
+                                    if handle.upgradeActive then dispatchUpgradeRead(fd, p, handle)
+                                    else dispatchReadPlain(fd, p, handle, eofPending)
                         case Absent =>
                             // Promise was already cleared (e.g. by a concurrent cancel); release the dispatch guard.
                             discard(handle.endDispatch())
@@ -1189,6 +1247,7 @@ final private[net] class PollerIoDriver private[posix] (
                 // fd gets a fresh activeFds entry and the stale missedReads entry is cleared on deregister; at worst it triggers one
                 // spurious EAGAIN probe on the new owner's first awaitRead, which the driver already handles correctly.
                 if fromKernelEdge then
+                    java.lang.System.err.println(s"ZZTRACE dispatchAbsent fd=$fd fromKernel=$fromKernelEdge eof=$eofPending")
                     discard(missedReads.add(fd))
                     // Preserve the half-close bit of a dropped edge: a bare missedReads entry re-dispatches with eofPending=false, which would
                     // read the buffered bytes but never surface the EOF (the ET half-close edge does not re-fire). Record it so the next
@@ -1242,8 +1301,54 @@ final private[net] class PollerIoDriver private[posix] (
             val missed     = missedReads.remove(fd)
             val missedEofd = missedEof.remove(fd)
             if missedEofd && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
+            // EPOLL multi-record edge-miss diagnosis: whether this re-arm re-dispatches (a buffered/missed record) or parks waiting for a fresh
+            // EPOLLET edge. A partial TLS record (tlsRead plain=0 mightMore=false) reaches here with rmhm=false; willDispatch=false then parks, and
+            // if the continuation produced no fresh edge (already buffered) the read strands. Pairs with `tlsRead ... mightMore=` and `dispatchAbsent`.
+            java.lang.System.err.println(
+                s"ZZTRACE-EPOLL rearmOwned fd=$fd missed=$missed missedEof=$missedEofd rmhm=${handle.readMightHaveMore} willDispatch=${missed || missedEofd || handle.readMightHaveMore}"
+            )
             if missed || missedEofd || handle.readMightHaveMore then dispatchRead(fd)
             // ET: otherwise the fd stays armed at the kernel; the consumer-paced drain in dispatchCmd handles residual bytes on the next re-register.
+
+    /** Re-arm a post-upgrade TLS read that yielded 0 plaintext, with the edge-recovery the bare [[rearmOwned]] lacks on both edge-triggered poller
+      * backends. After such a read drains to EAGAIN, rearmOwned re-deposits the promise and trusts the next readiness edge to re-fire for the next
+      * flight; a TLS 1.3 NewSessionTicket (or any post-handshake record) reads as 0 plaintext between FINISHED and the peer's first application flight
+      * (the echo), and an edge-triggered poller can lose that next edge for an already-buffered echo, stranding it. While the handle's post-upgrade
+      * window is open ([[PosixHandle.postUpgradeReadWindow]], cleared on the first application read), re-issue the read registration so the poller
+      * re-evaluates current readiness: kqueue's `EV_ADD` re-evaluates on re-register (re-queuing an already-ready fd); epoll's `EPOLLET` register-once
+      * skips the `EPOLL_CTL_MOD` on an unchanged mask, so it additionally seeds `missedReads` to make the OpRegisterRead apply force-dispatch one recv
+      * probe (the same recovery `armUpgradeProducerRead` / `forceReadRecovery` use). A redundant force-dispatch on kqueue would double-dispatch and
+      * strand the handshake, so the seed is epoll-only (`kqueueData` Empty). io_uring is completion-based and keeps the bare re-arm. Outside the
+      * window, steady-state reads keep the bare rearmOwned (no per-read kevent / force-dispatch). Poll-carrier-confined, like rearmOwned.
+      */
+    private def rearmTlsRead(fd: Int, handle: PosixHandle, promise: Promise.Unsafe[ReadOutcome, Abort[Closed]])(using
+        AllowUnsafe,
+        Frame
+    ): Unit =
+        // EPOLL multi-record edge-miss diagnosis: postUpgradeReadWindow gates the epoll missedReads-seed below. Once the window closes (first
+        // application plaintext), a partial-record re-arm (rmhm=false) falls through to a bare rearmOwned with NO seed, so a continuation that
+        // produced no fresh EPOLLET edge strands. This trace shows whether the window was still open on the stuck fd's re-arm.
+        java.lang.System.err.println(
+            s"ZZTRACE-EPOLL rearmTlsRead fd=$fd postUpgradeReadWindow=${handle.postUpgradeReadWindow} rmhm=${handle.readMightHaveMore}"
+        )
+        rearmOwned(fd, handle, promise)
+        if pollScratch.kqueueData.isDefined then
+            // KQUEUE (Class B, Decision 50(B) option 2): re-register a real EV_ADD on EVERY post-upgrade TLS-read re-arm, in-window AND
+            // steady-state. The standing EV_CLEAR registration re-reports only a fresh empty->ready transition, so a record already buffered
+            // at re-arm time (no fresh transition) is never re-reported and the read strands (the post-window steady-state edge-miss). A real
+            // EV_ADD re-level-checks the socket buffer (sb_cc) at registration and queues an event when bytes are present, recovering it.
+            // Demand-driven and spin-safe: EV_ADD fires once if buffered then drains to EAGAIN; the next EV_ADD finds the socket empty and
+            // does not fire (no forced recvNow, so no Decision-44 EAGAIN spin). The epoll branch below is left byte-for-byte unchanged.
+            regIntake.offer(Registration(handle, RegKind.Read))
+            submitChange(packCmd(OpRegisterRead, handle.readFd))
+        else if handle.postUpgradeReadWindow then
+            // EPOLL: in-window recovery only (seed missedReads to force-dispatch an already-buffered flight, then re-register); the post-window
+            // steady-state keeps the bare rearmOwned (Decision 45 close-window/drop-seed) so the register-once force-dispatch cannot hot-spin.
+            discard(missedReads.add(handle.readFd))
+            regIntake.offer(Registration(handle, RegKind.Read))
+            submitChange(packCmd(OpRegisterRead, handle.readFd))
+        end if
+    end rearmTlsRead
 
     /** Consumer-paced plain (non-TLS) read under edge-triggered registration.
       *
@@ -1326,6 +1431,104 @@ final private[net] class PollerIoDriver private[posix] (
         end if
     end dispatchReadPlain
 
+    /** STARTTLS upgrade producer (poll carrier): read one peer ciphertext flight and hand it to the parked handshake waiter through the handle's
+      * [[PosixHandle.upgradeHandoff]] slot, so the handshake fiber never reads the socket itself (eliminating the cross-carrier recv race a
+      * synchronous `recvNow` on the handshake fiber would have with this poll-carrier read). Runs only while [[PosixHandle.upgradeActive]] is set;
+      * `promise` is the producer vehicle [[armUpgradeProducerRead]] armed and is never completed with bytes. Demand-driven: after a flight is
+      * delivered the read is released (the handshake arms the next one); only an EAGAIN keeps it armed so the next readiness edge re-dispatches.
+      */
+    private def dispatchUpgradeRead(
+        fd: Int,
+        promise: Promise.Unsafe[ReadOutcome, Abort[Closed]],
+        handle: PosixHandle
+    )(using AllowUnsafe, Frame): Unit =
+        val result = recvNowWithRetry(fd, handle.readBuffer, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
+        val n      = result.value.toInt
+        java.lang.System.err.println(
+            s"ZZTRACE-EPOLL dispatchUpgradeRead fd=$fd n=$n err=${result.errorCode} rmhm=${n == handle.readBufferSize} slot=${handle.upgradeHandoff.get().getClass.getSimpleName}"
+        )
+        if n > 0 then
+            val arr = Buffer.copyToArray[Byte](handle.readBuffer, 0, n)
+            java.lang.System.err.println(s"ZZTRACE-EPOLL upReadType fd=$fd recType=${if arr.length > 0 then arr(0) & 0xff else -1}")
+            // Edge-triggered: a buffer-filling recv may leave more in the kernel with no new edge; readMightHaveMore makes the handshake's next
+            // armUpgradeProducerRead re-dispatch immediately (dispatchCmd) rather than wait for an edge that will not re-fire.
+            handle.readMightHaveMore = n == handle.readBufferSize
+            deliverToUpgradeHandoff(handle, arr)
+            // Demand-driven: do NOT re-arm here. The handshake parks the next waiter and re-arms via armUpgradeProducerRead. endDispatch releases the
+            // dispatch guard (and runs the deferred free if a close raced, which fails the just-handed waiter via freeResources).
+            discard(handle.endDispatch())
+        else if n == 0 then
+            handle.readMightHaveMore = false
+            failUpgradeHandoff(handle, eof = true, errno = 0)
+            discard(handle.endDispatch())
+        else if isWouldBlock(result.errorCode) then
+            // Socket confirmed empty: the peer flight has not arrived yet. Keep the producer armed (re-deposit the vehicle promise) so the next
+            // readiness edge re-dispatches this producer read.
+            handle.readMightHaveMore = false
+            rearmOwned(fd, handle, promise)
+        else
+            handle.readMightHaveMore = false
+            failUpgradeHandoff(handle, eof = false, errno = result.errorCode)
+            discard(handle.endDispatch())
+        end if
+    end dispatchUpgradeRead
+
+    /** Deliver `arr` (one peer ciphertext flight read on the poll carrier) into the handle's [[PosixHandle.upgradeHandoff]] slot: fulfil a parked
+      * handshake waiter, or stage a Carryover the handshake's next read consumes. When a Carryover is already staged (the poll carrier read a peer
+      * flight before the handshake parked its next waiter, e.g. a boringssl multi-record flight delivered across two dispatches), the new bytes are
+      * APPENDED to it rather than overwriting it: a single-slot replace would drop every segment but the first, the upgrade-handoff drop. The poll
+      * carrier is the sole stager (poll-carrier-confined), so the Carryover-append never contends. Mirrors [[NioIoDriver]]'s `deliverToUpgradeHandoff`
+      * Carryover-append. The CAS loop keeps exactly one winner per transition; a CAS-loss is resolved by a single re-run (no spin).
+      */
+    @scala.annotation.tailrec
+    private def deliverToUpgradeHandoff(handle: PosixHandle, arr: Array[Byte])(using AllowUnsafe): Unit =
+        import PosixHandle.UpgradeHandoff
+        handle.upgradeHandoff.get() match
+            case parked: UpgradeHandoff.Waiter =>
+                if handle.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle) then
+                    java.lang.System.err.println(s"ZZTRACE-EPOLL handoff fulfilWaiter fd=${handle.readFd} n=${arr.length}")
+                    parked.promise.completeDiscard(Result.succeed(Span.fromUnsafe(arr)))
+                else deliverToUpgradeHandoff(handle, arr)
+            case staged: UpgradeHandoff.Carryover =>
+                val combined = new Array[Byte](staged.bytes.length + arr.length)
+                java.lang.System.arraycopy(staged.bytes, 0, combined, 0, staged.bytes.length)
+                java.lang.System.arraycopy(arr, 0, combined, staged.bytes.length, arr.length)
+                if !handle.upgradeHandoff.compareAndSet(staged, UpgradeHandoff.Carryover(combined)) then
+                    deliverToUpgradeHandoff(handle, arr)
+                else
+                    java.lang.System.err.println(
+                        s"ZZTRACE-EPOLL handoff appendCarryover fd=${handle.readFd} was=${staged.bytes.length} add=${arr.length}"
+                    )
+                end if
+            case _ =>
+                if !handle.upgradeHandoff.compareAndSet(UpgradeHandoff.Idle, UpgradeHandoff.Carryover(arr)) then
+                    deliverToUpgradeHandoff(handle, arr)
+                else
+                    java.lang.System.err.println(s"ZZTRACE-EPOLL handoff stageCarryover fd=${handle.readFd} n=${arr.length}")
+        end match
+    end deliverToUpgradeHandoff
+
+    /** Fail a STARTTLS handshake parked on the upgrade handoff when the producer read hit EOF or a hard error. EOF (`eof`) completes the waiter with
+      * an empty Span (the handshake renders it as ": peer closed during read"); an error completes it Closed. A no-op when no waiter is parked (the
+      * handshake's own next read observes the closed fd). Mirrors [[IoUringDriver]]'s `complete` upgrade EOF/error branch.
+      */
+    private def failUpgradeHandoff(handle: PosixHandle, eof: Boolean, errno: Int)(using AllowUnsafe, Frame): Unit =
+        import PosixHandle.UpgradeHandoff
+        handle.upgradeHandoff.get() match
+            case parked: UpgradeHandoff.Waiter =>
+                discard(handle.upgradeHandoff.compareAndSet(parked, UpgradeHandoff.Idle))
+                if eof then parked.promise.completeDiscard(Result.succeed(Span.empty[Byte]))
+                else
+                    parked.promise.completeDiscard(Result.fail(Closed(
+                        label,
+                        summon[Frame],
+                        s"recv failed fd=${handle.readFd} errno=$errno"
+                    )))
+                end if
+            case _ => ()
+        end match
+    end failUpgradeHandoff
+
     /** Return the per-handle recvStaging Buffer, lazily allocated on the first TLS read.
       *
       * Poll-carrier-only: called from dispatchReadTls before submitEngineOp. The lazy-alloc write (first TLS read) happens here
@@ -1373,6 +1576,7 @@ final private[net] class PollerIoDriver private[posix] (
         val result  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
         val n       = result.value.toInt
         if n > 0 then
+            val recType0 = staging.get(0) & 0xff
             // Feed staging directly to feedCiphertext on the FIFO worker: no per-read re-fromArray.
             // The happens-before between the recvNow write (poll carrier) and the feedCiphertext read (FIFO worker) is the
             // submitEngineOp enqueue, the same mechanism as flushReArmPending. The at-most-one-in-flight guarantee ensures the next
@@ -1415,7 +1619,16 @@ final private[net] class PollerIoDriver private[posix] (
                     handle.readMightHaveMore =
                         (!drained && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose) ||
                             (handle.halfClose == HalfCloseState.PeerHalfClosePending)
+                    // B-diagnostic: un-gated (was `if n < 1024`) so the 16KB multi-record post-upgrade reads are visible. n>0 with plain=0 is a
+                    // BUFFER_UNDERFLOW partial record; complete read with mightMore but no follow-up dispatch is the edge-miss. Pairs with the
+                    // write-side sent/flush trace to split edge-miss / partial-record / write-strand. Stripped with the ZZTRACE at final all-green.
+                    java.lang.System.err.println(
+                        s"ZZTRACE-EPOLL tlsRead fd=$fd n=$n recType=$recType0 plain=${plain.length} eof=$eof errno=$errno cleanClose=${handle.halfClose == HalfCloseState.PeerCleanClose} mightMore=${handle.readMightHaveMore}"
+                    )
                     if plain.length > 0 then
+                        // First application plaintext after the upgrade: close the post-upgrade kqueue read window so steady-state reads keep the
+                        // bare re-arm (no per-read kevent). A no-op outside an upgrade (the flag is only set at STARTTLS completion).
+                        handle.postUpgradeReadWindow = false
                         finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(Span.fromUnsafe(plain))))
                     else if handle.halfClose == HalfCloseState.PeerCleanClose then
                         // The peer's close_notify was consumed (RFC 8446 6.1 orderly close): deliver CleanClose so the ReadPump tears down
@@ -1429,7 +1642,16 @@ final private[net] class PollerIoDriver private[posix] (
                         finishDispatch(fd, handle, promise, Result.fail(Closed(label, summon[Frame], s"recv failed fd=$fd errno=$errno")))
                     else
                         // Only handshake/partial-record bytes consumed and the socket is drained (EAGAIN): wait for more ciphertext on the next edge.
-                        rearmOwned(fd, handle, promise)
+                        // rearmTlsRead adds the kqueue edge-recovery the post-upgrade window needs (a 0-plaintext NewSessionTicket read before the echo).
+                        // EPOLL hot-spin fix: the socket is confirmed empty (drained) and no plaintext was produced, so the post-upgrade window's
+                        // register-once recovery (force-dispatch an ALREADY-buffered flight) is complete -- the first post-FINISHED arm already drained
+                        // whatever was buffered to reach this EAGAIN. Keeping the window open here makes rearmTlsRead re-seed missedReads + re-register
+                        // every cycle, and the seeded OpRegisterRead force-dispatch recvs EAGAIN and re-seeds in a tight CPU spin (the continuation has
+                        // NOT arrived; it will come as a fresh EPOLLET edge). Close the window (epoll only) so rearmTlsRead does a bare rearmOwned (park,
+                        // no re-register -> no register-once MOD-SKIP); the persistent EPOLLET arm + re-deposited pending read catch the continuation.
+                        // kqueue's EV_ADD re-arm only re-queues a ready fd, so it never spins and is left untouched.
+                        if pollScratch.kqueueData.isEmpty then handle.postUpgradeReadWindow = false
+                        rearmTlsRead(fd, handle, promise)
                     end if
                 catch
                     // A TLS engine op threw, almost always a fatal alert surfaced by the engine (feedAndDecrypt -> JdkSslEngine.readPlain ->
@@ -1467,15 +1689,24 @@ final private[net] class PollerIoDriver private[posix] (
                 try
                     if engine.hasBufferedPlaintext then
                         val buffered = engine.readBuffered()
-                        if buffered.nonEmpty then finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(buffered)))
-                        else rearmOwned(fd, handle, promise)
+                        if buffered.nonEmpty then
+                            handle.postUpgradeReadWindow =
+                                false // first application plaintext after the upgrade: close the kqueue read window
+                            finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.Bytes(buffered)))
+                        else rearmTlsRead(fd, handle, promise)
                         end if
                     else if halfCloseNow then
                         // Socket buffer confirmed empty (EAGAIN) AND the peer's half-close is known (EPOLLRDHUP / EV_EOF fired earlier,
                         // stored as PeerHalfClosePending). The engine has no buffered plaintext: the FIN is the definitive end. Deliver PeerFin.
                         handle.halfClose = HalfCloseState.PeerEof
                         finishDispatch(fd, handle, promise, Result.succeed(ReadOutcome.PeerFin))
-                    else rearmOwned(fd, handle, promise)
+                    else
+                        // EPOLL hot-spin fix (companion to the n>0 drained branch): EAGAIN with no buffered plaintext means the socket is empty and the
+                        // engine produced nothing, so the post-upgrade window's register-once recovery is complete. Close the window (epoll only) so
+                        // rearmTlsRead parks via a bare rearmOwned instead of re-seeding missedReads + re-registering, which would force-dispatch -> recv
+                        // EAGAIN -> re-seed in a CPU spin. The continuation arrives later as a fresh EPOLLET edge on the persistent arm. kqueue untouched.
+                        if pollScratch.kqueueData.isEmpty then handle.postUpgradeReadWindow = false
+                        rearmTlsRead(fd, handle, promise)
                     end if
                 catch
                     // A buffered-plaintext engine op threw (a fatal alert in the buffered records); fail the read promise rather than letting
@@ -1640,6 +1871,7 @@ final private[net] class PollerIoDriver private[posix] (
             // remove(Object) removes the first structurally-equal element; no two live registrations are structurally equal here (distinct handles,
             // or the same handle re-arming only after its prior op on this direction completed), so this removes exactly the scanned entry.
             if regMatches(reg, fd, kind) && regIntake.remove(reg) then
+                java.lang.System.err.println(s"ZZTRACE-EPOLLW regTake fd=$fd kind=$kind id=${reg.handle.id.packed}")
                 found = reg
                 scanning = false
             end if
@@ -1696,9 +1928,24 @@ final private[net] class PollerIoDriver private[posix] (
                             handle.pendingWritablePromise = Absent
                     end match
                     PollScratch.IdNoCheck
+                else if kind == RegKind.Read && handle.upgradeActive && !handle.handshakeReading then
+                    // STARTTLS upgrade confinement (poller): an OpRegisterRead for the read side while the handle is upgrading and the handshake has
+                    // not yet taken read ownership (handshakeReading false) is the retiring plaintext ReadPump's stray re-arm (its requestNextRead
+                    // raced detachForUpgrade). Admitting it would deposit the pump's promise as the fd's read owner and let the next readability event
+                    // deliver the peer's first TLS flight to the pump instead of the handshake. SKIP the backend register (return IdNoCheck) so the
+                    // stray never owns the fd; the handshake's own arm (handshakeReading set in awaitReadCiphertext) is admitted by the branch below.
+                    // Do NOT fail the pump's pendingReadPromise here: upgradeActive is set BEFORE detachForUpgrade flips the connection state to
+                    // Upgrading, so failing the promise on this carrier could tear the pump down while the state is still Established, letting its
+                    // closeFn win Established->Closing and close the fd the upgrade reuses (the peer then reads EOF mid-handshake). detachForUpgrade's
+                    // deregisterFds fails the pump promise AFTER the state is Upgrading, where closeFn is a no-op, so leaving the promise to it keeps
+                    // the teardown safe. This is the poller dual of NioIoDriver's dispatchReadPlain upgrade guard.
+                    java.lang.System.err.println(s"ZZTRACE reject fd=$fd hadPromise=${handle.pendingReadPromise.isDefined}")
+                    PollScratch.IdNoCheck
                 else
                     kind match
                         case RegKind.Read =>
+                            if handle.upgradeActive then
+                                java.lang.System.err.println(s"ZZTRACE admitRead fd=$fd hsReading=${handle.handshakeReading}")
                             activeFds.put(fd, handle.id.packed)
                             pendingReads.put(fd, handle)
                         case RegKind.Accept =>
@@ -1717,6 +1964,16 @@ final private[net] class PollerIoDriver private[posix] (
                 // No registration matched (a cancel removed it before the command ran). Return IdNoCheck so the caller skips the backend register:
                 // arming a fd with no pending op (the pre-fix behavior) would leave an interest with no owner id to tag the knote, and there is no op
                 // to deliver to anyway.
+                val dumpIt = regIntake.iterator()
+                val dumpSb = new StringBuilder
+                var dumpN  = 0
+                while dumpIt.hasNext do
+                    val r = dumpIt.next()
+                    dumpN += 1
+                    val rfd = if r.kind == RegKind.Write then r.handle.writeFd else r.handle.readFd
+                    dumpSb.append(s"[fd=$rfd k=${r.kind} id=${r.handle.id.packed}]")
+                end while
+                java.lang.System.err.println(s"ZZTRACE-EPOLLW regAbsent fd=$fd kind=$kind regIntakeSize=$dumpN entries=$dumpSb")
                 PollScratch.IdNoCheck
         end match
     end applyRegistration
@@ -1752,6 +2009,7 @@ final private[net] class PollerIoDriver private[posix] (
                     end if
                 end if
             else
+                java.lang.System.err.println(s"ZZTRACE-EPOLLW regCmdRead fd=$fd")
                 val id = applyRegistration(fd, RegKind.Read)
                 if id != PollScratch.IdNoCheck then
                     val rc = backend.registerRead(pollerFd, fd, id, pollScratch)
@@ -1774,6 +2032,11 @@ final private[net] class PollerIoDriver private[posix] (
                             // A dropped edge that carried eof advances halfClose to PeerHalfClosePending so re-dispatches drain to recv == 0
                             // and surface the EOF; the bare missedReads entry alone would re-dispatch with eofPending=false and lose it.
                             if missedEofd && h.halfClose == HalfCloseState.Open then h.halfClose = HalfCloseState.PeerHalfClosePending
+                            if h.upgradeActive || h.handshakeReading then
+                                java.lang.System.err.println(
+                                    s"ZZTRACE-EPOLLW applyRead fd=$fd rc=$rc missed=$missed rmhm=${h.readMightHaveMore} willDispatch=${h.readMightHaveMore || missed || missedEofd}"
+                                )
+                            end if
                             if h.readMightHaveMore || missed || missedEofd then dispatchRead(fd)
                         }
                     end if

@@ -28,6 +28,7 @@ import kyo.net.Transport
   *   - JVM: `PosixTransport` using io_uring/epoll/kqueue above the `NioTransport` (NIO Selector) floor
   *   - JS: `JsTransport` using Node.js net module
   */
+// TODO double check this is really necessary
 abstract private[kyo] class TransportImpl[Handle] extends Transport:
 
     /** The driver pool powering this transport. The only member `TransportImpl` ADDS over the public `Transport` abstract; every other
@@ -40,4 +41,5 @@ end TransportImpl
 /** Server listener returned by Transport.listen() or Transport.listenUnix(). Adds nothing over the public `Listener` abstract (port / host /
   * address / close are already declared there); the seam exists only to mirror `TransportImpl` as the internal listener base.
   */
+// TODO can we remove this?
 abstract private[kyo] class ListenerImpl extends Listener
