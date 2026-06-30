@@ -204,9 +204,12 @@ class PosixTransportMultiDriverTest extends Test:
     // This exercises the real production Entry.build (the same path NetPlatform.transport selects), then reads the built transport's pool size.
     "poolSizeMatchesIoPoolSize" in {
         assumePoller()
-        TestBackends.all.find(_.isAvailable) match
+        // The pool-size invariant is specific to the posix IoDriverPool transport; the NIO floor builds a NioTransport with no such pool. Select
+        // an available posix backend (every jvm-native registry entry except the "nio" floor) and skip cleanly when only a non-posix backend is
+        // selected (e.g. KYO_NET_ONLY=nio restricts the registry to the floor), rather than casting a NioTransport to PosixTransport.
+        TestBackends.all.find(entry => entry.isAvailable && entry.name != "nio") match
             case None =>
-                Sync.defer(cancel("no posix backend available on this host"))
+                Sync.defer(cancel("no posix backend selected/available on this host (pool-size check is posix-only)"))
             case Some(entry) =>
                 Sync.defer(entry.build(TransportConfig.default, summon[Frame])).map { transport =>
                     // A posix backend entry always builds a PosixTransport; the cast reaches its pool to count drivers.
