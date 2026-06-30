@@ -5,8 +5,12 @@ import org.scalajs.dom
 import org.scalajs.dom.document
 import scala.scalajs.js
 
-/** Scala.js UI backend. Mounts a UI into the browser DOM. */
-private[kyo] object DomBackend:
+/** Scala.js UI backend. Mounts a UI into the browser DOM. The implicit default `Backend` for the
+  * un-keyed UI tree (a DOM element has no `BackendNode.backend` key); registered at first mount.
+  */
+private[kyo] object DomBackend extends Backend:
+
+    def key: String = "dom"
 
     /** Mount a UI into the page body. */
     def mount(ui: UI)(using Frame): Unit < (Async & Scope) =
@@ -22,6 +26,30 @@ private[kyo] object DomBackend:
             else mountInto(ui, target.asInstanceOf[dom.Element])
         }
     end mount
+
+    // The Backend SPI mount: the DOM backend mounts the whole tree into `host`. Returns a Live
+    // handle whose teardown is the ambient page Scope (mountInto forks under it). `path` is the
+    // mount root (Seq.empty for the page body); the DOM backend owns the un-keyed tree.
+    def mount(node: UI, host: dom.Element, path: Seq[String])(using Frame): Backend.Live < (Async & Scope) =
+        mountInto(node, host).andThen(DomBackend.live)
+
+    // The DOM backend is not on the reactive patch path: the server emits Replace for every DOM
+    // region (never SetProp), so no server op reaches this. It exists to satisfy the SPI; were it
+    // called it would re-render the subtree at `path` and replace it (today's LocalExchange/Replace),
+    // ignoring `key` and treating `encoded` as rendered HTML.
+    def patch(path: Seq[String], key: String, encoded: String)(using Frame): Unit < Async =
+        Sync.defer {
+            val p  = path.mkString(".")
+            val el = dom.document.querySelector(s"""[data-kyo-path="$p"]""")
+            if el != null && el.outerHTML != encoded then el.outerHTML = encoded
+        }
+
+    // DOM structural reactivity rides Replace, not ReplaceSubtree; this satisfies the SPI with the
+    // same subtree-swap semantics.
+    def replaceSubtree(path: Seq[String], encoded: String)(using Frame): Unit < Async =
+        patch(path, "", encoded)
+
+    private val live: Backend.Live = new Backend.Live {}
 
     /** Injects a rendered stylesheet CSS string into the live document.
       *
