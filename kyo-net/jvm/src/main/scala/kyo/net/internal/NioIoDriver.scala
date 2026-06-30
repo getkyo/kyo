@@ -41,6 +41,11 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
     // private[net] so tests in kyo.net.internal can observe the flag state directly.
     private[net] val wakeupPending = AtomicBoolean.Unsafe.init(false)(using AllowUnsafe.embrace.danger)
 
+    // Count of UNCONDITIONAL connect-arm wakeups (armConnectInterest). private[net] test-observability: a deterministic test asserts a connect arm
+    // ALWAYS issues a wakeup even when wakeupPending is already set (the coalescing condition that a guarded wakeup would lose), proving the
+    // forceReadArmWakeup-class connect fix is load-independent. Not used by production logic.
+    private[net] val connectWakeups = new java.util.concurrent.atomic.AtomicInteger(0)
+
     // Count of consecutive selector.select() calls returning zero keys on the select-loop carrier.
     // Read and written only from pollOnce() on the single select-loop fiber (single-carrier-confined).
     private var zeroKeyReturns: Int = 0
@@ -404,7 +409,9 @@ final private[kyo] class NioIoDriver private (@volatile private var selector: Se
       */
     private def armConnectInterest(channel: SocketChannel)(using AllowUnsafe): Boolean =
         val registered = registerInterest(channel, SelectionKey.OP_CONNECT)
-        if registered then discard(selector.wakeup())
+        if registered then
+            discard(connectWakeups.incrementAndGet()) // test-observability: count the unconditional connect-arm wakeups
+            discard(selector.wakeup())
         registered
     end armConnectInterest
 

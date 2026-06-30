@@ -898,6 +898,44 @@ class NioIoDriverTest extends Test:
         end try
     }
 
+    "awaitConnectIssuesUnconditionalWakeupEvenWhenCoalescingPending" in {
+        // Deterministic, LOAD-INDEPENDENT guard for the connect-arm lost-wakeup (CONN-B, the forceReadArmWakeup-class gap). The bug: the connect
+        // arm used a GUARDED wakeup (registerInterest's wakeupPending CAS); under a burst, wakeupPending is already true (an in-flight wakeup), so a
+        // guarded wakeup COALESCES away and the freshly-armed OP_CONNECT is never observed if select() re-blocks before seeing it -> a 30s connect
+        // strand. The fix arms OP_CONNECT via armConnectInterest, which issues an UNCONDITIONAL selector.wakeup() so the arm ALWAYS forces a poll
+        // cycle. This test reproduces the exact coalescing condition (wakeupPending pre-set true) and asserts the arm STILL issues a wakeup -- a pure
+        // invariant check with NO real-time deadline, so it validates Fix B regardless of host load (a load-30 integration TIMEOUT cannot
+        // distinguish a residual gap from poll-carrier CPU starvation; this can).
+        //
+        // FAILS BEFORE THE FIX: the guarded registerInterest wakeup coalesces (wakeupPending already true) so no wakeup is issued -> connectWakeups
+        // stays 0. PASSES AFTER: armConnectInterest's unconditional wakeup fires -> connectWakeups == before + 1.
+        given Frame = Frame.internal
+        val driver  = NioIoDriver.init()
+        val ch      = SocketChannel.open()
+        ch.configureBlocking(false)
+        val handle = NioHandle.init(ch, 4096)
+        try
+            driver.registerChannel(handle)
+            // Pre-set the coalescing condition: an in-flight wakeup is pending, so any GUARDED wakeup (the pre-fix connect arm) would coalesce away.
+            // The fix's unconditional wakeup must fire regardless.
+            discard(driver.wakeupPending.compareAndSet(false, true))
+            val before = driver.connectWakeups.get()
+            val pc     = new IOPromise[Closed, Unit]
+            driver.awaitConnect(handle, pc.asInstanceOf[Promise.Unsafe[Unit, Abort[Closed]]])
+            val after = driver.connectWakeups.get()
+            assert(
+                after == before + 1,
+                s"the connect arm must issue an UNCONDITIONAL wakeup even when wakeupPending is already set (coalescing condition); " +
+                    s"connectWakeups went $before -> $after (a guarded wakeup would coalesce and not fire)"
+            )
+            succeed
+        finally
+            driver.cancel(handle)
+            ch.close()
+            driver.close()
+        end try
+    }
+
     "registerChannelDeferredOnClosedSelectorDuringRebuild" in {
         // Reproduce-first for the concurrent-connect-burst connect failure: a caller-carrier registerChannel races the poll carrier's
         // rebuildSelector, which closes the old selector (NioIoDriver selector.close() then selector = newSelector). Under a connect burst the
