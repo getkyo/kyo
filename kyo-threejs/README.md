@@ -576,7 +576,7 @@ val served =
     yield server
 ```
 
-The client half is a Scala.js bundle: a small `@JSExportTopLevel` entry (or a `main` that calls it) that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). Link it through `head.moduleScript` and map its bare `three` import through `head.importMap` to a served three module, so a plain `fastLinkJS`/`fullLinkJS` ESModule loads with no separate bundler step. The kyo-threejs demos ship runnable examples: `sbt demoClientFeedClock` serves one cube that spins client-side and steps color from a server feed, and `sbt demoClientFlagship` serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera).
+The client half is a Scala.js bundle: a small `@JSExportTopLevel` entry (or a `main` that calls it) that mounts the real scene via `Three.runMount` and connects each fed id with `Three.Feed.connect(id, mirror)` (or `Three.Feed.connectChunk` for a `serverSignal[Chunk[A]]` whose keyed reconciliation runs client-side). Link it through `head.moduleScript` and map its bare `three` import through `head.importMap` to a served three module, so a plain `fastLinkJS`/`fullLinkJS` ESModule loads with no separate bundler step. The kyo-threejs demos ship runnable examples: the `FeedClock` launcher serves one cube that spins client-side and steps color from a server feed, and the `Flagship` launcher serves a cube that does all four at once (client spin, server-fed color, click-driven scale via `emit`, and an orbit camera). See "Running the demos" below for how to launch them.
 
 ## Putting it together
 
@@ -665,27 +665,27 @@ The demo scenes live in [`shared/src/test/scala/demo`](shared/src/test/scala/dem
 
 ### Running the demos
 
-kyo-threejs is a Scala.js/Wasm module with no JVM variant, and Scala.js has no `Test/runMain`, so `sbt 'kyo-threejsJS/Test/runMain demo.BouncingBalls'` does not work. The supported launch is one sbt command alias per demo. Each alias selects that demo's main on the `kyo-threejs-demo-runner` project (a Node-runnable Scala.js module that reuses the demo sources) and runs it.
-
-Each alias does its own bundling, so no separate bundle step is needed; just launch a demo:
+kyo-threejs is a Scala.js/Wasm module with no JVM variant, and Scala.js has no `Test/runMain`, so `sbt 'kyo-threejsJS/Test/runMain demo.BouncingBalls'` does not work. Each demo's launcher is an `object` in package `democlient` on the `kyo-threejs-demo-runner` project (a Node-runnable Scala.js module that reuses the demo sources). Link the `kyo-threejs-demos` bundle, select the launcher as the runner's main, and run it:
 
 ```sh
-sbt demoClientBouncingBalls   # link the demos bundle and launch one demo's server on Node
+sbt 'kyo-threejs-demos/fastLinkJS' \
+    'set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.BouncingBalls")' \
+    'kyo-threejs-demo-runner/run'
 ```
 
-The launcher prints a `http://localhost:<port>/` URL; open it to see the scene render in the browser through `Three.runMount`. Each alias launches exactly one demo. The aliases:
+`kyo-threejs-demos/fastLinkJS` links the bundle the served page imports, the `set` picks the launcher, and `kyo-threejs-demo-runner/run` serves it on Node. `democlient.BouncingBalls` is the runner's default main, so for that demo the `set` can be dropped: `sbt 'kyo-threejs-demos/fastLinkJS' 'kyo-threejs-demo-runner/run'`. The launcher prints a `http://localhost:<port>/` URL; open it to see the scene render in the browser through `Three.runMount`. One `run` serves exactly one demo. Swap the `mainClass` for any launcher:
 
-| Command | Demo |
-|---------|------|
-| `sbt demoClientBouncingBalls` | BouncingBalls |
-| `sbt demoClientSolarSystem` | SolarSystem |
-| `sbt demoClientReactiveCubeField` | ReactiveCubeField |
-| `sbt demoClientSnake3D` | Snake3D |
-| `sbt demoClientGltfViewer` | GltfViewer |
-| `sbt demoClientEmbedded` | EmbeddedScene |
-| `sbt demoClientFeedClock` | FeedClock (client spin + a server-fed color) |
-| `sbt demoClientFlagship` | Flagship (all four halves on one cube) |
+| Launcher main | Demo |
+|---------------|------|
+| `democlient.BouncingBalls` | BouncingBalls |
+| `democlient.SolarSystem` | SolarSystem |
+| `democlient.ReactiveCubeField` | ReactiveCubeField |
+| `democlient.Snake3D` | Snake3D |
+| `democlient.GltfViewer` | GltfViewer |
+| `democlient.Embedded` | EmbeddedScene |
+| `democlient.FeedClock` | FeedClock (client spin + a server-fed color) |
+| `democlient.Flagship` | Flagship (all four halves on one cube) |
 
-The pure-animation aliases (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene alias link the shared `kyo-threejs-demos` bundle and run entirely client-side. The two server-fed aliases (FeedClock, Flagship) link the same bundle and serve it through `Three.Feed.run`: the page links a mount shim that imports the bundle's entry and an import map that resolves `three`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
+The pure-animation launchers (BouncingBalls, SolarSystem, ReactiveCubeField, Snake3D, GltfViewer) and the EmbeddedScene launcher run entirely client-side. The two server-fed launchers (FeedClock, Flagship) serve the bundle through `Three.Feed.run`: the page links a mount shim that imports the bundle's entry and an import map that resolves `three`, so the page feeds reactive data over the WebSocket while the scene still animates client-side.
 
 `ThumbnailGallery` uses `Three.toImage`, which requires a browser WebGL context and cannot run via the Node demo runner. Its rendered output is the committed `docs/images/*.png` thumbnails in this repository. The `toImage` primitive is validated by `ThreeToImageBrowserTest` and `WebGLAcceptanceTest` in a real software-WebGL Chrome.

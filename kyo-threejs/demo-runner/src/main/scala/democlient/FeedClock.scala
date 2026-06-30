@@ -25,7 +25,8 @@ import kyo.*
   * bundle's bare `three` import to the served three module, so the plain `fastLinkJS` bundle loads directly,
   * with no separate bundling step.
   *
-  * Link the demos bundle first with `sbt kyo-threejs-demos/fastLinkJS`; the `demoClientFeedClock` alias does this.
+  * Link the demos bundle first with `sbt kyo-threejs-demos/fastLinkJS`, then run this launcher as the
+  * `kyo-threejs-demo-runner` main (see the README's "Running the demos").
   */
 object FeedClock extends ClientDemoApp:
 

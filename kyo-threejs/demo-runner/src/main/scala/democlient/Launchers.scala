@@ -7,7 +7,8 @@ import kyo.*
   * URL runs the demo IN THE BROWSER through `Three.runMount`, so the scene animates locally.
   *
   * Each takes an optional port as the first argument (default ephemeral). One `KyoApp` per demo: no
-  * shared dispatcher. The `demoClientX` command aliases in build.sbt launch each one.
+  * shared dispatcher. Run one by selecting it as the `kyo-threejs-demo-runner` main; see the README's
+  * "Running the demos".
   */
 
 /** Base for the client-mount launchers: parses the optional port from the first argument (default 0,

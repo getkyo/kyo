@@ -27,7 +27,8 @@ import kyo.*
   * `three` and OrbitControls imports to the served three modules, so the plain `fastLinkJS` bundle loads
   * directly, with no separate bundling step.
   *
-  * Link the demos bundle first with `sbt kyo-threejs-demos/fastLinkJS`; the `demoClientFlagship` alias does this.
+  * Link the demos bundle first with `sbt kyo-threejs-demos/fastLinkJS`, then run this launcher as the
+  * `kyo-threejs-demo-runner` main (see the README's "Running the demos").
   */
 object Flagship extends ClientDemoApp:
 

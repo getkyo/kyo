@@ -7,7 +7,8 @@ package kyo
   * WebGL context was released when the scope closed. The production release runs `renderer.dispose()` then
   * `forceContextLoss()`, so the captured context reports `isContextLost()` after the scope closes; this
   * test fails if the production teardown stops releasing the context. The live-mount render path is covered
-  * by the six live demos (each runnable via their `sbt demoX` alias) and the onFrame-before-render ordering by
+  * by the six live demos (each runnable on `kyo-threejs-demo-runner`; see the README's "Running the demos")
+  * and the onFrame-before-render ordering by
   * [[ThreeMountOrderingBrowserTest]].
   *
   * Runs in a real software-WebGL Chrome over CDP; cancels (skips) where no Chrome can be downloaded. The

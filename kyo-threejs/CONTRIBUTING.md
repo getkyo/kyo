@@ -359,21 +359,20 @@ Follow the root's test-file naming rule: a test shares a name prefix with the so
 ## Running demos
 
 Each live-scene demo (`BouncingBalls`, `SolarSystem`, `ReactiveCubeField`, `Snake3D`, `GltfViewer`,
-`EmbeddedScene`) is a self-serving `KyoApp` that starts an `HttpServer` on Node. Scala.js has no
-`Test/runMain`, so each demo runs through a named sbt command alias (defined in `build.sbt:1847`):
+`EmbeddedScene`) is a self-serving `KyoApp` (an `object` in package `democlient`) that starts an
+`HttpServer` on Node. Scala.js has no `Test/runMain`, so a demo runs by selecting its launcher as the
+`kyo-threejs-demo-runner` main and running it:
 
 ```
-sbt demoBouncingBalls
-sbt demoSolarSystem
-sbt demoReactiveCubeField
-sbt demoSnake3D
-sbt demoGltfViewer
-sbt demoEmbeddedScene
+sbt 'kyo-threejs-demos/fastLinkJS' \
+    'set LocalProject("kyo-threejs-demo-runner") / Compile / mainClass := Some("democlient.BouncingBalls")' \
+    'kyo-threejs-demo-runner/run'
 ```
 
-Each alias sets `kyo-threejs-demo-runner / Compile / mainClass` to the chosen demo's object and runs
-`kyo-threejs-demo-runner/run`. The demo prints `http://localhost:<port>/` to open. There is **no
-shared dispatcher**: each alias launches exactly one demo, independently.
+`kyo-threejs-demos/fastLinkJS` links the bundle the page imports, the `set` picks the launcher
+(`democlient.BouncingBalls` is the default main, so it can be dropped for that demo), and `run` serves
+it on Node. The demo prints `http://localhost:<port>/` to open. There is **no shared dispatcher**: one
+`run` launches exactly one demo.
 
 The **demos source set** (`kyo-threejs/shared/src/test/scala/demo/`) is compiled into two distinct
 build artifacts:
