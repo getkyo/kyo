@@ -1169,6 +1169,12 @@ final private[kyo] class NioTransport private (
             c.forceCloseIfUpgrading()
         }
         connections.clear()
+        // Each c.close() above cancels its channel's SelectionKey and calls channel.close(), but on JDK 11+ the actual fd close (kill()) is
+        // deferred until the selector deregisters the cancelled key on its own next select() pass (see NioIoDriver.wakeup's scaladoc). The
+        // driver's select() call is indefinite (no timeout), so an otherwise-idle selector (this transport's last connection just closed, nothing
+        // else pending) never runs that pass on its own and every fd closed above leaks in CLOSE_WAIT past this call returning. NioListener.close
+        // already wakes the selector for the identical reason on a listener close; connection close here had no equivalent nudge.
+        driver.wakeup()
         pool.close()
     end close
 
