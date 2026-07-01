@@ -80,19 +80,6 @@ jobs:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-      - name: Stage Wasm (retriable)
-        uses: nick-fields/retry@v4
-        with:
-          max_attempts: 3
-          timeout_minutes: 120
-          command: sbt -Dplatform=Wasm "ci-release"
-        env:
-          CI_SONATYPE_RELEASE: ""
-          CI_CLEAN: ""
-          PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-          PGP_SECRET: ${{ secrets.PGP_SECRET }}
-          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
       # Phase 2: upload and publish the whole staged bundle as ONE Central Portal deployment. Single
       # attempt: re-uploading would collide on the portal. It bundles target/sona-staging and does not
       # re-run doc. Tag pushes only; snapshots were already published by the stage steps above.
