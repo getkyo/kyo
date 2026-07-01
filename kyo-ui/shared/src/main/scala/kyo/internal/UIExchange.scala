@@ -2,7 +2,10 @@ package kyo.internal
 
 import kyo.*
 
-/** Reactive change notification. Transport-agnostic; each backend renders in its own format. */
+/** Reactive change notification. Transport-agnostic; each backend renders in its own format. A
+  * DomRegion carries the rendered UI (a Replace); a PropRegion carries a backend node's bound prop
+  * value (a SetProp). The discriminated region (ReactiveUI.Region) is built by subscribeScoped.
+  */
 private[kyo] trait UIExchange:
-    def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async
+    def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async
 end UIExchange

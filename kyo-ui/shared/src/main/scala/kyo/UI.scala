@@ -36,7 +36,7 @@ import scala.language.implicitConversions
   * @see
   *   [[kyo.UI.Ast]] for the case-class AST that every factory returns
   */
-sealed abstract class UI:
+sealed trait UI:
     private[kyo] def frame: Frame
 
 /** Companion of [[kyo.UI]]: factory constructors, the [[kyo.UI.Ast]] node types, and the runners.
@@ -270,7 +270,9 @@ object UI:
                 Channel.use[Unit](256) { channel =>
                     val exchange =
                         new UIExchange:
-                            def onChange(path: Seq[String], changedUI: UI)(using Frame): Unit < Async =
+                            def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+                                // A render-stream tick fires on ANY region change (DOM or prop); the body
+                                // re-renders the whole page, so it ignores region/value entirely.
                                 // runPartial drops only a Closed (the consumer stopped draining); a Panic propagates.
                                 Abort.runPartial[Closed](channel.put(())).unit
                     // Scope.run owns the root region Fiber.init: when the stream consumer stops draining,
@@ -855,34 +857,54 @@ object UI:
           */
         trait SvgRootNode extends SvgInteractiveNode with Inline with HtmlContent
 
-        // ---- Host cross-file bridge (an element kyo-ui renders but never paints inside) ----
+        // ---- Backend cross-file bridge (a node a non-DOM backend renders) ----
 
-        /** Sanctioned cross-file bridge for a HOST node: an element kyo-ui renders once as a real
-          * DOM element (default `<canvas>`) on every runner and never paints inside. It exposes a
-          * platform-neutral, optional mount capability so external content (a 3D canvas, a map, a
-          * chart engine) can attach when the element enters the live DOM on the client and detach
-          * when the page tears down. kyo-ui knows nothing about what attaches.
+        /** Sanctioned non-sealed cross-file AST base for a node rendered by a foreign backend (a 3D
+          * canvas, a map, a chart engine), the generalization of the former host node. A node declared
+          * outside this file is still a valid UI child via the SvgNode/HostNode bridge pattern. It
+          * carries HtmlContent (so a scene is a valid HTML child) but NOT Inline, so it is NOT an
+          * Element: mixing Inline (Inline extends Element) would re-impose Element.children: Chunk[UI]
+          * on Three.Ast.Node, whose children: Chunk[Three] cannot satisfy it (Three is not a UI), so the
+          * extends would not compile. The ReactiveUI/HtmlRenderer BackendNode arm matches a backend node
+          * first/explicitly, so it SSRs a placeholder, never renders HTML for its subtree, and the walk
+          * DESCENDS its backendChildren (assigning data-kyo-path) and boundProps which the opaque host
+          * node did not.
           *
-          * Mirrors `SvgRootNode`: a non-sealed descendant of the sealed HTML AST, so a node declared
-          * outside this file is still a valid HTML child. The DOM tag is a plain `String`, so the
-          * shared renderer emits it on every platform; the mount capability has a concrete form only
-          * on JS+Wasm.
+          * Every member is `private[kyo]`: the backend SPI the kyo-ui walk and the registered backends
+          * consume, never a user call. PUBLIC as a TYPE so a kyo-threejs `Three.Ast.Node` extends it.
           */
-        trait HostNode extends Element with Inline with HtmlContent:
-            type Self <: HostNode
-            final def children: Chunk[UI] = Chunk.empty
-            private[kyo] def hostTag: String
-            private[kyo] def mount: Maybe[HostMount]
-        end HostNode
+        trait BackendNode extends UI, Ast.HtmlContent:
+            type Self <: BackendNode
+            private[kyo] def backend: String
+            private[kyo] def placeholder: BackendNode.Placeholder
+            private[kyo] def backendChildren: Chunk[UI]
+            private[kyo] def boundProps: Chunk[BackendNode.BoundProp]
+        end BackendNode
 
-        /** Platform-neutral marker for a host's client mount intent. Its only concrete
-          * implementation lives in `kyo-ui/js-wasm` and closes over a
-          * `org.scalajs.dom.Element => (Unit < (Async & Scope))`. Declaring the marker (not the
-          * function type) here keeps `org.scalajs.dom` off the JVM/Native classpath while still
-          * letting a shared `Host` value CARRY a mount the client backend runs. The shared backend
-          * (SSR / server-push) never invokes it.
+        object BackendNode:
+            /** The real SSR/DOM element a backend node emits (default `<canvas>`); only the scene root
+              * SSRs a tag, inner backend nodes never do. `attrs` carries id/class/style.
+              */
+            final private[kyo] case class Placeholder(tag: String, attrs: Ast.Attrs) derives CanEqual
+
+            /** One reactive prop bound at a backend node: a stable structural `key` (the navigate path,
+              * e.g. "material.color"), the type-erased bound `signal`, and an `encode` so the server
+              * serializes an emission with no knowledge of A. The Signal[Any] erasure is contained here,
+              * never a public asInstanceOf.
+              */
+            final private[kyo] case class BoundProp(key: String, signal: Signal[Any], encode: Any => String)
+        end BackendNode
+
+        /** TRANSITIONAL, `private[kyo]` (deleted together with `Host`): the platform-neutral marker the
+          * transitional `Host`'s mount-closure slot is typed as. Its only concrete implementation
+          * (`DomBackendMount`) lives in `kyo-ui/js-wasm` and closes over an
+          * `org.scalajs.dom.Element => (Unit < (Async & Scope))`. Declaring the marker (not the function
+          * type) here keeps `org.scalajs.dom` off the JVM/Native classpath while a shared `Host` carries a
+          * `Maybe[BackendMount]`. NOT a public type and NOT a `BackendNode` member: every backend node is
+          * registry-dispatched by its `backend` key, and the dom-host registry entry runs the Host's
+          * closure.
           */
-        trait HostMount
+        private[kyo] trait BackendMount
 
         // ---- Void trait (elements that cannot have children) ----
 
@@ -1677,20 +1699,30 @@ object UI:
             def title(v: String): Iframe = copy(frameTitle = Present(v))
         end Iframe
 
-        /** A host element kyo-ui renders once as a real `<tag>` (default `<canvas>`) on every
-          * runner and never paints inside. On JVM/Native it renders the bare element with
-          * `mount = Absent` and runs nothing; on JS+Wasm a `Host` built through the
-          * `UI.host(tag)(mount)` factory (or `Three.embed`) carries a `mount` the DOM backend runs
-          * when the element enters the live DOM, releasing on page teardown.
+        /** A host element kyo-ui renders once as a real `<tag>` (default `<canvas>`) on every runner and
+          * never paints inside, reimplemented on `BackendNode`: it is a backend node with empty
+          * boundProps/backendChildren and `backend = "dom-host"`, so the generalized mount dispatch routes
+          * it through the registry to the dom-host backend, which runs the host's own mount closure. On
+          * JVM/Native it renders the bare element with `mount = Absent` and runs nothing. It also mixes
+          * `Ast.Inline` (so it stays an Element, as `HostNode` was), keeping the existing host call sites
+          * (`UI.host().id(...)`, `.style(...)`) compiling. Transitional: deleted together with `UI.host`.
           */
         final case class Host(
             attrs: Attrs = Attrs(),
             hostTag: String = "canvas",
-            mount: Maybe[HostMount] = Absent
-        )(using val frame: Frame) extends HostNode:
+            private[kyo] mount: Maybe[BackendMount] = Absent
+        )(using val frame: Frame) extends BackendNode, Ast.Inline:
             type Self = Host
-            def withAttrs(a: Attrs): Host                  = copy(attrs = a)
-            private[kyo] def withMount(m: HostMount): Host = copy(mount = Present(m))
+            private[kyo] def backend: String                          = "dom-host"
+            private[kyo] def placeholder: BackendNode.Placeholder     = BackendNode.Placeholder(hostTag, attrs)
+            private[kyo] def backendChildren: Chunk[UI]               = Chunk.empty
+            private[kyo] def boundProps: Chunk[BackendNode.BoundProp] = Chunk.empty
+            // BackendNode is NOT an Element, but the Host mixes Ast.Inline itself (clash-free, since
+            // its children are empty Chunk[UI]) so the .id/.style host call sites keep compiling; as an
+            // Element it satisfies `children`/`withAttrs` itself (its `attrs` is the case-class field).
+            def children: Chunk[UI]                           = Chunk.empty
+            private[kyo] def withAttrs(a: Attrs): Host        = copy(attrs = a)
+            private[kyo] def withMount(m: BackendMount): Host = copy(mount = Present(m))
         end Host
 
         // ---- Custom dropdown (div-based overlay, NOT native <select>) ----

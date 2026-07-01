@@ -2,10 +2,10 @@ package kyo
 
 import org.scalajs.dom
 
-/** The one concrete `HostMount`: closes over the element-typed mount effect. JS+Wasm only,
+/** The one concrete `BackendMount`: closes over the element-typed mount effect. JS+Wasm only,
   * because `org.scalajs.dom.Element` resolves only where scalajs-dom is on the classpath.
   */
-final private[kyo] case class DomHostMount(run: dom.Element => (Unit < (Async & Scope))) extends UI.Ast.HostMount
+final private[kyo] case class DomBackendMount(run: dom.Element => (Unit < (Async & Scope))) extends UI.Ast.BackendMount
 
 extension (ui: UI.type)
     /** A host element: kyo-ui renders it once as a real DOM `<tag>` (default `canvas`) on
@@ -27,5 +27,5 @@ extension (ui: UI.type)
       * attached. The closure parameter infers `dom.Element` from this arity.
       */
     def host(tag: String)(mount: dom.Element => (Unit < (Async & Scope)))(using Frame): UI.Ast.Host =
-        UI.Ast.Host(hostTag = tag).withMount(DomHostMount(mount))
+        UI.Ast.Host(hostTag = tag).withMount(DomBackendMount(mount))
 end extension

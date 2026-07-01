@@ -3,9 +3,10 @@ package kyo.internal
 import kyo.*
 
 /** The serializable, FFI-free wire payload for a host-node delta pushed over the kyo-ui
-  * WebSocket as the body of an [[HtmlOp.HostUpdate]]. Opaque to kyo-ui: the transport carries
-  * it by `data-kyo-path` and never interprets it; an external host renderer (kyo-threejs)
-  * encodes its own feed variants and decodes them in its client island.
+  * WebSocket, wrapped into a [[HtmlOp.SetProp]] or [[HtmlOp.ReplaceSubtree]] by
+  * `UIServer.emitHostUpdate`. Opaque to kyo-ui: the transport carries it by `data-kyo-path` and
+  * never interprets it; an external host renderer (kyo-threejs) encodes its own feed variants and
+  * decodes them in its client island.
   *
   * The leaves drive the feed-by-signal-id path: the server feeds DATA addressed by a string
   * signal id and the client island writes a mirror `SignalRef` keyed by that id. `SignalUpdate`

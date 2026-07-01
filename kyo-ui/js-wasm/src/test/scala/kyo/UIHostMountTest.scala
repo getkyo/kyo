@@ -5,12 +5,12 @@ import org.scalajs.dom
 
 class UIHostMountTest extends kyo.test.Test[Any]:
 
-    "the arity-2 UI.host(tag)(mount) factory yields a Host carrying a Present DomHostMount" in {
+    "the arity-2 UI.host(tag)(mount) factory yields a Host carrying a Present DomBackendMount" in {
         val mounted = UI.host("div") { (_: dom.Element) => Kyo.unit }
         assert(mounted.mount.isDefined)
         mounted.mount match
-            case Present(_: DomHostMount) => succeed
-            case _                        => assert(false, "expected Present(DomHostMount)")
+            case Present(_: DomBackendMount) => succeed
+            case _                           => assert(false, "expected Present(DomBackendMount)")
     }
 
     "the arity-2 factory carries the given hostTag through to the host" in {

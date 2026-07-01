@@ -19,7 +19,7 @@ private[kyo] object UIServer:
     // (the kyo-threejs feed runner forks per-signal feed observers rather than host-bridge
     // subscriptions, so it reuses this page handler but composes its own /_kyo/ws session). The page is
     // identical to the handlers() page: it links head.moduleScript and carries the inline clientJs that
-    // routes a HostUpdate into window.__kyoHostChannels.
+    // routes SetProp/ReplaceSubtree to the owning backend.
     private[kyo] def pageHandler(basePath: String, head: UI.PageHead)(ui: => UI < Async)(using
         Frame
     ): HttpHandler[?, ?, ?] =
@@ -83,13 +83,15 @@ private[kyo] object UIServer:
             yield ()
         }
 
-    // Emits one HostUpdate op for a host subtree over the existing single WS, reusing the
+    // Emits one op for a host subtree's delta over the existing single WS, reusing the
     // Json.encode[HtmlOp] sink. runPartial drops only a Closed (the socket closed mid-push -> the
     // op is moot); a Panic propagates rather than being swallowed.
     private[kyo] def emitHostUpdate(ws: HttpWebSocket, path: Seq[String], payload: HostPayload)(using
         Frame
     ): Unit < Async =
-        val op = HtmlOp.HostUpdate(path, payload)
+        val op: HtmlOp = payload match
+            case HostPayload.SignalUpdate(signalId, encoded) => HtmlOp.SetProp(path, signalId, encoded)
+            case HostPayload.SignalChunk(_, encoded)         => HtmlOp.ReplaceSubtree(path, encoded)
         Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
     end emitHostUpdate
 
@@ -103,14 +105,21 @@ private[kyo] object UIServer:
             private def svgContextAt(path: Seq[String]): Boolean =
                 ReactiveUI.findNode(root, path).map(_.svgContext).getOrElse(false)
 
-            def onChange(path: Seq[String], ui: UI)(using Frame): Unit < Async =
-                HtmlRenderer.render(ui, path).map { html =>
-                    val finalHtml = HtmlRenderer.wrapReactiveRegion(path, svgContextAt(path), html)
-                    val op        = HtmlOp.Replace(path, finalHtml)
-                    // runPartial drops only a Closed (the socket closed mid-render -> the op is moot); a Panic
-                    // propagates to the region fiber rather than being swallowed by the discard.
-                    Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
-                }
+            private def push(op: HtmlOp)(using Frame): Unit < Async =
+                // runPartial drops only a Closed (the socket closed mid-push -> the op is moot); a Panic
+                // propagates to the region fiber rather than being swallowed by the discard.
+                Abort.runPartial[Closed](ws.put(HttpWebSocket.Payload.Text(Json.encode[HtmlOp](op)))).unit
+
+            def onChange(region: ReactiveUI.Region, value: Any)(using Frame): Unit < Async =
+                region match
+                    case dom: ReactiveUI.Region.DomRegion =>
+                        // value is the rendered UI (the DOM region path, unchanged behavior).
+                        HtmlRenderer.render(value.asInstanceOf[UI], dom.path).map { html =>
+                            push(HtmlOp.Replace(dom.path, HtmlRenderer.wrapReactiveRegion(dom.path, svgContextAt(dom.path), html)))
+                        }
+                    case prop: ReactiveUI.Region.PropRegion =>
+                        // a boundProp region on a BackendNode: encode the raw value, emit one SetProp.
+                        push(HtmlOp.SetProp(prop.path, prop.key, prop.encode(value)))
             end onChange
 
     private def dispatchEvent(

@@ -34,8 +34,9 @@ private[kyo] object HtmlRenderer:
 
     /** Wrap body HTML in a full page with inline JS client. The optional `moduleScript` links a
       * client island bundle (a `<script type="module" src="...">`) after the inline server-push
-      * client, so a server-push app can ship a Scala.js island the inline client routes host
-      * updates into. `Absent` emits no module script (the default server-push page).
+      * client, so a server-push app can ship a Scala.js island the inline client routes
+      * SetProp/ReplaceSubtree to the owning backend. `Absent` emits no module script (the default
+      * server-push page).
       */
     def renderPage(
         title: String,
@@ -236,6 +237,13 @@ private[kyo] object HtmlRenderer:
                             }.andThen(w(sb, s"</$tag>"))
                             end for
                 }
+
+            case bn: UI.Ast.BackendNode =>
+                // Placed AFTER the Element arm so the transitional Host (a BackendNode that also mixes
+                // Ast.Inline) keeps rendering through the ordinary Element/tagName path unchanged; every
+                // concrete BackendNode today is Host, so this catch-all is unreachable. A bare
+                // (non-Element) BackendNode's own SSR placeholder ships with the reactive descent split.
+                throw new IllegalStateException(s"BackendNode with no HTML rendering yet: ${bn.getClass.getName}")
     end renderTo
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
@@ -356,7 +364,7 @@ private[kyo] object HtmlRenderer:
         case _: FileInput      => "input"
         case _: HiddenInput    => "input"
         case _: Dropdown       => "div"
-        case h: HostNode       => h.hostTag
+        case h: Host           => h.hostTag
         case e: Svg.SvgElement => svgTagName(e)
         // SvgNode/SvgRootNode are the sanctioned non-sealed cross-file bridge for the SVG AST
         // (see UI.Ast.SvgNode); every in-tree SVG node extends Svg.SvgElement, matched above, so
@@ -766,37 +774,29 @@ private[kyo] object HtmlRenderer:
            |    var s=document.createElement("style");
            |    s.textContent=op.InjectCss.css;
            |    document.head.appendChild(s);
-           |  }else if(op.HostUpdate){
-           |    var p=op.HostUpdate.path.join(".");
-           |    var rx=window.__kyoHostChannels&&window.__kyoHostChannels[p];
-           |    if(rx){rx(op.HostUpdate.payload);}
-           |    else{
-           |      // The host's island receiver has not registered yet (the WS session can push a host's
-           |      // initial state before the client island mounts and registers). Buffer the payload by
-           |      // path, bounded so a host whose island never registers (a bundle load failure) under
-           |      // continuous server-push cannot grow it without limit; the bound exceeds any realistic
-           |      // initial push so the normal late-registration race never drops a legitimate op.
-           |      // __kyoHostChannelRegister flushes it in order when the receiver registers, so a host's
-           |      // first structural/prop pushes are never lost to that startup race.
-           |      var q=window.__kyoHostPending[p]=window.__kyoHostPending[p]||[];
-           |      q.push(op.HostUpdate.payload);
-           |      if(q.length>4096)q.shift();
-           |    }
+           |  }else if(op.SetProp){
+           |    var p=op.SetProp.path;
+           |    var b=backendForPath(p);            // nearest [data-kyo-backend] root; null -> DOM handling
+           |    if(b){b.patch(p,op.SetProp.key,op.SetProp.encoded);}
+           |  }else if(op.ReplaceSubtree){
+           |    var p=op.ReplaceSubtree.path;
+           |    var b=backendForPath(p);
+           |    if(b){b.replaceSubtree(p,op.ReplaceSubtree.encoded);}
            |  }
            |};
-           |// The island registers a receiver per host path here; a HostUpdate for an unregistered
-           |// path is buffered (see above) and flushed on registration.
-           |window.__kyoHostChannels=window.__kyoHostChannels||{};
-           |window.__kyoHostPending=window.__kyoHostPending||{};
-           |// Registers a host receiver and flushes any payloads buffered before it registered, in order.
-           |window.__kyoHostChannelRegister=function(p,rx){
-           |  window.__kyoHostChannels[p]=rx;
-           |  var pend=window.__kyoHostPending[p];
-           |  if(pend){delete window.__kyoHostPending[p];for(var i=0;i<pend.length;i++)rx(pend[i]);}
-           |};
-           |// The client->server app-event back-channel: a client onClick that calls Three.Feed.emit
-           |// posts an AppEvent over this same WS; the server routes it to the handler registered by eventId.
-           |window.__kyoPostAppEvent=function(path,eventId,encoded){post({AppEvent:{path:path,eventId:eventId,encoded:encoded}});};
+           |// The client-side backend-handle registry: a backend island (ThreeBackend.mount) registers
+           |// {patch,replaceSubtree} keyed by its placeholder's data-kyo-path (the backend root). The SSR
+           |// placeholder is in the DOM before the island mounts, so there is no register-before-push race.
+           |window.__kyoBackends=window.__kyoBackends||{};
+           |// Resolves the live backend handle owning `path`: walk up from the element at `path` to the
+           |// nearest [data-kyo-backend] ancestor, read its data-kyo-path (the root), and look it up.
+           |function backendForPath(path){
+           |  var el=document.querySelector('[data-kyo-path="'+path.join(".")+'"]');
+           |  while(el){ if(el.hasAttribute&&el.hasAttribute("data-kyo-backend")){
+           |    return window.__kyoBackends[el.getAttribute("data-kyo-path")]||null; }
+           |    el=el.parentElement; }
+           |  return null;
+           |}
            |function fp(el){
            |  while(el&&el!==document.body){
            |    if(el.hasAttribute("data-kyo-path"))return el;

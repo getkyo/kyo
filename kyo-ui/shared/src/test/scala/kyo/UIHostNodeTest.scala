@@ -1,14 +1,12 @@
 package kyo
 
 import kyo.UI.Ast.*
-import kyo.internal.HostPayload
-import kyo.internal.HtmlOp
 import kyo.internal.HtmlRenderer
 
-/** Tests for the host-node cross-platform bridge (`UI.Ast.HostNode` in `UI.scala`): tag rendering,
-  * non-void shape, HtmlContent child acceptance, `mount = Absent` default, attr propagation, and const
-  * (no Bound.Ref) classification. All tests call `HtmlRenderer.render` synchronously with no browser or
-  * DOM; they run on JVM, JS, Native, and Wasm.
+/** Tests for the host cross-platform bridge (the `BackendNode`-backed `UI.Ast.Host` in `UI.scala`): tag
+  * rendering, non-void shape, HtmlContent child acceptance, `mount = Absent` default, attr propagation,
+  * and const (no Bound.Ref) classification. All tests call `HtmlRenderer.render` synchronously with no
+  * browser or DOM; they run on JVM, JS, Native, and Wasm.
   */
 class UIHostNodeTest extends kyo.test.Test[Any]:
 
@@ -60,16 +58,6 @@ class UIHostNodeTest extends kyo.test.Test[Any]:
             val canvasHtml  = html.substring(canvasStart, canvasEnd + "</canvas>".length)
             assert(!canvasHtml.contains("data-kyo-reactive"))
         end for
-    }
-
-    // HostUpdate is a pure construction (no effect row at the call site).
-    "HostUpdate constructs as a plain HtmlOp value" in {
-        val payload = HostPayload.SignalUpdate("feed-color", """"#ff0000"""")
-        val op      = HtmlOp.HostUpdate(Seq("0", "2"), payload)
-        assert(op.path == Seq("0", "2"))
-        assert(op.payload == payload)
-        val op2 = HtmlOp.HostUpdate(Seq("0", "2"), payload)
-        assert(op == op2)
     }
 
 end UIHostNodeTest

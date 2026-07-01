@@ -7,11 +7,14 @@ import kyo.UI.*
 /** Normalized reactive UI node. */
 private[kyo] case class ReactiveUI(
     path: Seq[String],
-    signal: Signal[UI],
+    signal: Signal[Any],
     isConst: Boolean,
     children: Seq[ReactiveUI],
     handle: (Seq[String], UIEvent) => Boolean < Async,
-    svgContext: Boolean = false
+    svgContext: Boolean = false,
+    // Marks a bound-prop region on a BackendNode (the key + encoder); Absent for a DOM-subtree
+    // region. The discriminator subscribeScoped reads to build a DomRegion vs a PropRegion.
+    propMeta: Maybe[(String, Any => String)] = Absent
 )
 
 private[kyo] object ReactiveUI:
@@ -20,14 +23,15 @@ private[kyo] object ReactiveUI:
 
     def init(
         path: Seq[String],
-        signal: Signal[UI],
+        signal: Signal[Any],
         isConst: Boolean,
         children: Seq[ReactiveUI],
-        svgContext: Boolean = false
+        svgContext: Boolean = false,
+        propMeta: Maybe[(String, Any => String)] = Absent
     )(
         handle: (Seq[String], UIEvent) => Boolean < Async
     ): ReactiveUI =
-        ReactiveUI(path, signal, isConst, children, handle, svgContext)
+        ReactiveUI(path, signal, isConst, children, handle, svgContext, propMeta)
 
     /** Locate the ReactiveUI node at `path` in the resolved tree. Used by the exchanges to look up the
       * recorded svgContext flag so an empty placeholder uses the correct (<g> vs <span>) tag.
@@ -41,12 +45,19 @@ private[kyo] object ReactiveUI:
 
     def normalize(ui: UI, path: Seq[String], svg: Boolean = false): ReactiveUI < Sync =
         given Frame = ui.frame
+        // ReactiveUI.signal is Signal[Any] (a DOM region's UI and a bound-prop region's raw value
+        // share the field); Signal's CanEqual bound is not auto-derived for Any under strict
+        // equality, so this widens the field's construction sites explicitly.
+        given CanEqual[Any, Any] = CanEqual.derived
         ui match
             case ui: Reactive[?] =>
                 for
                     current   <- ui.signal.current
                     (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, ui.signal, isConst = false, kids, svgContext = svg) {
+                // rui.signal is Signal[Any] so a bound-prop region's raw value can share the field with a
+                // DOM region's UI; Signal is invariant, so the DOM region's Signal[UI] is upcast explicitly
+                // here rather than at the field.
+                yield init(path, ui.signal.map(x => x: Any), isConst = false, kids, svgContext = svg) {
                     (targetPath, event) =>
                         for
                             currentUI     <- ui.signal.current
@@ -68,7 +79,7 @@ private[kyo] object ReactiveUI:
                 for
                     current   <- sig.current
                     (kids, _) <- walkStatic(current, path, svg)
-                yield init(path, sig, isConst = false, kids, svgContext = svg) {
+                yield init(path, sig.map(x => x: Any), isConst = false, kids, svgContext = svg) {
                     (targetPath, event) =>
                         for
                             currentUI     <- sig.current
@@ -91,7 +102,7 @@ private[kyo] object ReactiveUI:
                 val (elementSignal, isConstNode) =
                     collectSignalRef(ui).fold((Signal.initConst(ui: UI), true))(ref => (ref.map(_ => ui: UI), false))
                 for (kids, hdl) <- walkStatic(ui, path, svg)
-                yield ReactiveUI(path, elementSignal, isConst = isConstNode, kids, hdl, svgContext = svg)
+                yield ReactiveUI(path, elementSignal.map(x => x: Any), isConst = isConstNode, kids, hdl, svgContext = svg)
 
             case ui =>
                 // Catch-all for static leaf nodes: Text, Fragment, KeyedChild.
@@ -99,7 +110,7 @@ private[kyo] object ReactiveUI:
                 // Reactive or Foreach (also handled above). If a new UI subtype is added, the
                 // exhaustiveness checker will NOT warn here; any new type that is interactive must
                 // be added as an explicit case above before this catch-all.
-                ReactiveUI(path, Signal.initConst(ui), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
+                ReactiveUI(path, Signal.initConst(ui: Any), isConst = true, Seq.empty, (_, _) => true, svgContext = svg)
         end match
     end normalize
 
@@ -376,9 +387,11 @@ private[kyo] object ReactiveUI:
                             targetSatisfies(e.children(i), nodePath :+ seg, targetPath, predicate)
                         case _ => false
                     end match
-            // Text and RawHtml are leaf content with no kyo-addressable Element children, so no event
-            // target can resolve through them: neither can satisfy an Element predicate.
-            case _: Text | _: RawHtml => false
+            // Text, RawHtml, and a bare (non-Element) BackendNode are leaf content with no
+            // kyo-addressable Element children reachable through this walk, so no event target can
+            // resolve through them: none can satisfy an Element predicate. Every concrete BackendNode
+            // today (Host) also mixes Ast.Inline and is caught by the Element arm above.
+            case _: Text | _: RawHtml | _: BackendNode => false
 
     private def isTargetDisabled(elem: Element, myPath: Seq[String], targetPath: Seq[String])(using Frame): Boolean < Sync =
         targetSatisfies(elem, myPath, targetPath, isDisabled)
@@ -576,6 +589,18 @@ private[kyo] object ReactiveUI:
       */
     case class Subscription(handle: Handler, lastSignalChangeTime: AtomicRef[Instant])
 
+    /** The exchange-facing view of a reactive region, derived from a ReactiveUI node's path +
+      * propMeta. NOT a third AST node kind: the discriminated argument subscribeScoped passes to
+      * UIExchange.onChange. A DomRegion renders HTML (Replace); a PropRegion encodes a raw value
+      * (SetProp).
+      */
+    sealed private[kyo] trait Region derives CanEqual:
+        def path: Seq[String]
+    private[kyo] object Region:
+        final case class DomRegion(path: Seq[String])                                      extends Region
+        final case class PropRegion(path: Seq[String], key: String, encode: Any => String) extends Region
+    end Region
+
     /** Subscribe all reactive boundaries under the caller's Scope. Returns the dispatch handle + change
       * time; lifecycle is owned by the enclosing Scope (closing it interrupts every region fiber).
       */
@@ -600,14 +625,26 @@ private[kyo] object ReactiveUI:
         else
             // Per-value setup, run inside each value's fresh Scope: render the region and fork its children into
             // that scope, so the next value (or an interrupt) tears them down by cascade.
-            def renderValue(current: UI): Unit < (Async & Scope) =
-                for
-                    now          <- Clock.now
-                    _            <- signalChangeTime.set(now)
-                    _            <- exchange.onChange(rui.path, current)
-                    (newKids, _) <- walkStatic(current, rui.path, rui.svgContext)
-                    _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
-                yield ()
+            def renderValue(current: Any): Unit < (Async & Scope) =
+                rui.propMeta match
+                    case Present((key, encode)) =>
+                        // A bound-prop region on a BackendNode: emit one SetProp; no subtree to walk.
+                        for
+                            now <- Clock.now
+                            _   <- signalChangeTime.set(now)
+                            _   <- exchange.onChange(Region.PropRegion(rui.path, key, encode), current)
+                        yield ()
+                    case Absent =>
+                        // A DOM subtree region: value is a UI; render + re-walk children (today's path).
+                        val ui = current.asInstanceOf[UI]
+                        for
+                            now          <- Clock.now
+                            _            <- signalChangeTime.set(now)
+                            _            <- exchange.onChange(Region.DomRegion(rui.path), ui)
+                            (newKids, _) <- walkStatic(ui, rui.path, rui.svgContext)
+                            _            <- Kyo.foreachDiscard(newKids)(subscribeScoped(_, exchange, signalChangeTime))
+                        yield ()
+                        end for
             // Every region observes with observe: each value owns a fresh per-value Scope (renderValue forks its
             // children into it), held open until the next change, then closed by cascade. SignalRef-bound element
             // regions (normalize maps the bound leaf to the constant `ui`) ride the SignalRef's exact register-before-
