@@ -5,6 +5,17 @@ import kyo.net.internal.tls.TlsProviderPlatform
 
 abstract class Test extends kyo.test.Test[Any]:
 
+    // KYO_NET_ONLY is the single source of truth TestBackends.all filters on for the parameterized eachBackend/eachBackendTls leaves, but a
+    // leaf that touches the process-shared NetPlatform.transport directly (e.g. TransportListenerTest, deliberately testing the single
+    // production entry point rather than a per-backend fan-out) selects through -Dkyo.net.backend instead (see IoBackend.select), which
+    // KYO_NET_ONLY never reached. Bridging it here, once per process and only when no explicit -D override is already present, makes both
+    // selection paths agree, so a KYO_NET_ONLY=epoll cell-isolation run stays isolated even through NetPlatform.transport's process-lifetime
+    // cache (discovered when a KYO_NET_ONLY=epoll Native run still hit an io_uring-only accept-loop bug through TransportListenerTest).
+    // Idempotent: every suite in the process derives the same value from the same env var, so concurrent construction on Native races harmlessly.
+    locally:
+        if java.lang.System.getProperty("kyo.net.backend") == null then
+            sys.env.get("KYO_NET_ONLY").foreach(name => java.lang.System.setProperty("kyo.net.backend", name))
+
     // 60s per-leaf budget for the whole module. CI runners are far slower than a local box, and the heaviest leaves here
     // drive software TLS over BoringSSL/OpenSSL with dozens of concurrent connections (a few seconds idle on the JVM,
     // several times that on Scala Native and under load). The generous ceiling absorbs that variance while a true

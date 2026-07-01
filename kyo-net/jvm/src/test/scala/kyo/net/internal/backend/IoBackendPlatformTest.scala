@@ -31,11 +31,16 @@ class IoBackendPlatformTest extends Test:
         assert(nioEntries.head.isAvailable)
         // On a posix host the highest-priority available entry is the OS-appropriate posix backend (kqueue on
         // macOS/BSD, io_uring/epoll on Linux); "nio" is selected only when forced or when no posix syscall is available.
+        // A cell-isolation run (KYO_NET_ONLY=<backend>, bridged to -Dkyo.net.backend by kyo.net.Test) forces that backend instead of the
+        // natural priority gradient; without accounting for it here, a KYO_NET_ONLY=epoll run on a host with io_uring available would
+        // wrongly expect "io_uring", since natural selection never consults the isolation env var.
         val expected =
-            if PosixConstants.isMacOrBsd && KqueueBackend.isAvailable then "kqueue"
-            else if PosixConstants.isLinux && IoUringBackend.isAvailable then "io_uring"
-            else if PosixConstants.isLinux && EpollBackend.isAvailable then "epoll"
-            else "nio"
+            sys.env.get("KYO_NET_ONLY").getOrElse {
+                if PosixConstants.isMacOrBsd && KqueueBackend.isAvailable then "kqueue"
+                else if PosixConstants.isLinux && IoUringBackend.isAvailable then "io_uring"
+                else if PosixConstants.isLinux && EpollBackend.isAvailable then "epoll"
+                else "nio"
+            }
         assert(IoBackendPlatform.selected.name == expected, s"selected=${IoBackendPlatform.selected.name}, expected=$expected")
     }
 
