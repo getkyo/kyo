@@ -359,6 +359,13 @@ final private[net] class IoUringDriver private[posix] (
             val armedForStaging = handle.tls match
                 case Present(_) => true
                 case Absent     => false
+            // ORDERING NOTE: `register` (making `hasInFlightRead` observe this op) runs a few lines BEFORE `handle.recvInFlight = true` below
+            // (case Present(sqe) =>, after submitBatched()) -- the two are NOT simultaneous. This gap is safe only because `submitRecv` is the
+            // SOLE writer of both, runs to completion on the single reap carrier with no suspension point in between, and cannot be re-entered
+            // while executing: no OTHER call on that same carrier can ever observe the intermediate state. If a future change lets some other
+            // carrier read `hasInFlightRead` or `recvInFlight` directly (not just via another `submitRecv` call), that read MUST NOT assume the
+            // two become true together -- see IoUringDriverTest's "closeHandle defers..." leaf and IoUringExclusiveUseSqFullTest for the exact
+            // test-side race this gap can expose under scheduling pressure (flaky under full-suite load, never in isolation).
             register(key, PendingOp.Read(promise, handle, eintrRetries, handshakeOwned, armedPostUpgrade, armedForStaging))
             uring.kyo_uring_get_sqe(ring) match
                 case Present(sqe) =>
