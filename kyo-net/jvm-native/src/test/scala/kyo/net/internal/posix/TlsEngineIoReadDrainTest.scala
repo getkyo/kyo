@@ -36,7 +36,7 @@ class TlsEngineIoReadDrainTest extends Test:
         def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
         def label: String                                                  = "TlsEngineIoHarness"
         def feedAndDecryptForTest(engine: TlsEngine, cipher: Buffer[Byte], len: Int, handle: PosixHandle)(using AllowUnsafe): Array[Byte] =
-            feedAndDecrypt(engine, cipher, len, handle)
+            feedAndDecrypt(engine, cipher, len, handle, () => handle.requestClose())
     end TlsEngineIoHarness
 
     // Anti-flakiness: a real handshake completes synchronously over the in-memory loopback; the read step runs inline. No async, no sleep.

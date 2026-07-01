@@ -1589,7 +1589,7 @@ final private[net] class PollerIoDriver private[posix] (
             if eofPending && handle.halfClose == HalfCloseState.Open then handle.halfClose = HalfCloseState.PeerHalfClosePending
             submitEngineOp { () =>
                 try
-                    var plain   = feedAndDecrypt(engine, staging, n, handle)
+                    var plain   = feedAndDecrypt(engine, staging, n, handle, () => handle.requestClose())
                     var eof     = false
                     var errno   = 0
                     var drained = false
@@ -1603,7 +1603,7 @@ final private[net] class PollerIoDriver private[posix] (
                     while plain.length == 0 && !eof && errno == 0 && handle.halfClose != HalfCloseState.PeerCleanClose && !drained do
                         val r  = recvNowWithRetry(fd, staging, handle.readBufferSize.toLong, PosixConstants.MSG_DONTWAIT)
                         val rN = r.value.toInt
-                        if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle)
+                        if rN > 0 then plain = feedAndDecrypt(engine, staging, rN, handle, () => handle.requestClose())
                         else if rN == 0 then eof = true
                         else if isWouldBlock(r.errorCode) then drained = true
                         else errno = r.errorCode

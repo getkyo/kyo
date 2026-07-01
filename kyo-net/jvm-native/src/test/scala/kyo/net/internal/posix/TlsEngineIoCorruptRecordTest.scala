@@ -31,7 +31,7 @@ class TlsEngineIoCorruptRecordTest extends Test:
         def submitEngineOp(op: () => Unit)(using AllowUnsafe, Frame): Unit = op()
         def label: String                                                  = "TlsEngineIoHarness"
         def feedAndDecryptForTest(engine: TlsEngine, cipher: Buffer[Byte], len: Int, handle: PosixHandle)(using AllowUnsafe): Array[Byte] =
-            feedAndDecrypt(engine, cipher, len, handle)
+            feedAndDecrypt(engine, cipher, len, handle, () => handle.requestClose())
     end TlsEngineIoHarness
 
     /** Decrypt one record directly off the engine, returning the engine's raw readPlain code (`> 0` bytes, `0` want-read/close, `-2` fatal). */

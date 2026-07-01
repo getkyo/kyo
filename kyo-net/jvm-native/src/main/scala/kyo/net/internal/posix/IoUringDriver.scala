@@ -1526,16 +1526,34 @@ final private[net] class IoUringDriver private[posix] (
                                     deferredDecrement = true
                                     submitEngineOp { () =>
                                         try
-                                            val plain = feedAndDecrypt(engine, staging, res, h)
+                                            // onFatal routes through closeHandle rather than a bare handle.requestClose(): io_uring never
+                                            // acquires the read half of the handle's guard (reads are async/kernel-owned, tracked by
+                                            // inFlight/pendingCloses/closeAfterDrain instead), so requestClose() alone would free the
+                                            // handle's buffers and engine immediately, unconditionally -- unsafe when a second kernel-owned
+                                            // recv for this same handle (the STARTTLS upgrade-handoff window allows more than one) is still
+                                            // in flight and has already captured a reference to those buffers. closeHandle defers the actual
+                                            // free until every op still in flight for the handle (this deferred decrement included) drains.
+                                            // fatalRecord is a LOCAL flag, not a shared/ambient signal: closeHandle only marks pendingCloses
+                                            // (shared across every close reason for this handle) synchronously, so checking pendingCloses here
+                                            // would also misfire for an unrelated concurrent close racing a read that decoded cleanly.
+                                            var fatalRecord = false
+                                            val plain = feedAndDecrypt(
+                                                engine,
+                                                staging,
+                                                res,
+                                                h,
+                                                () =>
+                                                    fatalRecord = true; closeHandle(h)
+                                            )
                                             java.lang.System.err.println(
                                                 s"ZZTRACE-IOU tlsReadFed fd=${h.readFd} res=$res plain=${plain.length} handshakeOwned=$handshakeOwned closing=${h.isClosing()}"
                                             )
-                                            // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): feedAndDecrypt calls
-                                            // handle.requestClose() on a fatal TLS record (readPlain == -2). The io_uring read CQE holds no dispatch
-                                            // guard, so requestClose runs immediately; the handle is closing or already closed. Failing the read
-                                            // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned / endDispatch
-                                            // does when the dispatch guard observes the close bit.
-                                            if h.isClosing() then
+                                            // Fatal-record check (mirrors the poller's rearmOwned endDispatch closing check): fatalRecord is set
+                                            // exactly when THIS call's onFatal fired; isClosing() is kept too for any other concurrent close that
+                                            // already ran the guard's free (a rare path independent of this read). Either way, failing the read
+                                            // promise Closed here tears the connection down on io_uring exactly as the poller's rearmOwned /
+                                            // endDispatch does when the dispatch guard observes the close bit.
+                                            if fatalRecord || h.isClosing() then
                                                 promise.completeDiscard(Result.fail(Closed(
                                                     label,
                                                     summon[Frame],

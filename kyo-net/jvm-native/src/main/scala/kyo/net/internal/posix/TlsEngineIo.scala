@@ -116,8 +116,19 @@ private[posix] trait TlsEngineIo:
       *
       * Fatal record handling (RFC 5246 §7.2.2): when a fatal record-layer error (`readPlain == -2`, e.g. a bad-MAC / tampered record) is
       * reached, the stream is invalid and the connection MUST terminate. The accumulated good-prefix bytes are discarded (per the RFC, all data
-      * is dropped on a fatal alert) and the handle is torn down via [[PosixHandle.requestClose]], so the fatal is never swallowed behind valid
+      * is dropped on a fatal alert) and the handle is torn down via the caller-supplied `onFatal`, so the fatal is never swallowed behind valid
       * application data: the driver's read continuation observes the closing handle and fails the read with `Closed` rather than re-arming.
+      *
+      * `onFatal` is a driver-supplied hook rather than a bare `handle.requestClose()` call because the two drivers protect the handle's shared
+      * resources differently. `PollerIoDriver` calls `feedAndDecrypt` only from inside a synchronous read dispatch that already holds
+      * [[PosixHandle.beginDispatch]], so `requestClose` correctly DEFERS the free to that dispatch's `endDispatch` (which also waits out any
+      * concurrent write); passing `() => handle.requestClose()` there is safe and unchanged from before. `IoUringDriver` never acquires that
+      * guard for reads (its reads are async, kernel-owned, tracked by its own in-flight bookkeeping instead), so calling `requestClose` directly
+      * would free the handle's buffers and engine IMMEDIATELY and unconditionally: with the STARTTLS upgrade-handoff design allowing more than
+      * one kernel-owned recv in flight for a handle at once, a second already-in-flight read that captured a reference to those buffers before
+      * this one freed them would then touch freed off-heap memory when its own engine op runs. `IoUringDriver` passes `() => closeHandle(handle)`
+      * instead, which defers the actual free until its own in-flight count (covering every currently-submitted-but-not-yet-processed op for the
+      * handle, not just this one) drains to zero.
       *
       * Read-side drain: a `readPlain` can produce outbound ciphertext that must be sent (OpenSSL/BoringSSL `SSL_read` WANT_WRITE; a TLS 1.3
       * KeyUpdate response queued during the read). After decrypting, this drains the engine's write side onto the same pending-ciphertext tail
@@ -125,16 +136,15 @@ private[posix] trait TlsEngineIo:
       * flush machinery sends it. Both the decrypt and the drain run on the engine FIFO worker (feedAndDecrypt is called inside submitEngineOp),
       * so the single owner of the tail is preserved.
       */
-    private[posix] def feedAndDecrypt(engine: TlsEngine, cipher: Buffer[Byte], len: Int, handle: PosixHandle)(using
+    private[posix] def feedAndDecrypt(engine: TlsEngine, cipher: Buffer[Byte], len: Int, handle: PosixHandle, onFatal: () => Unit)(using
         AllowUnsafe
     ): Array[Byte] =
         discard(engine.feedCiphertext(cipher, len))
         val decrypted = decryptInbound(engine, handle)
         if decrypted eq TlsEngineIo.FatalRecord then
             // Fatal record reached behind (possibly) good data: terminate the connection so the error is not lost. Skip the read-side drain;
-            // the stream is being torn down. requestClose defers the resource free behind the in-flight read guard (poller) or routes the
-            // engine free through the FIFO (both drivers), so it never races this in-flight decrypt.
-            handle.requestClose()
+            // the stream is being torn down. See the driver-specific onFatal doc above for why this is a caller hook, not a bare requestClose().
+            onFatal()
             Array.emptyByteArray
         else
             drainReadProducedCiphertext(engine, handle)

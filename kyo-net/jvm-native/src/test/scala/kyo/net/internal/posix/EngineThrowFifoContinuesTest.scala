@@ -170,8 +170,8 @@ class EngineThrowFifoContinuesTest extends Test:
                     try
                         // driver.feedAndDecrypt is the real production method from TlsEngineIo,
                         // private[posix] and inherited by PollerIoDriver. This is the same call
-                        // dispatchReadTls uses; it throws when feedCiphertext throws.
-                        discard(driver.feedAndDecrypt(throwOnFeed, staging, 0, handle))
+                        // dispatchReadTls uses (onFatal included); it throws when feedCiphertext throws.
+                        discard(driver.feedAndDecrypt(throwOnFeed, staging, 0, handle, () => handle.requestClose()))
                     catch
                         case _: Throwable =>
                             // Inner catch (production parallel: dispatchReadTls fails the read promise
