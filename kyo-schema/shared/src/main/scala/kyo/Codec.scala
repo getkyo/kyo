@@ -108,6 +108,17 @@ object Codec:
           */
         def droppedFieldsMask(n: Int): Long = 0L
 
+        /** Returns a bitmask of absent fields that this reader can materialize from a typed empty seed.
+          *
+          * The macro-generated case-class decoder supplies `defaultableFieldsMask` with bit `i` set when constructor field `i` is a
+          * non-optional collection or map field that has a typed empty seed. A reader can return some or all of those bits when the wire
+          * format defines absence as the empty value for those field shapes, as Protobuf does for repeated and map fields.
+          *
+          * Self-describing codecs keep the default `0L`, so a missing required collection or map field still fails required-field validation.
+          * Only the low-order `n` bits are relevant; bits beyond that are ignored by the caller.
+          */
+        def absentDefaultedFieldsMask(n: Int, defaultableFieldsMask: Long): Long = 0L
+
         /** Parse the next field name and record it as internal state for [[matchField]] and [[lastFieldName]].
           *
           * Implementations should advance the wire stream past the field name (and any delimiters such as JSON's `:`) so subsequent value
@@ -205,11 +216,43 @@ object Codec:
         def duration(value: java.time.Duration): Unit
         def result(): Span[Byte]
 
+        /** Whether this writer can express a top-level non-object value: a top-level array, a bare
+          * top-level scalar, or a top-level null. Self-describing codecs (Json, Yaml, Ion, MsgPack)
+          * return true; a field-number-driven binary codec (Protobuf) cannot express these shapes and
+          * leaves the default false, so the engine raises a typed error before writing rather than
+          * emitting an invalid stream. Positive opt-in: a writer must declare the capability to gain it.
+          *
+          * Override this in a custom codec whose format can carry a top-level array, scalar, or null to
+          * make the Tuple, TupleFlat, and Untagged sum representations available with that codec.
+          */
+        def canWriteTopLevelNonObject: Boolean = false
+
+        /** The public codec name, used in user-facing error messages such as [[RepresentationUnsupportedException]].
+          *
+          * Each concrete writer overrides this with the name of the codec the user selected (e.g. "Protobuf", "Json"),
+          * not the writer's internal class name. A custom codec should override this so its error messages name the
+          * codec the user selected rather than the writer's class name.
+          */
+        def codecName: String = getClass.getSimpleName
+
         /** Materialize the output as a String. Default delegates to `result()` + UTF-8 decode; codecs with char-native or ASCII-fast paths
           * should override to skip intermediate copies.
           */
         def resultString: String =
             new String(result().toArrayUnsafe, java.nio.charset.StandardCharsets.UTF_8)
+
+        /** Projects this writer's serialization capabilities into a descriptor that drives
+          * representation selection for a chain-bearing sum schema. The default body reads the
+          * existing `canWriteTopLevelNonObject` opt-in, so an external codec participates in
+          * selection with no kyo-schema source change.
+          */
+        def capabilities: Codec.Capabilities = Codec.Capabilities(canWriteTopLevelNonObject)
     end Writer
+
+    /** Describes what wire shapes a codec can express, consulted by `Schema.representationFor`
+      * to select the highest-priority representation a chain admits. A single boolean axis today
+      * (`canWriteTopLevelNonObject`); future axes add fields without changing the selection arity.
+      */
+    final case class Capabilities(canWriteTopLevelNonObject: Boolean) derives CanEqual
 
 end Codec

@@ -275,11 +275,15 @@ lazy val kyoJVM: Project = project
         `kyo-logging-slf4j`.jvm,
         `kyo-reactive-streams`.jvm,
         `kyo-aeron`.jvm,
+        `kyo-compiler`.jvm,
         `kyo-schema`.jvm,
         `kyo-http`.jvm,
         `kyo-flow`.jvm,
+        `kyo-ai`.jvm,
         `kyo-jsonrpc`.jvm,
         `kyo-jsonrpc-http`.jvm,
+        `kyo-mcp`.jvm,
+        `kyo-lsp`.jvm,
         `kyo-caliban`.jvm,
         `kyo-bench`.jvm,
         `kyo-zio-test`.jvm,
@@ -346,8 +350,11 @@ lazy val kyoJS = project
         `kyo-schema`.js,
         `kyo-http`.js,
         `kyo-flow`.js,
+        `kyo-ai`.js,
         `kyo-jsonrpc`.js,
         `kyo-jsonrpc-http`.js,
+        `kyo-mcp`.js,
+        `kyo-lsp`.js,
         `kyo-browser`.js,
         `kyo-slack`.js,
         `kyo-ui`.js,
@@ -394,8 +401,11 @@ lazy val kyoNative = project
         `kyo-schema`.native,
         `kyo-http`.native,
         `kyo-flow`.native,
+        `kyo-ai`.native,
         `kyo-jsonrpc`.native,
         `kyo-jsonrpc-http`.native,
+        `kyo-mcp`.native,
+        `kyo-lsp`.native,
         `kyo-scheduler-zio`.native,
         `kyo-zio`.native,
         `kyo-zio-test`.native,
@@ -447,8 +457,11 @@ lazy val kyoWasm = project
         `kyo-net`.wasm,
         `kyo-stats-otlp`.wasm,
         `kyo-flow`.wasm,
+        `kyo-ai`.wasm,
         `kyo-jsonrpc`.wasm,
         `kyo-jsonrpc-http`.wasm,
+        `kyo-mcp`.wasm,
+        `kyo-lsp`.wasm,
         `kyo-pod`.wasm,
         `kyo-browser`.wasm,
         `kyo-slack`.wasm,
@@ -1521,6 +1534,27 @@ lazy val `kyo-aeron` =
         )
         .jvmSettings(mimaCheck(false))
 
+lazy val `kyo-compiler` =
+    crossProject(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-compiler"))
+        .dependsOn(`kyo-core`, `kyo-aeron`, `kyo-ai` % Test)
+        .withKyoTest
+        .settings(
+            `kyo-settings`,
+            fork := true,
+            javaOptions ++= Seq(
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+            ),
+            libraryDependencies ++= Seq(
+                "org.scala-lang" %% "scala3-presentation-compiler" % scalaVersion.value
+            )
+        )
+        .jvmSettings(mimaCheck(false))
+
 lazy val `kyo-http` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
         .crossType(CrossType.Full)
@@ -1534,6 +1568,24 @@ lazy val `kyo-http` =
         .jvmSettings(
             mimaCheck(false)
         )
+        .jsSettings(
+            `js-settings`,
+            scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
+        )
+        .nativeSettings(
+            `native-settings`,
+            `openssl-native-settings`
+        )
+        .wasmSettings(`wasm-settings`)
+
+lazy val `kyo-ai` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-ai"))
+        .dependsOn(`kyo-core`, `kyo-schema`, `kyo-http`, `kyo-actor`)
+        .withKyoTest
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
@@ -1589,6 +1641,33 @@ lazy val `kyo-jsonrpc-http` =
             `js-settings`,
             scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule) }
         )
+
+lazy val `kyo-mcp` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-mcp"))
+        .withKyoTest
+        .dependsOn(`kyo-jsonrpc`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        // Test-only dep so the JVM demo MCP servers (jvm/src/test/scala/demo) can drive
+        // kyo-tasty's runtime reflection (RepoExplorer). kyo-tasty is a sibling, so no cycle.
+        .jvmConfigure(_.dependsOn(`kyo-tasty`.jvm % Test))
+        .nativeSettings(`native-settings`)
+        .wasmSettings(`wasm-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-lsp` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform, WasmPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-lsp"))
+        .withKyoTest
+        .dependsOn(`kyo-jsonrpc`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .wasmSettings(`wasm-settings`)
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)

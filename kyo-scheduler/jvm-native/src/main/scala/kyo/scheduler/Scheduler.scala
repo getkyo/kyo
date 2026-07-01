@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.LongAdder
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
+import kyo.scheduler.top.BusyWorker
 import kyo.scheduler.top.Reporter
 import kyo.scheduler.top.Status
 import kyo.scheduler.util.LoomSupport
@@ -499,6 +500,31 @@ final class Scheduler(
             admissionRegulator.status(),
             concurrencyRegulator.status()
         )
+    }
+
+    /** Per-busy-worker fiber attribution for the end-of-run leak probe: one [[kyo.scheduler.top.BusyWorker]] for every
+      * worker that holds work (`load > 0`) at call time, each carrying the worker's mount thread name and the rendered
+      * kyo Trace of the task it is running (or "" when that task carries no kyo trace).
+      *
+      * Covers EVERY busy worker, in worker-index order, not just the first. Total: it never throws, even while a worker
+      * thread concurrently completes its task or nulls a trace; a worker that goes idle between the load read and the
+      * task read contributes nothing. This is a leak-probe diagnostic, not a monitoring surface: it renders a kyo trace
+      * per busy worker, so it is called once at a leak finding, never on a hot path.
+      */
+    def busyFiberTraces(): Seq[BusyWorker] = {
+        val out = Seq.newBuilder[BusyWorker]
+        var i   = 0
+        while (i < allocatedWorkers) {
+            val w = workers(i)
+            if ((w ne null) && w.load() > 0) {
+                val t         = w.currentTask
+                val m         = w.mount
+                val mountName = if (m ne null) m.getName() else ""
+                out += BusyWorker(mountName, if (t ne null) t.fiberTrace() else "")
+            }
+            i += 1
+        }
+        out.result()
     }
 }
 

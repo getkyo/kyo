@@ -1,6 +1,6 @@
 # kyo-schema
 
-Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
+Define a case class and get JSON/YAML serialization, Protobuf and MessagePack encoding, field validation, type-safe lenses, structural diffs, and more, all derived from the type's structure. No required annotations, no boilerplate. Works across JVM, JavaScript, and Scala Native. The module depends only on `kyo-data` (pure data structures) and has no dependency on Kyo's effect runtime, so it can be adopted as a standalone library.
 
 <!-- doctest:setup
 ```scala
@@ -129,6 +129,37 @@ Json.encode[Shape](Rectangle(3.0, 4.0))
 
 On decode, the key determines which subtype to construct. This format is self-describing and works without configuration.
 
+Sealed traits support six wire representations, selected by a builder on the schema. The default is wrapper-object; the rest are opt-in:
+
+| Representation | Builder | Wire shape for `Circle(10.0)` |
+|---|---|---|
+| Wrapper-object (default) | (none) | `{"Circle":{"radius":10.0}}` |
+| Flat discriminator | `.discriminator("type")` | `{"type":"Circle","radius":10.0}` |
+| Adjacent | `.adjacent("type","content")` | `{"type":"Circle","content":{"radius":10.0}}` |
+| Tuple (tagged) | `.tupleTagged` | `["Circle",{"radius":10.0}]` |
+| Tuple (flat) | `.tupleFlat` | `["Circle",10.0]` |
+| Untagged | `.untagged` | `{"radius":10.0}` |
+
+**Fallback chains.** A single representation must be expressible by the active codec or encode fails (see the Protobuf constraint below). To let one schema serve both a self-describing codec and Protobuf, declare an ordered fallback chain with `representations`; encode picks the highest-priority entry the codec can express and decode tries the chain in declared order. `orElseRepresentation(fallback)` is the single-fallback shorthand. `External` is always expressible and acts as the implicit chain floor, so it need not be listed explicitly. A chain containing a duplicate entry raises `DuplicateRepresentationException` at the builder call, not at encode time.
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+// tupleFlat where the codec can express a top-level array, else the always-expressible External wrapper
+given Schema[Shape] = Schema[Shape].tupleFlat.orElseRepresentation(Schema.UnionRepresentation.External)
+
+Json.encode[Shape](Rectangle(3.0, 4.0))
+// ["Rectangle",3.0,4.0]
+
+// Protobuf cannot express a top-level array, so it falls back to External
+Protobuf.encode[Shape](Rectangle(3.0, 4.0))
+// Span[Byte] (External wrapper-object form)
+```
+
+The tagged representations (`.discriminator`, `.adjacent`, `.tupleTagged`, `.tupleFlat`) route the tag through the variant-naming layer below, so `renameAllVariants`, `variantNames`, and `variantAlias` all apply to the emitted tag. `.untagged` carries no tag, so variant naming and aliases do not apply to it.
+
 For a flat encoding with a type discriminator field, use `schema.discriminator`:
 
 ```scala
@@ -169,6 +200,105 @@ The case engine is acronym-aware: an uppercase run is one word. `DList` tokenize
 
 Variant naming applies only under `.discriminator(...)`. Without a discriminator the configuration has no effect and the default wrapper-object format is used.
 
+**Adjacent** keeps the tag and payload in separate, named keys of one object. The payload is always an object, even for a single-field variant:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].adjacent("type", "content")
+
+Json.encode[Shape](Circle(10.0))
+// {"type":"Circle","content":{"radius":10.0}}
+```
+
+**Tuple (tagged)** encodes the sum as a two-element array: tag at index 0, payload object at index 1:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].tupleTagged
+
+Json.encode[Shape](Circle(10.0))
+// ["Circle",{"radius":10.0}]
+```
+
+**Tuple (flat)** encodes the sum as an array: tag at index 0, then each payload field value in declaration order. Use this representation when the variant type has only scalar fields and you want the most compact array form:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].tupleFlat
+
+Json.encode[Shape](Rectangle(3.0, 4.0))
+// ["Rectangle",3.0,4.0]
+```
+
+A record-typed field nests as one element rather than being deep-flattened: a variant like `Group(bounds: Rectangle)` encodes as `["Group",{"width":3.0,"height":4.0}]`, keeping the inner record whole.
+
+**Untagged** emits only the variant payload, with no tag or wrapper. On decode, each variant is attempted in declaration order and the first clean parse wins:
+
+```scala
+sealed trait Shape
+case class Circle(radius: Double)                   extends Shape
+case class Rectangle(width: Double, height: Double) extends Shape
+
+given Schema[Shape] = Schema[Shape].untagged
+
+Json.encode[Shape](Circle(10.0))
+// {"radius":10.0}
+
+Json.decode[Shape]("""{"width":3.0,"height":4.0}""")
+// Result.Success(Rectangle(3.0, 4.0))
+```
+
+Because there is no tag, variants whose fields overlap are resolved by declaration order: the first variant whose fields all match wins. When no variant matches, decode returns `Result.Failure(NoVariantMatchException(...))` listing the variants that were attempted.
+
+Scala 3 type unions derive directly: `Schema[A | B]` is untagged by default, so it encodes the bare member payload and decodes by trying each member in declaration order. A type union has no nominal variant names, so the tagged representations (`discriminator`, `adjacent`) do not apply to it; only the untagged shape is available. When more than one member decodes the same wire value (a JSON number is both an `Int` and a `Long`), the default `Strict` policy fails with `AmbiguousVariantMatchException` listing the matched members rather than picking arbitrarily. Choose `unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)` to resolve a known-ambiguous union by declaration order instead.
+
+```scala
+val s: Schema[Int | Long] = summon[Schema[Int | Long]].unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+given Schema[Int | Long]  = s
+
+Json.decode[Int | Long]("42")
+// Result.Success(42)  (Int wins as first-declared)
+```
+
+The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`) require a self-describing codec. Encoding through Protobuf raises `RepresentationUnsupportedException` before any bytes are written. Wrapper-object, flat-discriminator, and adjacent all work on Protobuf.
+
+**Field presence on the wire.** By default an absent optional encodes as a null-valued key and an empty collection as `[]` or `{}`. To drop a field from the wire, apply an omit policy. `omitNone` and `omitEmptyCollections` are schema-wide. Per field, `omit(_.field)` opens a policy you finish four ways: `.whenNone` (drop an absent optional), `.whenEmpty` (drop an empty collection or map), `.when(predicate)` (drop when a predicate over the field's encoded value returns true), and `.whenDefault` (drop when the value equals the field's compile-time default). A per-field policy shadows the schema-wide one for that field. Only optional and collection/map fields are affected by `whenNone`/`whenEmpty`; `when` and `whenDefault` apply to any field type. An empty product is never dropped. On decode, an omitted field defaults back to `None`, the typed-empty value, or its compile-time default, so the round-trip is preserved.
+
+```scala
+case class Cart(id: Int, items: List[String])
+
+given Schema[Cart] = Schema[Cart].omit(_.items).whenEmpty
+
+Json.encode(Cart(1, Nil))
+// {"id":1}
+
+Json.decode[Cart]("""{"id":1}""")
+// Result.Success(Cart(1, List()))
+```
+
+`when` and `whenDefault` drop a field based on its encoded value rather than its emptiness. `when(predicate)` runs the predicate over the field's materialized `Structure.Value`; `whenDefault` drops the field when its value equals the compile-time default declared in the case class. A field with no compile-time default never omits under `whenDefault`:
+
+```scala
+case class Item(label: String, count: Int = 0)
+
+given Schema[Item] = Schema[Item].omit(_.count).whenDefault
+
+Json.encode(Item("widget", 0))
+// {"label":"widget"}
+
+Json.encode(Item("widget", 5))
+// {"label":"widget","count":5}
+```
+
 Missing fields with default values are filled in automatically, which is useful for configuration types and backward-compatible evolution:
 
 ```scala
@@ -176,6 +306,20 @@ case class Config(host: String, port: Int = 8080, ssl: Boolean = false)
 
 Json.decode[Config]("""{"host":"localhost"}""")
 // Result.Success(Config("localhost", 8080, false))
+```
+
+When a field is absent and has no compile-time default, decode fails with `MissingFieldException`. To supply a fallback at decode time without changing the case class, register one with `default(_.field)(supplier)`. The supplier is by-name, evaluated at most once per decode and only when the field is missing; a present field never runs it. A registered supplier takes precedence over a Scala `=` default, which in turn takes precedence over the field's tag zero value:
+
+```scala
+case class Account(id: Int, name: String)
+
+given Schema[Account] = Schema[Account].default(_.name)("guest")
+
+Json.decode[Account]("""{"id":1}""")
+// Result.Success(Account(1, "guest"))
+
+Json.decode[Account]("""{"id":1,"name":"ada"}""")
+// Result.Success(Account(1, "ada"))
 ```
 
 For raw bytes, `Json.encodeBytes` and `Json.decodeBytes` work with `Span[Byte]` (the immutable byte sequence from `kyo-data`) instead of `String`:
@@ -194,6 +338,20 @@ Json.decode[User](untrustedInput, maxDepth = 64, maxCollectionSize = 10000)
 ```
 
 Exceeding either limit returns `Result.Failure(LimitExceededException)`. `LimitExceededException` is a subtype of `DecodeException`, so the same pattern-match handles malformed input and limit breaches.
+
+**Strict decoding.** By default decode ignores input fields the schema does not name, so unknown keys are silently discarded. `denyUnknownFields` flips this: decode rejects the first input field absent from the schema's effective read set with `Result.Failure(UnknownFieldException(...))`. The check runs after field naming, aliases, and schema transforms are applied, so renamed and aliased wire names are accepted while a renamed-away source name is rejected. The policy is read-side only; encode output is unchanged:
+
+```scala
+case class Person(id: Int, name: String)
+
+val strict = Schema[Person].denyUnknownFields
+
+strict.decodeString[Json]("""{"id":1,"name":"Ada"}""")
+// Result.Success(Person(1, "Ada"))
+
+strict.decodeString[Json]("""{"id":1,"name":"Ada","extra":true}""")
+// Result.Failure(UnknownFieldException(...))  (rejects the first unknown field)
+```
 
 ### Ion
 
@@ -489,7 +647,21 @@ val schema =
         .fieldId(_.name)(2)
 ```
 
+The same pin can be declared inline on the field with `@proto.fieldNumber(n)`, the recommended way to fix Protobuf field numbers for strict external interop. The annotation desugars onto the same override during derivation, so `@proto.fieldNumber(1) id: Long` and `.fieldId(_.id)(1)` produce identical wire numbers; see [Protobuf field numbers](#protobuf-field-numbers) under Annotations.
+
 `Protobuf.decode` accepts the same `maxDepth` and `maxCollectionSize` safety limits as `Json.decode`.
+
+Maps encode as a standard proto3 `map<K, V>`: each entry is a `MapEntry` message (key at field 1, value at field 2) repeated under the map field. A key type proto3 admits as a map key (an integral, `Boolean`, or `String` scalar, or an opaque type / value class whose `Schema` reduces to one) yields an interoperable `map<K, V>`. Any other key type (a message, `Float`, or `Double` key) cannot form a proto3-native `map<K, V>`. Under the default `Conformance.Strict` mode, encoding such a map raises `SchemaNotSerializableException` with a message prefixed `"non-canonical proto3 map key: "`. Under `Conformance.Permissive`, the map uses an entry-message encoding that round-trips through this codec but is not standard proto3 externally, and `protoSchema` describes the field as `repeated <Name>Entry` rather than the invalid `map<...>` syntax.
+
+Repeated and map fields follow proto3 emptiness: an empty `List`/`Seq`/`Map`/... emits no bytes, and an absent repeated or map field decodes to the empty collection rather than failing, so collection fields are not required on the wire.
+
+Repeated scalar fields (`List[Int]`, `Vector[Double]`, `Set[Boolean]`, and so on) are packed into a single length-delimited record, matching proto3's canonical form. The reader accepts both packed and unpacked forms. Self-consistent round-trips (kyo encode then decode) always work; an externally-produced zero-length packed scalar record is byte-identical to an empty string element on the same field number, so that specific external wire form is not distinguished.
+
+The proto3 conformance mode is `Conformance.Strict` by default: the zero-argument `given Protobuf` rejects any shape that cannot be encoded in canonical proto3. To allow the non-canonical extensions that still round-trip through this codec, supply an explicit instance:
+
+```scala
+given Protobuf = Protobuf(Protobuf.Config(conformance = Protobuf.Conformance.Permissive))
+```
 
 `Protobuf.protoSchema[A]` generates a `.proto` definition as a string:
 
@@ -498,22 +670,39 @@ val proto = Protobuf.protoSchema[User]
 // syntax = "proto3";
 //
 // message Address {
-//   string city = 1;
-//   string zip = 2;
+//   string city = 1842612;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string zip = 739203;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 //
 // message User {
-//   sint32 id = 1;
-//   string name = 2;
-//   string email = 3;
-//   string password = 4;
-//   Address address = 5;
+//   sint32 id = 1243642;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string name = 1790876;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string email = 1459300;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   string password = 508918;  // hash-derived field number; pin via Schema.fieldId for stable external interop
+//   Address address = 1702831;  // hash-derived field number; pin via Schema.fieldId for stable external interop
 // }
 ```
 
-The field numbers in the generated `.proto` are assigned in declaration order (`1`, `2`, `3`, ...) and do **not** reflect the MurmurHash3-derived wire IDs that kyo-schema's own Protobuf codec uses on the wire. If you plan to interoperate with an external consumer of the `.proto`, pin field IDs explicitly with `fieldId(_.name)(1)` so the wire format matches the `.proto`.
+The field numbers in the generated `.proto` match the wire field numbers the codec writes: each is the MurmurHash3-derived value for that field name, the same number used at encode and decode. Hash-derived fields carry a provenance comment. Pinning a field with `fieldId` removes the provenance comment and writes the pinned number on the wire instead. A hash-derived number in proto3's reserved range (19000-19999) escalates the comment to a WARNING because external `protoc` rejects numbers in that band. The specific numbers in the examples above (1842612, 739203, and so on) are the hash-derived values for those field names and are shown for illustration; the actual values for your types are computed at compile time from field names via the same formula.
+
+`Protobuf.fieldNumberAudit[A]` returns one `FieldNumberInfo` per message field, depth-first, reporting the wire field number, a `pinned` flag, and an `inReservedRange` flag without performing any encode or decode:
+
+```scala
+val audit = Protobuf.fieldNumberAudit[User]
+// Chunk.Indexed(
+//   FieldNumberInfo(id,id,1243642,false,false),       // numbers are hash-derived for these field names
+//   FieldNumberInfo(name,name,1790876,false,false),
+//   FieldNumberInfo(email,email,1459300,false,false),
+//   FieldNumberInfo(password,password,508918,false,false),
+//   FieldNumberInfo(address,address,1702831,false,false),
+//   FieldNumberInfo(address.city,city,1842612,false,false),
+//   FieldNumberInfo(address.zip,zip,739203,false,false)
+// )
+```
 
 A few shapes that proto3 cannot express raise `IllegalArgumentException` at encode or `protoSchema` time: `Option[Option[_]]`, `List[Option[_]]`, `List[List[_]]`, `List[Map[_,_]]`, and `Unit`-typed fields. `BigInt` and `BigDecimal` serialize as proto3 `string`, since proto3 has no arbitrary-precision number type; this preserves exact round-trip values.
+
+Protobuf supports the wrapper-object, flat-discriminator, and adjacent sum representations. The array-shaped and bare representations (`.tupleTagged`, `.tupleFlat`, `.untagged`) need a self-describing codec; encoding one through Protobuf raises `RepresentationUnsupportedException` before any bytes are written.
 
 ### MsgPack
 
@@ -618,6 +807,175 @@ object Username:
         Schema[String].transform[Username](Username(_))(identity)
 end Username
 ```
+
+## Annotations
+
+Everything the serialization sections configure with builder calls (variant representations, field and variant renaming, decode aliases, conditional omission, custom field codecs) can also be declared inline on the type with annotations from `kyo.schema`. `derives Schema` reads them and desugars each onto the same programmatic configuration, so an annotated type and the equivalent builder chain produce identical schemas. Annotations are opt-in: a type with none derives a byte-identical schema, and when an annotation and a programmatic call configure the same field, the programmatic call wins.
+
+```scala
+import kyo.schema.*
+```
+
+The annotations compose. A single order event can rename its identifier, document a field, omit an optional field while it is empty, and keep a server-only field off the wire:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+case class Order(
+    @rename("order_id") @alias("id") orderId: Long,
+    @doc("Customer-facing label") label: String,
+    @omit(omit.WhenNone) note: Maybe[String] = Maybe.empty,
+    @transient internalToken: String = ""
+) derives Schema
+
+Json.encode(Order(7L, "Boots", Maybe.empty, "tok-123"))
+// {"order_id":7,"label":"Boots"}
+
+Json.decode[Order]("""{"id":7,"label":"Boots"}""")
+// Result.Success(Order(7, "Boots", Absent, ""))
+```
+
+`@rename` sets the wire key used on encode and the primary key accepted on decode. `@alias` registers extra names accepted on decode only, so the legacy `id` key still parses. `@omit(omit.WhenNone)` drops `note` from the output while it is `Maybe.empty` and rebuilds it from the field default on decode. `@transient` always drops `internalToken` on encode and reconstructs it from its Scala default. `@doc` attaches field documentation that `Json.jsonSchema` reports as the property description; it never reaches the wire.
+
+### Renaming and aliases
+
+`@rename(wireName)` changes a field's wire key; `@alias(names*)` adds decode-only names against the effective key. Once a field is renamed, input using the original Scala name no longer decodes unless an `@alias` re-admits it. A field alias that collides with another field's wire name raises `FieldNameCollisionException` at schema construction.
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+case class Account(@rename("user_name") @alias("login") userName: String) derives Schema
+
+Json.encode(Account("ada"))
+// {"user_name":"ada"}
+
+Json.decode[Account]("""{"login":"ada"}""")
+// Result.Success(Account("ada"))
+```
+
+### Omitting fields
+
+`@omit` controls when a field is left off the wire. The mode is an `omit.Mode` value passed as the argument; the no-arg form is type-aware. An omitted field is reconstructed from its Scala default (or `Maybe.empty` for optional fields) on decode.
+
+| Annotation | Omits the field when |
+|---|---|
+| `@omit` | type-aware: an absent `Maybe`/`Option`, or an empty collection |
+| `@omit(omit.WhenNone)` | the value is `Maybe.empty` / `None` |
+| `@omit(omit.WhenEmpty)` | the value is an empty collection or map |
+| `@omit(omit.WhenDefault)` | the value equals the field's Scala default (the field must declare one) |
+| `@omit(omit.When(pred))` | the supplied `OmitPredicate` returns true for the value |
+
+`@omit(omit.When(pred))` runs a custom predicate. Implement `OmitPredicate` as a named object; `test` receives the field's materialized `Structure.Value`:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+object DropZero extends OmitPredicate:
+    def test(value: Structure.Value): Boolean =
+        value match
+            case Structure.Value.Integer(n) => n == 0L
+            case _                          => false
+end DropZero
+
+case class Reading(@omit(omit.When(DropZero)) celsius: Int = 0) derives Schema
+
+Json.encode(Reading(0))
+// {}
+
+Json.encode(Reading(21))
+// {"celsius":21}
+```
+
+`@transient` is the unconditional sibling: it always drops the field on encode and requires a Scala default to rebuild it on decode. Unlike `@omit`, which may or may not emit the field depending on its value, `@transient` is never present on the wire.
+
+### Sum representations
+
+For sealed traits, `@discriminator`, `@adjacent`, and `@untagged` select the wire encoding declaratively, matching the `.discriminator`, `.adjacent`, and `.untagged` builders. They are sealed-trait-only; placing one on a case class is a compile error. `@rename` and `@alias` on a variant set and extend its tag value.
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+@discriminator("type") sealed trait Event derives Schema
+@rename("created") case class Created(id: Long) extends Event derives Schema
+case class Deleted(id: Long)                    extends Event derives Schema
+
+Json.encode[Event](Created(1L))
+// {"type":"created","id":1}
+
+Json.decode[Event]("""{"type":"created","id":1}""")
+// Result.Success(Created(1))
+```
+
+`@adjacent(tagKey, contentKey)` carries the tag and payload in separate keys; `@untagged()` writes each variant as its bare payload and decodes by trying variants in declaration order. Untagged decoding requires a self-describing codec and fails on Protobuf, exactly like the `.untagged` builder.
+
+### Custom field codecs
+
+`@transform(obj)` installs a custom codec for one field. The object extends one of the `Transformer` family: `Transformer.Full` for custom read and write, `Transformer.WriteOnly` for custom write only, or `Transformer.ReadOnly` for custom read only. The argument must be a stable object reference, not a closure.
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+object Hex extends Transformer.Full[Int]:
+    def write(value: Int, writer: Codec.Writer): Unit = writer.string(value.toHexString)
+    def read(reader: Codec.Reader): Int               = java.lang.Integer.parseInt(reader.string(), 16)
+
+case class Packet(@transform(Hex) code: Int) derives Schema
+
+Json.encode(Packet(255))
+// {"code":"ff"}
+
+Json.decode[Packet]("""{"code":"ff"}""")
+// Result.Success(Packet(255))
+```
+
+### Protobuf field numbers
+
+Format-specific annotations are scoped under an object named for their wire format. `@proto.fieldNumber(n)` is the first: it pins the Protobuf field number for a field, overriding the hash-derived default, and is the recommended way to fix numbers for strict interoperability with an external `.proto` definition. The annotation desugars onto the same single-segment override `Schema[A].fieldId(_.field)(n)` produces, so encode, decode, `Protobuf.protoSchema`, and `Protobuf.fieldNumberAudit` all honor it. A programmatic `.fieldId` applied after derivation still wins, consistent with the rest of the annotation set.
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+case class Payment(@proto.fieldNumber(1) amount: Long, currency: String) derives Schema
+
+Schema[Payment].fieldId("amount")
+// 1
+```
+
+Proto field numbers are positive (`>= 1`); pin a stable number to keep a field out of proto3's reserved band (19000-19999), which external tooling rejects. `Protobuf.fieldNumberAudit` reports a pinned field with `pinned = true`. Schema-general annotations (`@rename`, `@doc`, `@discriminator`, ...) stay flat; only format-specific ones take a scope.
+
+### Reading annotations back
+
+Every built-in annotation subtypes `SchemaAnnotation`, and so can any annotation you define. The derivation always reifies `SchemaAnnotation` instances onto `schema.structure`, where tooling reads them by type. The extractors `annotationOf[A]` and `annotationsOf[A]` work on a product type, a sum type, a field, or a variant; `fieldsWith[A]` and `variantsWith[A]` pair each carrier with its annotation:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+case class Profile(@rename("user_name") name: String, @doc("age in years") age: Int) derives Schema
+
+val product = Schema[Profile].structure.asInstanceOf[Structure.Type.Product]
+
+product.fields.fieldsWith[rename].map((field, r) => field.name -> r.wireName)
+// Chunk(("name", "user_name"))
+
+product.fields.fieldsWith[doc].map((field, d) => field.name -> d.text)
+// Chunk(("age", "age in years"))
+```
+
+A custom annotation subtyping `SchemaAnnotation` is captured the same way, ready for a codec author to drive behavior from the captured instance:
+
+```scala doctest:scope=nested
+import kyo.schema.*
+
+final class pii() extends SchemaAnnotation
+
+case class Customer(@pii ssn: String, name: String) derives Schema
+
+Schema[Customer].structure.asInstanceOf[Structure.Type.Product]
+    .fields.fieldsWith[pii].map(_._1.name)
+// Chunk("ssn")
+```
+
+Annotations that do not subtype `SchemaAnnotation` (third-party markers such as validation annotations) are captured according to an `AnnotationPolicy` summoned at derivation. The default admits every annotation except a fixed compiler-noise set. Place an `inline given` in derivation scope to narrow capture, for example `inline given AnnotationPolicy = AnnotationPolicy.markersOnly` to keep only `SchemaAnnotation` subtypes. Marker subtypes are always captured and never consult the policy.
 
 ## Validation
 
@@ -935,6 +1293,25 @@ Each transform has defined behavior on the round-trip:
 - **drop**: encode omits the field. Decode fills it from the default value if one exists; otherwise uses the zero value.
 - **add**: the computed field appears in encoded output. Decode ignores unknown fields, so the extra field is silently discarded.
 - **select**: equivalent to dropping all fields not named in the selection.
+
+### Per-field wire transforms
+
+`drop`/`rename`/`add` reshape the structural field set. To keep a field but change only how it crosses the wire, use `transformField(_.field)(write)(read)`. It overrides the field's encode and decode functions while preserving the structural type, so navigation, validation, and conversion still see the original Scala field. `transformFieldWrite` and `transformFieldRead` override one direction and preserve any existing override for the other. A later transform for the same field replaces both directions.
+
+```scala
+case class Order(name: String, quantity: Int)
+
+val s = Schema[Order]
+    .transformField(_.quantity)((v, w) => w.string(v.toString))(r => r.string().toInt)
+
+s.encodeString[Json](Order("hat", 42))
+// {"name":"hat","quantity":"42"}
+
+s.decodeString[Json]("""{"name":"hat","quantity":"42"}""")
+// Result.Success(Order("hat", 42))
+```
+
+Per-field transforms compose with the other builders: a `rename` on the same field still applies, and a `default(_.field)(...)` supplies the field when it is absent. Watch the omit case: an `omit(_.field).when(...)` predicate runs over the post-transform `Structure.Value`, so write the predicate against the transformed wire value, not the original Scala field type, or it silently never fires.
 
 ## Type Conversion
 
@@ -1300,11 +1677,17 @@ All errors raised by kyo-schema extend the sealed `SchemaException` hierarchy. T
 | Exception | Raised when |
 |-----------|-------------|
 | `MissingFieldException` | a required field is absent on decode |
+| `MissingTagKeyException` | an `.adjacent` decode input lacks the configured tag key |
 | `TypeMismatchException` | a runtime value is the wrong shape for the schema |
 | `UnknownVariantException` | a sum-type discriminator names an undefined variant, or a `variantNames`/`variantAlias` call references an unknown Scala variant name |
 | `VariantNameCollisionException` | two variants (or a variant and an alias) map to the same wire discriminator value |
 | `FieldNameCollisionException` | two fields (or a field and an alias) map to the same wire name |
+| `NoVariantMatchException` | an `.untagged` decode matches no variant (lists the attempted variants) |
+| `UnknownFieldException` | a `denyUnknownFields` decode hits an input field absent from the schema's effective read set (after naming, aliases, and transforms); carries the offending `fieldName` |
 | `ParseException` | raw input cannot be parsed by the codec |
+| `RepresentationUnsupportedException` | a `.tupleTagged`, `.tupleFlat`, or `.untagged` representation is encoded through a codec that cannot express it (Protobuf) |
+| `AmbiguousVariantMatchException` | an untagged or type-union decode under the default `Strict` policy matches more than one member (lists the matched members) |
+| `DuplicateRepresentationException` | a `representations(...)` or `orElseRepresentation(...)` chain contains the same representation twice (raised at the builder call, not at encode time) |
 | `TruncatedInputException` | the input stream ends before decoding completes |
 | `LimitExceededException` | `maxDepth` or `maxCollectionSize` is exceeded |
 | `RangeException` | a numeric value overflows the target type |

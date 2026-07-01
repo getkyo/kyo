@@ -281,7 +281,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         "metadata + reflect: reflect fields carry doc metadata from macro" in {
             val tpe = Structure.of[XCUser]
             tpe match
-                case Structure.Type.Product(name, _, _, fields) =>
+                case Structure.Type.Product(name, _, _, fields, _) =>
                     assert(name == "XCUser")
                     assert(fields.size == 5)
                     assert(fields.map(_.name) == Chunk("id", "name", "email", "password", "ssn"))
@@ -488,7 +488,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
 
             // Both should produce Product with same fields
             (reflectedViaStandalone, reflectedViaSchema) match
-                case (Structure.Type.Product(n1, _, _, f1), Structure.Type.Product(n2, _, _, f2)) =>
+                case (Structure.Type.Product(n1, _, _, f1, _), Structure.Type.Product(n2, _, _, f2, _)) =>
                     assert(n1 == n2)
                     assert(f1.map(_.name) == f2.map(_.name))
                     assert(f1.size == f2.size)
@@ -596,7 +596,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
             // Step 1: Inspect type structure via Structure.of
             val tpe = Structure.of[XCUser]
             tpe match
-                case Structure.Type.Product(_, _, _, fields) =>
+                case Structure.Type.Product(_, _, _, fields, _) =>
                     assert(fields.size == 5)
                     assert(fields.head.name == "id")
                 case _ => fail("Expected Product")
@@ -1041,7 +1041,7 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         "Structure.of matches expected product structure" in {
             val tpe = Structure.of[MTUser]
             tpe match
-                case Structure.Type.Product(name, _, _, fields) =>
+                case Structure.Type.Product(name, _, _, fields, _) =>
                     assert(name == "MTUser")
                     assert(fields.map(_.name) == Chunk("name", "age", "email", "ssn"))
                 case _ => fail("Expected Product")
@@ -1672,28 +1672,28 @@ class SchemaStructureTest extends kyo.test.Test[Any]:
         }
 
         "Bool encodes as JSON Schema boolean type" in {
-            val v    = JsonSchema.Bool
+            val v    = JsonSchema.Bool()
             val json = Json.encode(v)
             assert(json.contains("\"boolean\""))
             assert(!json.contains("\"Bool\""))
         }
 
         "Bool round-trips through JSON" in {
-            val v       = JsonSchema.Bool
+            val v       = JsonSchema.Bool()
             val encoded = Json.encode(v)
             val decoded = Json.decode[JsonSchema](encoded).getOrThrow
             assert(decoded == v)
         }
 
         "Null encodes as JSON Schema null type" in {
-            val v    = JsonSchema.Null
+            val v    = JsonSchema.Null()
             val json = Json.encode(v)
             assert(json.contains("\"null\""))
             assert(!json.contains("\"Null\""))
         }
 
         "Null round-trips through JSON" in {
-            val v       = JsonSchema.Null
+            val v       = JsonSchema.Null()
             val encoded = Json.encode(v)
             val decoded = Json.decode[JsonSchema](encoded).getOrThrow
             assert(decoded == v)

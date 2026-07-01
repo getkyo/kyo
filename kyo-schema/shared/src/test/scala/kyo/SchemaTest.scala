@@ -2101,4 +2101,847 @@ class SchemaTest extends kyo.test.Test[Any]:
         }
     }
 
+    // =========================================================================
+    // omit builders
+    // =========================================================================
+
+    "omit builders are total and produce Schema[Cart]" in {
+        val schema         = Schema[Cart]
+        val withNone       = schema.omitNone
+        val withEmpty      = schema.omitEmptyCollections
+        val withItemsEmpty = Schema[Cart].omit(_.items).whenEmpty
+        val withNoteNone   = Schema[Cart].omit(_.note).whenNone
+        assert(withNone.isInstanceOf[Schema[Cart]])
+        assert(withEmpty.isInstanceOf[Schema[Cart]])
+        assert(withItemsEmpty.isInstanceOf[Schema[Cart]])
+        assert(withNoteNone.isInstanceOf[Schema[Cart]])
+        assert(withItemsEmpty.omitPolicies == Chunk("items" -> Schema.OmitPolicy.WhenEmpty))
+        assert(withNoteNone.omitPolicies == Chunk("note" -> Schema.OmitPolicy.WhenNone))
+    }
+
+    "round two field builders preserve Focused and expose inert state" in {
+        val schema      = Schema[Cart]
+        val strict      = schema.denyUnknownFields
+        val withDefault = schema.default(_.note)(Maybe("hello"))
+        val withWhen = schema.omit(_.items).when {
+            case Structure.Value.Sequence(values) => values.isEmpty
+            case _                                => false
+        }
+        val withWhenDefault = schema.omit(_.note).whenDefault
+
+        val _: Schema[Cart] { type Focused = "items" ~ Chunk[String] & "note" ~ Maybe[String] } = strict
+        val _: Schema[Cart] { type Focused = "items" ~ Chunk[String] & "note" ~ Maybe[String] } = withDefault
+        val _: Schema[Cart] { type Focused = "items" ~ Chunk[String] & "note" ~ Maybe[String] } = withWhen
+        val _: Schema[Cart] { type Focused = "items" ~ Chunk[String] & "note" ~ Maybe[String] } = withWhenDefault
+
+        assert(!schema.denyUnknownFieldsEnabled)
+        assert(schema.fieldDefaults.isEmpty)
+        assert(schema.fieldTransforms.isEmpty)
+        assert(!schema.hasTransforms)
+        assert(!schema.hasReadTransforms)
+
+        assert(strict.denyUnknownFieldsEnabled)
+        assert(!strict.hasTransforms)
+        assert(strict.hasReadTransforms)
+
+        assert(withDefault.fieldDefaults.map(_._1) == Chunk("note"))
+        assert(!withDefault.hasTransforms)
+        assert(withDefault.hasReadTransforms)
+
+        assert(withWhen.omitPolicies.map(_._1) == Chunk("items"))
+        withWhen.omitPolicies(0)._2 match
+            case Schema.OmitPolicy.When(predicate) =>
+                assert(predicate(Structure.Value.Sequence(Chunk.empty)))
+                assert(!predicate(Structure.Value.Sequence(Chunk(Structure.Value.Str("x")))))
+            case other => fail(s"Expected When policy, got $other")
+        end match
+
+        assert(withWhenDefault.omitPolicies == Chunk("note" -> Schema.OmitPolicy.WhenDefault))
+    }
+
+    "unknown field exception has decode-only shape" in {
+        val ex = UnknownFieldException(Seq("root"), "extra")
+        assert(ex.isInstanceOf[SchemaException])
+        assert(ex.isInstanceOf[DecodeException])
+        assert(!ex.isInstanceOf[NavigationException])
+        assert(ex.path == Seq("root"))
+        assert(ex.fieldName == "extra")
+        assert(ex.getMessage.contains("Unknown field 'extra'"))
+        assert(ex.getMessage.contains("at root"))
+        assert(
+            ex.getMessage.contains("Remove this field from the input, or decode with a schema that does not configure denyUnknownFields.")
+        )
+    }
+
+    "denyUnknownFields" - {
+
+        def assertUnknownField[A](result: Result[DecodeException, A], fieldName: String)(using kyo.test.AssertScope): Unit =
+            result match
+                case Result.Failure(ex: UnknownFieldException) =>
+                    assert(ex.fieldName == fieldName)
+                case other =>
+                    fail(s"Expected UnknownFieldException for $fieldName, got $other")
+            end match
+        end assertUnknownField
+
+        "unconfigured product decode ignores an extra JSON field" in {
+            val result = Schema[StrictPerson].decodeString[Json]("""{"id":1,"name":"Ada","extra":true}""")
+            assert(result == Result.Success(StrictPerson(1, "Ada")))
+        }
+
+        "configured product decode rejects the first extra JSON field" in {
+            val schema = Schema[StrictPerson].denyUnknownFields
+            val result = schema.decodeString[Json]("""{"id":1,"extra":true,"name":"Ada"}""")
+            assertUnknownField(result, "extra")
+        }
+
+        "renamed and aliased wire names are accepted" in {
+            val schema = Schema[StrictRename]
+                .rename(_.firstName, "given")
+                .alias("given", "first")
+                .denyUnknownFields
+
+            val renamed = schema.decodeString[Json]("""{"given":"Ada","lastName":"Lovelace"}""")
+            val aliased = schema.decodeString[Json]("""{"first":"Ada","lastName":"Lovelace"}""")
+
+            assert(renamed == Result.Success(StrictRename("Ada", "Lovelace")))
+            assert(aliased == Result.Success(StrictRename("Ada", "Lovelace")))
+        }
+
+        "renamed-away source name is rejected with the raw field name" in {
+            val schema = Schema[StrictRename]
+                .rename(_.firstName, "given")
+                .denyUnknownFields
+            val result = schema.decodeString[Json]("""{"firstName":"Ada","lastName":"Lovelace"}""")
+            assertUnknownField(result, "firstName")
+        }
+
+        "field-case wire names are accepted and unrelated fields are rejected" in {
+            val schema = Schema[StrictFieldCase]
+                .renameAllFields(Schema.NameCase.SnakeCase)
+                .denyUnknownFields
+
+            val accepted = schema.decodeString[Json]("""{"first_name":"Ada","last_name":"Lovelace"}""")
+            val rejected = schema.decodeString[Json]("""{"first_name":"Ada","middle_name":"Byron","last_name":"Lovelace"}""")
+
+            assert(accepted == Result.Success(StrictFieldCase("Ada", "Lovelace")))
+            assertUnknownField(rejected, "middle_name")
+        }
+
+        "nested product strict decode reports a typed failure" in {
+            val schema = Schema[StrictOuter].denyUnknownFields
+            val result = schema.decodeString[Json]("""{"name":"root","inner":{"value":1,"extra":2}}""")
+            assertUnknownField(result, "extra")
+        }
+
+        "flatten accepts flattened child keys and rejects unrelated unknown keys" in {
+            val schema   = Schema[StrictFlattenParent].flatten.denyUnknownFields
+            val accepted = schema.decodeString[Json]("""{"id":1,"code":"sku","quantity":2}""")
+            val rejected = schema.decodeString[Json]("""{"id":1,"code":"sku","quantity":2,"extra":true}""")
+
+            assert(accepted == Result.Success(StrictFlattenParent(1, StrictFlattenChild("sku", 2))))
+            assertUnknownField(rejected, "extra")
+        }
+
+        "strict mode does not reject synthetic empty collection injection" in {
+            val schema = Schema[CartWithList].omitEmptyCollections.denyUnknownFields
+            val result = schema.decodeString[Json]("""{"name":"x"}""")
+            assert(result == Result.Success(CartWithList(List.empty, "x")))
+        }
+    }
+
+    "default" - {
+
+        def assertUnknownField[A](result: Result[DecodeException, A], fieldName: String)(using kyo.test.AssertScope): Unit =
+            result match
+                case Result.Failure(ex: UnknownFieldException) =>
+                    assert(ex.fieldName == fieldName)
+                case other =>
+                    fail(s"Expected UnknownFieldException for $fieldName, got $other")
+            end match
+        end assertUnknownField
+
+        "primitive field default decodes concrete value when missing" in {
+            val schema = Schema[DefaultPrimitive].default(_.name)("generated")
+            val result = schema.decodeString[Json]("""{"id":1}""")
+            assert(result == Result.Success(DefaultPrimitive(1, "generated")))
+        }
+
+        "nested product field default decodes concrete value when missing" in {
+            val child  = DefaultNestedChild("sku", 2)
+            val schema = Schema[DefaultNestedParent].default(_.child)(child)
+            val result = schema.decodeString[Json]("""{"id":1}""")
+            assert(result == Result.Success(DefaultNestedParent(1, child)))
+        }
+
+        "collection field default decodes concrete value when missing" in {
+            val schema = Schema[DefaultCollection].default(_.items)(Chunk("one", "two"))
+            val result = schema.decodeString[Json]("""{"name":"cart"}""")
+            assert(result == Result.Success(DefaultCollection(Chunk("one", "two"), "cart")))
+        }
+
+        "sum field default decodes concrete variant when missing" in {
+            val schema = Schema[DefaultSumParent].default(_.shape)(MTCircle(5.0): MTShape)
+            val result = schema.decodeString[Json]("""{"id":1}""")
+            assert(result == Result.Success(DefaultSumParent(1, MTCircle(5.0))))
+        }
+
+        "supplier wins over Scala default" in {
+            val schema = Schema[DefaultWithScala].default(_.name)("configured")
+            val result = schema.decodeString[Json]("""{"id":1}""")
+            assert(result == Result.Success(DefaultWithScala(1, "configured")))
+        }
+
+        "present field does not evaluate supplier" in {
+            var evaluations = 0
+            val schema = Schema[DefaultPrimitive].default(_.name) {
+                evaluations += 1
+                "generated"
+            }
+            val result = schema.decodeString[Json]("""{"id":1,"name":"wire"}""")
+            assert(result == Result.Success(DefaultPrimitive(1, "wire")))
+            assert(evaluations == 0)
+        }
+
+        "missing field evaluates supplier exactly once per decode" in {
+            var evaluations = 0
+            val schema = Schema[DefaultPrimitive].default(_.name) {
+                evaluations += 1
+                s"generated-$evaluations"
+            }
+            val first  = schema.decodeString[Json]("""{"id":1}""")
+            val second = schema.decodeString[Json]("""{"id":2}""")
+            assert(first == Result.Success(DefaultPrimitive(1, "generated-1")))
+            assert(second == Result.Success(DefaultPrimitive(2, "generated-2")))
+            assert(evaluations == 2)
+        }
+
+        "unconfigured missing required field still fails" in {
+            val result = Schema[DefaultPrimitive].decodeString[Json]("""{"id":1}""")
+            val missingField = result match
+                case Result.Failure(_: MissingFieldException) => true
+                case _                                        => false
+            assert(missingField)
+        }
+
+        "builder order preserves source keys across rename and strict mode" in {
+            val defaultThenRename = Schema[DefaultRename]
+                .default(_.firstName)("Ada")
+                .rename(_.firstName, "givenName")
+                .denyUnknownFields
+            val renameThenDefault = Schema[DefaultRename]
+                .rename(_.firstName, "givenName")
+                .default(_.givenName)("Ada")
+                .denyUnknownFields
+
+            val input = """{"lastName":"Lovelace"}"""
+            assert(defaultThenRename.decodeString[Json](input) == Result.Success(DefaultRename("Ada", "Lovelace")))
+            assert(renameThenDefault.decodeString[Json](input) == Result.Success(DefaultRename("Ada", "Lovelace")))
+            assertUnknownField(defaultThenRename.decodeString[Json]("""{"lastName":"Lovelace","extra":true}"""), "extra")
+        }
+
+        "drop composition does not evaluate an unused supplier" in {
+            var evaluations = 0
+            val schema = Schema[DefaultDrop]
+                .default(_.removed) {
+                    evaluations += 1
+                    Maybe("configured")
+                }
+                .drop("removed")
+            val result = schema.decodeString[Json]("""{"id":1}""")
+            assert(result == Result.Success(DefaultDrop(1, Maybe.empty)))
+            assert(evaluations == 0)
+        }
+
+        "flattened strict builder order preserves child fields" in {
+            val flattenThenStrict = Schema[StrictFlattenParent].flatten.denyUnknownFields
+            val strictThenFlatten = Schema[StrictFlattenParent].denyUnknownFields.flatten
+            val accepted          = """{"id":1,"code":"sku","quantity":2}"""
+            val rejected          = """{"id":1,"code":"sku","quantity":2,"extra":true}"""
+
+            assert(flattenThenStrict.decodeString[Json](accepted) == Result.Success(StrictFlattenParent(1, StrictFlattenChild("sku", 2))))
+            assert(strictThenFlatten.decodeString[Json](accepted) == Result.Success(StrictFlattenParent(1, StrictFlattenChild("sku", 2))))
+            assertUnknownField(flattenThenStrict.decodeString[Json](rejected), "extra")
+            assertUnknownField(strictThenFlatten.decodeString[Json](rejected), "extra")
+        }
+
+        "default targeting a flattened parent evaluates only when child fields are absent" in {
+            var evaluations = 0
+            val schema = Schema[StrictFlattenParent]
+                .default(_.child) {
+                    evaluations += 1
+                    StrictFlattenChild("fallback", 9)
+                }
+                .flatten
+                .denyUnknownFields
+
+            val fromChildren = schema.decodeString[Json]("""{"id":1,"code":"sku","quantity":2}""")
+            assert(fromChildren == Result.Success(StrictFlattenParent(1, StrictFlattenChild("sku", 2))))
+            assert(evaluations == 0)
+
+            val fromDefault = schema.decodeString[Json]("""{"id":1}""")
+            assert(fromDefault == Result.Success(StrictFlattenParent(1, StrictFlattenChild("fallback", 9))))
+            assert(evaluations == 1)
+        }
+    }
+
+    "unconfigured schema is byte-identical and self-describing codecs require missing collections" in {
+        val schema  = Schema[Cart]
+        val value   = Cart(Chunk("a", "b"), Maybe("hello"))
+        val encoded = schema.encodeString[Json](value)
+        assert(encoded == """{"items":["a","b"],"note":"hello"}""")
+        assert(!schema.denyUnknownFieldsEnabled)
+        assert(schema.fieldDefaults.isEmpty)
+        assert(schema.fieldTransforms.isEmpty)
+
+        val missingItems = schema.decodeString[Json]("""{"note":"hi"}""")
+        assert(missingItems.failure.exists(_.isInstanceOf[MissingFieldException]), s"expected missing items failure, got: $missingItems")
+
+        val missingTags = Schema[CartWithMap].decodeString[Json]("""{"name":"cart"}""")
+        assert(missingTags.failure.exists(_.isInstanceOf[MissingFieldException]), s"expected missing tags failure, got: $missingTags")
+    }
+
+    "omit policy survives a subsequent copyWith-routed builder" in {
+        val schema1 = Schema[Cart].omitEmptyCollections.discriminator("type")
+        assert(schema1.omitEmptyCollectionsAll)
+
+        val schema2 = Schema[Cart].omitEmptyCollections
+        assert(schema2.omitEmptyCollectionsAll)
+
+        val schema3 = schema2.omitNone
+        assert(schema3.omitEmptyCollectionsAll)
+        assert(schema3.omitNoneAll)
+    }
+
+    "configured empty/absent fields are absent from the encoded object" in {
+        val schema = Schema[OmitAllPolicyCase].omitEmptyCollections.omitNone
+        val value  = OmitAllPolicyCase(Chunk.empty, Map.empty, None, "x")
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"items\""), s"items key must be absent: $out")
+        assert(!out.contains("\"tags\""), s"tags key must be absent: $out")
+        assert(!out.contains("\"note\""), s"note key must be absent: $out")
+        assert(!out.contains("[]"), s"empty array must not appear: $out")
+        assert(!out.contains("{}"), s"empty object must not appear: $out")
+        assert(!out.contains("null"), s"null must not appear: $out")
+        assert(out.contains("\"name\""), s"populated name key must be present: $out")
+        assert(out.contains("\"x\""), s"name value must be present: $out")
+    }
+
+    "per-field policy shadows the schema-wide flag" in {
+        val schema = Schema[OmitShadowCase].omitEmptyCollections.omit(_.b).whenNone
+        val value  = OmitShadowCase(List.empty, List.empty)
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"a\""), s"a must be omitted by schema-wide WhenEmpty: $out")
+        assert(out.contains("\"b\""), s"b must be present (per-field WhenNone shadows WhenEmpty): $out")
+        assert(out.contains("[]"), s"b must appear as an empty array: $out")
+    }
+
+    "when omits a field when the predicate returns true" in {
+        val schema = Schema[PredicateOmitCase].omit(_.count).when {
+            case Structure.Value.Integer(n) => n == 0
+            case _                          => false
+        }
+        val omitted  = schema.encodeString[Json](PredicateOmitCase("x", 0))
+        val retained = schema.encodeString[Json](PredicateOmitCase("x", 5))
+        assert(!omitted.contains("\"count\""), s"count must be absent when predicate true: $omitted")
+        assert(retained.contains("\"count\""), s"count must be present when predicate false: $retained")
+        assert(retained.contains("5"), s"count value must appear: $retained")
+    }
+
+    "false predicate preserves the field on encode" in {
+        val schema = Schema[PredicateOmitCase].omit(_.count).when(_ => false)
+        val out    = schema.encodeString[Json](PredicateOmitCase("x", 0))
+        assert(out.contains("\"count\""), s"count must be present when predicate always false: $out")
+        assert(out.contains("0"), s"zero value must appear: $out")
+    }
+
+    "whenDefault omits a field whose value equals the compile-time default" in {
+        val schema   = Schema[PredicateOmitCase].omit(_.count).whenDefault
+        val omitted  = schema.encodeString[Json](PredicateOmitCase("x", 0))
+        val retained = schema.encodeString[Json](PredicateOmitCase("x", 42))
+        assert(!omitted.contains("\"count\""), s"count must be absent when equal to default 0: $omitted")
+        assert(retained.contains("\"count\""), s"count must be present when not equal to default: $retained")
+        assert(retained.contains("42"), s"non-default value must appear: $retained")
+    }
+
+    "whenDefault does not omit a field with no compile-time default" in {
+        val schema = Schema[PredicateOmitCase].omit(_.label).whenDefault
+        val out    = schema.encodeString[Json](PredicateOmitCase("x", 1))
+        assert(out.contains("\"label\""), s"label must be present (no compile-time default): $out")
+        assert(out.contains("\"x\""), s"label value must appear: $out")
+    }
+
+    "whenDefault omits a product field equal to its compile-time default via field-schema materialization" in {
+        val schema   = Schema[WhenDefaultOuter].omit(_.inner).whenDefault
+        val omitted  = schema.encodeString[Json](WhenDefaultOuter("x", WhenDefaultInner(1, 2)))
+        val retained = schema.encodeString[Json](WhenDefaultOuter("x", WhenDefaultInner(1, 99)))
+        assert(!omitted.contains("\"inner\""), s"inner must be absent when equal to default Inner(1,2): $omitted")
+        assert(retained.contains("\"inner\""), s"inner must be present when not equal to default: $retained")
+        assert(retained.contains("99"), s"non-default value must appear: $retained")
+    }
+
+    "per-field when replaces an earlier whenDefault for the same field" in {
+        val schema = Schema[PredicateOmitCase]
+            .omit(_.count).whenDefault
+            .omit(_.count).when(_ => true)
+        val out = schema.encodeString[Json](PredicateOmitCase("x", 42))
+        assert(!out.contains("\"count\""), s"later when(true) must replace whenDefault: $out")
+        assert(schema.omitPolicies.count(_._1 == "count") == 1, "only one policy for count after replacement")
+    }
+
+    "field order is declaration order minus omitted fields" in {
+        val schema = Schema[PredicateOmitCase].omit(_.count).when {
+            case Structure.Value.Integer(n) => n == 0
+            case _                          => false
+        }
+        val out = schema.encodeString[Json](PredicateOmitCase("hello", 0))
+        assert(!out.contains("\"count\""), s"omitted field must be absent: $out")
+        assert(out.contains("\"label\""), s"remaining field must be present: $out")
+        val labelIdx = out.indexOf("\"label\"")
+        assert(labelIdx >= 0, s"label not found: $out")
+    }
+
+    "when and WhenDefault decode stubs return false (decode unchanged)" in {
+        val whenSchema        = Schema[PredicateOmitCase].omit(_.count).when(_ => true)
+        val whenDefaultSchema = Schema[PredicateOmitCase].omit(_.count).whenDefault
+        val json              = """{"label":"x","count":7}"""
+        assert(whenSchema.decodeString[Json](json) == Result.Success(PredicateOmitCase("x", 7)))
+        assert(whenDefaultSchema.decodeString[Json](json) == Result.Success(PredicateOmitCase("x", 7)))
+    }
+
+    "omit round-trips a populated collection through the standard derived Schema, no custom codec" in {
+        val schema = Schema[Cart].omitEmptyCollections
+        val value  = Cart(Chunk("a", "b"), Maybe("hello"))
+        val out    = schema.encodeString[Json](value)
+        val back   = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+        assert(out.contains("\"items\""), s"populated items must appear: $out")
+    }
+
+    // =========================================================================
+    // omit type-awareness: product fields must never be omitted
+    // =========================================================================
+
+    "empty Map field is omitted under omitEmptyCollections but a sibling empty product field is NOT omitted" in {
+        // At one schema level: tags (empty Map) is omitted; nested (empty product) is retained.
+        // Omit is a property of the schema it is configured on; it does not propagate into the
+        // nested product's own derived schema, so nested still renders with its inner empty map.
+        val schema = Schema[MapAndProductSibling].omitEmptyCollections
+        val value  = MapAndProductSibling(Map.empty, EmptyMapProduct(Map.empty))
+        val out    = schema.encodeString[Json](value)
+        assert(out == "{\"nested\":{\"theMap\":{}}}", s"expected only nested product retained, empty Map omitted: $out")
+        assert(!out.contains("\"tags\""), s"empty Map field must be omitted: $out")
+        assert(out.contains("\"nested\""), s"empty product field must be present: $out")
+    }
+
+    "nested product whose own collection fields render empty is NOT itself dropped from the parent" in {
+        val schema = Schema[OuterWithNestedProduct].omitEmptyCollections
+        val value  = OuterWithNestedProduct(InnerWithEmptyCollection(Chunk.empty), "present")
+        val out    = schema.encodeString[Json](value)
+        assert(out == "{\"inner\":{\"items\":[]},\"label\":\"present\"}", s"inner product must be retained: $out")
+        assert(out.contains("\"inner\""), s"inner product field must be present even though it renders as empty object: $out")
+        assert(out.contains("\"label\""), s"label field must be present: $out")
+    }
+
+    "nested product with empty collection round-trips correctly under omitEmptyCollections" in {
+        val schema = Schema[OuterWithNestedProduct].omitEmptyCollections
+        val value  = OuterWithNestedProduct(InnerWithEmptyCollection(Chunk.empty), "present")
+        val out    = schema.encodeString[Json](value)
+        val back   = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty Map field round-trips correctly under omitEmptyCollections (positive regression guard)" in {
+        val schema = Schema[CartWithMap].omitEmptyCollections
+        val value  = CartWithMap(Map.empty, "x")
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"tags\""), s"empty Map must be omitted: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "empty List field round-trips correctly under omitEmptyCollections (positive regression guard)" in {
+        val schema = Schema[CartWithList].omitEmptyCollections
+        val value  = CartWithList(List.empty, "x")
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"items\""), s"empty List must be omitted: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip failed: $back (encoded: $out)")
+    }
+
+    "omitNone schema-wide: absent Maybe field is omitted on encode and decodes back to Maybe.empty" in {
+        // Cart has: items: Chunk[String], note: Maybe[String]
+        val schema = Schema[Cart].omitNone
+        val value  = Cart(Chunk("a"), Maybe.empty)
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"note\""), s"note key must be absent when omitNone and Maybe.empty: $out")
+        assert(!out.contains("null"), s"null must not appear under omitNone: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip must restore Maybe.empty: $back (encoded: $out)")
+    }
+
+    "omitNone schema-wide: absent Option field is omitted on encode and decodes back to None" in {
+        // OmitAllPolicyCase has: items, tags, note: Option[String], name
+        val schema = Schema[OmitAllPolicyCase].omitNone
+        val value  = OmitAllPolicyCase(Chunk("x"), Map("k" -> 1), None, "y")
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"note\""), s"note key must be absent when omitNone and None: $out")
+        assert(!out.contains("null"), s"null must not appear under omitNone: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"round-trip must restore None: $back (encoded: $out)")
+    }
+
+    "omit per-field whenNone: absent Maybe field is omitted on encode and decodes back to Maybe.empty" in {
+        val schema = Schema[Cart].omit(_.note).whenNone
+        val value  = Cart(Chunk("a"), Maybe.empty)
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"note\""), s"note key must be absent with per-field whenNone and Maybe.empty: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"per-field whenNone round-trip must restore Maybe.empty: $back (encoded: $out)")
+    }
+
+    "omit per-field whenNone: absent Option field is omitted on encode and decodes back to None" in {
+        val schema = Schema[OmitAllPolicyCase].omit(_.note).whenNone
+        val value  = OmitAllPolicyCase(Chunk("x"), Map("k" -> 1), None, "y")
+        val out    = schema.encodeString[Json](value)
+        assert(!out.contains("\"note\""), s"note key must be absent with per-field whenNone and None: $out")
+        val back = schema.decodeString[Json](out)
+        assert(back == Result.succeed(value), s"per-field whenNone round-trip must restore None: $back (encoded: $out)")
+    }
+
+    // =========================================================================
+    // union derivation (OrType arm)
+    // =========================================================================
+
+    "a Scala type union derives to a two-variant Sum structure" in {
+        // The produced schema must expose a Sum structure with one variant per union member,
+        // proving derivation took the union path rather than a fallback.
+        val s = summon[Schema[Int | String]]
+        s.structure match
+            case sum: Structure.Type.Sum =>
+                assert(sum.variants.size == 2, s"expected 2 variants; got ${sum.variants.size}")
+                assert(sum.variants.map(_.name) == Chunk("Int", "String"), s"expected Chunk(Int, String); got ${sum.variants.map(_.name)}")
+            case other =>
+                fail(s"expected Structure.Type.Sum from union derivation; got $other")
+        end match
+    }
+
+    "zero-config union round-trips on all four self-describing codecs" in {
+        val s = summon[Schema[Int | String]]
+        // Bare untagged payload pin (the untagged default)
+        val encInt = s.encodeString[Json](42)
+        assert(encInt == "42", s"Int member JSON: expected '42' but got '$encInt'")
+        val decInt = s.decodeString[Json]("42")
+        assert(decInt == Result.succeed(42), s"Int JSON decode: $decInt")
+        val encStr = s.encodeString[Json]("hello")
+        assert(encStr == "\"hello\"", s"String member JSON: expected '\"hello\"' but got '$encStr'")
+        val decStr = s.decodeString[Json]("\"hello\"")
+        assert(decStr == Result.succeed("hello"), s"String JSON decode: $decStr")
+        // Yaml
+        val yamlInt = s.encodeString[Yaml](42)
+        assert(s.decodeString[Yaml](yamlInt) == Result.succeed(42), s"Int Yaml round-trip: $yamlInt")
+        val yamlStr = s.encodeString[Yaml]("hello")
+        assert(s.decodeString[Yaml](yamlStr) == Result.succeed("hello"), s"String Yaml round-trip: $yamlStr")
+        // Ion
+        val ionInt = s.encodeString[Ion](42)
+        assert(s.decodeString[Ion](ionInt) == Result.succeed(42), s"Int Ion round-trip: $ionInt")
+        val ionStr = s.encodeString[Ion]("hello")
+        assert(s.decodeString[Ion](ionStr) == Result.succeed("hello"), s"String Ion round-trip: $ionStr")
+        // MsgPack (binary codec)
+        val mpInt = s.encode[MsgPack](42)
+        assert(s.decode[MsgPack](mpInt) == Result.succeed(42), "Int MsgPack round-trip failed")
+        val mpStr = s.encode[MsgPack]("hello")
+        assert(s.decode[MsgPack](mpStr) == Result.succeed("hello"), "String MsgPack round-trip failed")
+    }
+
+    "nested union flattens to one ordered Sum with declared member order" in {
+        val s = summon[Schema[Int | (String | Boolean)]]
+        s.structure match
+            case sum: Structure.Type.Sum =>
+                val names = sum.variants.map(_.name)
+                assert(
+                    names == Chunk("Int", "String", "Boolean"),
+                    s"expected Chunk(Int, String, Boolean) but got $names"
+                )
+                assert(sum.variants.size == 3, s"expected 3 variants but got ${sum.variants.size}")
+            case other =>
+                fail(s"expected Structure.Type.Sum but got $other")
+        end match
+    }
+
+    "declaration order determines Sum variant order" in {
+        val s = summon[Schema[Boolean | Int | String]]
+        s.structure match
+            case sum: Structure.Type.Sum =>
+                val names = sum.variants.map(_.name)
+                assert(
+                    names == Chunk("Boolean", "Int", "String"),
+                    s"reordered declaration yields reordered variants; got $names"
+                )
+            case other =>
+                fail(s"expected Structure.Type.Sum but got $other")
+        end match
+    }
+
+    "Maybe/Result/Either keep their explicit given schemas and are never rerouted through union derivation" in {
+        // Maybe[A] resolves to maybeSchema (the explicit given), not the OrType union arm.
+        val mSchema    = summon[Schema[Maybe[Int]]]
+        val encPresent = mSchema.encodeString[Json](Maybe(5))
+        assert(encPresent == "5", s"Maybe(5) must encode as '5' (null-or-inner); got '$encPresent'")
+        val encAbsent = mSchema.encodeString[Json](Maybe.empty)
+        assert(encAbsent == "null", s"Maybe.empty must encode as 'null'; got '$encAbsent'")
+        // Maybe[A] is a nominal sealed trait; its structure is a Sum with the sealed children,
+        // not a 2-variant union Sum named "Union".
+        val mStructure = mSchema.structure
+        mStructure match
+            case sum: Structure.Type.Sum =>
+                assert(sum.name != "Union", s"maybeSchema must not produce a union-derived Sum (name 'Union'); got name '${sum.name}'")
+            case _ => ()
+        end match
+        // Result[E, A] encodes with "success"/"failure" keys (adjacent-like shape), not bare payload.
+        val rSchema = summon[Schema[Result[String, Int]]]
+        val encSucc = rSchema.encodeString[Json](Result.succeed(42))
+        assert(encSucc.contains("success"), s"Result.succeed must encode with 'success' key; got '$encSucc'")
+        assert(encSucc.contains("42"), s"Result.succeed must include value 42; got '$encSucc'")
+        val encFail = rSchema.encodeString[Json](Result.fail("oops"))
+        assert(encFail.contains("failure"), s"Result.fail must encode with 'failure' key; got '$encFail'")
+        // Either[A, B] encodes with "Right"/"Left" discriminator.
+        val eSchema  = summon[Schema[Either[String, Int]]]
+        val encRight = eSchema.encodeString[Json](Right(42))
+        assert(encRight.contains("Right"), s"Right must encode with 'Right' discriminator; got '$encRight'")
+        assert(encRight.contains("42"), s"Right must include value 42; got '$encRight'")
+    }
+
+    "untagged union decode is a typed three-way outcome (no-match, exactly-one, multi-match under Strict)" in {
+        // No-match: "true" decodes as neither Int nor String; yields NoVariantMatchException.
+        val sIntStr = summon[Schema[Int | String]]
+        val noMatch = sIntStr.decodeString[Json]("true")
+        noMatch match
+            case Result.Failure(ex: NoVariantMatchException) =>
+                assert(ex.variants.size == 2, s"Expected 2 attempted variants, got ${ex.variants.size}")
+            case other => fail(s"Expected Failure(NoVariantMatchException), got $other")
+        end match
+        // Exactly-one-match: "\"hi\"" decodes only as String (not Int).
+        val oneMatch = sIntStr.decodeString[Json]("\"hi\"")
+        assert(oneMatch == Result.succeed("hi"), s"Exactly-one-match must return String 'hi', got $oneMatch")
+        // Multi-match under Strict (default): "42" decodes as both Int and Long;
+        // yields AmbiguousVariantMatchException listing matched members.
+        val sIntLong   = summon[Schema[Int | Long]]
+        val multiMatch = sIntLong.decodeString[Json]("42")
+        multiMatch match
+            case Result.Failure(ex: AmbiguousVariantMatchException) =>
+                assert(ex.matched.size == 2, s"Expected 2 matched members, got ${ex.matched.size}")
+            case other => fail(s"Expected Failure(AmbiguousVariantMatchException) for Int|Long on '42', got $other")
+        end match
+    }
+
+    "FirstMatch resolves a multi-member match by declared order" in {
+        // "42" matches both Int and Long; FirstMatch returns Int (first-declared).
+        val s      = summon[Schema[Int | Long]].unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+        val result = s.decodeString[Json]("42")
+        result match
+            case Result.Success(v) =>
+                assert(v.isInstanceOf[Int], s"FirstMatch must return Int (first-declared), got ${v.getClass}")
+                assert(v == 42, s"Value must be 42, got $v")
+            case other => fail(s"Expected Result.Success(42: Int), got $other")
+        end match
+    }
+
+    "ambiguity slot is decode-only: encode output is byte-identical regardless of policy" in {
+        val sDefault      = summon[Schema[Int | Long]]
+        val sFirstMatch   = summon[Schema[Int | Long]].unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+        val encDefault    = sDefault.encodeString[Json](42)
+        val encFirstMatch = sFirstMatch.encodeString[Json](42)
+        assert(
+            encDefault == encFirstMatch,
+            s"Encode must be identical regardless of ambiguity policy; got '$encDefault' vs '$encFirstMatch'"
+        )
+        // Policy is preserved through subsequent builder calls (copyWith chain).
+        val sChained = sFirstMatch.adjacent("type", "content")
+        assert(
+            sChained.unionAmbiguityPolicy == Schema.UnionAmbiguity.FirstMatch,
+            "unionAmbiguityPolicy must survive copyWith/adjacent chain"
+        )
+    }
+
+    "union decode probe is non-destructive: a value valid only for a later member decodes correctly" in {
+        // "\"hello\"" is not a valid Int but is a valid String (declared second in Int | String).
+        // A destructive read would consume the input on the first (failing) Int probe,
+        // leaving nothing for the String probe. Non-destructive replay must succeed.
+        val s      = summon[Schema[Int | String]]
+        val result = s.decodeString[Json]("\"hello\"")
+        assert(result == Result.succeed("hello"), s"Non-destructive probe must decode String 'hello', got $result")
+    }
+
+    "union member naming via reused variantNames rejects a non-member name at the builder call site" in {
+        val s      = summon[Schema[Int | String]]
+        val result = Result.catching[SchemaException](s.variantNames("Nope" -> "x"))
+        assert(result.isFailure, s"variantNames with unknown member must fail; got $result")
+    }
+
+    "nominal untagged sum keeps first-declared-wins decode while type unions probe all members" in {
+        // SSRUAmbig is a sealed nominal sum; both SSRUAmbigFirst and SSRUAmbigSecond have field 'x'.
+        // readUntagged (first-wins) must still be used for nominal sums, not readUnionMultiProbe.
+        val schema = Schema[SSRUAmbig].untagged
+        val result = schema.decodeString[Json]("""{"x":5.0}""")
+        assert(result == Result.succeed(SSRUAmbigFirst(5.0)), s"Nominal sum must keep first-declared-wins; got $result")
+    }
+
+    "union with duplicate simple-name labels is rejected at compile time" in {
+        typeCheckFailure(
+            "summon[kyo.Schema[kyo.SfA.Dup | kyo.SfB.Dup]]"
+        )("duplicate wire labels")
+    }
+
+    "disjoint union (Int | String) still derives without error" in {
+        val s = summon[Schema[Int | String]]
+        s.structure match
+            case sum: Structure.Type.Sum =>
+                assert(sum.variants.size == 2, s"expected 2 variants; got ${sum.variants.size}")
+                assert(sum.variants.map(_.name) == Chunk("Int", "String"), s"expected Chunk(Int, String); got ${sum.variants.map(_.name)}")
+            case other =>
+                fail(s"expected Structure.Type.Sum from disjoint union; got $other")
+        end match
+    }
+
+    "cross-feature: denyUnknownFields + default + omit whenDefault + rename + builder-order reversal" in {
+        val schemaA = Schema[CrossFeaturePerson]
+            .rename(_.firstName, "first_name")
+            .default(_.score)(42)
+            .omit(_.score).whenDefault
+            .denyUnknownFields
+
+        val schemaB = Schema[CrossFeaturePerson]
+            .denyUnknownFields
+            .omit(_.score).whenDefault
+            .default(_.score)(42)
+            .rename(_.firstName, "first_name")
+
+        // schemaA: renamed wire name accepted, score present decodes normally
+        val r1 = schemaA.decodeString[Json]("""{"first_name":"Alice","score":42}""")
+        assert(r1 == Result.Success(CrossFeaturePerson("Alice", 42)), s"score present must decode: $r1")
+
+        // schemaA: absent score falls to default supplier (42)
+        val r2 = schemaA.decodeString[Json]("""{"first_name":"Bob"}""")
+        assert(r2 == Result.Success(CrossFeaturePerson("Bob", 42)), s"absent score must use supplier: $r2")
+
+        // schemaA: encode score=0 (== Scala default) -> omitted by whenDefault
+        val e1 = schemaA.encodeString[Json](CrossFeaturePerson("Carol", 0))
+        assert(!e1.contains("\"score\""), s"score==0 (Scala default) must be omitted: $e1")
+        assert(e1.contains("\"first_name\":\"Carol\""), s"renamed field must appear: $e1")
+
+        // schemaA: encode score=7 (not Scala default 0) -> retained
+        val e2 = schemaA.encodeString[Json](CrossFeaturePerson("Dave", 7))
+        assert(e2.contains("\"score\":7"), s"score!=0 must be retained: $e2")
+        assert(e2.contains("\"first_name\":\"Dave\""), s"renamed field must appear: $e2")
+
+        // schemaA: encode score=42 (not Scala default 0) -> retained (42 != compile-time default 0)
+        val e3 = schemaA.encodeString[Json](CrossFeaturePerson("Ivan", 42))
+        assert(e3.contains("\"score\":42"), s"score=42 must be retained (42 != Scala default 0): $e3")
+
+        // schemaA: unknown field -> UnknownFieldException
+        val r3 = schemaA.decodeString[Json]("""{"first_name":"Eve","extra":1}""")
+        assert(r3.isFailure, s"unknown field must fail: $r3")
+        assert(
+            r3.failure.exists(_.isInstanceOf[UnknownFieldException]),
+            s"failure must be UnknownFieldException: $r3"
+        )
+
+        // schemaA: original source name (renamed away) is rejected
+        val r4 = schemaA.decodeString[Json]("""{"firstName":"X"}""")
+        assert(r4.isFailure, s"renamed-away source name must fail: $r4")
+        assert(
+            r4.failure.exists(_.isInstanceOf[UnknownFieldException]),
+            s"failure must be UnknownFieldException: $r4"
+        )
+
+        // schemaB: same decode behavior as schemaA (builder-order reversal)
+        val r5 = schemaB.decodeString[Json]("""{"first_name":"F"}""")
+        assert(r5 == Result.Success(CrossFeaturePerson("F", 42)), s"schemaB absent score must use supplier: $r5")
+
+        // schemaB: same omit behavior as schemaA
+        val e4 = schemaB.encodeString[Json](CrossFeaturePerson("G", 0))
+        assert(!e4.contains("\"score\""), s"schemaB score==0 must be omitted: $e4")
+    }
+
+    "case class union round-trips via isInstanceOf dispatch on all four codecs" in {
+        val s = summon[Schema[UnionCaseA | UnionCaseB]]
+        val a = UnionCaseA("x", 1)
+        val b = UnionCaseB(true)
+        // Json
+        val encA = s.encodeString[Json](a)
+        assert(s.decodeString[Json](encA) == Result.succeed(a), s"CaseA Json round-trip: $encA")
+        val encB = s.encodeString[Json](b)
+        assert(s.decodeString[Json](encB) == Result.succeed(b), s"CaseB Json round-trip: $encB")
+        // Yaml
+        val yamlA = s.encodeString[Yaml](a)
+        assert(s.decodeString[Yaml](yamlA) == Result.succeed(a), s"CaseA Yaml round-trip: $yamlA")
+        val yamlB = s.encodeString[Yaml](b)
+        assert(s.decodeString[Yaml](yamlB) == Result.succeed(b), s"CaseB Yaml round-trip: $yamlB")
+        // Ion
+        val ionA = s.encodeString[Ion](a)
+        assert(s.decodeString[Ion](ionA) == Result.succeed(a), s"CaseA Ion round-trip: $ionA")
+        val ionB = s.encodeString[Ion](b)
+        assert(s.decodeString[Ion](ionB) == Result.succeed(b), s"CaseB Ion round-trip: $ionB")
+        // MsgPack (binary)
+        val mpA = s.encode[MsgPack](a)
+        assert(s.decode[MsgPack](mpA) == Result.succeed(a), "CaseA MsgPack round-trip failed")
+        val mpB = s.encode[MsgPack](b)
+        assert(s.decode[MsgPack](mpB) == Result.succeed(b), "CaseB MsgPack round-trip failed")
+    }
+
 end SchemaTest
+
+case class UnionCaseA(label: String, value: Int) derives CanEqual, Schema
+case class UnionCaseB(flag: Boolean) derives CanEqual, Schema
+
+object SfA:
+    case class Dup(x: Int) derives CanEqual, Schema
+
+object SfB:
+    case class Dup(y: Int) derives CanEqual, Schema
+
+case class Cart(items: Chunk[String], note: Maybe[String]) derives Schema, CanEqual
+
+case class StrictPerson(id: Int, name: String) derives CanEqual, Schema
+case class StrictRename(firstName: String, lastName: String) derives CanEqual, Schema
+case class StrictFieldCase(firstName: String, lastName: String) derives CanEqual, Schema
+case class StrictInner(value: Int) derives CanEqual, Schema
+case class StrictOuter(name: String, inner: StrictInner) derives CanEqual, Schema
+case class StrictFlattenChild(code: String, quantity: Int) derives CanEqual, Schema
+case class StrictFlattenParent(id: Int, child: StrictFlattenChild) derives CanEqual, Schema
+
+case class DefaultPrimitive(id: Int, name: String) derives CanEqual, Schema
+case class DefaultNestedChild(code: String, quantity: Int) derives CanEqual, Schema
+case class DefaultNestedParent(id: Int, child: DefaultNestedChild) derives CanEqual, Schema
+case class DefaultCollection(items: Chunk[String], name: String) derives CanEqual, Schema
+case class DefaultSumParent(id: Int, shape: MTShape) derives CanEqual, Schema
+case class DefaultWithScala(id: Int, name: String = "scala") derives CanEqual, Schema
+case class DefaultRename(firstName: String, lastName: String) derives CanEqual, Schema
+case class DefaultDrop(id: Int, removed: Maybe[String]) derives CanEqual, Schema
+
+case class OmitAllPolicyCase(
+    items: Chunk[String],
+    tags: Map[String, Int],
+    note: Option[String],
+    name: String
+) derives CanEqual, Schema
+
+case class OmitShadowCase(a: List[Int], b: List[Int]) derives CanEqual, Schema
+
+// Fixtures: product fields must not be omitted under omitEmptyCollections
+case class EmptyMapProduct(theMap: Map[String, Int]) derives CanEqual, Schema
+case class MapAndProductSibling(tags: Map[String, Int], nested: EmptyMapProduct) derives CanEqual, Schema
+
+case class InnerWithEmptyCollection(items: Chunk[String]) derives CanEqual, Schema
+case class OuterWithNestedProduct(inner: InnerWithEmptyCollection, label: String) derives CanEqual, Schema
+
+case class CartWithMap(tags: Map[String, Int], name: String) derives CanEqual, Schema
+case class CartWithList(items: List[String], name: String) derives CanEqual, Schema
+
+case class PredicateOmitCase(label: String, count: Int = 0) derives CanEqual, Schema
+
+case class WhenDefaultInner(x: Int, y: Int) derives CanEqual, Schema
+case class WhenDefaultOuter(label: String, inner: WhenDefaultInner = WhenDefaultInner(1, 2)) derives CanEqual, Schema
+
+case class CrossFeaturePerson(firstName: String, score: Int = 0) derives CanEqual, Schema

@@ -312,6 +312,927 @@ import scala.quoted.*
     // Schema.derived[A]: typeclass derivation entry point
     // ==========================================================================
 
+    /** Captures the policy-surviving annotation instances on `sym` as an `Expr[Chunk[Any]]`.
+      *
+      * Markers (subtypes of `kyo.schema.SchemaAnnotation`) are always included; a non-marker is
+      * included iff its FQN matches an `include` glob and no `exclude` glob of the summoned policy.
+      * Each surviving annotation Term is reified via `reifyAnnotation`; a non-liftable INCLUDED term
+      * is silently skipped (no `report.errorAndAbort`, no `report.info`), so a third-party annotation
+      * the rail cannot lift is benign. Source-declaration order is preserved.
+      *
+      * For case-class fields, use `captureFieldAnnotations` instead: in Scala 3, user-placed
+      * annotations live on the primary-constructor parameter symbol, not on the accessor-getter symbol
+      * returned by `sym.caseFields`.
+      */
+    private def captureAnnotations(using Quotes)(sym: quotes.reflect.Symbol): Expr[Chunk[Any]] =
+        import quotes.reflect.*
+        val policy = summonAnnotationPolicy
+        val kept: List[Expr[Any]] = sym.annotations.flatMap { term =>
+            val fqn      = term.tpe.typeSymbol.fullName
+            val isMarker = term.tpe <:< TypeRepr.of[kyo.schema.SchemaAnnotation]
+            if isMarker || policyAdmits(policy, fqn) then reifyAnnotation(term)
+            else None
+        }
+        '{ kyo.Chunk.from[Any](Array[Any](${ Varargs(kept) }*)) }
+    end captureAnnotations
+
+    /** Captures the policy-surviving annotation instances for a case-class field as an
+      * `Expr[Chunk[Any]]`.
+      *
+      * In Scala 3, annotations placed on a case-class field (e.g. `@ann field: T`) are stored on
+      * the primary-constructor parameter symbol, not on the accessor-getter symbol returned by
+      * `sym.caseFields`. Additionally, `sym.annotations` returns constructor-parameter annotations
+      * in reverse source order (rightmost first); this helper reverses them to restore
+      * left-to-right declaration order before merging. Any accessor annotations whose type is not
+      * already represented are appended after. Policy filtering and liftability semantics are
+      * identical to `captureAnnotations`.
+      */
+    private def captureFieldAnnotations(using
+        Quotes
+    )(
+        caseField: quotes.reflect.Symbol,
+        typeSym: quotes.reflect.Symbol
+    ): Expr[Chunk[Any]] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+        val policy                     = summonAnnotationPolicy
+        val ctorParam                  = typeSym.primaryConstructor.paramSymss.flatten.find(_.name == caseField.name)
+        val ctorAnnots                 = ctorParam.map(_.annotations.reverse).getOrElse(Nil)
+        val accessorAnnots             = caseField.annotations
+        val ctorTypeSyms               = ctorAnnots.map(_.tpe.typeSymbol)
+        val mergedAnnots               = ctorAnnots ++ accessorAnnots.filterNot(a => ctorTypeSyms.contains(a.tpe.typeSymbol))
+        val kept: List[Expr[Any]] = mergedAnnots.flatMap { term =>
+            val fqn      = term.tpe.typeSymbol.fullName
+            val isMarker = term.tpe <:< TypeRepr.of[kyo.schema.SchemaAnnotation]
+            if isMarker || policyAdmits(policy, fqn) then reifyAnnotation(term)
+            else None
+        }
+        '{ kyo.Chunk.from[Any](Array[Any](${ Varargs(kept) }*)) }
+    end captureFieldAnnotations
+
+    /** Summons the in-scope `AnnotationPolicy`, falling back to the companion `given default`.
+      *
+      * Evaluates the summoned expression at macro-expansion time by walking the tree: an
+      * `AnnotationPolicy(...)` Apply is decoded field by field; a Ref or Select to a companion val
+      * is followed via the symbol's DefDef/ValDef RHS. If a present given cannot be decoded as a
+      * compile-time constant, expansion is aborted with a clear error.
+      */
+    private def summonAnnotationPolicy(using Quotes): kyo.schema.AnnotationPolicy =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+
+        def extractStrings(term: Term): Option[List[String]] = term match
+            case Inlined(_, _, inner)                                  => extractStrings(inner)
+            case Select(_, "empty") | TypeApply(Select(_, "empty"), _) => Some(Nil)
+            case Typed(inner, _)                                       => extractStrings(inner)
+            case Repeated(elems, _) =>
+                val ss = elems.flatMap { case Literal(StringConstant(s)) => Some(s); case _ => None }
+                if ss.length == elems.length then Some(ss) else None
+            case Apply(_, List(Typed(Repeated(elems, _), _))) =>
+                val ss = elems.flatMap { case Literal(StringConstant(s)) => Some(s); case _ => None }
+                if ss.length == elems.length then Some(ss) else None
+            case Apply(_, args) =>
+                val ss = args.flatMap { case Literal(StringConstant(s)) => Some(s); case _ => None }
+                if ss.length == args.length then Some(ss) else None
+            case _ => None
+
+        def followRhs(sym: Symbol): Option[Term] =
+            def fromTree(t: Tree): Option[Term] = t match
+                case dd: DefDef => dd.rhs
+                case vd: ValDef => vd.rhs
+                case _          => None
+            def searchOwnerBody: Option[Term] =
+                try
+                    sym.owner.tree match
+                        case cd: ClassDef =>
+                            cd.body.collectFirst {
+                                case vd: ValDef if vd.symbol == sym => vd.rhs
+                                case dd: DefDef if dd.symbol == sym => dd.rhs
+                            }.flatten
+                        case _ => None
+                catch case _: Throwable => None
+            try
+                fromTree(sym.tree) match
+                    case some @ Some(_) => some
+                    case None           => searchOwnerBody
+            catch case _: Throwable => searchOwnerBody
+            end try
+        end followRhs
+
+        def decodePolicy(term: Term): Option[kyo.schema.AnnotationPolicy] = term match
+            case Inlined(_, _, inner) => decodePolicy(inner)
+            case Typed(inner, _)      => decodePolicy(inner)
+            case Apply(_, args) if term.tpe <:< TypeRepr.of[kyo.schema.AnnotationPolicy] =>
+                val named = args.collect { case NamedArg(n, t) => n -> t }.toMap
+                val inc = named.get("include").flatMap(extractStrings)
+                    .map(kyo.Chunk.from[String])
+                    .getOrElse(kyo.schema.AnnotationPolicy.default.include)
+                val exc = named.get("exclude").flatMap(extractStrings)
+                    .map(kyo.Chunk.from[String])
+                    .getOrElse(kyo.schema.AnnotationPolicy.default.exclude)
+                Some(kyo.schema.AnnotationPolicy(inc, exc))
+            case Block(_, last) => decodePolicy(last)
+            case _ =>
+                val sym      = term.symbol
+                val ownerFqn = sym.owner.fullName
+                if ownerFqn == "kyo.schema.AnnotationPolicy" || ownerFqn == "kyo.schema.AnnotationPolicy$" then
+                    sym.name match
+                        case "markersOnly" => Some(kyo.schema.AnnotationPolicy.markersOnly)
+                        case "default"     => Some(kyo.schema.AnnotationPolicy.default)
+                        case _             => followRhs(sym).flatMap(decodePolicy)
+                else followRhs(sym).flatMap(decodePolicy)
+                end if
+
+        Expr.summon[kyo.schema.AnnotationPolicy] match
+            case None => kyo.schema.AnnotationPolicy.default
+            case Some(policyExpr) =>
+                val term     = policyExpr.asTerm
+                val givenSym = term.symbol
+                val body     = followRhs(givenSym).getOrElse(term)
+                decodePolicy(body) match
+                    case Some(policy) => policy
+                    case None =>
+                        report.errorAndAbort(
+                            "A custom AnnotationPolicy must be provided as an `inline given` so its value is " +
+                                "readable at derivation time, e.g. `inline given AnnotationPolicy = AnnotationPolicy.markersOnly`. " +
+                                "A plain `given` cannot be read by the derivation macro."
+                        )
+                end match
+        end match
+    end summonAnnotationPolicy
+
+    /** True iff `fqn` matches some include glob AND no exclude glob (segment-wise `*` wildcard). */
+    private def policyAdmits(policy: kyo.schema.AnnotationPolicy, fqn: String): Boolean =
+        policy.include.exists(globMatches(_, fqn)) && !policy.exclude.exists(globMatches(_, fqn))
+
+    /** Glob match: `"*"` matches any FQN; `"a.b.*"` matches `a.b` or any `a.b.X`; otherwise exact. */
+    private def globMatches(glob: String, fqn: String): Boolean =
+        if glob == "*" then true
+        else if glob.endsWith(".*") then
+            val prefix = glob.dropRight(2)
+            fqn == prefix || fqn.startsWith(prefix + ".")
+        else glob == fqn
+
+    /** Reifies a stable annotation Term into a runtime `Expr[Any]`, or `None` when non-liftable.
+      *
+      * A term whose constructor args are all constant (literals, new-applied stable constructors,
+      * stable module/val references) is lifted directly. A term containing method-call args or
+      * closures is rejected: it cannot be safely embedded in the generated carrier without
+      * surprising runtime evaluation semantics.
+      */
+    private def reifyAnnotation(using Quotes)(term: quotes.reflect.Term): Option[Expr[Any]] =
+        import quotes.reflect.*
+        def isConstantTerm(t: Term): Boolean = t match
+            case Inlined(_, _, inner) => isConstantTerm(inner)
+            case Literal(_)           => true
+            case Typed(inner, _)      => isConstantTerm(inner)
+            case NamedArg(_, inner)   => isConstantTerm(inner)
+            case Repeated(elems, _)   => elems.forall(isConstantTerm)
+            case New(_)               => true
+            // Stable companion-apply: a case-class or enum-case factory (e.g., omit.When(pred))
+            // over a stable qualifier and all-constant args. The applied symbol is a synthetic factory
+            // method (not a ValDef/Module/Enum), so the general Apply case rejects it via
+            // isConstantTerm(fn). Accept here when the result type is a case class or enum case and
+            // the qualifier and all args are recursively constant.
+            case Apply(Select(qual, _), args)
+                if t.tpe.widen.typeSymbol.flags.is(Flags.Case) && isConstantTerm(qual) && args.forall(isConstantTerm) =>
+                true
+            case Apply(fn, args)          => isConstantTerm(fn) && args.forall(isConstantTerm)
+            case TypeApply(fn, _)         => isConstantTerm(fn)
+            case Select(New(_), "<init>") => true
+            // Compiler-synthesized default-getter: e.g. Select(Ident("omit"), "$lessinit$greater$default$1").
+            // These are produced when a constructor parameter with a default value is not supplied
+            // at the call site; the name always contains "$default$". The generated accessor is
+            // compile-time stable and asExpr lifts it correctly.
+            case Select(_, name) if name.contains("$default$") => true
+            case Select(_, _) => t.symbol.isValDef || t.symbol.flags.is(Flags.Module) || t.symbol.flags.is(Flags.Enum)
+            case i: Ident     => i.symbol.isValDef || i.symbol.flags.is(Flags.Module) || i.symbol.flags.is(Flags.Enum)
+            case _            => false
+        if isConstantTerm(term) then
+            try Some(term.asExpr)
+            catch case _: Throwable => None
+        else None
+        end if
+    end reifyAnnotation
+
+    // ==========================================================================
+    // Built-in SchemaAnnotation leaf desugar helpers
+    // ==========================================================================
+
+    /** Macro-local carrier for product desugar config. Fields map 1:1 onto Schema.init params.
+      * Parameterized by the root case-class type A so that `fieldTransforms` carries the correct
+      * `Schema.FieldTransform[A]` element type.
+      */
+    private case class ProductConfig[A](
+        renamedFields: Expr[Chunk[(String, String)]],
+        droppedFields: Expr[Set[String]],
+        documentation: Expr[Maybe[String]],
+        fieldDocs: Expr[Map[Seq[String], String]],
+        variantNaming: Expr[Schema.VariantNaming],
+        omitPolicies: Expr[Chunk[(String, Schema.OmitPolicy)]],
+        omitNoneAll: Expr[Boolean],
+        omitEmptyCollectionsAll: Expr[Boolean],
+        fieldMaterializedDefaults: Expr[Chunk[(String, Structure.Value)]],
+        fieldTransforms: Expr[Chunk[(String, Schema.FieldTransform[A])]],
+        fieldIdOverrides: Expr[Map[Seq[String], Int]]
+    )
+
+    private object ProductConfig:
+        def empty[A: Type](using Quotes): ProductConfig[A] = ProductConfig[A](
+            renamedFields = '{ kyo.Chunk.empty[(String, String)] },
+            droppedFields = '{ Set.empty[String] },
+            documentation = '{ kyo.Maybe.empty[String] },
+            fieldDocs = '{ Map.empty[Seq[String], String] },
+            variantNaming = '{ kyo.Schema.VariantNaming() },
+            omitPolicies = '{ kyo.Chunk.empty },
+            omitNoneAll = '{ false },
+            omitEmptyCollectionsAll = '{ false },
+            fieldMaterializedDefaults = '{ kyo.Chunk.empty[(String, kyo.Structure.Value)] },
+            fieldTransforms = '{ kyo.Chunk.empty },
+            fieldIdOverrides = '{ Map.empty[Seq[String], Int] }
+        )
+    end ProductConfig
+
+    /** Macro-local carrier for sum desugar config. Fields map 1:1 onto Schema.init params. */
+    private case class SumConfig(
+        discriminatorField: Expr[Maybe[String]],
+        representation: Expr[Schema.UnionRepresentation],
+        variantNaming: Expr[Schema.VariantNaming],
+        documentation: Expr[Maybe[String]],
+        variantEffectivePrimaries: Expr[Set[String]]
+    )
+
+    private object SumConfig:
+        def empty(using Quotes): SumConfig = SumConfig(
+            discriminatorField = '{ kyo.Maybe.empty[String] },
+            representation = '{ kyo.Schema.UnionRepresentation.External },
+            variantNaming = '{ kyo.Schema.VariantNaming() },
+            documentation = '{ kyo.Maybe.empty[String] },
+            variantEffectivePrimaries = '{ Set.empty[String] }
+        )
+    end SumConfig
+
+    /** Reads built-in SchemaAnnotation leaves off a case class's field and type-level annotations
+      * and assembles a ProductConfig whose Expr values are spliced into Schema.init.
+      *
+      * Two-pass design: pass 1 builds a rename map per field so that pass 2 can resolve the
+      * effective wire name before processing @alias (E-1 ordering safety).
+      *
+      * Parameterized by A (the case-class root type) so that `fieldTransforms` carries the correct
+      * element type `Schema.FieldTransform[A]`. The caller (emitProductSchemaStatic[A]) passes A.
+      */
+    private def desugarProductConfig[A: Type](using
+        Quotes
+    )(
+        sym: quotes.reflect.Symbol,
+        tpe: quotes.reflect.TypeRepr
+    ): ProductConfig[A] =
+        import quotes.reflect.*
+        given CanEqual[Symbol, Symbol] = CanEqual.derived
+
+        val fields = sym.caseFields
+
+        // Ctor-param annotations in left-to-right source order.
+        // Scala 3 returns them in reverse; reversing restores source order.
+        def ctorParamAnnots(f: Symbol): List[Term] =
+            sym.primaryConstructor.paramSymss.flatten
+                .find(_.name == f.name)
+                .map(_.annotations.reverse)
+                .getOrElse(Nil)
+
+        def firstStringArg(term: Term): Option[String] = term match
+            case Apply(_, args) =>
+                args.collectFirst {
+                    case Literal(StringConstant(s))              => s
+                    case NamedArg(_, Literal(StringConstant(s))) => s
+                    case Typed(Literal(StringConstant(s)), _)    => s
+                }
+            case _ => None
+
+        def firstIntArg(term: Term): Option[Int] = term match
+            case Apply(_, args) =>
+                args.collectFirst {
+                    case Literal(IntConstant(n))              => n
+                    case NamedArg(_, Literal(IntConstant(n))) => n
+                    case Typed(Literal(IntConstant(n)), _)    => n
+                }
+            case _ => None
+
+        def varargStrings(term: Term): List[String] = term match
+            case Apply(_, args) =>
+                args.flatMap {
+                    case Typed(Repeated(elems, _), _) =>
+                        elems.collect { case Literal(StringConstant(s)) => s }
+                    case NamedArg(_, Typed(Repeated(elems, _), _)) =>
+                        elems.collect { case Literal(StringConstant(s)) => s }
+                    case Literal(StringConstant(s))              => List(s)
+                    case NamedArg(_, Literal(StringConstant(s))) => List(s)
+                    case _                                       => Nil
+                }
+            case _ => Nil
+
+        // Extract the omit.Mode case name from an @omit annotation term.
+        // An empty arg list means omit.WhenAbsent (the default).
+        // Handles both positional (@omit(omit.WhenDefault)) and named-arg
+        // (@omit(when = omit.WhenDefault)) forms, as well as the two-param form
+        // @omit(reason = "...") where the when arg is absent (defaulting to WhenAbsent).
+        def omitModeName(term: Term): String =
+            def modeFromTerm(t: Term): String = t match
+                case Select(_, "WhenNone")    => "WhenNone"
+                case Select(_, "WhenEmpty")   => "WhenEmpty"
+                case Select(_, "WhenDefault") => "WhenDefault"
+                case Select(_, "WhenAbsent")  => "WhenAbsent"
+                case Ident("WhenNone")        => "WhenNone"
+                case Ident("WhenEmpty")       => "WhenEmpty"
+                case Ident("WhenDefault")     => "WhenDefault"
+                case _                        => "WhenAbsent"
+            term match
+                case Apply(_, args) if args.nonEmpty =>
+                    // Named "when" arg takes precedence over positional first arg.
+                    args.collectFirst { case NamedArg("when", inner) => modeFromTerm(inner) }
+                        .getOrElse {
+                            args.head match
+                                case NamedArg(_, _) => "Absent" // named arg for "reason" only
+                                case t              => modeFromTerm(t)
+                        }
+                case _ => "Absent"
+            end match
+        end omitModeName
+
+        // Extract the OmitPredicate term from an @omit(omit.When(pred)) annotation term.
+        // Returns Some(predTerm) when the when-arg is an omit.When construction.
+        // Returns None for all constant omit.Mode cases (WhenAbsent / WhenNone / WhenEmpty / WhenDefault).
+        // Checks the named "when" arg first, then the positional first arg, mirroring omitModeName.
+        //
+        // TASTy representation: Scala 3 stores omit.When(pred) in annotation args as
+        // Typed(Apply(Select(companionObj, "apply"), List(pred)), TypeTree("omit.Mode")).
+        // The Typed ascription widens the specific omit.Mode.When type to omit.Mode (the formal
+        // parameter type). Constant cases like omit.WhenNone are stored as plain Select terms
+        // (no Apply, no Typed). The Typed(Apply(...)) shape is therefore the discriminator.
+        def extractWhenPredicate(term: Term): Option[Term] =
+            def fromInner(t: Term): Option[Term] = t match
+                // Companion apply with positional or named pred, without Typed ascription
+                case Apply(Select(_, "When"), List(NamedArg(_, p))) => Option(p)
+                case Apply(Select(_, "When"), List(p))              => Option(p)
+                // TASTy form: Typed(Apply(companionApply, List(pred)), TypeTree("omit.Mode"))
+                // Any Typed(Apply(...)) in this position is omit.When because the constant
+                // cases (WhenAbsent, WhenNone, WhenEmpty, WhenDefault) are singleton Select terms, never Apply.
+                case Typed(Apply(_, List(NamedArg("predicate", p))), _) => Option(p)
+                case Typed(Apply(_, List(p)), _)                        => Option(p)
+                case _                                                  => scala.None
+            end fromInner
+            term match
+                case Apply(_, args) if args.nonEmpty =>
+                    args.collectFirst { case NamedArg("when", inner) => fromInner(inner) }.flatten
+                        .orElse(args.head match
+                            case NamedArg(_, _) => scala.None
+                            case t              => fromInner(t))
+                case _ => scala.None
+            end match
+        end extractWhenPredicate
+
+        // Compile-time collection-type test, mirroring SchemaSerializer.isCollectionOrMapTag.
+        def isCollectionType(t: TypeRepr): Boolean =
+            t.dealias match
+                case AppliedType(tycon, _) =>
+                    val s = tycon.typeSymbol
+                    s == TypeRepr.of[kyo.Chunk[Any]].typeSymbol ||
+                    s == TypeRepr.of[List[Any]].typeSymbol ||
+                    s == TypeRepr.of[Vector[Any]].typeSymbol ||
+                    s == TypeRepr.of[Set[Any]].typeSymbol ||
+                    s == TypeRepr.of[Seq[Any]].typeSymbol ||
+                    s == TypeRepr.of[Map[Any, Any]].typeSymbol
+                case _ => false
+
+        val maybeSym  = TypeRepr.of[kyo.Maybe[Any]].typeSymbol
+        val optionSym = TypeRepr.of[Option[Any]].typeSymbol
+
+        // PASS 1: collect per-field rename map for effective wire name resolution.
+        val renameMap: Map[String, String] = fields.flatMap { f =>
+            ctorParamAnnots(f)
+                .find(_.tpe <:< TypeRepr.of[kyo.schema.rename])
+                .flatMap(firstStringArg)
+                .map(f.name -> _)
+        }.toMap
+
+        def effectiveWire(fieldName: String): String = renameMap.getOrElse(fieldName, fieldName)
+
+        // PASS 2: accumulate config entries across all fields.
+        var renamedPairs: List[Expr[(String, String)]]                       = Nil
+        var droppedExprs: List[Expr[String]]                                 = Nil
+        var fieldDocPairs: List[Expr[(Seq[String], String)]]                 = Nil
+        var aliasPairs: List[Expr[(String, String)]]                         = Nil
+        var omitEntries: List[Expr[(String, Schema.OmitPolicy)]]             = Nil
+        var matDefEntries: List[Expr[(String, Structure.Value)]]             = Nil
+        var transformEntries: List[Expr[(String, Schema.FieldTransform[A])]] = Nil
+        var fieldIdPairs: List[Expr[(Seq[String], Int)]]                     = Nil
+        var typeDocOpt: Option[Expr[String]]                                 = None
+
+        sym.annotations.foreach { term =>
+            if term.tpe <:< TypeRepr.of[kyo.schema.doc] then
+                firstStringArg(term).foreach(txt => typeDocOpt = Some(Expr(txt)))
+        }
+
+        fields.zipWithIndex.foreach { (f, idx) =>
+            val anns     = ctorParamAnnots(f)
+            val wire     = effectiveWire(f.name)
+            val wireExpr = Expr(wire)
+
+            anns.foreach { term =>
+                if term.tpe <:< TypeRepr.of[kyo.schema.rename] then
+                    firstStringArg(term).foreach { w =>
+                        renamedPairs = '{ (${ Expr(f.name) }, ${ Expr(w) }) } :: renamedPairs
+                    }
+                else if term.tpe <:< TypeRepr.of[kyo.schema.transient] then
+                    droppedExprs = Expr(f.name) :: droppedExprs
+                else if term.tpe <:< TypeRepr.of[kyo.schema.doc] then
+                    firstStringArg(term).foreach { txt =>
+                        fieldDocPairs = '{ (Seq($wireExpr), ${ Expr(txt) }) } :: fieldDocPairs
+                    }
+                else if term.tpe <:< TypeRepr.of[kyo.schema.alias] then
+                    varargStrings(term).foreach { a =>
+                        aliasPairs = '{ (${ Expr(a) }, $wireExpr) } :: aliasPairs
+                    }
+                else if term.tpe <:< TypeRepr.of[kyo.schema.omit] then
+                    val srcExpr = Expr(f.name)
+                    // omit.When is checked first: its shape (Apply(Select(_, "When"), List(pred)))
+                    // cannot be distinguished by omitModeName (which falls through to "WhenAbsent").
+                    extractWhenPredicate(term) match
+                        case Some(predTerm) =>
+                            val predExpr = liftObjectArg[kyo.schema.OmitPredicate](predTerm)
+                            omitEntries =
+                                '{ ($srcExpr, kyo.Schema.OmitPolicy.When(v => $predExpr.test(v))) } :: omitEntries
+                        case scala.None =>
+                            val mode      = omitModeName(term)
+                            val fieldType = tpe.memberType(f).dealias
+                            val isOpt = fieldType match
+                                case AppliedType(tycon, _) =>
+                                    tycon.typeSymbol == maybeSym || tycon.typeSymbol == optionSym
+                                case _ => false
+                            val isCol = isCollectionType(fieldType)
+
+                            mode match
+                                case "WhenNone" =>
+                                    omitEntries = '{ ($srcExpr, kyo.Schema.OmitPolicy.WhenNone) } :: omitEntries
+                                case "WhenEmpty" =>
+                                    omitEntries = '{ ($srcExpr, kyo.Schema.OmitPolicy.WhenEmpty) } :: omitEntries
+                                case "WhenDefault" =>
+                                    omitEntries =
+                                        '{ ($srcExpr, kyo.Schema.OmitPolicy.WhenDefault) } :: omitEntries
+                                    // Materialize the Scala default value into a Structure.Value for
+                                    // fieldMaterializedDefaults so OmitPolicy.WhenDefault can compare at
+                                    // runtime. Keyed by the Scala source name (same key
+                                    // SchemaSerializer.omitField uses for the sourceName lookup).
+                                    MacroUtils.getDefault(tpe, idx) match
+                                        case Some(defVal) =>
+                                            tpe.memberType(f).asType match
+                                                case '[t] =>
+                                                    Expr.summon[kyo.Tag[t]] match
+                                                        case Some(tagExpr) =>
+                                                            matDefEntries =
+                                                                '{
+                                                                    (
+                                                                        $srcExpr,
+                                                                        // Unsafe: the materialized default's static type is erased at
+                                                                        // this macro site; the value is the field's own declared default
+                                                                        // so it conforms to the field type `t`.
+                                                                        kyo.Structure.Value.primitive[t]($defVal.asInstanceOf[t])(using
+                                                                            $tagExpr
+                                                                        )
+                                                                    )
+                                                                } :: matDefEntries
+                                                        case scala.None => ()
+                                        case scala.None => ()
+                                    end match
+                                case _ => // WhenAbsent: type-aware desugar
+                                    if isOpt then
+                                        omitEntries =
+                                            '{ ($srcExpr, kyo.Schema.OmitPolicy.WhenNone) } :: omitEntries
+                                    else if isCol then
+                                        omitEntries =
+                                            '{ ($srcExpr, kyo.Schema.OmitPolicy.WhenEmpty) } :: omitEntries
+                                    // Plain scalar with omit.WhenAbsent: annotation is captured in the
+                                    // schema structure for documentation (reason string) but no omit
+                                    // policy is applied. Use omit.WhenDefault (with a Scala default)
+                                    // to conditionally omit a scalar field.
+                            end match
+                    end match
+                else if term.tpe <:< TypeRepr.of[kyo.schema.transform] then
+                    // Extract the transformer constructor arg (positional or named).
+                    val argTerm: Term = term match
+                        case Apply(_, args) if args.nonEmpty =>
+                            args.collectFirst { case NamedArg("transformer", inner) => inner }
+                                .getOrElse(args.head)
+                        case _ =>
+                            report.errorAndAbort(
+                                s"Unexpected @transform annotation shape on field '${f.name}': $term"
+                            )
+
+                    // Verify transformer element type matches field type.
+                    val fieldType      = tpe.memberType(f).dealias
+                    val transformerSym = TypeRepr.of[kyo.schema.Transformer[Any]].typeSymbol
+                    argTerm.tpe.baseType(transformerSym) match
+                        case AppliedType(_, List(elemType)) =>
+                            if !(elemType =:= fieldType) then
+                                report.errorAndAbort(
+                                    s"Type mismatch: @transform on field '${f.name}' of type '${fieldType.show}': " +
+                                        s"transformer element type '${elemType.show}' does not match field type"
+                                )
+                        case _ =>
+                            report.errorAndAbort(
+                                s"Cannot determine Transformer element type for @transform on field '${f.name}'"
+                            )
+                    end match
+
+                    // Reify the stable object reference from the annotation AST into an Expr
+                    // whose runtime value is the singleton object named in the annotation.
+                    fieldType.asType match
+                        case '[ft] =>
+                            // Build getter lambda: (v: A) => v.fieldName
+                            val getExpr: Expr[A => Any] =
+                                val mtpe = MethodType(List("_v"))(_ => List(TypeRepr.of[A]), _ => TypeRepr.of[Any])
+                                Lambda(
+                                    Symbol.spliceOwner,
+                                    mtpe,
+                                    { (_, params) =>
+                                        Select(params.head.asInstanceOf[Term], f)
+                                    }
+                                ).asExprOf[A => Any]
+                            end getExpr
+
+                            // writeDerived: schema-derived write for the field type (the post-read write-back path).
+                            val writeDerivedExpr: Expr[(Any, kyo.Codec.Writer) => Unit] =
+                                '{
+                                    (value: Any, writer: kyo.Codec.Writer) =>
+                                        kyo.internal.writeField(
+                                            scala.compiletime.summonInline[kyo.Schema[ft]],
+                                            // Unsafe: value is extracted from the product by the companion get lambda,
+                                            // which guarantees the runtime type is ft; Any here is an erasure artifact.
+                                            value.asInstanceOf[ft],
+                                            writer
+                                        )
+                                }
+
+                            val fullSym      = TypeRepr.of[kyo.schema.Transformer.Full[Any]].typeSymbol
+                            val writeOnlySym = TypeRepr.of[kyo.schema.Transformer.WriteOnly[Any]].typeSymbol
+                            val readOnlySym  = TypeRepr.of[kyo.schema.Transformer.ReadOnly[Any]].typeSymbol
+                            val baseClasses  = argTerm.tpe.baseClasses
+
+                            if baseClasses.contains(fullSym) then
+                                val fullExpr = liftObjectArg[kyo.schema.Transformer.Full[ft]](argTerm)
+                                val writeExpr: Expr[kyo.Maybe[(Any, kyo.Codec.Writer) => Unit]] =
+                                    '{
+                                        kyo.Maybe[(Any, kyo.Codec.Writer) => Unit]((value: Any, writer: kyo.Codec.Writer) =>
+                                            // Unsafe: value is the field extracted by the companion get lambda with static type ft
+                                            // at the call site; Any is an erasure boundary artifact.
+                                            $fullExpr.write(value.asInstanceOf[ft], writer)
+                                        )
+                                    }
+                                val readExpr: Expr[kyo.Maybe[kyo.Codec.Reader => Any]] =
+                                    '{
+                                        kyo.Maybe[kyo.Codec.Reader => Any]((reader: kyo.Codec.Reader) =>
+                                            // Unsafe: read returns ft at the call site; widening to Any is the erasure boundary
+                                            // convention for the lambda's declared return type.
+                                            $fullExpr.read(reader).asInstanceOf[Any]
+                                        )
+                                    }
+                                transformEntries =
+                                    '{
+                                        (
+                                            ${ Expr(f.name) },
+                                            kyo.Schema.FieldTransform[A](
+                                                get = $getExpr,
+                                                write = $writeExpr,
+                                                read = $readExpr,
+                                                writeDerived = $writeDerivedExpr
+                                            )
+                                        )
+                                    } :: transformEntries
+                            else if baseClasses.contains(writeOnlySym) then
+                                val woExpr = liftObjectArg[kyo.schema.Transformer.WriteOnly[ft]](argTerm)
+                                val writeExpr: Expr[kyo.Maybe[(Any, kyo.Codec.Writer) => Unit]] =
+                                    '{
+                                        kyo.Maybe[(Any, kyo.Codec.Writer) => Unit]((value: Any, writer: kyo.Codec.Writer) =>
+                                            // Unsafe: value is the field extracted by the companion get lambda with static type ft
+                                            // at the call site; Any is an erasure boundary artifact.
+                                            $woExpr.write(value.asInstanceOf[ft], writer)
+                                        )
+                                    }
+                                transformEntries =
+                                    '{
+                                        (
+                                            ${ Expr(f.name) },
+                                            kyo.Schema.FieldTransform[A](
+                                                get = $getExpr,
+                                                write = $writeExpr,
+                                                read = kyo.Maybe.empty[kyo.Codec.Reader => Any],
+                                                writeDerived = $writeDerivedExpr
+                                            )
+                                        )
+                                    } :: transformEntries
+                            else if baseClasses.contains(readOnlySym) then
+                                val roExpr = liftObjectArg[kyo.schema.Transformer.ReadOnly[ft]](argTerm)
+                                val readExpr: Expr[kyo.Maybe[kyo.Codec.Reader => Any]] =
+                                    '{
+                                        kyo.Maybe[kyo.Codec.Reader => Any]((reader: kyo.Codec.Reader) =>
+                                            // Unsafe: read returns ft at the call site; widening to Any is the erasure boundary
+                                            // convention for the lambda's declared return type.
+                                            $roExpr.read(reader).asInstanceOf[Any]
+                                        )
+                                    }
+                                transformEntries =
+                                    '{
+                                        (
+                                            ${ Expr(f.name) },
+                                            kyo.Schema.FieldTransform[A](
+                                                get = $getExpr,
+                                                write = kyo.Maybe.empty[(Any, kyo.Codec.Writer) => Unit],
+                                                read = $readExpr,
+                                                writeDerived = $writeDerivedExpr
+                                            )
+                                        )
+                                    } :: transformEntries
+                            else
+                                report.errorAndAbort(
+                                    s"@transform on field '${f.name}': transformer must extend " +
+                                        "Transformer.Full, Transformer.WriteOnly, or Transformer.ReadOnly"
+                                )
+                            end if
+                    end match
+                else if term.tpe <:< TypeRepr.of[kyo.schema.proto.fieldNumber] then
+                    firstIntArg(term) match
+                        case Some(n) =>
+                            if n <= 0 then
+                                report.errorAndAbort(
+                                    s"@proto.fieldNumber on field '${f.name}': field number must be positive, got $n"
+                                )
+                            end if
+                            // Pin keyed by the single-segment Scala field name, the same shape the
+                            // programmatic Schema.fieldId(_.field)(n) builder writes, so it is
+                            // wire-functional for the Protobuf codec and surfaced by fieldNumberAudit.
+                            fieldIdPairs = '{ (Seq(${ Expr(f.name) }), ${ Expr(n) }) } :: fieldIdPairs
+                        case scala.None =>
+                            // A non-constant pin hard-fails rather than silently skipping like @rename and @doc do:
+                            // with no compile-time number, encode would fall back to the hash-derived field number
+                            // and silently break the Protobuf wire interop the pin exists to guarantee.
+                            report.errorAndAbort(
+                                s"@proto.fieldNumber on field '${f.name}': expected a constant Int field number"
+                            )
+                    end match
+            }
+        }
+
+        val renamedFieldsExpr: Expr[Chunk[(String, String)]] =
+            if renamedPairs.isEmpty then '{ kyo.Chunk.empty[(String, String)] }
+            else '{ kyo.Chunk.from[(String, String)](Array[(String, String)](${ Varargs(renamedPairs.reverse) }*)) }
+
+        val droppedFieldsExpr: Expr[Set[String]] =
+            if droppedExprs.isEmpty then '{ Set.empty[String] } else '{ Set[String](${ Varargs(droppedExprs.reverse) }*) }
+
+        val documentationExpr: Expr[Maybe[String]] = typeDocOpt match
+            case Some(txt) => '{ kyo.Maybe($txt) }
+            case None      => '{ kyo.Maybe.empty[String] }
+
+        val fieldDocsExpr: Expr[Map[Seq[String], String]] =
+            if fieldDocPairs.isEmpty then '{ Map.empty[Seq[String], String] }
+            else '{ Map[Seq[String], String](${ Varargs(fieldDocPairs.reverse) }*) }
+
+        val variantNamingExpr: Expr[Schema.VariantNaming] =
+            if aliasPairs.isEmpty then '{ kyo.Schema.VariantNaming() }
+            else
+                val aliasChunk = '{ kyo.Chunk.from[(String, String)](Array[(String, String)](${ Varargs(aliasPairs.reverse) }*)) }
+                '{ kyo.Schema.VariantNaming(fieldAliases = $aliasChunk) }
+
+        val omitPoliciesExpr: Expr[Chunk[(String, Schema.OmitPolicy)]] =
+            if omitEntries.isEmpty then '{ kyo.Chunk.empty }
+            else
+                // The element type is left to inference rather than spelled out: `Schema.OmitPolicy` is
+                // `private[kyo]`, so naming it in an explicit type-argument position would make the
+                // generated code uncompilable when the annotated type lives outside package `kyo`. The
+                // tuple expressions already fix the inferred element type.
+                '{
+                    kyo.Chunk.from(Array(${
+                        Varargs(omitEntries.reverse)
+                    }*))
+                }
+
+        val matDefaultsExpr: Expr[Chunk[(String, Structure.Value)]] =
+            if matDefEntries.isEmpty then '{ kyo.Chunk.empty[(String, kyo.Structure.Value)] }
+            else
+                '{
+                    kyo.Chunk.from[(String, kyo.Structure.Value)](Array[(String, kyo.Structure.Value)](${
+                        Varargs(matDefEntries.reverse)
+                    }*))
+                }
+
+        val fieldTransformsExpr: Expr[Chunk[(String, Schema.FieldTransform[A])]] =
+            if transformEntries.isEmpty then '{ kyo.Chunk.empty }
+            else
+                // Element type left to inference: `Schema.FieldTransform` is `private[kyo]`, so an
+                // explicit type-argument naming it would not compile when the annotated type lives
+                // outside package `kyo`. The tuple expressions fix the inferred element type.
+                '{
+                    kyo.Chunk.from(Array(${
+                        Varargs(transformEntries.reverse)
+                    }*))
+                }
+
+        val fieldIdOverridesExpr: Expr[Map[Seq[String], Int]] =
+            if fieldIdPairs.isEmpty then '{ Map.empty[Seq[String], Int] }
+            else '{ Map[Seq[String], Int](${ Varargs(fieldIdPairs.reverse) }*) }
+
+        ProductConfig[A](
+            renamedFields = renamedFieldsExpr,
+            droppedFields = droppedFieldsExpr,
+            documentation = documentationExpr,
+            fieldDocs = fieldDocsExpr,
+            variantNaming = variantNamingExpr,
+            omitPolicies = omitPoliciesExpr,
+            omitNoneAll = '{ false },
+            omitEmptyCollectionsAll = '{ false },
+            fieldMaterializedDefaults = matDefaultsExpr,
+            fieldTransforms = fieldTransformsExpr,
+            fieldIdOverrides = fieldIdOverridesExpr
+        )
+    end desugarProductConfig
+
+    /** Reads built-in SchemaAnnotation leaves off a sealed trait and its children and assembles
+      * a SumConfig whose Expr values are spliced into the sum Schema.init.
+      *
+      * Type-level annotations (@discriminator, @adjacent, @untagged, @doc) come from `sym`.
+      * Variant-level annotations (@rename, @alias) come from each child symbol.
+      */
+    private def desugarSumConfig(using
+        Quotes
+    )(
+        sym: quotes.reflect.Symbol,
+        tpe: quotes.reflect.TypeRepr,
+        children: List[quotes.reflect.Symbol]
+    ): SumConfig =
+        import quotes.reflect.*
+
+        def firstStringArg(term: Term): Option[String] = term match
+            case Apply(_, args) =>
+                args.collectFirst {
+                    case Literal(StringConstant(s))              => s
+                    case NamedArg(_, Literal(StringConstant(s))) => s
+                    case Typed(Literal(StringConstant(s)), _)    => s
+                }
+            case _ => None
+
+        def varargStrings(term: Term): List[String] = term match
+            case Apply(_, args) =>
+                args.flatMap {
+                    case Typed(Repeated(elems, _), _) =>
+                        elems.collect { case Literal(StringConstant(s)) => s }
+                    case NamedArg(_, Typed(Repeated(elems, _), _)) =>
+                        elems.collect { case Literal(StringConstant(s)) => s }
+                    case Literal(StringConstant(s))              => List(s)
+                    case NamedArg(_, Literal(StringConstant(s))) => List(s)
+                    case _                                       => Nil
+                }
+            case _ => Nil
+
+        var discriminatorOpt: Option[Expr[String]]                      = None
+        var representationOpt: Option[Expr[Schema.UnionRepresentation]] = None
+        var docOpt: Option[Expr[String]]                                = None
+        var variantPairs: List[Expr[(String, String)]]                  = Nil
+        var variantAliasPairs: List[Expr[(String, String)]]             = Nil
+        var effectiveWireNames: List[String]                            = Nil
+
+        sym.annotations.foreach { term =>
+            if term.tpe <:< TypeRepr.of[kyo.schema.discriminator] then
+                firstStringArg(term).foreach { key =>
+                    discriminatorOpt = Some(Expr(key))
+                    representationOpt = Some('{ kyo.Schema.UnionRepresentation.Internal(${ Expr(key) }) })
+                }
+            else if term.tpe <:< TypeRepr.of[kyo.schema.adjacent] then
+                term match
+                    case Apply(_, args) =>
+                        def strAt(i: Int): Option[String] = args.lift(i).collectFirst {
+                            case Literal(StringConstant(s))              => s
+                            case NamedArg(_, Literal(StringConstant(s))) => s
+                        }
+                        for
+                            tagKey     <- strAt(0)
+                            contentKey <- strAt(1)
+                        do representationOpt = Some('{ kyo.Schema.UnionRepresentation.Adjacent(${ Expr(tagKey) }, ${ Expr(contentKey) }) })
+                        end for
+                    case _ => ()
+            else if term.tpe <:< TypeRepr.of[kyo.schema.untagged] then
+                representationOpt = Some('{ kyo.Schema.UnionRepresentation.Untagged })
+            else if term.tpe <:< TypeRepr.of[kyo.schema.doc] then
+                firstStringArg(term).foreach(txt => docOpt = Some(Expr(txt)))
+        }
+
+        // Variant-level: @rename and @alias on each child symbol.
+        children.foreach { child =>
+            val childName = child.name.stripSuffix("$")
+            val childRenameOpt = child.annotations.collectFirst {
+                case term if term.tpe <:< TypeRepr.of[kyo.schema.rename] =>
+                    firstStringArg(term)
+            }.flatten
+            val effectiveChildWire = childRenameOpt.getOrElse(childName)
+
+            // Collect effective wire name for the alias-vs-primary collision check at Schema.init
+            // time. The check needs the full set without forcing the lazy structure; baking the
+            // set here (compile time) mirrors what effectiveVariantWires computes at runtime.
+            effectiveWireNames = effectiveChildWire :: effectiveWireNames
+
+            childRenameOpt.foreach { wire =>
+                variantPairs = '{ (${ Expr(childName) }, ${ Expr(wire) }) } :: variantPairs
+            }
+
+            child.annotations.foreach { term =>
+                if term.tpe <:< TypeRepr.of[kyo.schema.alias] then
+                    varargStrings(term).foreach { a =>
+                        variantAliasPairs = '{ (${ Expr(a) }, ${ Expr(effectiveChildWire) }) } :: variantAliasPairs
+                    }
+            }
+        }
+
+        val discriminatorExpr: Expr[Maybe[String]] = discriminatorOpt match
+            case Some(key) => '{ kyo.Maybe($key) }
+            case None      => '{ kyo.Maybe.empty[String] }
+
+        val representationExpr: Expr[Schema.UnionRepresentation] =
+            representationOpt.getOrElse('{ kyo.Schema.UnionRepresentation.External })
+
+        val documentationExpr: Expr[Maybe[String]] = docOpt match
+            case Some(txt) => '{ kyo.Maybe($txt) }
+            case None      => '{ kyo.Maybe.empty[String] }
+
+        val variantNamingExpr: Expr[Schema.VariantNaming] =
+            if variantPairs.isEmpty && variantAliasPairs.isEmpty then '{ kyo.Schema.VariantNaming() }
+            else
+                val pairsChunk =
+                    if variantPairs.isEmpty then '{ kyo.Chunk.empty[(String, String)] }
+                    else '{ kyo.Chunk.from[(String, String)](Array[(String, String)](${ Varargs(variantPairs.reverse) }*)) }
+                val aliasChunk =
+                    if variantAliasPairs.isEmpty then '{ kyo.Chunk.empty[(String, String)] }
+                    else '{ kyo.Chunk.from[(String, String)](Array[(String, String)](${ Varargs(variantAliasPairs.reverse) }*)) }
+                '{ kyo.Schema.VariantNaming(variantPairs = $pairsChunk, variantAliases = $aliasChunk) }
+
+        // Bake the effective primary wire names into the check at Schema.init time. This is the
+        // same set that effectiveVariantWires computes at runtime, but computed at compile time
+        // so that Schema.init does not need to force the lazy structure (which would break
+        // recursive-schema initialization cycles).
+        val effectivePrimariesExpr: Expr[Set[String]] =
+            if effectiveWireNames.isEmpty then '{ Set.empty[String] }
+            else
+                val nameExprs = effectiveWireNames.reverse.map(Expr(_))
+                '{ Set[String](${ Varargs(nameExprs) }*) }
+
+        SumConfig(
+            discriminatorField = discriminatorExpr,
+            representation = representationExpr,
+            variantNaming = variantNamingExpr,
+            documentation = documentationExpr,
+            variantEffectivePrimaries = effectivePrimariesExpr
+        )
+    end desugarSumConfig
+
+    /** Rejects sum-only representation annotations placed on a non-sum type (case class or union).
+      *
+      * If `sym` carries any annotation conforming to `@discriminator`, `@adjacent`, or `@untagged`,
+      * this method calls `report.errorAndAbort` with a message that contains the phrase
+      * "sum-representation annotation", which `typeCheckErrors` assertions key on.
+      */
+    private def rejectSumOnlyAnnotations(using
+        Quotes
+    )(
+        tpe: quotes.reflect.TypeRepr,
+        sym: quotes.reflect.Symbol
+    ): Unit =
+        import quotes.reflect.*
+        sym.annotations.foreach { term =>
+            val annName =
+                if term.tpe <:< TypeRepr.of[kyo.schema.discriminator] then Some("@discriminator")
+                else if term.tpe <:< TypeRepr.of[kyo.schema.adjacent] then Some("@adjacent")
+                else if term.tpe <:< TypeRepr.of[kyo.schema.untagged] then Some("@untagged")
+                else None
+            annName.foreach { name =>
+                report.errorAndAbort(
+                    s"$name is a sum-representation annotation and can only be placed on a sealed " +
+                        s"trait. It was placed on `${tpe.show}`, which is not a sealed trait."
+                )
+            }
+        }
+    end rejectSumOnlyAnnotations
+
+    /** Reifies a stable object-reference term extracted from an annotation constructor argument.
+      *
+      * Given an annotation like `@transform(UpperCase)`, the caller
+      * extracts `argTerm` from the annotation's `Apply(_, List(argTerm))` constructor call and
+      * passes it here. Because the Scala front-end has already type-checked that `argTerm.tpe <:<
+      * T` before the macro sees it, `asExprOf[T]` is safe and produces an `Expr[T]` whose runtime
+      * value is the singleton object the user named in the annotation.
+      */
+    private def liftObjectArg[T: Type](using Quotes)(argTerm: quotes.reflect.Term): Expr[T] =
+        import quotes.reflect.*
+        argTerm.asExprOf[T]
+    end liftObjectArg
+
     /** Derives `Schema[A]` for case classes and sealed traits.
       *
       * The emission walks `sym.caseFields` (for case classes) or `sym.children` (for sealed traits)
@@ -331,7 +1252,15 @@ import scala.quoted.*
             emitSealedSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
         else if sym.isClassDef && sym.flags.is(Flags.Case) then
             rejectPrivateCaseFields(tpe, sym)
-            emitProductSchemaStatic[A](tpe, sym, sourceFields = '{ Seq.empty[kyo.Field[?, ?]] }, focusedType = tpe)
+            rejectSumOnlyAnnotations(tpe, sym)
+            val sourceFieldsExpr: Expr[Seq[kyo.Field[?, ?]]] = Expr.summon[kyo.Fields[A]] match
+                case Some(fieldsExpr) => '{ $fieldsExpr.fields }
+                case None             => '{ Seq.empty[kyo.Field[?, ?]] }
+            emitProductSchemaStatic[A](tpe, sym, sourceFields = sourceFieldsExpr, focusedType = tpe)
+        else if isOrType(tpe) then
+            // Reject sum-representation annotations placed on a union type alias.
+            rejectSumOnlyAnnotations(TypeRepr.of[A], TypeRepr.of[A].typeSymbol)
+            emitUnionSchemaStatic[A](tpe)
         else
             report.errorAndAbort(
                 s"Cannot derive Schema for ${tpe.show}: not a case class or sealed trait. " +
@@ -339,6 +1268,190 @@ import scala.quoted.*
             )
         end if
     end derivedImpl
+
+    /** True iff `tpe` is a Scala type union (`A | B`). */
+    private def isOrType(using Quotes)(tpe: quotes.reflect.TypeRepr): Boolean =
+        import quotes.reflect.*
+        tpe.dealias match
+            case _: OrType => true
+            case _         => false
+    end isOrType
+
+    /** Flattens a (possibly nested) union into its member types in declared first-occurrence order
+      * (depth-first, left-to-right), preserving order. A member appearing twice is kept at its
+      * first occurrence only. Does not use Set so declaration order is stable.
+      */
+    private def flattenUnion(using Quotes)(tpe: quotes.reflect.TypeRepr): List[quotes.reflect.TypeRepr] =
+        import quotes.reflect.*
+        val acc  = scala.collection.mutable.ListBuffer.empty[TypeRepr]
+        val seen = scala.collection.mutable.ListBuffer.empty[String]
+        def go(t: TypeRepr): Unit = t.dealias match
+            case OrType(l, r) => go(l); go(r)
+            case other =>
+                val key = other.show
+                if !seen.contains(key) then
+                    seen += key
+                    acc += other
+        go(tpe)
+        acc.toList
+    end flattenUnion
+
+    /** The default wire label for a union member: splits on '.' and takes the last segment,
+      * giving the simple name for both primitives ("scala.Int" -> "Int") and named types.
+      */
+    private def memberLabel(using Quotes)(tpe: quotes.reflect.TypeRepr): String =
+        tpe.show.split('.').last
+    end memberLabel
+
+    /** Emits the `Schema[A]` for a Scala type union `A | B | ...`. Mirrors `emitSealedSchemaStatic`
+      * but enumerates flattened OrType members (order-preserving) instead of `sym.children`: each
+      * member's `Schema` is summoned via `summonInline[Schema[member]]`, the encode branch selects
+      * by a static `isInstanceOf[member]` chain, and the structure is a
+      * `Structure.Type.Sum` whose `variants` carry the member names in declared order and whose
+      * `enumValues` is empty (a union has no case-object enum values).
+      */
+    private def emitUnionSchemaStatic[A: Type](using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[Schema[A]] =
+        import quotes.reflect.*
+        val members     = flattenUnion(tpe)
+        val n           = members.size
+        val memberNames = members.map(memberLabel)
+
+        val labelCounts = memberNames.groupBy(identity).filter(_._2.size > 1)
+        if labelCounts.nonEmpty then
+            val collisions = labelCounts.keys.toList.sorted.mkString(", ")
+            val involved = memberNames.zip(members).collect {
+                case (label, member) if labelCounts.contains(label) =>
+                    s"${member.show} (label \"$label\")"
+            }.mkString(", ")
+            report.errorAndAbort(
+                s"Cannot derive Schema for ${tpe.show}: union members produce duplicate wire labels [$collisions]. " +
+                    s"Colliding members: $involved. " +
+                    "Rename the types so each member has a distinct simple name, or wrap them in distinct named types."
+            )
+        end if
+
+        val tagExpr = summonSchemaTag(tpe)
+        val owner   = Symbol.spliceOwner
+
+        // _uself: Schema[A] (lazy), one _u$idx: Schema[Any] (lazy) per member,
+        // one _unb$idx: Array[Byte] per member for the fieldBytes write envelope.
+        val selfSym = Symbol.newVal(owner, "_uself", TypeRepr.of[Schema[A]], Flags.Lazy, Symbol.noSymbol)
+        val variantSyms: List[Symbol] =
+            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_u$idx", TypeRepr.of[Schema[Any]], Flags.Lazy, Symbol.noSymbol))
+        val nameByteSyms: List[Symbol] =
+            (0 until n).toList.map(idx => Symbol.newVal(owner, s"_unb$idx", TypeRepr.of[Array[Byte]], Flags.EmptyFlags, Symbol.noSymbol))
+
+        val selfRef: Term = Ref(selfSym)
+
+        // Encode branch: static isInstanceOf[member] per member.
+        // Each arm wraps the member payload in a one-field object envelope (memberName -> memberValue)
+        // mirroring the sealed-sum writeBody. writeWithTransforms -> untaggedEncode strips the outer
+        // envelope, leaving the bare member payload on the wire (the untagged default).
+        // The cast to Any is sound: the isInstanceOf guard ensures the value is of that member type.
+        def writeBody(v: Expr[A], w: Expr[Writer]): Expr[Unit] =
+            val chain: Term = (0 until n).foldRight(
+                '{ kyo.bug("Schema union write: " + $v.asInstanceOf[Any].getClass.getName + " matched no member") }.asTerm
+            ) { (idx, elseTerm) =>
+                val cond = members(idx).asType match
+                    case '[t] => '{ $v.asInstanceOf[Any].isInstanceOf[t] }.asTerm
+                val mName    = Expr(memberNames(idx))
+                val mFieldId = Expr(kyo.internal.CodecMacro.fieldId(memberNames(idx)))
+                val arm = '{
+                    $w.objectStart($mName, 1)
+                    $w.fieldBytes(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }, $mFieldId)
+                    ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeWrite($v, $w)
+                    $w.objectEnd()
+                }.asTerm
+                If(cond, arm, elseTerm)
+            }
+            chain.asExprOf[Unit]
+        end writeBody
+
+        val variantDecodersExpr: Expr[Chunk[kyo.Codec.Reader => Any]] =
+            val perMember: List[Expr[kyo.Codec.Reader => Any]] = (0 until n).toList.map { idx =>
+                '{ (r: kyo.Codec.Reader) => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead(r) }
+            }
+            '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perMember) }*)) }
+        end variantDecodersExpr
+
+        // External-format variant dispatcher: reads {memberName: payload} and routes to the
+        // matching member's serializeRead. Used for tagged representations (adjacent, internal,
+        // tuple, tupleFlat) where the representation layer has already resolved the tag and
+        // presents the payload in External wrapper format to rawSerializeRead.
+        def readBody(r: Expr[kyo.Codec.Reader]): Expr[A] =
+            val matchChain: Term = (0 until n).foldRight(
+                '{
+                    val _parsed = $r.lastFieldName()
+                    $r.skip()
+                    throw kyo.UnknownVariantException(Seq.empty, _parsed)(using $r.frame)
+                }.asTerm
+            ) { (idx, elseTerm) =>
+                val cond = '{ $r.matchField(${ Ref(nameByteSyms(idx)).asExprOf[Array[Byte]] }) }.asTerm
+                val arm  = '{ ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead($r).asInstanceOf[A] }.asTerm
+                If(cond, arm, elseTerm)
+            }
+            '{
+                kyo.discard($r.objectStart())
+                if ! $r.hasNextField() then
+                    throw kyo.MissingFieldException(Seq.empty, "<member>")(using $r.frame)
+                $r.fieldParse()
+                val _result: A = ${ matchChain.asExprOf[A] }
+                $r.objectEnd()
+                _result
+            }
+        end readBody
+
+        def structureExpr: Expr[Structure.Type] =
+            val variantStructs: List[Expr[kyo.Structure.Variant]] = (0 until n).toList.map { idx =>
+                val memberAnnots = captureAnnotations(members(idx).typeSymbol)
+                '{
+                    kyo.Structure.Variant(
+                        ${ Expr(memberNames(idx)) },
+                        ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.structure,
+                        $memberAnnots
+                    )
+                }
+            }
+            '{
+                Structure.Type.Sum(
+                    "Union",
+                    $tagExpr,
+                    kyo.Chunk.empty[Structure.Type],
+                    kyo.Chunk.from[kyo.Structure.Variant](Array[kyo.Structure.Variant](${ Varargs(variantStructs) }*)),
+                    kyo.Chunk.empty[String],
+                    kyo.Chunk.empty[Any]
+                )
+            }
+        end structureExpr
+
+        val selfRefExpr: Expr[Schema[A]] = selfRef.asExprOf[Schema[A]]
+        val selfRhs: Expr[Schema[A]] = '{
+            Schema.init[A](
+                writeFn = (v, w) => ${ writeBody('v, 'w) },
+                readFn = r => ${ readBody('r) },
+                variantDecoders = $variantDecodersExpr,
+                representation = Schema.UnionRepresentation.Untagged,
+                structure = ${ structureExpr }
+            )
+        }
+        val selfDef = ValDef(selfSym, Some(selfRhs.asTerm.changeOwner(selfSym)))
+
+        // Name-byte vals (non-lazy; computed once at schema init, consumed by writeBody).
+        val nameBytesValDefs: List[ValDef] = memberNames.zipWithIndex.map { (mn, idx) =>
+            val nameExpr = Expr(mn)
+            ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
+        }
+
+        // Member schema vals (lazy; summon each member's Schema).
+        val variantDefs: List[ValDef] = members.zipWithIndex.map { (memberType, idx) =>
+            memberType.asType match
+                case '[t] =>
+                    val rhs = '{ summonInline[Schema[t]].asInstanceOf[Schema[Any]] }.asTerm
+                    ValDef(variantSyms(idx), Some(rhs.changeOwner(variantSyms(idx))))
+        }
+
+        Block(nameBytesValDefs ++ (selfDef :: variantDefs), selfRef).asExprOf[Schema[A]]
+    end emitUnionSchemaStatic
 
     /** Rejects case classes with private case-fields (would otherwise leak storage names on the wire). */
     private def rejectPrivateCaseFields(using
@@ -372,9 +1485,9 @@ import scala.quoted.*
       * Each per-field schema resolves via `summonInline[Schema[ft]]` at the generated-code typer phase;
       * the in-flight `derived$Schema` is visible by forward-reference, so recursive products close the
       * cycle. The read body seeds defaults / `Maybe.empty` / `None`, tracks a `Long` required-field
-      * bitmap, ORs in `droppedFieldsMask` before the required check, and throws `MissingFieldException`
-      * (carrying `reader.frame`) for a missing required field. Used by both `derivedImpl`
-      * (`derives Schema`) and the `metaApplyImpl` Focus path.
+      * bitmap, ORs in reader-supplied pre-satisfied field masks before the required check, and throws
+      * `MissingFieldException` (carrying `reader.frame`) for a missing required field. Used by both
+      * `derivedImpl` (`derives Schema`) and the `metaApplyImpl` Focus path.
       */
     private def emitProductSchemaStatic[A: Type](using
         Quotes
@@ -557,10 +1670,21 @@ import scala.quoted.*
         // READ: static per-field name-matched loop.
         def readBody(r: Expr[Reader]): Expr[A] =
             val requiredMask: Long = fields.zipWithIndex.foldLeft(0L) { case (m, (_, idx)) =>
-                if !hasDefaultFlags(idx) && !isMaybeFlags(idx) && !isOptionFlags(idx) then m | (1L << idx)
+                if !hasDefaultFlags(idx) && !isMaybeFlags(idx) && !isOptionFlags(idx) then
+                    m | (1L << idx)
                 else m
             }
             val fieldNames: List[String] = fields.map(_.name)
+
+            val absentDefaultableMaskExpr: Expr[Long] =
+                fields.indices.foldLeft('{ 0L }) { (mask, idx) =>
+                    if hasDefaultFlags(idx) || isMaybeFlags(idx) || isOptionFlags(idx) then mask
+                    else
+                        effectiveSchemaTypes(idx).asType match
+                            case '[t] =>
+                                val s = fieldSchemaExprTyped[t](idx)
+                                '{ $mask | kyo.internal.absentDefaultMask($s, ${ Expr(1L << idx) }) }
+                }
 
             val seedExprs: List[Expr[Any]] = fields.zipWithIndex.map { (f, idx) =>
                 val ft = tpe.memberType(f)
@@ -576,8 +1700,10 @@ import scala.quoted.*
                     ft.asType match
                         case '[t] => '{ Option.empty[Any].asInstanceOf[t] }
                 else
-                    ft.asType match
-                        case '[t] => '{ null.asInstanceOf[t] }
+                    effectiveSchemaTypes(idx).asType match
+                        case '[t] =>
+                            val s = fieldSchemaExprTyped[t](idx)
+                            '{ kyo.internal.absentDefaultSeed($s) }
                 end if
             }
 
@@ -658,7 +1784,10 @@ import scala.quoted.*
                     val maskExpr  = Expr(requiredMask)
                     val nExpr     = Expr(n)
                     Some('{
-                        val _combined = $seenRef | $r.droppedFieldsMask($nExpr)
+                        val _combined =
+                            $seenRef |
+                                $r.droppedFieldsMask($nExpr) |
+                                $r.absentDefaultedFieldsMask($nExpr, $absentDefaultableMaskExpr)
                         if (_combined & $maskExpr) != $maskExpr then
                             val _missing = java.lang.Long.numberOfTrailingZeros((~_combined) & $maskExpr).toInt
                             val _names   = $namesExpr
@@ -701,6 +1830,16 @@ import scala.quoted.*
 
         // STRUCTURE: inline Chunk of Structure.Field via by-name fieldType thunks.
         def structureExpr: Expr[Structure.Type] =
+            // Read each field's @doc off the PRIMARY-CONSTRUCTOR PARAMETER symbol (the case-field getter
+            // carries no annotation). Built once before the fields loop so the per-field emission stays
+            // branch-free: one buildProductSchema per derivation, no per-field annotation read.
+            val docSym = TypeRepr.of[kyo.schema.doc].typeSymbol
+            val ctorDocs: Map[String, String] =
+                sym.primaryConstructor.paramSymss.flatten.flatMap { p =>
+                    p.getAnnotation(docSym).collect {
+                        case Apply(_, List(Literal(StringConstant(s)))) => p.name -> s
+                    }
+                }.toMap
             val fieldStructures: List[Expr[Structure.Field]] = fields.zipWithIndex.map { (f, idx) =>
                 val rawType  = tpe.memberType(f)
                 val isOpt    = isMaybeFlags(idx) || isOptionFlags(idx)
@@ -708,16 +1847,21 @@ import scala.quoted.*
                 val optExpr  = Expr(isOpt)
                 val defVal   = defaultStructureValuesExpr
                 val idxExpr  = Expr(idx)
+                val docExpr = ctorDocs.get(f.name) match
+                    case Some(s) => '{ kyo.Maybe(${ Expr(s) }) }
+                    case None    => '{ kyo.Maybe.empty[String] }
                 rawType.asType match
                     case '[ft] =>
                         val fieldSchemaRef = Ref(hoistedSchemaSym(rawType)).asExprOf[Schema[ft]]
+                        val fieldAnnots    = captureFieldAnnotations(f, sym)
                         '{
                             kyo.Structure.Field(
                                 $nameExpr,
                                 $fieldSchemaRef.structure,
-                                kyo.Maybe.empty,
+                                $docExpr,
                                 $defVal($idxExpr)(),
-                                $optExpr
+                                $optExpr,
+                                $fieldAnnots
                             )
                         }
                 end match
@@ -731,25 +1875,39 @@ import scala.quoted.*
                                 '{ ${ Ref(hoistedSchemaSym(tp)).asExprOf[Schema[t]] }.structure }
                     }
                     '{ kyo.Chunk.from[Structure.Type](Array[Structure.Type](${ Varargs(perParam) }*)) }
-            val nameExprS = Expr(typeName)
+            val nameExprS  = Expr(typeName)
+            val typeAnnots = captureAnnotations(sym)
             '{
                 Structure.Type.Product(
                     $nameExprS,
                     $tagExpr,
                     $tpStructures,
-                    kyo.Chunk.from[Structure.Field](Array[Structure.Field](${ Varargs(fieldStructures) }*))
+                    kyo.Chunk.from[Structure.Field](Array[Structure.Field](${ Varargs(fieldStructures) }*)),
+                    $typeAnnots
                 )
             }
         end structureExpr
 
         // Build the Schema.init term first so every fieldSchemaExprTyped / structure call has
         // populated `hoistedSchemas`, then prepend the hoisted lazy vals as a wrapping block.
+        val cfg = desugarProductConfig[A](sym, tpe)
         val schemaInitTerm: Term =
             '{
                 Schema.init[A](
                     writeFn = (v, w) => ${ writeBody('v, 'w) },
                     readFn = r => ${ readBody('r) },
                     sourceFields = $sourceFields,
+                    renamedFields = ${ cfg.renamedFields },
+                    droppedFields = ${ cfg.droppedFields },
+                    documentation = ${ cfg.documentation },
+                    fieldDocs = ${ cfg.fieldDocs },
+                    fieldIdOverrides = ${ cfg.fieldIdOverrides },
+                    variantNaming = ${ cfg.variantNaming },
+                    omitPolicies = ${ cfg.omitPolicies },
+                    omitNoneAll = ${ cfg.omitNoneAll },
+                    omitEmptyCollectionsAll = ${ cfg.omitEmptyCollectionsAll },
+                    fieldMaterializedDefaults = ${ cfg.fieldMaterializedDefaults },
+                    fieldTransforms = ${ cfg.fieldTransforms },
                     structure = ${ structureExpr }
                 )
             }.asTerm
@@ -814,6 +1972,7 @@ import scala.quoted.*
                     structure = kyo.Structure.Type.Product(
                         ${ Expr(childName) },
                         kyo.Tag[Any],
+                        kyo.Chunk.empty,
                         kyo.Chunk.empty,
                         kyo.Chunk.empty
                     )
@@ -956,15 +2115,24 @@ import scala.quoted.*
                     }
                     '{ kyo.Chunk.from[Structure.Type](Array[Structure.Type](${ Varargs(perParam) }*)) }
             val variantStructs: List[Expr[kyo.Structure.Variant]] = (0 until n).toList.map { idx =>
-                '{ kyo.Structure.Variant(${ Expr(childNames(idx)) }, ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.structure) }
+                val childAnnots = captureAnnotations(children(idx))
+                '{
+                    kyo.Structure.Variant(
+                        ${ Expr(childNames(idx)) },
+                        ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.structure,
+                        $childAnnots
+                    )
+                }
             }
+            val sumAnnots = captureAnnotations(sym)
             '{
                 Structure.Type.Sum(
                     ${ Expr(typeName) },
                     $tagExpr,
                     $tpStructures,
                     kyo.Chunk.from[kyo.Structure.Variant](Array[kyo.Structure.Variant](${ Varargs(variantStructs) }*)),
-                    kyo.Chunk.from[String](Array[String](${ Varargs(enumValues.map(Expr(_))) }*))
+                    kyo.Chunk.from[String](Array[String](${ Varargs(enumValues.map(Expr(_))) }*)),
+                    $sumAnnots
                 )
             }
         end structureExpr
@@ -974,11 +2142,24 @@ import scala.quoted.*
             ValDef(nameByteSyms(idx), Some('{ $nameExpr.getBytes(java.nio.charset.StandardCharsets.UTF_8) }.asTerm))
         }
 
+        val variantDecodersExpr: Expr[Chunk[kyo.Codec.Reader => Any]] =
+            val perVariant: List[Expr[kyo.Codec.Reader => Any]] = (0 until n).toList.map { idx =>
+                '{ (r: kyo.Codec.Reader) => ${ Ref(variantSyms(idx)).asExprOf[Schema[Any]] }.serializeRead(r) }
+            }
+            '{ kyo.Chunk.from[kyo.Codec.Reader => Any](Array[kyo.Codec.Reader => Any](${ Varargs(perVariant) }*)) }
+        end variantDecodersExpr
+        val cfg = desugarSumConfig(sym, tpe, children)
         val selfRhs: Expr[Schema[A]] = '{
             Schema.init[A](
                 writeFn = (v, w) => ${ writeBody('v, 'w) },
                 readFn = r => ${ readBody('r) },
                 sourceFields = $sourceFields,
+                variantDecoders = $variantDecodersExpr,
+                discriminatorField = ${ cfg.discriminatorField },
+                representation = ${ cfg.representation },
+                variantNaming = ${ cfg.variantNaming },
+                documentation = ${ cfg.documentation },
+                variantEffectivePrimaries = ${ cfg.variantEffectivePrimaries },
                 structure = ${ structureExpr }
             )
         }

@@ -7,6 +7,7 @@ import io.aeron.driver.MediaDriver
 import io.aeron.logbuffer.BufferClaim
 import io.aeron.logbuffer.Header
 import org.agrona.DirectBuffer
+import org.agrona.concurrent.UnsafeBuffer
 import upickle.default.*
 
 /** High-performance publish-subscribe messaging for local and distributed systems.
@@ -128,7 +129,8 @@ object Topic:
       */
     def publish[A: ReadWriter](
         aeronUri: String,
-        retrySchedule: Schedule = defaultRetrySchedule
+        retrySchedule: Schedule = defaultRetrySchedule,
+        streamId: Maybe[Int] = Absent
     )[S](stream: Stream[A, S])(using
         frame: Frame,
         tag: Tag[A],
@@ -136,11 +138,16 @@ object Topic:
     ): Unit < (Topic & S & Abort[Closed | Backpressured] & Async) =
         Env.use[Aeron] { aeron =>
             Sync.defer {
-                // register the publication with Aeron using type's hash as stream ID
-                val publication = aeron.addPublication(aeronUri, tag.hash.abs)
+                // register the publication with Aeron using the caller's explicit stream id, else the
+                // message type's content-stable hash (the default), so a publish and a subscribe of the
+                // same type land on the same stream
+                val publication = aeron.addPublication(aeronUri, streamId.getOrElse(tag.hash.abs))
 
                 // reuse buffer claim to avoid allocations on hot path
                 val bufferClaim = new BufferClaim
+
+                // reuse one wrapper for the offer path (messages larger than a single frame)
+                val offerBuffer = new UnsafeBuffer()
 
                 // cache backpressure failure for performance
                 val backpressured = Abort.fail(Backpressured())
@@ -153,14 +160,22 @@ object Topic:
                                 if !publication.isConnected() then backpressured
                                 else
                                     // serialize messages with type tag for runtime verification
-                                    val bytes  = writeBinary((tag.show, messages))
-                                    val result = publication.tryClaim(bytes.length, bufferClaim)
-                                    if result > 0 then
-                                        // write directly to claimed buffer region
-                                        val buffer = bufferClaim.buffer()
-                                        val offset = bufferClaim.offset()
-                                        buffer.putBytes(offset, bytes)
-                                        bufferClaim.commit()
+                                    val bytes = writeBinary((tag.show, messages))
+                                    // a message that fits one frame uses the zero-copy claim; a larger
+                                    // one uses offer, which copies and fragments it across frames (the
+                                    // subscriber's FragmentAssembler reassembles it)
+                                    val result =
+                                        if bytes.length <= publication.maxPayloadLength() then
+                                            val claimed = publication.tryClaim(bytes.length, bufferClaim)
+                                            if claimed > 0 then
+                                                bufferClaim.buffer().putBytes(bufferClaim.offset(), bytes)
+                                                bufferClaim.commit()
+                                            end if
+                                            claimed
+                                        else
+                                            offerBuffer.wrap(bytes)
+                                            publication.offer(offerBuffer, 0, bytes.length)
+                                    if result > 0 then ()
                                     else
                                         result match
                                             case Publication.BACK_PRESSURED =>
@@ -204,13 +219,15 @@ object Topic:
       */
     def stream[A: ReadWriter](
         aeronUri: String,
-        retrySchedule: Schedule = defaultRetrySchedule
+        retrySchedule: Schedule = defaultRetrySchedule,
+        streamId: Maybe[Int] = Absent
     )(using tag: Tag[A], etag: Tag[Emit[Chunk[A]]], frame: Frame): Stream[A, Topic & Abort[Backpressured] & Async] =
         Stream {
             Env.use[Aeron] { aeron =>
                 Sync.defer {
-                    // register subscription with Aeron using type's hash as stream ID
-                    val subscription = aeron.addSubscription(aeronUri, tag.hash.abs)
+                    // register subscription with Aeron using the caller's explicit stream id, else the
+                    // message type's content-stable hash (the default)
+                    val subscription = aeron.addSubscription(aeronUri, streamId.getOrElse(tag.hash.abs))
 
                     // cache backpressure failure for performance
                     val backpressured = Abort.fail(Backpressured())
@@ -261,7 +278,10 @@ object Topic:
                                                     Emit.valueWith(messages)(loop())
                                                 end if
                                             case Absent =>
-                                                Abort.panic(new IllegalStateException(s"No results"))
+                                                // a fragment was read but it did not complete a message
+                                                // (a multi-fragment message mid-reassembly): keep polling
+                                                // for the remaining fragments rather than failing
+                                                loop()
                                         end match
                                     end if
                                 }

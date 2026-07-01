@@ -73,6 +73,16 @@ object Command:
                 }
             }
 
+        /** Spawns the process WITHOUT registering it with any `Scope`: the caller owns the process
+          * lifetime and must close it. The unscoped analog of [[spawn]] (mirrors `Fiber.initUnscoped`),
+          * for a process that outlives the spawning computation's scope, such as a long-lived worker a
+          * backend owns and closes explicitly.
+          */
+        def spawnUnscoped(using Frame): Process < (Sync & Abort[CommandException]) =
+            Sync.Unsafe.defer {
+                Abort.get(self.unsafe.spawn()).map(_.safe)
+            }
+
         /** Spawns the process, waits for it to complete, and returns its combined stdout as a UTF-8 string. */
         def text(using Frame): String < (Async & Abort[CommandException]) =
             Sync.Unsafe.defer(self.unsafe.text().safe.get)

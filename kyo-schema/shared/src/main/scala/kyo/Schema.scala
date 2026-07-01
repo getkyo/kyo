@@ -66,11 +66,27 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     private[kyo] val documentation: Maybe[String] = Maybe.empty,
     private[kyo] val fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
     private[kyo] val discriminatorField: Maybe[String] = Maybe.empty,
-    @publicInBinary private[kyo] val variantNaming: Schema.VariantNaming = Schema.VariantNaming()
+    @publicInBinary private[kyo] val variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+    @publicInBinary private[kyo] val representation: Schema.UnionRepresentation = Schema.UnionRepresentation.External,
+    @publicInBinary private[kyo] val representationChain: Maybe[Chunk[Schema.UnionRepresentation]] = Maybe.empty,
+    @publicInBinary private[kyo] val omitPolicies: Chunk[(String, Schema.OmitPolicy)] = Chunk.empty,
+    @publicInBinary private[kyo] val omitNoneAll: Boolean = false,
+    @publicInBinary private[kyo] val omitEmptyCollectionsAll: Boolean = false,
+    @publicInBinary private[kyo] val unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
+    @publicInBinary private[kyo] val variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+    @publicInBinary private[kyo] val denyUnknownFieldsEnabled: Boolean = false,
+    @publicInBinary private[kyo] val fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
+    @publicInBinary private[kyo] val fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] =
+        Chunk.empty[(String, Schema.FieldTransform[A])],
+    @publicInBinary private[kyo] val fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty
 ):
 
     /** The structural representation type. Set by factory/transforms. */
     type Focused
+
+    @publicInBinary private[kyo] def flattenedReadFields: Chunk[(String, String)] = Chunk.empty
+
+    @publicInBinary private[kyo] def absentDefaultValue: Maybe[A] = Maybe.empty
 
     // --- Abstract codec and focus methods. Each concrete Schema[A] overrides
     // these via `Schema.init` / `Schema.initFocused`, which inline the caller's
@@ -97,10 +113,25 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       * `Schema.init`'s inline `serializeWrite` / `serializeRead` call these only when transforms exist.
       */
     @publicInBinary private[kyo] def transformedWrite(value: A, writer: Writer): Unit =
-        internal.SchemaSerializer.writeWithTransforms(this, value, writer)
+        internal.SchemaSerializer.writeWithTransforms(this, value, writer)(using Frame.internal)
     @publicInBinary private[kyo] def transformedRead(reader: Reader): A =
-        if discriminatorField.nonEmpty then internal.SchemaSerializer.readWithDiscriminator(this, reader)
-        else internal.SchemaSerializer.readWithTransforms(this, reader)
+        representationChain match
+            case Maybe.Present(chain) =>
+                internal.SchemaSerializer.readChain(this, reader, chain)
+            case Maybe.Absent =>
+                representation match
+                    case Schema.UnionRepresentation.External =>
+                        internal.SchemaSerializer.readWithTransforms(this, reader)
+                    case Schema.UnionRepresentation.Internal(_) =>
+                        internal.SchemaSerializer.readWithDiscriminator(this, reader)
+                    case Schema.UnionRepresentation.Adjacent(tagKey, contentKey) =>
+                        internal.SchemaSerializer.readAdjacent(this, reader, tagKey, contentKey)
+                    case Schema.UnionRepresentation.Tuple =>
+                        internal.SchemaSerializer.readTuple(this, reader)
+                    case Schema.UnionRepresentation.TupleFlat =>
+                        internal.SchemaSerializer.readTupleFlat(this, reader)
+                    case Schema.UnionRepresentation.Untagged =>
+                        internal.SchemaSerializer.readUntagged(this, reader)
 
     /** Get the focused value out of a root A. */
     @publicInBinary private[kyo] def getter(value: A): Maybe[Any]
@@ -113,14 +144,21 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     @publicInBinary private[kyo] val hasTransforms: Boolean =
         droppedFields.nonEmpty || renamedFields.nonEmpty ||
-            computedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty
+            computedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty ||
+            representation.nonDefault || representationChain.isDefined ||
+            omitPolicies.nonEmpty || omitNoneAll || omitEmptyCollectionsAll ||
+            fieldTransforms.nonEmpty
 
     /** Read-side transform flag: discriminator / rename / drop (computed fields are write-only). Marked
       * `@publicInBinary` so `Schema.init`'s inline `serializeRead` can branch on it from a user
       * `derives Schema` site without an inaccessible `private[kyo]` reference.
       */
     @publicInBinary private[kyo] val hasReadTransforms: Boolean =
-        droppedFields.nonEmpty || renamedFields.nonEmpty || discriminatorField.isDefined || variantNaming.nonEmpty
+        droppedFields.nonEmpty || renamedFields.nonEmpty || discriminatorField.isDefined ||
+            variantNaming.nonEmpty || representation.nonDefault || representationChain.isDefined ||
+            omitPolicies.nonEmpty || omitNoneAll || omitEmptyCollectionsAll ||
+            (unionAmbiguityPolicy != Schema.UnionAmbiguity.Strict) ||
+            denyUnknownFieldsEnabled || fieldDefaults.nonEmpty || fieldTransforms.nonEmpty
 
     /** Pre-built root navigator for focus lambda resolution.
       *
@@ -305,9 +343,172 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     def discriminator(fieldName: String): Schema[A] { type Focused = Schema.this.Focused } =
         Schema.copyWith(this)(
-            discriminatorField = Maybe(fieldName)
+            discriminatorField = Maybe(fieldName),
+            representation = Schema.UnionRepresentation.Internal(fieldName)
         )
     end discriminator
+
+    /** Selects the adjacently-tagged wire representation for a sum type.
+      *
+      * Encodes each variant as a two-field object: `tagKey` holds the resolved variant wire name
+      * and `contentKey` holds the variant payload. Unlike the flat discriminator, the payload is
+      * carried whole in the content position, so a non-object payload (a bare scalar, an array,
+      * null) survives the round-trip. Decode reads the tag, resolves the variant (accepting any
+      * configured alias), and reconstructs from the content. The tag resolves through the variant
+      * naming layer. A decode whose input lacks `tagKey` fails with `MissingTagKeyException`.
+      *
+      * {{{
+      * val s = Schema[Shape].adjacent("type", "content")
+      * // Json.encode(Circle(10.0)) == """{"type":"Circle","content":{"radius":10.0}}"""
+      * }}}
+      */
+    def adjacent(tagKey: String, contentKey: String): Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.UnionRepresentation.Adjacent(tagKey, contentKey)
+        )
+    end adjacent
+
+    /** Selects the nested positional-array (tuple) wire representation for a sum type.
+      *
+      * Encodes each variant as a two-element array: element 0 the resolved variant wire name,
+      * element 1 the variant payload. A non-object payload rides through as the second element.
+      * Decode reads element 0 as the tag (accepting any configured alias) and reconstructs from
+      * element 1. The tag resolves through the variant naming layer. On a codec that cannot express
+      * a top-level array (Protobuf), encode fails with `RepresentationUnsupportedException`.
+      *
+      * {{{
+      * val s = Schema[Shape].tupleTagged
+      * // Json.encode(Circle(10.0)) == """["Circle",{"radius":10.0}]"""
+      * }}}
+      */
+    def tupleTagged: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.UnionRepresentation.Tuple
+        )
+    end tupleTagged
+
+    /** Selects the positional-flattened (tuple-flat) wire representation for a sum type.
+      *
+      * Encodes each variant as an array whose element 0 is the resolved variant wire name and whose
+      * remaining elements are the variant's payload field values spread positionally in declaration
+      * order; field names are dropped. A field that is itself a record is one nested array element,
+      * not deep-flattened. Decode reverse-resolves element 0 to the variant (accepting any configured
+      * alias) and pairs the remaining elements with the variant's declaration-ordered fields; an
+      * element count that does not match the variant's field count fails with a typed decode error.
+      * The tag resolves through the variant naming layer. On a codec that cannot express a top-level
+      * array (Protobuf), encode fails with `RepresentationUnsupportedException`. Unlike
+      * `tupleTagged`, which nests the whole payload as the second element, this form spreads the
+      * payload fields as separate elements.
+      *
+      * {{{
+      * val s = Schema[Shape].tupleFlat
+      * // Json.encode(Triangle(10.0, 10.0, 10.0)) == """["Triangle",10.0,10.0,10.0]"""
+      * }}}
+      */
+    def tupleFlat: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.UnionRepresentation.TupleFlat
+        )
+    end tupleFlat
+
+    /** Selects the untagged wire representation for a sum type.
+      *
+      * Encodes each variant as its bare payload with no tag or wrapper. Decode attempts each
+      * variant's decoder in declaration order over a non-destructively captured copy of the input
+      * and returns the first variant that decodes without error; if no variant matches, decode fails
+      * with `NoVariantMatchException` listing the attempted variants. No tag is emitted or read, so
+      * variant naming and aliases do not apply to a tag; field-level naming still applies to the
+      * payload. Untagged decode requires a self-describing codec (such as: Json, Yaml, Ion, MsgPack); on a
+      * non-self-describing codec (Protobuf) decode fails with a typed self-describing-reader error.
+      *
+      * {{{
+      * val s = Schema[Shape].untagged
+      * // Json.encode(Circle(10.0)) == """{"radius":10.0}"""
+      * }}}
+      */
+    def untagged: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(
+            representation = Schema.UnionRepresentation.Untagged
+        )
+    end untagged
+
+    /** Configures an ordered fallback chain of wire representations for a sum type.
+      *
+      * Encode selects the highest-priority entry the active codec can express; decode tries the
+      * entries in declared order and returns the first that parses to a valid value. The first
+      * entry is the primary; later entries degrade for codecs that cannot express the primary.
+      * `External` is always expressible and is the implicit chain floor. A chain containing a
+      * duplicate representation is rejected with `DuplicateRepresentationException` at this call.
+      *
+      * {{{
+      * val s = Schema[Shape].representations(
+      *     Schema.UnionRepresentation.TupleFlat,
+      *     Schema.UnionRepresentation.Adjacent("type", "content"),
+      *     Schema.UnionRepresentation.External
+      * )
+      * }}}
+      */
+    def representations(
+        first: Schema.UnionRepresentation,
+        rest: Schema.UnionRepresentation*
+    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        val chain = first +: Chunk.from(rest)
+        Schema.checkRepresentationChain(chain)
+        Schema.copyWith(this)(
+            representation = first,
+            representationChain = Maybe(chain)
+        )
+    end representations
+
+    /** Configures a single-fallback representation hint: the current primary, then `fallback`.
+      *
+      * Sugar over `representations(currentPrimary, fallback)`. The current primary is this schema's
+      * `representation` (the default `External` unless a representation builder set it). Rejects a
+      * `fallback` equal to the current primary with `DuplicateRepresentationException` at this call.
+      *
+      * {{{
+      * val s = Schema[Shape].tupleFlat.orElseRepresentation(Schema.UnionRepresentation.External)
+      * }}}
+      */
+    def orElseRepresentation(
+        fallback: Schema.UnionRepresentation
+    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        representations(representation, fallback)
+    end orElseRepresentation
+
+    /** The representation this schema's chain selects for the given codec capabilities.
+      *
+      * Total and deterministic: the same `(schema, capabilities)` always returns the same
+      * representation. Returns the highest-priority chain entry the capabilities admit; with no
+      * chain configured, returns this schema's single `representation`. `External` is always
+      * admitted and is the chain floor, so this never throws. Exposed for tooling and tests.
+      */
+    def representationFor(capabilities: Codec.Capabilities): Schema.UnionRepresentation =
+        representationChain match
+            case Maybe.Present(chain) =>
+                chain.find(rep => Schema.representationExpressibleBy(rep, capabilities))
+                    .getOrElse(Schema.UnionRepresentation.External)
+            case Maybe.Absent =>
+                representation
+    end representationFor
+
+    /** Sets the ambiguity policy for untagged union decode.
+      *
+      * Under `Strict` (the default), a wire value that decodes successfully against more than one
+      * member raises `AmbiguousVariantMatchException` listing the matched members. Under
+      * `FirstMatch`, the first-declared member that decodes successfully is returned.
+      *
+      * This is a decode-only configuration: encode behavior is not affected. The policy is
+      * preserved through any subsequent builder calls.
+      *
+      * {{{
+      * val s = summon[Schema[Int | Long]].unionAmbiguity(Schema.UnionAmbiguity.FirstMatch)
+      * // Json.decode[Int | Long]("42") returns Result.succeed(42) (Int wins as first-declared)
+      * }}}
+      */
+    def unionAmbiguity(policy: Schema.UnionAmbiguity): Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(unionAmbiguityPolicy = policy)
+    end unionAmbiguity
 
     /** Maps Scala sealed-trait variant names to wire discriminator values.
       *
@@ -446,6 +647,58 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         val navigated = focus(rootSelect)
         alias(navigated.segments.last, aliases*)
     end alias
+
+    /** Schema-wide policy: omit optional fields (None / Maybe.empty) on encode instead of writing
+      * a null-valued key, so the encoded form carries no null-valued keys and covers
+      * transform-injected optional slots. Per-field `omit(_.x).whenNone` overrides this for a
+      * specific field.
+      */
+    def omitNone: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(omitNoneAll = true)
+    end omitNone
+
+    /** Schema-wide policy: omit empty collection/map fields on encode (emit no key, not `[]`/`{}`),
+      * and decode-default a missing collection/map field to the typed empty value. Per-field
+      * `omit(_.x).whenEmpty` overrides this for a specific field.
+      */
+    def omitEmptyCollections: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(omitEmptyCollectionsAll = true)
+    end omitEmptyCollections
+
+    /** Rejects input fields that do not match this schema's effective read field set.
+      *
+      * The policy is read-side only. Encode keeps the same output shape, while decode checks the
+      * object field names accepted after field naming, aliases, and schema transforms have been
+      * applied.
+      */
+    def denyUnknownFields: Schema[A] { type Focused = Schema.this.Focused } =
+        Schema.copyWith(this)(denyUnknownFieldsEnabled = true)
+    end denyUnknownFields
+
+    /** Registers a decode-time supplier for the focused field.
+      *
+      * The supplier is used when the focused field is absent from input. The focused structural type
+      * is preserved because the Scala field remains part of the schema; only the read policy gains a
+      * fallback for missing input.
+      */
+    transparent inline def default[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(
+        supplier: => V
+    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        ${ internal.SchemaTransformMacro.defaultFocusImpl[A, Focused, V]('this, 'focus, 'supplier) }
+    end default
+
+    /** Begins a per-field omit policy on the focused field. Finish with `.whenEmpty` or `.whenNone`.
+      * The field is identified by the lens at compile time; `Focused` is preserved.
+      *
+      * {{{
+      * val s = Schema[Cart].omit(_.items).whenEmpty
+      * }}}
+      */
+    transparent inline def omit[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(using
+        Frame
+    ): Schema.OmitWhen[A, Schema.this.Focused] =
+        ${ internal.SchemaTransformMacro.omitFocusImpl[A, Focused, V]('this, 'focus) }
+    end omit
 
     /** Sets per-field documentation using a focus lambda to identify the field.
       *
@@ -741,10 +994,60 @@ abstract class Schema[A] @publicInBinary private[kyo] (
     def fieldIds: Dict[String, Int] =
         Dict.from(sourceFields.map(f => f.name -> fieldId(f.name)).toMap)
 
+    /** Leaf-name field-id overrides (single-segment focus paths) projected to a name-keyed map for
+      * the Protobuf wire resolver. Multi-segment (nested-path) overrides are not projected: the
+      * derived write path uses one stable hash id per leaf name, so only leaf-name pins are
+      * wire-functional.
+      *
+      * A renamed field is resolved to a single number: its explicit leaf-name pin when one is set,
+      * otherwise the rename-invariant hash of its effective wire name. That number is registered
+      * under BOTH names the codec presents for the field, because the two sides key the lookup
+      * differently: the encode side presents the effective wire name to the writer, while the decode
+      * side and `Protobuf.fieldNumberAudit` resolve the field by its source name. Registering both
+      * keys lets a pin override the rename hash on every surface; an unpinned, non-renamed field gets
+      * no entry, so its `fieldNumberAudit` row stays `pinned == false`.
+      */
+    private[kyo] def fieldIdNameOverrides: Map[String, Int] =
+        val baseOverrides = fieldIdOverrides.collect { case (Seq(name), id) => name -> id }
+        if renamedFields.isEmpty then baseOverrides
+        else
+            val forwardMap = renamedFields.toMap
+            @scala.annotation.tailrec
+            def resolveTarget(name: String): String =
+                forwardMap.get(name) match
+                    case Some(next) => resolveTarget(next)
+                    case None       => name
+            val renamedEntries: Map[String, Int] =
+                sourceFields.flatMap { sf =>
+                    if forwardMap.contains(sf.name) then
+                        val wireName = resolveTarget(sf.name)
+                        val number   = baseOverrides.getOrElse(sf.name, kyo.internal.CodecMacro.fieldId(wireName))
+                        Seq(sf.name -> number, wireName -> number)
+                    else Nil
+                }.toMap
+            baseOverrides ++ renamedEntries
+        end if
+    end fieldIdNameOverrides
+
+    /** The explicit single-segment field-id overrides, projected to a name set. These are the leaf
+      * field names carrying a real user pin, set programmatically via `Schema.fieldId` or
+      * declaratively via `@proto.fieldNumber(n)`. Rename-derived entries from `fieldIdNameOverrides`
+      * are excluded: a `@rename` is not a pin.
+      */
+    private[kyo] def pinnedFieldNames: Set[String] =
+        fieldIdOverrides.collect { case (Seq(name), _) => name }.toSet
+
     /** Sets a custom field ID for a field identified by a Focus lambda.
       *
       * Use this when you need a specific field ID for interoperability with existing binary schemas (e.g., matching an existing `.proto`
-      * definition). This is for documentation/introspection purposes - the actual codec uses hash-based IDs computed at compile time.
+      * definition). A single-segment (top-level field) override is wire-functional for the Protobuf codec: encode emits it, decode
+      * matches it, and protoSchema / fieldNumberAudit report it. The `@proto.fieldNumber(n)` annotation desugars onto the same
+      * single-segment override during derivation. A nested-path override is a consistent no-op across encode, decode, protoSchema,
+      * and fieldNumberAudit.
+      *
+      * Pinning is keyed by field NAME and is therefore GLOBAL: pinning `id` sets the field number for
+      * EVERY field named `id` across all messages. This is consistent with the default scheme, where the
+      * field number is already `MurmurHash3(name)`, so all same-named fields already share a number.
       *
       * {{{
       * Schema[User].fieldId(_.age)(42)  // Sets field ID 42 for the 'age' field
@@ -995,6 +1298,41 @@ abstract class Schema[A] @publicInBinary private[kyo] (
         )
     end transform
 
+    /** Overrides the focused field's encode and decode functions.
+      *
+      * The field is selected at compile time through the focus lambda and the schema's `Focused`
+      * type is preserved. A later transform for the same source field replaces both directions.
+      */
+    transparent inline def transformField[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(
+        write: (V, Codec.Writer) => Unit
+    )(read: Codec.Reader => V)(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        ${ internal.SchemaTransformMacro.transformFieldFocusImpl[A, Focused, V]('this, 'focus, 'write, 'read) }
+    end transformField
+
+    /** Overrides the focused field's encode function.
+      *
+      * If a read transform already exists for the same source field, it is preserved. This lets
+      * write-side and read-side overrides be configured independently while sharing one field
+      * transform slot.
+      */
+    transparent inline def transformFieldWrite[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(
+        write: (V, Codec.Writer) => Unit
+    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        ${ internal.SchemaTransformMacro.transformFieldWriteFocusImpl[A, Focused, V]('this, 'focus, 'write) }
+    end transformFieldWrite
+
+    /** Overrides the focused field's decode function.
+      *
+      * If a write transform already exists for the same source field, it is preserved. This lets
+      * read-side and write-side overrides be configured independently while sharing one field
+      * transform slot.
+      */
+    transparent inline def transformFieldRead[V](inline focus: Focus.Select[A, Focused] => Focus.Select[A, V])(
+        read: Codec.Reader => V
+    )(using Frame): Schema[A] { type Focused = Schema.this.Focused } =
+        ${ internal.SchemaTransformMacro.transformFieldReadFocusImpl[A, Focused, V]('this, 'focus, 'read) }
+    end transformFieldRead
+
     // --- Ordering/CanEqual givens ---
 
     /** Derives an Ordering[A] for the source type by comparing fields in declaration order. */
@@ -1064,7 +1402,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       *
       * This is the direct Writer API used by tests and internal code. For high-level usage, prefer `Json.encode` or `Protobuf.encode`.
       */
-    private[kyo] def writeTo(value: A, writer: Writer): Unit =
+    private[kyo] def writeTo(value: A, writer: Writer)(using Frame): Unit =
         internal.SchemaSerializer.writeTo(this, value, writer)
 
     /** Reads a value from a Reader (low-level deserialization).
@@ -1083,7 +1421,7 @@ abstract class Schema[A] @publicInBinary private[kyo] (
       */
     private[kyo] def toStructureValue(value: A): Structure.Value =
         val w = StructureValueWriter()
-        writeTo(value, w)
+        writeTo(value, w)(using Frame.internal)
         w.getResult
     end toStructureValue
 
@@ -1164,12 +1502,41 @@ object Schema:
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
         variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+        representation: Schema.UnionRepresentation = Schema.UnionRepresentation.External,
+        representationChain: Maybe[Chunk[Schema.UnionRepresentation]] = Maybe.empty,
+        omitPolicies: Chunk[(String, Schema.OmitPolicy)] = Chunk.empty,
+        omitNoneAll: Boolean = false,
+        omitEmptyCollectionsAll: Boolean = false,
+        unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
+        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+        denyUnknownFieldsEnabled: Boolean = false,
+        fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
+        fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
+        absentDefaultValue: => Maybe[A] = Maybe.empty,
+        fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
+        variantEffectivePrimaries: Set[String] = Set.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] =
         // Lazy capture defers inner.structure access until structure is first queried.
         // Container givens pass `inner.structure` as the structure argument; lazy evaluation
         // prevents initialization cycles for recursive structure type graphs.
-        lazy val _structure = structure
+        lazy val _structure          = structure
+        lazy val _absentDefaultValue = absentDefaultValue
+        // Annotation-baked aliases arrive in variantNaming at Schema.init time (the macro
+        // sets them before the Schema object exists, unlike programmatic .alias() which
+        // calls checkFieldAliases at the builder invocation site). Run the same checks here
+        // so collisions raise immediately rather than silently passing through as a
+        // last-write-wins map and surfacing as MissingFieldException at decode time.
+        // Empty alias lists are no-ops; the lazy structure is never forced by these checks.
+        // variantEffectivePrimaries is the compile-time-baked set of effective variant wire
+        // names (accounting for @rename on each variant) passed by the macro; it matches the
+        // set that the programmatic .variantAlias builder computes via effectiveVariantWires,
+        // without forcing the lazy _structure and breaking recursive-schema init cycles.
+        if variantNaming.fieldAliases.nonEmpty then
+            val primaries = Schema.effectiveFieldWireNames(sourceFields, renamedFields, variantNaming)
+            Schema.checkFieldAliases(Chunk.empty, variantNaming.fieldAliases, primaries)(using Frame.internal)
+        if variantNaming.variantAliases.nonEmpty then
+            Schema.checkVariantAliases(variantEffectivePrimaries, variantNaming.variantAliases)(using Frame.internal)
         new Schema[A](
             segments,
             examples,
@@ -1184,7 +1551,18 @@ object Schema:
             documentation,
             fieldIdOverrides,
             discriminatorField,
-            variantNaming
+            variantNaming,
+            representation,
+            representationChain,
+            omitPolicies,
+            omitNoneAll,
+            omitEmptyCollectionsAll,
+            unionAmbiguityPolicy,
+            variantDecoders,
+            denyUnknownFieldsEnabled,
+            fieldDefaults,
+            fieldTransforms,
+            fieldMaterializedDefaults
         ):
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
@@ -1196,8 +1574,72 @@ object Schema:
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
+            @publicInBinary override private[kyo] def absentDefaultValue: Maybe[A]         = _absentDefaultValue
             override def structure: Structure.Type                                         = _structure
         end new
+    end init
+
+    /** Constructs a schema with no optional read/write policy slots configured. */
+    @nowarn("msg=anonymous")
+    inline def init[A](
+        inline writeFn: (A, Writer) => Unit,
+        inline readFn: Reader => A,
+        inline getterFn: A => Maybe[Any],
+        inline setterFn: (A, Any) => A,
+        segments: Seq[String],
+        examples: Chunk[A],
+        fieldDocs: Map[Seq[String], String],
+        fieldDeprecated: Map[Seq[String], String],
+        constraints: Seq[Schema.Constraint],
+        droppedFields: Set[String],
+        renamedFields: Chunk[(String, String)],
+        computedFields: Chunk[(String, A => Any)],
+        sourceFields: Seq[Field[?, ?]],
+        checks: Seq[A => Seq[ValidationFailedException]],
+        documentation: Maybe[String],
+        fieldIdOverrides: Map[Seq[String], Int],
+        discriminatorField: Maybe[String],
+        variantNaming: Schema.VariantNaming,
+        representation: Schema.UnionRepresentation,
+        representationChain: Maybe[Chunk[Schema.UnionRepresentation]],
+        omitPolicies: Chunk[(String, Schema.OmitPolicy)],
+        omitNoneAll: Boolean,
+        omitEmptyCollectionsAll: Boolean,
+        unionAmbiguityPolicy: Schema.UnionAmbiguity,
+        variantDecoders: Chunk[Codec.Reader => Any],
+        structure: => Structure.Type
+    ): Schema[A] =
+        init[A](
+            writeFn = writeFn,
+            readFn = readFn,
+            getterFn = getterFn,
+            setterFn = setterFn,
+            segments = segments,
+            examples = examples,
+            fieldDocs = fieldDocs,
+            fieldDeprecated = fieldDeprecated,
+            constraints = constraints,
+            droppedFields = droppedFields,
+            renamedFields = renamedFields,
+            computedFields = computedFields,
+            sourceFields = sourceFields,
+            checks = checks,
+            documentation = documentation,
+            fieldIdOverrides = fieldIdOverrides,
+            discriminatorField = discriminatorField,
+            variantNaming = variantNaming,
+            representation = representation,
+            representationChain = representationChain,
+            omitPolicies = omitPolicies,
+            omitNoneAll = omitNoneAll,
+            omitEmptyCollectionsAll = omitEmptyCollectionsAll,
+            unionAmbiguityPolicy = unionAmbiguityPolicy,
+            variantDecoders = variantDecoders,
+            denyUnknownFieldsEnabled = false,
+            fieldDefaults = Chunk.empty,
+            fieldTransforms = Chunk.empty[(String, Schema.FieldTransform[A])],
+            structure = structure
+        )
     end init
 
     /** Typed-focus variant of `Schema.init`. Produces `Schema[A] { type Focused = F }`. Internally, the user's `getterFn` and `setterFn`
@@ -1225,6 +1667,17 @@ object Schema:
         fieldIdOverrides: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
         variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+        representation: Schema.UnionRepresentation = Schema.UnionRepresentation.External,
+        representationChain: Maybe[Chunk[Schema.UnionRepresentation]] = Maybe.empty,
+        omitPolicies: Chunk[(String, Schema.OmitPolicy)] = Chunk.empty,
+        omitNoneAll: Boolean = false,
+        omitEmptyCollectionsAll: Boolean = false,
+        unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
+        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+        denyUnknownFieldsEnabled: Boolean = false,
+        fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
+        fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
+        absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type = Structure.Type.Open(Tag[Any])
     ): Schema[A] { type Focused = F } =
         // Erase the F-typed Function signatures to (A, Any) via asInstanceOf on the Function
@@ -1250,6 +1703,17 @@ object Schema:
             fieldIdOverrides = fieldIdOverrides,
             discriminatorField = discriminatorField,
             variantNaming = variantNaming,
+            representation = representation,
+            representationChain = representationChain,
+            omitPolicies = omitPolicies,
+            omitNoneAll = omitNoneAll,
+            omitEmptyCollectionsAll = omitEmptyCollectionsAll,
+            unionAmbiguityPolicy = unionAmbiguityPolicy,
+            variantDecoders = variantDecoders,
+            denyUnknownFieldsEnabled = denyUnknownFieldsEnabled,
+            fieldDefaults = fieldDefaults,
+            fieldTransforms = fieldTransforms,
+            absentDefaultValue = absentDefaultValue,
             structure = structure
         ).asInstanceOf[Schema[A] { type Focused = F }]
     end initFocused
@@ -1297,6 +1761,159 @@ object Schema:
         final case class UniqueItems(segments: Seq[String])                            extends Constraint
 
     end Constraint
+
+    /** The wire representation a sum type (sealed trait / enum) uses for serialization.
+      *
+      * Each case selects one wire shape. `External` (the default) is the single-field wrapper object
+      * `{"Circle":{...}}`. `Internal(tagKey)` is the flat discriminator `{"type":"Circle",...}`,
+      * selected by `discriminator`. `Adjacent(tagKey, contentKey)` is the two-field object
+      * `{"type":"Circle","content":{...}}`. `Tuple` is the nested positional array
+      * `["Circle",{...}]`. `TupleFlat` is the flattened positional array `["Triangle",10,10,10]`,
+      * coexisting with `Tuple`. `Untagged` is the bare payload `{"radius":10.0}`. The carrier is the
+      * internal `representation` slot, set by the matching builder.
+      */
+    enum UnionRepresentation derives CanEqual:
+        case External
+        case Internal(tagKey: String)
+        case Adjacent(tagKey: String, contentKey: String)
+        case Tuple
+        case TupleFlat
+        case Untagged
+
+        /** True for every representation other than the inert `External` default. ORed into the
+          * transform flags so a configured sum takes the transform-aware engine path.
+          */
+        private[kyo] def nonDefault: Boolean = this match
+            case External => false
+            case _        => true
+    end UnionRepresentation
+
+    /** Governs how untagged union decode handles a wire value matched by more than one member schema.
+      *
+      * `Strict` (the default) raises `AmbiguousVariantMatchException` listing the matched members when
+      * more than one member decoder succeeds on the same wire input. This makes overlapping wire shapes
+      * (e.g. `Int | Long` on a JSON number) an explicit error rather than a silent arbitrary pick.
+      *
+      * `FirstMatch` returns the first-declared member that decodes successfully, matching how a
+      * nominal untagged sum resolves overlapping members by declaration order. Choose this when a
+      * known-ambiguous union should resolve by declaration order rather than fail.
+      *
+      * Configure via `schema.unionAmbiguity(policy)`. The policy is decode-only: it does not affect
+      * encode.
+      */
+    enum UnionAmbiguity derives CanEqual:
+        case Strict
+        case FirstMatch
+    end UnionAmbiguity
+
+    /** The per-field omit trigger. Internal slot value; the user expresses it through the
+      * `whenNone`, `whenEmpty`, `when`, and `whenDefault` builder method names, not by constructing
+      * an `OmitPolicy`.
+      */
+    private[kyo] enum OmitPolicy derives CanEqual:
+        case WhenNone
+        case WhenEmpty
+        case When(predicate: Structure.Value => Boolean)
+        case WhenDefault
+    end OmitPolicy
+
+    /** Stored fallback for a field that may be absent during decode.
+      *
+      * `supplier` is evaluated when decode needs the missing field value. `writeDefault` writes that
+      * value with the field's derived schema, giving later serializer steps the same codec path as
+      * an ordinary field write.
+      */
+    final private[kyo] case class FieldDefault(
+        supplier: () => Any,
+        writeDefault: (Any, Codec.Writer) => Unit
+    )
+
+    /** Stored field-level codec override for a source field.
+      *
+      * A transform keeps the source getter, optional write override, optional read override, and the
+      * derived write path for the same field. Builders merge by source field name so write-only and
+      * read-only configuration can be applied in either order without duplicating the slot.
+      *
+      * The carrier is parameterized by the root type because the getter receives the complete root
+      * value. Field value types are erased inside the carrier and restored by the macro-generated
+      * functions at the call site.
+      */
+    final private[kyo] case class FieldTransform[A](
+        get: A => Any,
+        write: Maybe[(Any, Codec.Writer) => Unit],
+        read: Maybe[Codec.Reader => Any],
+        writeDerived: (Any, Codec.Writer) => Unit
+    )
+
+    private[kyo] def mergeFieldTransform[A](
+        existing: Chunk[(String, Schema.FieldTransform[A])],
+        fieldName: String,
+        next: Schema.FieldTransform[A],
+        replaceWrite: Boolean,
+        replaceRead: Boolean
+    ): Chunk[(String, Schema.FieldTransform[A])] =
+        val merged =
+            existing.filter(_._1 == fieldName).lastMaybe match
+                case Maybe.Present((_, current)) =>
+                    Schema.FieldTransform[A](
+                        get = next.get,
+                        write = if replaceWrite then next.write else current.write,
+                        read = if replaceRead then next.read else current.read,
+                        writeDerived = next.writeDerived
+                    )
+                case Maybe.Absent =>
+                    next
+        existing.filterNot(_._1 == fieldName) :+ (fieldName -> merged)
+    end mergeFieldTransform
+
+    /** Intermediate carrier returned by `Schema.omit(_.field)`. Holds the captured schema and the
+      * compile-time-extracted source field name; the user finishes with `whenEmpty` or `whenNone`
+      * to install the per-field omit policy. `Focused` is preserved (an omit affects wire presence,
+      * not the structural field set).
+      */
+    final class OmitWhen[A, F] @publicInBinary private[kyo] (
+        schema: Schema[A] { type Focused = F },
+        fieldName: String,
+        private[kyo] val materializedDefault: Maybe[Structure.Value] = Maybe.empty
+    ):
+        /** Omit the focused field on encode when its value is an empty collection/map, and
+          * decode-default a missing field to the empty collection/map. Field-level shadows schema-wide.
+          */
+        def whenEmpty: Schema[A] { type Focused = F } =
+            Schema.copyWith(schema)(
+                omitPolicies = schema.omitPolicies.filterNot(_._1 == fieldName) :+ (fieldName -> Schema.OmitPolicy.WhenEmpty)
+            ).asInstanceOf[Schema[A] { type Focused = F }]
+
+        /** Omit the focused field on encode when its value is absent (None / Maybe.empty).
+          * Field-level shadows schema-wide.
+          */
+        def whenNone: Schema[A] { type Focused = F } =
+            Schema.copyWith(schema)(
+                omitPolicies = schema.omitPolicies.filterNot(_._1 == fieldName) :+ (fieldName -> Schema.OmitPolicy.WhenNone)
+            ).asInstanceOf[Schema[A] { type Focused = F }]
+
+        /** Omit the focused field on encode when the predicate returns true for its materialized value. */
+        def when(predicate: Structure.Value => Boolean): Schema[A] { type Focused = F } =
+            Schema.copyWith(schema)(
+                omitPolicies = schema.omitPolicies.filterNot(_._1 == fieldName) :+ (fieldName -> Schema.OmitPolicy.When(predicate))
+            ).asInstanceOf[Schema[A] { type Focused = F }]
+
+        /** Omit the focused field on encode when its materialized value equals the field's compile-time
+          * default, materialized through the field's schema writer. Works for any field type including
+          * products, collections, and sums. If the field has no compile-time default, never omits.
+          */
+        def whenDefault: Schema[A] { type Focused = F } =
+            val updatedDefaults = materializedDefault match
+                case Maybe.Present(value) =>
+                    schema.fieldMaterializedDefaults.filterNot(_._1 == fieldName) :+ (fieldName -> value)
+                case Maybe.Absent =>
+                    schema.fieldMaterializedDefaults.filterNot(_._1 == fieldName)
+            Schema.copyWith(schema)(
+                omitPolicies = schema.omitPolicies.filterNot(_._1 == fieldName) :+ (fieldName -> Schema.OmitPolicy.WhenDefault),
+                fieldMaterializedDefaults = updatedDefaults
+            ).asInstanceOf[Schema[A] { type Focused = F }]
+        end whenDefault
+    end OmitWhen
 
     /** Case conventions for `renameAllVariants` / `renameAllFields`.
       *
@@ -1360,6 +1977,26 @@ object Schema:
         }
     end checkVariantTargets
 
+    /** Rejects a representation chain that contains a duplicate entry, at the builder call site. */
+    private[kyo] def checkRepresentationChain(chain: Chunk[Schema.UnionRepresentation])(using Frame): Unit =
+        if chain.size != chain.distinct.size then throw DuplicateRepresentationException(chain)
+    end checkRepresentationChain
+
+    /** True iff `rep` is expressible by a codec with the given capabilities. The three top-level
+      * non-object shapes (Tuple/TupleFlat/Untagged) require `canWriteTopLevelNonObject`; the
+      * object-shaped representations (External/Internal/Adjacent) are always expressible.
+      */
+    private[kyo] def representationExpressibleBy(
+        rep: Schema.UnionRepresentation,
+        capabilities: Codec.Capabilities
+    ): Boolean =
+        rep match
+            case Schema.UnionRepresentation.Tuple | Schema.UnionRepresentation.TupleFlat |
+                Schema.UnionRepresentation.Untagged =>
+                capabilities.canWriteTopLevelNonObject
+            case _ => true
+    end representationExpressibleBy
+
     /** Raises `VariantNameCollisionException` if a variant alias duplicates an effective
       * primary wire name (from explicit pairs, convention, or raw Scala name) or another alias.
       * `effectivePrimaries` is the full set of effective wire names as computed by
@@ -1421,8 +2058,8 @@ object Schema:
       */
     private[kyo] def variantScalaNames(structure: Structure.Type): Chunk[String] =
         structure match
-            case Structure.Type.Sum(_, _, _, variants, _) => variants.map(_.name)
-            case _                                        => Chunk.empty
+            case Structure.Type.Sum(_, _, _, variants, _, _) => variants.map(_.name)
+            case _                                           => Chunk.empty
 
     /** The effective wire name of each variant: the explicit pair if present, else the
       * convention-derived name if a case is set, else the raw Scala name. Mirrors the
@@ -1610,6 +2247,7 @@ object Schema:
         Schema.init[Span[Byte]](
             writeFn = (v, w) => w.bytes(v),
             readFn = _.bytes(),
+            absentDefaultValue = Maybe(Span.empty[Byte]),
             structure = Structure.Type.Primitive(Structure.PrimitiveKind.String, Tag[Span[Byte]].asInstanceOf[Tag[Any]])
         )
 
@@ -1719,6 +2357,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(List.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "List",
@@ -1750,6 +2389,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Vector.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Vector",
@@ -1781,6 +2421,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Set.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Set",
@@ -1812,6 +2453,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Chunk.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Chunk",
@@ -1843,6 +2485,7 @@ object Schema:
                 reader.arrayEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Seq.empty[A]),
             // Non-inline givens have no implicit Tag[A] in scope; fall back to Tag[Any].
             structure = Structure.Type.Collection(
                 "Seq",
@@ -1874,6 +2517,7 @@ object Schema:
                 reader.arrayEnd()
                 Span.from(builder.result())
             ,
+            absentDefaultValue = Maybe(Span.empty[A]),
             structure = Structure.Type.Collection(
                 "Span",
                 Tag[Span[A]].asInstanceOf[Tag[Any]],
@@ -1956,6 +2600,7 @@ object Schema:
                 reader.mapEnd()
                 builder.result()
             ,
+            absentDefaultValue = Maybe(Map.empty[String, V]),
             // Non-inline givens have no implicit Tag[V] in scope; fall back to Tag[Any].
             structure = Structure.Type.Mapping(
                 "Map",
@@ -1965,6 +2610,64 @@ object Schema:
             )
         )
     end stringMapSchema
+
+    /** Schema for Map[K, V] with non-String keys.
+      *
+      * `stringMapSchema` is the more specific given for `Map[String, V]` (object encoding); this
+      * general given covers every other key type so `Map[Int, V]` and friends derive and round-trip
+      * on all codecs. Each entry is written as a two-field record (`key`, `value`): the Protobuf
+      * codec renders this as a standard proto3 `MapEntry` message, and self-describing codecs render
+      * an array of `{key, value}` objects (a non-String key cannot be an object field name).
+      */
+    given mapSchema[K, V](using kSchema0: => Schema[K], vSchema0: => Schema[V]): Schema[Map[K, V]] =
+        lazy val kSchema = kSchema0
+        lazy val vSchema = vSchema0
+        Schema.init[Map[K, V]](
+            writeFn = (value, writer) =>
+                writer.arrayStart(value.size)
+                value.foreach { (k, v) =>
+                    writer.objectStart("", 2)
+                    writer.field("key", 1)
+                    kSchema.serializeWrite(k, writer)
+                    writer.field("value", 2)
+                    vSchema.serializeWrite(v, writer)
+                    writer.objectEnd()
+                }
+                writer.arrayEnd()
+            ,
+            readFn = reader =>
+                discard(reader.arrayStart())
+                val builder = Map.newBuilder[K, V]
+                @tailrec
+                def loop(count: Int): Unit =
+                    if reader.hasNextElement() then
+                        reader.checkCollectionSize(count)
+                        discard(reader.objectStart())
+                        // hasNextField advances past the inter-field separator (a no-op for
+                        // Protobuf, the comma for a self-describing codec) before each field read.
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "key"
+                        val k = kSchema.serializeRead(reader)
+                        discard(reader.hasNextField())
+                        val _ = reader.field() // "value"
+                        val v = vSchema.serializeRead(reader)
+                        reader.objectEnd()
+                        builder += (k -> v)
+                        loop(count + 1)
+                loop(1)
+                reader.arrayEnd()
+                builder.result()
+            ,
+            absentDefaultValue = Maybe(Map.empty[K, V]),
+            // Non-inline givens have no implicit Tag[K] + Tag[V] in scope; fall back to Tag[Any].
+            structure = Structure.Type.Mapping(
+                "Map",
+                Tag[Any],
+                kSchema.structure,
+                vSchema.structure
+            )
+        )
+    end mapSchema
 
     // --- Tuple Schemas ---
 
@@ -2317,9 +3020,10 @@ object Schema:
         checks: Seq[A => Seq[ValidationFailedException]],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
-        droppedFields: Set[String] = Set.empty
+        droppedFields: Set[String] = Set.empty,
+        flattenedReadFields: Chunk[(String, String)] = Chunk.empty
     ): Schema[A] { type Focused = F2 } =
-        internal.SchemaFactory.createFrom[A, F2](source, checks, computedFields, renamedFields, droppedFields)
+        internal.SchemaFactory.createFrom[A, F2](source, checks, computedFields, renamedFields, droppedFields, flattenedReadFields)
 
     /** Internal factory for creating Schema with a specific Focused type, preserving all state. Used by methods that return
       * `Schema[A] { type Focused = E }` without changing E.
@@ -2344,9 +3048,23 @@ object Schema:
         fieldIds: Map[Seq[String], Int] = Map.empty,
         discriminatorField: Maybe[String] = Maybe.empty,
         variantNaming: Schema.VariantNaming = Schema.VariantNaming(),
+        representation: Schema.UnionRepresentation = Schema.UnionRepresentation.External,
+        representationChain: Maybe[Chunk[Schema.UnionRepresentation]] = Maybe.empty,
+        omitPolicies: Chunk[(String, Schema.OmitPolicy)] = Chunk.empty,
+        omitNoneAll: Boolean = false,
+        omitEmptyCollectionsAll: Boolean = false,
+        unionAmbiguityPolicy: Schema.UnionAmbiguity = Schema.UnionAmbiguity.Strict,
+        variantDecoders: Chunk[Codec.Reader => Any] = Chunk.empty,
+        denyUnknownFieldsEnabled: Boolean = false,
+        fieldDefaults: Chunk[(String, Schema.FieldDefault)] = Chunk.empty,
+        fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = Chunk.empty[(String, Schema.FieldTransform[A])],
+        fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = Chunk.empty,
+        flattenedReadFields0: Chunk[(String, String)] = Chunk.empty,
+        absentDefaultValue: => Maybe[A] = Maybe.empty,
         structure: => Structure.Type
     ): Schema[A] { type Focused = E } =
-        lazy val _structure = structure
+        lazy val _structure          = structure
+        lazy val _absentDefaultValue = absentDefaultValue
         new Schema[A](
             segments,
             examples,
@@ -2361,9 +3079,21 @@ object Schema:
             doc,
             fieldIds,
             discriminatorField,
-            variantNaming
+            variantNaming,
+            representation,
+            representationChain,
+            omitPolicies,
+            omitNoneAll,
+            omitEmptyCollectionsAll,
+            unionAmbiguityPolicy,
+            variantDecoders,
+            denyUnknownFieldsEnabled,
+            fieldDefaults,
+            fieldTransforms,
+            fieldMaterializedDefaults
         ):
             type Focused = E
+            @publicInBinary override private[kyo] val flattenedReadFields: Chunk[(String, String)] = flattenedReadFields0
             @publicInBinary def serializeWrite(value: A, writer: Writer): Unit =
                 if hasTransforms then transformedWrite(value, writer)
                 else writeFn(value, writer)
@@ -2374,6 +3104,7 @@ object Schema:
             @publicInBinary override def rawSerializeRead(reader: Reader): A               = readFn(reader)
             @publicInBinary def getter(value: A): Maybe[Any]                               = getterFn(value)
             @publicInBinary def setter(value: A, next: Any): A                             = setterFn(value, next)
+            @publicInBinary override private[kyo] def absentDefaultValue: Maybe[A]         = _absentDefaultValue
             override def structure: Structure.Type                                         = _structure
         end new
     end createWithFocused
@@ -2400,6 +3131,19 @@ object Schema:
         fieldIds: Map[Seq[String], Int] = self.fieldIdOverrides,
         discriminatorField: Maybe[String] = self.discriminatorField,
         variantNaming: Schema.VariantNaming = self.variantNaming,
+        representation: Schema.UnionRepresentation = self.representation,
+        representationChain: Maybe[Chunk[Schema.UnionRepresentation]] = self.representationChain,
+        omitPolicies: Chunk[(String, Schema.OmitPolicy)] = self.omitPolicies,
+        omitNoneAll: Boolean = self.omitNoneAll,
+        omitEmptyCollectionsAll: Boolean = self.omitEmptyCollectionsAll,
+        unionAmbiguityPolicy: Schema.UnionAmbiguity = self.unionAmbiguityPolicy,
+        variantDecoders: Chunk[Codec.Reader => Any] = self.variantDecoders,
+        denyUnknownFieldsEnabled: Boolean = self.denyUnknownFieldsEnabled,
+        fieldDefaults: Chunk[(String, Schema.FieldDefault)] = self.fieldDefaults,
+        fieldTransforms: Chunk[(String, Schema.FieldTransform[A])] = self.fieldTransforms,
+        fieldMaterializedDefaults: Chunk[(String, Structure.Value)] = self.fieldMaterializedDefaults,
+        flattenedReadFields: Chunk[(String, String)] = self.flattenedReadFields,
+        absentDefaultValue: => Maybe[A] = self.absentDefaultValue,
         structure: => Structure.Type = self.structure
     ): Schema[A] { type Focused = self.Focused } =
         createWithFocused[A, self.Focused](
@@ -2421,6 +3165,19 @@ object Schema:
             fieldIds = fieldIds,
             discriminatorField = discriminatorField,
             variantNaming = variantNaming,
+            representation = representation,
+            representationChain = representationChain,
+            omitPolicies = omitPolicies,
+            omitNoneAll = omitNoneAll,
+            omitEmptyCollectionsAll = omitEmptyCollectionsAll,
+            unionAmbiguityPolicy = unionAmbiguityPolicy,
+            variantDecoders = variantDecoders,
+            denyUnknownFieldsEnabled = denyUnknownFieldsEnabled,
+            fieldDefaults = fieldDefaults,
+            fieldTransforms = fieldTransforms,
+            fieldMaterializedDefaults = fieldMaterializedDefaults,
+            flattenedReadFields0 = flattenedReadFields,
+            absentDefaultValue = absentDefaultValue,
             structure = structure
         )
 

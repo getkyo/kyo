@@ -1,6 +1,9 @@
 package kyo
 
-final class Protobuf extends Codec:
+import scala.annotation.tailrec
+
+final class Protobuf(val config: Protobuf.Config) extends Codec:
+    def this() = this(Protobuf.Config.Default)
     def newWriter(): Codec.Writer = new kyo.internal.ProtobufWriter()
     def newReader(input: Span[Byte])(using Frame): Codec.Reader =
         new kyo.internal.ProtobufReader(input.toArray)
@@ -17,6 +20,59 @@ end Protobuf
   *   [[kyo.Json]] for JSON serialization
   */
 object Protobuf:
+    /** Proto3 conformance mode for the Protobuf codec.
+      *
+      * Selects which wire forms `encode` is allowed to produce. The default is `Strict`, so the
+      * zero-argument `given Protobuf` is canonical out of the box and interoperates with external
+      * proto3 tooling for the shapes proto3 defines.
+      *
+      * @see
+      *   [[Protobuf.Config]] for where this is configured
+      */
+    enum Conformance derives CanEqual:
+        /** Rejects non-proto3-native map keys at encode time. A map whose key type is not proto3-native
+          * (integral, bool, or string scalar, or an opaque/value-class type reducing to one of these)
+          * raises [[SchemaNotSerializableException]] before any bytes are written. Canonical proto3
+          * `map<K, V>` key types are accepted.
+          *
+          * This mode does not guarantee every emitted field number is accepted by external `protoc`.
+          * Hash-derived field numbers in the reserved range 19000-19999 produce a WARNING from
+          * `protoSchema` regardless of conformance mode. Pin numbers via `Schema.fieldId` and
+          * verify with `Protobuf.fieldNumberAudit` to avoid the reserved range for external interop.
+          */
+        case Strict
+
+        /** Round-trippable behavior: non-canonical extensions are permitted so every schema that
+          * round-trips through this codec keeps encoding, at the cost of strict external proto3 interop.
+          */
+        case Permissive
+    end Conformance
+
+    /** Configuration for the Protobuf codec.
+      *
+      * @param conformance
+      *   the proto3 conformance mode; defaults to [[Conformance.Strict]] so the codec is canonical
+      *   by default. See [[Conformance]] for the Strict vs Permissive contract.
+      * @param maxDepth
+      *   maximum nesting depth honored by `decode` across every recursive container (message, list,
+      *   string-keyed map, non-string map)
+      * @param maxCollectionSize
+      *   maximum number of entries honored by `decode` for maps, sets, arrays
+      * @param protoSchemaProvenance
+      *   when false, protoSchema omits the 'pin a stable number' comment on hash-derived field
+      *   numbers; the reserved-range warning is always emitted
+      */
+    final case class Config(
+        conformance: Conformance = Conformance.Strict,
+        maxDepth: Int = Json.DefaultMaxDepth,
+        maxCollectionSize: Int = Json.DefaultMaxCollectionSize,
+        protoSchemaProvenance: Boolean = true
+    ) derives CanEqual
+
+    object Config:
+        val Default: Config = Config()
+    end Config
+
     given Protobuf = Protobuf()
 
     /** Encodes a value of type A to Protocol Buffers binary bytes.
@@ -26,26 +82,99 @@ object Protobuf:
       * @return
       *   the proto3 wire-format bytes
       */
-    inline def encode[A](value: A)(using schema: Schema[A], frame: Frame): Span[Byte] =
-        val w = summon[Protobuf].newWriter()
+    inline def encode[A](value: A)(using protobuf: Protobuf, schema: Schema[A], frame: Frame): Span[Byte] =
+        if protobuf.config.conformance == Conformance.Strict then validateCanonical(schema.structure)
+        val w         = protobuf.newWriter()
+        val overrides = schema.fieldIdNameOverrides
+        if overrides.nonEmpty then
+            w match
+                case pw: kyo.internal.ProtobufWriter => val _ = pw.withFieldIdOverrides(overrides)
+                case _                               => ()
+        end if
         schema.writeTo(value, w)
         w.result()
     end encode
 
-    /** Decodes Protocol Buffers binary bytes into a value of type A.
+    /** True iff `key` is a type proto3 admits as a `map<K, V>` key: an integral, bool, or string scalar
+      * (BigInt / BigDecimal serialize as string, so they qualify). Float, double, and any non-primitive
+      * (message, enum, collection) are not valid proto3 map keys.
+      */
+    private def isProto3MapKey(key: Structure.Type): Boolean =
+        key match
+            case p: Structure.Type.Primitive =>
+                p.kind match
+                    case Structure.PrimitiveKind.Double | Structure.PrimitiveKind.Float |
+                        Structure.PrimitiveKind.Unit => false
+                    case _ => true
+            case _ => false
+    end isProto3MapKey
+
+    /** Walks a schema structure under [[Conformance.Strict]] and rejects any shape proto3 cannot
+      * encode canonically. The only non-canonical shape this codec can produce is a map whose key is
+      * not a proto3-native scalar (the entry-message key form), so that is the entire rejection set.
+      * Product / Sum recursion is cycle-guarded by name; every container is reached so a map nested
+      * anywhere is validated.
+      */
+    private def validateCanonical(structure: Structure.Type)(using Frame): Unit =
+        // Explicit work-stack loop (tail-recursive): a Structure walk has multiple children per node
+        // (a Product's fields, a Sum's variants, a Mapping's key+value), so a single self-recursive
+        // tail call is impossible; the stack keeps the traversal O(1) on the call stack. `seen` is a
+        // global name set (carried immutably): each distinct type need only be CHECKED once.
+        @tailrec def loop(stack: List[Structure.Type], seen: Set[String]): Unit =
+            stack match
+                case Nil => ()
+                case t :: rest =>
+                    t match
+                        case Structure.Type.Mapping(_, _, key, value) =>
+                            if !isProto3MapKey(key) then
+                                throw SchemaNotSerializableException(
+                                    s"non-canonical proto3 map key: ${key.name}"
+                                )
+                            end if
+                            loop(key :: value :: rest, seen)
+                        case Structure.Type.Collection(_, _, elem) => loop(elem :: rest, seen)
+                        case Structure.Type.Optional(_, _, inner)  => loop(inner :: rest, seen)
+                        case p: Structure.Type.Product =>
+                            if seen.contains(p.name) then loop(rest, seen)
+                            else loop(p.fields.foldRight(rest)((f, a) => f.fieldType :: a), seen + p.name)
+                        case s: Structure.Type.Sum =>
+                            if seen.contains(s.name) then loop(rest, seen)
+                            else loop(s.variants.foldRight(rest)((v, a) => v.variantType :: a), seen + s.name)
+                        // A structureless leaf (primitive or open type) has no nested children to
+                        // recurse, so nothing to validate.
+                        case _ => loop(rest, seen)
+        loop(structure :: Nil, Set.empty)
+    end validateCanonical
+
+    /** Decodes Protocol Buffers binary bytes using the codec's configured limits. */
+    inline def decode[A](input: Span[Byte])(using protobuf: Protobuf, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
+        decode(input, protobuf.config.maxDepth, protobuf.config.maxCollectionSize)
+    end decode
+
+    /** Decodes Protocol Buffers binary bytes into a value of type A with explicit limits.
       *
       * @param input
       *   the proto3 wire-format bytes to decode
+      * @param maxDepth
+      *   maximum nesting depth for objects/arrays
+      * @param maxCollectionSize
+      *   maximum number of entries in maps, sets, or arrays
       * @return
       *   the decoded value, or a DecodeException if the input is malformed or does not match the schema
       */
     def decode[A](
         input: Span[Byte],
-        maxDepth: Int = Json.DefaultMaxDepth,
-        maxCollectionSize: Int = Json.DefaultMaxCollectionSize
+        maxDepth: Int,
+        maxCollectionSize: Int
     )(using protobuf: Protobuf, schema: Schema[A], frame: Frame): Result[DecodeException, A] =
         val reader = protobuf.newReader(input)
         reader.resetLimits(maxDepth, maxCollectionSize)
+        val overrides = schema.fieldIdNameOverrides
+        if overrides.nonEmpty then
+            reader match
+                case pr: kyo.internal.ProtobufReader => val _ = pr.withFieldIdOverrides(overrides)
+                case _                               => ()
+        end if
         Result.catching[DecodeException](schema.readFrom(reader))
     end decode
 
@@ -59,7 +188,99 @@ object Protobuf:
       * @return
       *   a proto3 schema string ready for use as a `.proto` file
       */
-    inline def protoSchema[A](using s: Schema[A], frame: Frame): String = ProtoSchema.from[A]
+    inline def protoSchema[A](using protobuf: Protobuf, s: Schema[A], frame: Frame): String =
+        ProtoSchema.fromStructure(s.structure, s.fieldIdNameOverrides, protobuf.config.protoSchemaProvenance)
+
+    /** Audits the wire field number of every message field in `A`, recursively.
+      *
+      * Pure and total: no encode, no decode, no throw. One [[FieldNumberInfo]] per user-facing
+      * message field, with a dotted `path` for nested messages. `number` is the field number the
+      * codec actually writes (the MurmurHash3 scheme, or a leaf-name `Schema.fieldId` override),
+      * `pinned` is true when the number came from an override, and `inReservedRange` is true when
+      * the number falls in proto3's reserved band 19000-19999 (which external protoc rejects).
+      *
+      * @tparam A the type to audit
+      * @return one row per message field, in declaration order, depth-first
+      * @see [[FieldNumberInfo]]
+      */
+    inline def fieldNumberAudit[A](using schema: Schema[A], frame: Frame): Chunk[FieldNumberInfo] =
+        auditStructure(schema.structure, schema.fieldIdNameOverrides, schema.pinnedFieldNames)
+
+    /** Field-number provenance for one field of a message tree.
+      *
+      * One row per field, recursive over nested messages.
+      *
+      * @param path     the dotted path from the root message (e.g. "inner.id")
+      * @param name     the leaf field name
+      * @param number   the wire field number this codec uses
+      * @param pinned   true when a single-segment (leaf field-name) `Schema` field-id override is
+      *   set and is wire-functional, whether pinned programmatically via `Schema.fieldId` or
+      *   declaratively via `@proto.fieldNumber(n)`; a nested-path (multi-segment) override is a
+      *   consistent no-op (`pinned` stays false)
+      * @param inReservedRange true if `number` is in proto3's reserved field-number band
+      *   19000-19999, which external tooling rejects; pin a stable number to avoid it
+      * @see [[Protobuf.fieldNumberAudit]]
+      */
+    final case class FieldNumberInfo(
+        path: String,
+        name: String,
+        number: Int,
+        pinned: Boolean,
+        inReservedRange: Boolean
+    ) derives CanEqual
+
+    private[kyo] def auditStructure(rt: Structure.Type, overrides: Map[String, Int], pinnedNames: Set[String]): Chunk[FieldNumberInfo] =
+        val buf                              = scala.collection.mutable.ArrayBuffer.empty[FieldNumberInfo]
+        def resolve(name: String): Int       = overrides.getOrElse(name, kyo.internal.CodecMacro.fieldId(name))
+        def isReservedRange(n: Int): Boolean = n >= 19000 && n <= 19999
+        // A traversal frame: the dotted-path prefix, the type to visit, and the ancestry (the set of
+        // type names on the path from the root to this node). Ancestry-based recursion guard: a
+        // Product/Sum is entered (its fields emitted) when its name is NOT on its own path; recursion
+        // stops only on a genuine cycle (name already on the path, e.g. TreeNode -> List[TreeNode]).
+        // The ancestry is per-frame, so a type REUSED across two sibling fields is not on its sibling's
+        // path and emits its field rows at EACH occurrence (both list-element and map-value inner
+        // fields). A global `seen` would wrongly drop the second occurrence.
+        final case class Frame(prefix: String, tpe: Structure.Type, ancestry: Set[String])
+        // Explicit work-stack loop (tail-recursive): a node has multiple children (a Product's fields,
+        // a Sum's variants), so a single self-recursive tail call is impossible; the stack keeps the
+        // walk O(1) on the call stack. `children` is a tightly-scoped local accumulator per node.
+        @tailrec def loop(stack: List[Frame]): Unit =
+            stack match
+                case Nil => ()
+                case Frame(prefix, tpe, ancestry) :: rest =>
+                    tpe match
+                        case p: Structure.Type.Product if !ancestry.contains(p.name) =>
+                            val nextAncestry = ancestry + p.name
+                            val children     = scala.collection.mutable.ListBuffer.empty[Frame]
+                            p.fields.foreach { field =>
+                                val name   = field.name
+                                val path   = if prefix.isEmpty then name else s"$prefix.$name"
+                                val number = resolve(name)
+                                buf += FieldNumberInfo(path, name, number, pinnedNames.contains(name), isReservedRange(number))
+                                field.fieldType match
+                                    case np: Structure.Type.Product             => children += Frame(path, np, nextAncestry)
+                                    case ns: Structure.Type.Sum                 => children += Frame(path, ns, nextAncestry)
+                                    case Structure.Type.Optional(_, _, inner)   => children += Frame(path, inner, nextAncestry)
+                                    case Structure.Type.Collection(_, _, elem)  => children += Frame(path, elem, nextAncestry)
+                                    case Structure.Type.Mapping(_, _, _, value) => children += Frame(s"$path.value", value, nextAncestry)
+                                    case _                                      => ()
+                                end match
+                            }
+                            loop(children.toList ::: rest)
+                        case s: Structure.Type.Sum if !ancestry.contains(s.name) =>
+                            val nextAncestry = ancestry + s.name
+                            val children     = scala.collection.mutable.ListBuffer.empty[Frame]
+                            s.variants.foreach { variant =>
+                                variant.variantType match
+                                    case vp: Structure.Type.Product => children += Frame(prefix, vp, nextAncestry)
+                                    case vs: Structure.Type.Sum     => children += Frame(prefix, vs, nextAncestry)
+                                    case _                          => ()
+                            }
+                            loop(children.toList ::: rest)
+                        case _ => loop(rest)
+        loop(Frame("", rt, Set.empty) :: Nil)
+        Chunk.from(buf)
+    end auditStructure
 
     /** Generates Protocol Buffers schema (.proto file content) from Scala types.
       *
@@ -74,10 +295,35 @@ object Protobuf:
       */
     object ProtoSchema:
         /** Generates a `.proto` schema string for type `A`. */
-        inline def from[A](using s: Schema[A], frame: Frame): String = fromStructure(s.structure)
+        inline def from[A](using s: Schema[A], frame: Frame): String = fromStructure(s.structure, s.fieldIdNameOverrides)
 
-        /** Derives a proto schema string from a Structure.Type at runtime. */
-        private[kyo] def fromStructure(rt: Structure.Type)(using Frame): String =
+        /** Derives a proto schema string from a Structure.Type at runtime.
+          *
+          * `fieldIdOverrides` is the leaf-name override map so the emitted field numbers match the wire:
+          * hash-derived numbers carry a provenance comment, and a number in proto3's reserved
+          * range 19000-19999 carries an escalated WARNING. The reserved-range WARNING is
+          * UNCONDITIONAL on the range: it fires whether the number was hash-derived or pinned, because
+          * the band is invalid for external protoc however the number was chosen.
+          */
+        private[kyo] def fromStructure(rt: Structure.Type, fieldIdOverrides: Map[String, Int], emitProvenance: Boolean = true)(using
+            Frame
+        ): String =
+
+            def wireFieldNumber(name: String): Int =
+                fieldIdOverrides.getOrElse(name, kyo.internal.CodecMacro.fieldId(name))
+
+            def provenanceComment(name: String, number: Int): String =
+                // The reserved-range WARNING is unconditional on the range: a number in 19000-19999 is
+                // invalid for external protoc however it was chosen (hash-derived OR pinned), so the
+                // warning fires before the pinned/hash-derived split. The ordinary "pin a stable
+                // number" nudge stays gated on hash-derived numbers only, and is further suppressed
+                // when emitProvenance is false.
+                if number >= 19000 && number <= 19999 then
+                    "  // WARNING: in proto3 reserved range 19000-19999; external protoc REJECTS this number. Choose a number outside the band via Schema.fieldId for external interop."
+                else if fieldIdOverrides.contains(name) then ""
+                else if emitProvenance then
+                    "  // hash-derived field number; pin via Schema.fieldId for stable external interop"
+                else ""
 
             /** Accumulated state threaded through collection. */
             case class State(seen: Set[String], messages: List[String])
@@ -88,7 +334,7 @@ object Protobuf:
                 else
                     val visited = state.copy(seen = state.seen + name)
                     tpe match
-                        case Structure.Type.Sum(name, _, _, variants, _) =>
+                        case Structure.Type.Sum(name, _, _, variants, _, _) =>
                             val sb = new StringBuilder
                             sb.append(s"message $name {\n")
                             sb.append("  oneof value {\n")
@@ -105,12 +351,13 @@ object Protobuf:
                             sb.append("}\n")
                             afterVariants.copy(messages = sb.toString :: afterVariants.messages)
 
-                        case Structure.Type.Product(name, _, _, fields) =>
+                        case Structure.Type.Product(name, _, _, fields, _) =>
                             val sb = new StringBuilder
                             sb.append(s"message $name {\n")
-                            val afterFields = fields.toList.zipWithIndex.foldLeft(visited) { case (acc, (field, idx)) =>
-                                val (decl, nextAcc) = protoFieldDecl(field.name, field.fieldType, idx + 1, acc)
-                                sb.append(s"  $decl\n")
+                            val afterFields = fields.toList.foldLeft(visited) { case (acc, field) =>
+                                val number          = wireFieldNumber(field.name)
+                                val (decl, nextAcc) = protoFieldDecl(field.name, field.fieldType, number, acc)
+                                sb.append(s"  $decl${provenanceComment(field.name, number)}\n")
                                 nextAcc
                             }
                             sb.append("}\n")
@@ -163,9 +410,20 @@ object Protobuf:
                                 (s"repeated $innerType $name = $fieldNumber;", nextState)
 
                     case Structure.Type.Mapping(_, _, key, value) =>
-                        val (keyName, s1) = protoTypeName(key, state)
-                        val (valName, s2) = protoTypeName(value, s1)
-                        (s"map<$keyName, $valName> $name = $fieldNumber;", s2)
+                        if isProto3MapKey(key) then
+                            val (keyName, s1) = protoTypeName(key, state)
+                            val (valName, s2) = protoTypeName(value, s1)
+                            (s"map<$keyName, $valName> $name = $fieldNumber;", s2)
+                        else
+                            // proto3 forbids this key type in map<>. The codec encodes such a map as an
+                            // array of [key, value] pairs, so describe it as a repeated entry message
+                            // rather than emit an invalid map<...>.
+                            val (keyName, s1) = protoTypeName(key, state)
+                            val (valName, s2) = protoTypeName(value, s1)
+                            val entryName     = s"${name.capitalize}Entry"
+                            val entryMsg      = s"message $entryName {\n  $keyName key = 1;\n  $valName value = 2;\n}\n"
+                            (s"repeated $entryName $name = $fieldNumber;", s2.copy(messages = entryMsg :: s2.messages))
+                        end if
 
                     case p: Structure.Type.Product =>
                         val nextState = collect(p, state)

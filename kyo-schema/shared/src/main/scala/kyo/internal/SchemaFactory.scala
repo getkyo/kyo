@@ -25,7 +25,8 @@ private[kyo] object SchemaFactory:
         checks: Seq[A => Seq[ValidationFailedException]],
         computedFields: Chunk[(String, A => Any)],
         renamedFields: Chunk[(String, String)],
-        droppedFields: Set[String] = Set.empty
+        droppedFields: Set[String] = Set.empty,
+        flattenedReadFields: Chunk[(String, String)] = Chunk.empty
     ): Schema[A] { type Focused = F2 } =
         // Compute updated field metadata:
         // - drop removes all path-keyed entries whose first segment is the dropped field
@@ -78,7 +79,19 @@ private[kyo] object SchemaFactory:
             doc = source.documentation,
             fieldIds = updatedFieldIds,
             discriminatorField = source.discriminatorField,
-            variantNaming = source.variantNaming
+            variantNaming = source.variantNaming,
+            representation = source.representation,
+            representationChain = source.representationChain,
+            omitPolicies = source.omitPolicies,
+            omitNoneAll = source.omitNoneAll,
+            omitEmptyCollectionsAll = source.omitEmptyCollectionsAll,
+            unionAmbiguityPolicy = source.unionAmbiguityPolicy,
+            variantDecoders = source.variantDecoders,
+            denyUnknownFieldsEnabled = source.denyUnknownFieldsEnabled,
+            fieldDefaults = source.fieldDefaults,
+            fieldTransforms = source.fieldTransforms,
+            fieldMaterializedDefaults = source.fieldMaterializedDefaults,
+            flattenedReadFields0 = (source.flattenedReadFields ++ flattenedReadFields).distinct
         )
     end createFrom
 

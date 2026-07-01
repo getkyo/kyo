@@ -1,6 +1,7 @@
 package kyo
 
 import Cache.Unsafe.internal.*
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLongArray
 import java.util.concurrent.atomic.AtomicReferenceArray
@@ -35,7 +36,7 @@ import scala.annotation.tailrec
   * @see
   *   [[Cache.Unsafe]] for the low-level API
   */
-opaque type Cache[K, V] = Cache.Unsafe[K, V]
+opaque type Cache[K, V] = Cache.Stored[K, V]
 
 object Cache:
 
@@ -48,22 +49,22 @@ object Cache:
 
         /** Looks up a key and returns its value if present and not expired. */
         def get(key: K)(using Frame): Maybe[V] < Sync =
-            Sync.Unsafe.defer(self.get(key))
+            Sync.Unsafe.defer(self.store.get(key))
 
         /** Inserts value for key, or returns the existing value if already present. */
         def add(key: K, value: V)(using Frame): V < Sync =
-            Sync.Unsafe.defer(self.add(key, value))
+            Sync.Unsafe.defer(self.store.add(key, value))
 
         /** Returns the existing value if present, or evaluates `value` and inserts it. */
         inline def getOrElse(key: K, inline value: => V)(using Frame): V < Sync =
-            Sync.Unsafe.defer(self.getOrElse(key, value))
+            Sync.Unsafe.defer(self.store.getOrElse(key, value))
 
         /** Removes an entry by marking it as a tombstone. */
         def remove(key: K)(using Frame): Unit < Sync =
-            Sync.Unsafe.defer(self.remove(key))
+            Sync.Unsafe.defer(self.store.remove(key))
 
         /** Returns the underlying unsafe cache for low-level access. */
-        def unsafe: Unsafe[K, V] = self
+        def unsafe: Unsafe[K, V] = self.store
 
     end extension
 
@@ -81,7 +82,7 @@ object Cache:
         expireAfterAccess: Duration = Duration.Zero,
         expireAfterWrite: Duration = Duration.Zero
     )(using Frame): Cache[K, V] < Sync =
-        Sync.Unsafe.defer(Unsafe.init[K, V](maxSize, expireAfterAccess, expireAfterWrite))
+        Sync.Unsafe.defer(new Stored(Unsafe.init[K, V](maxSize, expireAfterAccess, expireAfterWrite), Absent))
 
     /** Creates a new typed Cache and applies the given function to it. */
     inline def initWith[K, V, A, S](
@@ -89,7 +90,155 @@ object Cache:
         expireAfterAccess: Duration = Duration.Zero,
         expireAfterWrite: Duration = Duration.Zero
     )(inline f: Cache[K, V] => A < S)(using inline frame: Frame): A < (S & Sync) =
-        Sync.Unsafe.defer(f(Unsafe.init[K, V](maxSize, expireAfterAccess, expireAfterWrite)))
+        Sync.Unsafe.defer(f(new Stored(Unsafe.init[K, V](maxSize, expireAfterAccess, expireAfterWrite), Absent)))
+
+    private val DefaultGracePeriod = 30.seconds
+
+    // Holds the off-sweep finalization machinery for a finalizer-bearing cache. The values queue is
+    // unbounded so the synchronous eviction callbacks never drop a value: a slow finalizer plus an
+    // eviction burst grows the queue rather than losing a finalization. The unbounded queue has no
+    // suspending take, so a capacity-1 wakeup channel lets the drainer park on empty without busy-
+    // spinning: every enqueue signals the wakeup, the drainer drains all available then suspends on
+    // the wakeup, and closing the wakeup ends the drainer after a final drain. The closing flag makes
+    // close idempotent.
+    final private[kyo] class Finalization[V](
+        val values: Queue.Unbounded[V],
+        val wakeup: Channel[Unit],
+        val drainer: Fiber[Unit, Any],
+        val closing: AtomicBoolean
+    )
+
+    // A Cache's runtime representation: the low-level store plus the optional finalization machinery
+    // (Absent for a plain cache, Present for a finalizer-bearing one). Carrying it on the Cache lets
+    // close reach the finalization directly, with no global registry.
+    final private[kyo] class Stored[K, V](val store: Unsafe[K, V], val finalization: Maybe[Finalization[V]])
+
+    /** Creates a cache that runs `finalizer` on every removal path.
+      *
+      * Like [[init]], but `finalizer` is run once for every value removed by any path:
+      * size-eviction, expiry, explicit [[remove]], and [[close]]. The finalizer is EFFECTFUL,
+      * so it cannot run on the inline `Sync` eviction sweep; instead each removed value is
+      * enqueued onto an unbounded finalization queue and a background fiber drains the queue and
+      * runs the finalizer per value, logging and continuing on a finalizer failure. The queue is
+      * unbounded, so a slow finalizer never drops an eviction: every removed value is finalized. A
+      * close that suspends (a process kill, a native close) therefore never blocks an eviction.
+      *
+      * Scope-managed: the cache is a closeable resource, so closing the scope drains the queue
+      * and finalizes every remaining entry. A value being read is not closed mid-request:
+      * consumers re-resolve per request and treat a closed value as recreate, and
+      * `expireAfterAccess` keeps recently-used entries alive.
+      *
+      * @param maxSize
+      *   Maximum number of entries (must be between 1 and 1,048,576)
+      * @param expireAfterAccess
+      *   Duration after last access before an entry expires (Duration.Zero = no expiration)
+      * @param expireAfterWrite
+      *   Duration after creation/update before an entry expires (Duration.Zero = no expiration)
+      * @param finalizer
+      *   The effectful close run once per removed value, off the eviction sweep
+      */
+    def initWithFinalizer[K, V](
+        maxSize: Int,
+        expireAfterAccess: Duration = Duration.Zero,
+        expireAfterWrite: Duration = Duration.Zero
+    )(finalizer: V => Unit < (Async & Abort[Throwable]))(using Frame): Cache[K, V] < (Sync & Scope) =
+        Queue.Unbounded.init[V]().map: values =>
+            Channel.init[Unit](1).map: wakeup =>
+                drainLoop(values, wakeup, finalizer).map: drainer =>
+                    Sync.Unsafe.defer:
+                        // Unsafe: the eviction callbacks are synchronous (K, V) => Unit invoked
+                        // inline on the Sync sweep, where a suspending put is illegal. offer on the
+                        // unbounded queue is the non-suspending enqueue that never drops: the queue
+                        // grows, so an eviction burst that outruns the finalizer keeps every value
+                        // rather than losing one. The wakeup offer is non-suspending and coalescing:
+                        // a pending signal is enough to wake an idle drainer, so a dropped duplicate
+                        // signal loses nothing.
+                        val enqueue: (K, V) => Unit = (_, v) =>
+                            discard(values.unsafe.offer(v))
+                            discard(wakeup.unsafe.offer(()))
+                        val store = Unsafe.init[K, V](
+                            maxSize,
+                            expireAfterAccess,
+                            expireAfterWrite,
+                            onEvict = enqueue,
+                            onExpire = enqueue,
+                            onRemove = enqueue
+                        )
+                        val cache: Cache[K, V] =
+                            new Stored(store, Present(new Finalization(values, wakeup, drainer, new AtomicBoolean(false))))
+                        Scope.ensure(close(cache)(DefaultGracePeriod)).andThen:
+                            cache
+
+    // The background drainer: drain every value currently in the unbounded queue and run the
+    // finalizer once per value, logging and continuing on a finalizer failure; then suspend on the
+    // wakeup channel until the next enqueue signals it. A take that aborts Closed means close has
+    // closed the wakeup: the drainer runs one final drain pass and completes, so every value
+    // enqueued before close is still finalized (the close-then-drain contract). The take suspends
+    // the fiber when the queue is empty, so the drainer never busy-spins and never blocks a thread.
+    private def drainLoop[V](
+        values: Queue.Unbounded[V],
+        wakeup: Channel[Unit],
+        finalizer: V => Unit < (Async & Abort[Throwable])
+    )(using Frame): Fiber[Unit, Any] < (Sync & Scope) =
+        Fiber.init:
+            def runOne(v: V): Unit < Async =
+                Abort.run[Throwable](finalizer(v)).map:
+                    case Result.Success(_)   => ()
+                    case Result.Failure(err) => Log.error("cache finalizer failed", err)
+                    case Result.Panic(err)   => Log.error("cache finalizer panicked", err)
+            def drainBatch: Boolean < Async =
+                Abort.run[Closed](values.drain).map:
+                    case Result.Success(batch) => Kyo.foreachDiscard(batch)(runOne).andThen(batch.nonEmpty)
+                    case _                     => false
+            // After close, loop the drain until a pass observes an empty queue: a value evicted
+            // concurrently with close (its onEvict adds while a prior batch is being finalized) is
+            // caught by the next pass, so no straggler is left unfinalized on the close path.
+            def drainUntilEmpty: Unit < Async =
+                Loop.foreach:
+                    drainBatch.map(more => if more then Loop.continue else Loop.done)
+            Loop.foreach:
+                drainBatch.andThen:
+                    Abort.run[Closed](wakeup.take).map:
+                        case Result.Success(_) => Loop.continue
+                        case _                 => drainUntilEmpty.andThen(Loop.done)
+
+    extension [K, V](self: Cache[K, V])
+        /** Closes the cache: stops accepting entries and finalizes every remaining one, waiting
+          * up to `gracePeriod` for in-flight finalizers. The canonical close variant.
+          */
+        def close(gracePeriod: Duration)(using frame: Frame): Unit < Async =
+            Sync.Unsafe.defer:
+                self.finalization match
+                    case Absent => ()
+                    case Present(typed) =>
+                        if typed.closing.compareAndSet(false, true) then
+                            // Snapshot every live value into the unbounded queue so the drainer
+                            // finalizes each one. offer on the unbounded queue is non-suspending and
+                            // never drops. A value evicted concurrently with this close is enqueued
+                            // by its own onEvict callback rather than gated off, so it lands in the
+                            // same queue the drainer's final pass drains; the snapshot and the
+                            // concurrent eviction both reach the drainer, and the finalizer's
+                            // idempotent close tolerates a double-see of a value caught in both.
+                            self.store.foreachValue(v => discard(typed.values.unsafe.offer(v)))
+                            // Close the wakeup channel so the drainer's suspended take aborts Closed
+                            // and it runs its final drain pass over the snapshot and any straggler,
+                            // then completes. discard the returned remainder: the drainer owns the
+                            // values queue, not the wakeup channel.
+                            discard(typed.wakeup.unsafe.close())
+                            Async.timeout(gracePeriod)(typed.drainer.get)
+                                .handle(Abort.run[Timeout])
+                                .andThen(typed.drainer.interruptDiscard(Result.Panic(Interrupted(frame))))
+                        else ()
+                        end if
+
+        /** Closes the cache with the default grace period. */
+        def close(using Frame): Unit < Async =
+            close(DefaultGracePeriod)
+
+        /** Closes the cache immediately (zero grace period). */
+        def closeNow(using Frame): Unit < Async =
+            close(Duration.Zero)
+    end extension
 
     /** Creates a memoized version of a function with its own internal cache.
       *
@@ -470,6 +619,20 @@ object Cache:
             loop(home, 0)
         end remove
 
+        /** Applies `f` to every present value, without removing it. Used by close-on-evict to
+          * enqueue still-live entries for finalization. A best-effort point-in-time snapshot:
+          * a concurrent insert/eviction may be missed or double-seen, which the finalizer's
+          * idempotent close tolerates.
+          */
+        private[kyo] def foreachValue(f: V => Unit)(using AllowUnsafe): Unit =
+            @tailrec def loop(slot: Int): Unit =
+                if slot <= mask then
+                    val s = values.get(slot)
+                    if s.isPresent then f(s.value)
+                    loop(slot + 1)
+            loop(0)
+        end foreachValue
+
         /** Diagnostic stats. Scans all slots for entries, ghosts, and consistency violations. */
         def stats(using AllowUnsafe): Cache.Stats =
 
@@ -543,7 +706,7 @@ object Cache:
         end contents
 
         /** Wraps this unsafe cache in the safe API. */
-        def safe: Cache[K, V] = this
+        def safe: Cache[K, V] = new Stored(this, Absent)
 
         private def isExpired(slot: Int, now: Int): Boolean =
             val st = states.get(slot)
