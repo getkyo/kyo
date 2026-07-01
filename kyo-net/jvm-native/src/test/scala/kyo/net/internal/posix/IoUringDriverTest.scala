@@ -457,12 +457,12 @@ class IoUringDriverTest extends Test:
                     val reaped    = recording.awaitReap()
                     drv.awaitRead(acceptedH, promise) // recv SQE with no data: stays in flight
                     // awaitRead only ENQUEUES the arm onto the engine FIFO (submitDeferredRecv); the actual submitRecv -- and the register()
-                    // call that increments the handle's in-flight count -- runs later, on the reap carrier. Wait for the real submit
-                    // (recording.submittedKeys gains an entry the instant kyo_uring_sqe_set_data64 keys the SQE, strictly after register())
-                    // before calling closeHandle below: calling it immediately races the reap carrier under load (confirmed flaky under a
-                    // full-suite parallel run, clean in isolation -- a test-timing gap, not a driver bug, since FIFO ordering on the engine
-                    // queue already guarantees register() runs before closeHandle's own queued op checks the in-flight count).
-                    awaitCondition(5.seconds)(!recording.submittedKeys.isEmpty).map { armed =>
+                    // call that increments the handle's in-flight count -- runs later, on the reap carrier. Wait for handle.recvInFlight
+                    // directly (the exact field closeHandle's deferral decision reads), not recording.submittedKeys: kyo_uring_sqe_set_data64
+                    // (which keys submittedKeys) runs a few lines BEFORE `handle.recvInFlight = true` in submitRecv's successful branch, so
+                    // submittedKeys.nonEmpty can be true while recvInFlight is still false -- a narrower but real race that let closeHandle
+                    // free the buffer immediately in that window (confirmed flaky under cell-11's full-suite podman run, clean in isolation).
+                    awaitCondition(5.seconds)(acceptedH.recvInFlight).map { armed =>
                         assert(armed, "recv's submitRecv never ran (a hang, not the close-ordering hazard under test)")
                         // closeHandle while the recv SQE is in flight: it must NOT free the read buffer yet (the kernel still owns it).
                         drv.closeHandle(acceptedH)
