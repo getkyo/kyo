@@ -23,7 +23,7 @@ class UIHostMountTest extends kyo.test.Test[Any]:
     "an arity-2 host renders the same <canvas data-kyo-path> string as a bare host" in {
         val tree = UI.div(UI.host("canvas") { (_: dom.Element) => Kyo.unit })
         for html <- HtmlRenderer.render(tree, Seq.empty)
-        yield assert(html.contains("<canvas data-kyo-path=\"0\"></canvas>"))
+        yield assert(html.contains("<canvas data-kyo-path=\"0\" data-kyo-backend=\"dom-host\"></canvas>"))
         end for
     }
 

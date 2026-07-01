@@ -11,8 +11,10 @@ import kyo.internal.HtmlRenderer
 class UIHostNodeTest extends kyo.test.Test[Any]:
 
     "host renders a canvas element with data-kyo-path" in {
+        // Host is a BackendNode; the placeholder arm renders data-kyo-backend="dom-host" alongside
+        // data-kyo-path (design/02-design.md's SSR placeholder shape).
         for html <- HtmlRenderer.render(UI.div(UI.host()), Seq.empty)
-        yield assert(html.contains("<canvas data-kyo-path=\"0\"></canvas>"))
+        yield assert(html.contains("<canvas data-kyo-path=\"0\" data-kyo-backend=\"dom-host\"></canvas>"))
         end for
     }
 
@@ -35,7 +37,7 @@ class UIHostNodeTest extends kyo.test.Test[Any]:
     "host is a valid HtmlContent child of a container" in {
         val tree = UI.div(UI.span("a"), UI.host(), UI.span("b"))
         for html <- HtmlRenderer.render(tree, Seq.empty)
-        yield assert(html.contains("<canvas data-kyo-path=\"1\">"))
+        yield assert(html.contains("<canvas data-kyo-path=\"1\" data-kyo-backend=\"dom-host\">"))
         end for
     }
 

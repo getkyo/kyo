@@ -89,6 +89,43 @@ private[kyo] object ReactiveUI:
                 }
                 end for
 
+            case bn: UI.Ast.BackendNode =>
+                // Assign this node's path, then descend backendChildren (index-addressed like DOM children,
+                // path :+ i) and boundProps (each a per-key reactive region at path :+ key), emitting NO
+                // HTML. The structural descent is identical to the DOM case; only the leaf kind differs (a
+                // 3D prop vs an HTML element). Matches a backend node first/explicitly: a pure 3D node is
+                // not an Element (so it cannot fall through to the Element arm); placed BEFORE the Element
+                // arm only so the transitional Host (a BackendNode that also mixes Inline) is matched here.
+                for
+                    childNodes <- Kyo.foreach(bn.backendChildren.toSeq.zipWithIndex) { (child, i) =>
+                        normalize(child, path :+ i.toString, svg = false)
+                    }
+                    // Each prop region's signal IS the bound prop's signal (the raw value the server
+                    // encodes); propMeta marks it a PropRegion so the exchange emits SetProp, not Replace.
+                    propRegions = bn.boundProps.toSeq.map { bp =>
+                        init(
+                            path :+ bp.key,
+                            bp.signal,
+                            isConst = false,
+                            children = Seq.empty,
+                            propMeta = Present((bp.key, bp.encode))
+                        )((_, _) => true)
+                    }
+                // isConst = true unconditionally: this node's own signal is Signal.initConst (it never
+                // changes), and subscribeScoped still walks `children` regardless of isConst, so the
+                // propRegions/childNodes are subscribed either way. Marking this node non-const when
+                // boundProps is nonempty would make subscribeScoped `observe` a signal that can never
+                // emit a second value, so its one-shot renderValue call (the Absent-propMeta branch)
+                // re-walks this same node via walkStatic -> normalize and re-subscribes a fresh copy of
+                // the whole subtree, forking without bound. Const avoids observing this node's own
+                // signal at all; only the propRegions' real (changing) signals are individually observed.
+                yield init(
+                    path,
+                    Signal.initConst(bn: Any),
+                    isConst = true,
+                    children = childNodes ++ propRegions
+                )((_, _) => true)
+
             case ui: Element =>
                 // An element with a SignalRef-bound attribute (`.value(ref)` xor `.checked(ref)`; an element binds at most
                 // one, see collectSignalRef) must re-render when that signal changes. The change is carried by the ref
@@ -146,7 +183,9 @@ private[kyo] object ReactiveUI:
                 for childWalks <- Kyo.foreach(elem.children.toSeq.zipWithIndex) { (child, i) =>
                         val childPath = basePath :+ i.toString
                         child match
-                            case _: Reactive[?] | _: Foreach[?, ?] =>
+                            case _: Reactive[?] | _: Foreach[?, ?] | _: UI.Ast.BackendNode =>
+                                // A BackendNode child is normalized (not descended as HTML) so its
+                                // backendChildren + boundProps become reactive regions (the central split).
                                 for rui <- normalize(child, childPath, childSvg)
                                 yield (Seq(rui), Seq.empty[(Int, Handler)])
                             case childElem: Element if collectSignalRef(childElem).nonEmpty =>
@@ -192,11 +231,12 @@ private[kyo] object ReactiveUI:
                         else true
                     (allKids, handle)
 
-            case _: Reactive[?] | _: Foreach[?, ?] =>
-                // When walkStatic is called with a Reactive or Foreach as the top-level node
-                // (not as a child of an Element), normalize it at basePath so subscribeNode
+            case _: Reactive[?] | _: Foreach[?, ?] | _: UI.Ast.BackendNode =>
+                // When walkStatic is called with a Reactive, Foreach, or BackendNode as the top-level
+                // node (not as a child of an Element), normalize it at basePath so subscribeNode
                 // sets up a subscription for it. This handles the case where an outer reactive's
-                // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }).
+                // signal value is itself a Reactive or Foreach (e.g. outer.map { _ => inner.map(UI.span(_)) }),
+                // and the case where a bare backend node is the whole tree.
                 for rui <- normalize(ui, basePath, svg)
                 yield (Seq(rui), rui.handle)
 

@@ -154,6 +154,19 @@ private[kyo] object HtmlRenderer:
         ui match
             case dd: Dropdown =>
                 renderDropdown(sb, dd, path)
+            case bn: UI.Ast.BackendNode =>
+                // The central split: the path/reactive descent CONTINUES into this node (ReactiveUI) but
+                // the HTML descent STOPS here. Emit the placeholder tag + attrs + data-kyo-path +
+                // data-kyo-backend, then STOP: no child HTML. The SSR placeholder for a scene is
+                // <canvas data-kyo-path="1" data-kyo-backend="three"></canvas>.
+                val ph = bn.placeholder
+                w(sb, s"""<${ph.tag} data-kyo-path="${pathAttr(path)}" data-kyo-backend="${esc(bn.backend)}"""")
+                // id/class/style ride renderCommonAttrs (the same pure Attrs renderer the Element arm calls
+                // at :161); a bare placeholder binds no element-specific attr (no Button/Input/checked/href),
+                // so renderElementAttrs is NOT called and the arm stays pure. No children: the HTML descent stops.
+                renderCommonAttrs(sb, ph.attrs)
+                w(sb, s"></${ph.tag}>")
+
             case elem: Element =>
                 val tag  = tagName(elem)
                 val void = elem.isInstanceOf[Void]
@@ -237,13 +250,6 @@ private[kyo] object HtmlRenderer:
                             }.andThen(w(sb, s"</$tag>"))
                             end for
                 }
-
-            case bn: UI.Ast.BackendNode =>
-                // Placed AFTER the Element arm so the transitional Host (a BackendNode that also mixes
-                // Ast.Inline) keeps rendering through the ordinary Element/tagName path unchanged; every
-                // concrete BackendNode today is Host, so this catch-all is unreachable. A bare
-                // (non-Element) BackendNode's own SSR placeholder ships with the reactive descent split.
-                throw new IllegalStateException(s"BackendNode with no HTML rendering yet: ${bn.getClass.getName}")
     end renderTo
 
     private def renderTextareaValue(sb: StringBuilder, ta: Textarea)(using Frame): Unit < Sync =
@@ -313,58 +319,62 @@ private[kyo] object HtmlRenderer:
     // ---- Tag names ----
 
     private def tagName(elem: Element): String = elem match
-        case _: Div            => "div"
-        case _: P              => "p"
-        case _: Section        => "section"
-        case _: Main           => "main"
-        case _: Header         => "header"
-        case _: Footer         => "footer"
-        case _: Pre            => "pre"
-        case _: Blockquote     => "blockquote"
-        case _: Code           => "code"
-        case _: Ul             => "ul"
-        case _: Ol             => "ol"
-        case _: Table          => "table"
-        case _: H1             => "h1"
-        case _: H2             => "h2"
-        case _: H3             => "h3"
-        case _: H4             => "h4"
-        case _: H5             => "h5"
-        case _: H6             => "h6"
-        case _: Hr             => "hr"
-        case _: Br             => "br"
-        case _: SpanElement    => "span"
-        case _: Nav            => "nav"
-        case _: Li             => "li"
-        case _: Tr             => "tr"
-        case _: Td             => "td"
-        case _: Th             => "th"
-        case _: Label          => "label"
-        case _: Form           => "form"
-        case _: Textarea       => "textarea"
-        case _: Select         => "select"
-        case _: Opt            => "option"
-        case _: Button         => "button"
-        case _: Anchor         => "a"
-        case _: Img            => "img"
-        case _: Iframe         => "iframe"
-        case _: Input          => "input"
-        case _: PasswordInput  => "input"
-        case _: EmailInput     => "input"
-        case _: TelInput       => "input"
-        case _: UrlInput       => "input"
-        case _: SearchInput    => "input"
-        case _: NumberInput    => "input"
-        case _: Checkbox       => "input"
-        case _: Radio          => "input"
-        case _: DateInput      => "input"
-        case _: TimeInput      => "input"
-        case _: ColorInput     => "input"
-        case _: RangeInput     => "input"
-        case _: FileInput      => "input"
-        case _: HiddenInput    => "input"
-        case _: Dropdown       => "div"
-        case h: Host           => h.hostTag
+        case _: Div           => "div"
+        case _: P             => "p"
+        case _: Section       => "section"
+        case _: Main          => "main"
+        case _: Header        => "header"
+        case _: Footer        => "footer"
+        case _: Pre           => "pre"
+        case _: Blockquote    => "blockquote"
+        case _: Code          => "code"
+        case _: Ul            => "ul"
+        case _: Ol            => "ol"
+        case _: Table         => "table"
+        case _: H1            => "h1"
+        case _: H2            => "h2"
+        case _: H3            => "h3"
+        case _: H4            => "h4"
+        case _: H5            => "h5"
+        case _: H6            => "h6"
+        case _: Hr            => "hr"
+        case _: Br            => "br"
+        case _: SpanElement   => "span"
+        case _: Nav           => "nav"
+        case _: Li            => "li"
+        case _: Tr            => "tr"
+        case _: Td            => "td"
+        case _: Th            => "th"
+        case _: Label         => "label"
+        case _: Form          => "form"
+        case _: Textarea      => "textarea"
+        case _: Select        => "select"
+        case _: Opt           => "option"
+        case _: Button        => "button"
+        case _: Anchor        => "a"
+        case _: Img           => "img"
+        case _: Iframe        => "iframe"
+        case _: Input         => "input"
+        case _: PasswordInput => "input"
+        case _: EmailInput    => "input"
+        case _: TelInput      => "input"
+        case _: UrlInput      => "input"
+        case _: SearchInput   => "input"
+        case _: NumberInput   => "input"
+        case _: Checkbox      => "input"
+        case _: Radio         => "input"
+        case _: DateInput     => "input"
+        case _: TimeInput     => "input"
+        case _: ColorInput    => "input"
+        case _: RangeInput    => "input"
+        case _: FileInput     => "input"
+        case _: HiddenInput   => "input"
+        case _: Dropdown      => "div"
+        case h: Host          => h.hostTag
+        // Unreachable in practice once the BackendNode arm precedes the Element arm in renderTo
+        // (Host is a BackendNode, so it is intercepted there, above). Kept for exhaustivity: Host is a
+        // concrete, sealed-visible Element leaf (Ast.Inline), and this match has no wildcard.
+        // Mirrors the SvgNode arm below (same shape: compiler-required, not runtime-reached).
         case e: Svg.SvgElement => svgTagName(e)
         // SvgNode/SvgRootNode are the sanctioned non-sealed cross-file bridge for the SVG AST
         // (see UI.Ast.SvgNode); every in-tree SVG node extends Svg.SvgElement, matched above, so

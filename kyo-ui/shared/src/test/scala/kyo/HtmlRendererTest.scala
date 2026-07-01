@@ -819,6 +819,15 @@ class HtmlRendererTest extends UITest:
         assert(html.contains("""var base="/myapp";"""))
     }
 
+    // ---- BackendNode placeholder split (pure string inspection; no browser) ----
+    // FakeBackendNode is defined once, top-level, in ReactiveUITest.scala (same `kyo` test package).
+
+    "BackendNode renders an SSR placeholder and stops the HTML descent" in {
+        for html <- kyo.internal.HtmlRenderer.render(UI.div(FakeBackendNode("three")), Seq.empty)
+        yield assert(html.contains("<canvas data-kyo-path=\"0\" data-kyo-backend=\"three\"></canvas>"))
+        end for
+    }
+
     // ---- renderPage import map (pure string inspection; no browser) ----
 
     "renderPage: a non-empty importMap emits one importmap script before the module script" in {
