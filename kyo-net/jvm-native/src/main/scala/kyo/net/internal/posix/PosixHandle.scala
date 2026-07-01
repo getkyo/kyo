@@ -94,6 +94,34 @@ final private[net] class PosixHandle private (
       */
     @volatile var upgrading: Boolean = false
 
+    /** Set true once this handle has ever gone through a STARTTLS upgrade (`upgradeRole`), and never cleared for the handle's lifetime. Unlike
+      * [[upgradeActive]] / [[upgrading]] (both transient, cleared together at handshake completion), this survives `onFinished` so the io_uring
+      * reap can still recognize an upgrade-owned recv that reaps AFTER those flags clear. The specific hazard: `driveUpgradeRead`'s producer-recv
+      * arm ([[IoDriver.armUpgradeProducerRead]]) can race `onFinished`'s flag-clear (the check-then-arm is a TOCTOU across the reap carrier's
+      * engine-FIFO ordering, see the fix-log), leaving a `handshakeOwned` recv genuinely kernel-owned and in flight once `upgradeActive`/`upgrading`
+      * are already false and `tls` is already `Present`. Without this flag, that orphan's CQE falls through to the ordinary TLS-feed branch and
+      * either interleaves its ciphertext with the post-upgrade `ReadPump`'s own (concurrent) recv -- both target the SAME cached staging buffer,
+      * see [[IoUringDriver.recvStagingFor]] -- or silently drops the decoded plaintext onto the orphan's own throwaway producer promise, which
+      * nothing observes. `false` for a fresh (non-STARTTLS) handshake's `handshakeOwned` recvs, so they are unaffected: `tls` stays `Absent` for
+      * those until their own `onFinished` runs, and this flag was never set. io_uring-only (the poller's synchronous reads hold no kernel-owned
+      * recv that could outlive `onFinished` this way); harmless if read on a poller, where nothing sets it.
+      */
+    @volatile var isUpgraded: Boolean = false
+
+    /** io_uring single-recv-ordering enforcement: a recv request [[IoUringDriver.submitRecv]] deferred, instead of submitting, because another
+      * recv was already kernel-owned and in flight for this SAME handle -- the orphaned handshake-window recv [[isUpgraded]] documents, still
+      * outstanding when the post-upgrade `ReadPump`'s first recv tries to arm. Rather than submitting a second SQE (which would target the SAME
+      * cached staging buffer, see [[IoUringDriver.recvStagingFor]], and race completion order with the orphan), `submitRecv` stores the request
+      * here; the reap carrier fires it the moment the in-flight recv's CQE is fully processed (see `IoUringDriver.complete`'s `drainQueuedRecv`
+      * call), so the two recvs are never simultaneously in flight -- enforced structurally, not by caller discipline. Mutated only on the reap
+      * carrier (both the queue decision in `submitRecv` and the drain in `complete` run there), so a plain `@volatile var` (not a CAS slot like
+      * [[upgradeHandoff]]) suffices: there is a single writer, `@volatile` only carries visibility to a concurrent close-path reader. At most
+      * one request is ever queued per handle (the ReadPump arms at most one recv at a time), so a single slot, not a queue collection, suffices.
+      * Drained/failed on close (`freeResources`) so a queued request never leaks or fires against a closing/closed handle. Unused on the
+      * pollers (their reads are synchronous, holding no kernel-owned recv that could race a second arm this way).
+      */
+    @volatile var queuedRecv: PosixHandle.QueuedRecv = PosixHandle.QueuedRecv.None
+
     /** STARTTLS poller confinement: set true once the handshake takes read ownership from the retiring plaintext ReadPump (PosixTransport's
       * awaitReadCiphertext, before the first post-detach read arm). While `upgradeActive && !handshakeReading` the poll carrier REJECTS an
       * OpRegisterRead for this fd's read side ([[PollerIoDriver]]'s registration apply): that registration is the pump's stray re-arm racing
@@ -494,6 +522,15 @@ private[net] object PosixHandle:
         case Waiter(promise: Promise.Unsafe[Span[Byte], Abort[Closed]], frame: Frame)
     end UpgradeHandoff
 
+    /** A recv request [[IoUringDriver.submitRecv]] deferred instead of submitting, because another recv was already kernel-owned and in flight
+      * for the SAME handle (see [[PosixHandle.queuedRecv]]). Carries exactly what a fresh [[IoUringDriver.submitRecv]] call needs to arm it
+      * later, once the in-flight one's CQE reaps: `eintrRetries` is always 0 (a freshly-queued request, never itself a retry).
+      */
+    private[posix] enum QueuedRecv:
+        case None
+        case Queued(promise: Promise.Unsafe[ReadOutcome, Abort[Closed]], handshakeOwned: Boolean)
+    end QueuedRecv
+
     /** Socket handle: one fd carries both directions, so `readFd == writeFd`. The optional `connectTarget` (an encoded `sockaddr` buffer and
       * its length) is stashed for the io_uring client-connect path: `IoUringDriver.awaitConnect` submits an `IORING_OP_CONNECT` SQE against it.
       * The readiness poller ignores it (epoll/kqueue signal connect via write-readiness), so it defaults to `Absent` for an already-connected
@@ -607,6 +644,21 @@ private[net] object PosixHandle:
         h.upgrading = false
         h.handshakeReading = false
         h.postUpgradeReadWindow = false
+        // Fail (not merely drop) a queued recv (see queuedRecv): a request submitRecv deferred because another recv was still in flight for
+        // this handle. If that in-flight recv's CQE never routed here in time (the handle is closing for an unrelated reason, e.g. a deadline
+        // reap), the queued request would otherwise never fire, leaking the promise (the caller's ReadPump/handshake fiber hangs on it forever).
+        // Never fire it here instead: freeResources is about to close the read buffer this recv would target, so submitting it now would be a
+        // use-after-free.
+        h.queuedRecv match
+            case PosixHandle.QueuedRecv.Queued(p, _) =>
+                p.completeDiscard(Result.fail(kyo.Closed(
+                    "PosixHandle",
+                    Frame.internal,
+                    s"fd=${h.readFd}/${h.writeFd} closed while a recv was queued"
+                )(using Frame.internal)))
+            case _ => ()
+        end match
+        h.queuedRecv = PosixHandle.QueuedRecv.None
         // Clear promise fields: these are on-heap references with no native close needed; setting to Absent drops the reference.
         h.pendingReadPromise = Absent
         h.pendingAcceptPromise = Absent

@@ -301,6 +301,21 @@ final private[net] class IoUringDriver private[posix] (
             // serialized: either the arm wins and the close defers behind the recv CQE, or the buffer is already closed and this branch fires.
             java.lang.System.err.println(s"ZZTRACE-IOU submitRecv readBuffer-closed fd=${handle.readFd}")
             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"fd=${handle.readFd} closed")))
+        else if handle.isUpgraded && hasInFlightRead(handle) then
+            // Single-recv-ordering enforcement: this handle went through a STARTTLS upgrade (PosixHandle.isUpgraded) and ANOTHER recv is
+            // already kernel-owned and in flight for it right now -- the orphaned handshake-window producer recv the driveUpgradeRead /
+            // onFinished TOCTOU can leave outstanding (see PosixHandle.isUpgraded's doc). Queue this request (PosixHandle.queuedRecv) instead
+            // of submitting a second SQE: both would target the SAME cached staging buffer (recvStagingFor) and race completion order (a
+            // fatal TLS record, or the bad_record_mac corruption shape). `complete`'s `drainQueuedRecv` fires it the moment that in-flight
+            // recv's CQE is fully processed, so the two are never simultaneously in flight -- non-blocking, no fiber parked, no deadlock risk
+            // (unlike deferring the caller's `onFinished`/`upgraded.start()` itself, which was tried and reverted: see PosixTransport's
+            // onFinished comment). Gated on `isUpgraded` (rare, durable, set only for STARTTLS-upgraded handles) so a normal connection's reads
+            // never pay this extra `hasInFlightRead` scan: a well-behaved ReadPump/handshake never has two recvs in flight for one handle
+            // outside this one upgrade-transition window in the first place.
+            java.lang.System.err.println(
+                s"ZZTRACE-IOU submitRecv queued (in-flight orphan) fd=${handle.readFd} handshakeOwned=$handshakeOwned"
+            )
+            handle.queuedRecv = PosixHandle.QueuedRecv.Queued(promise, handshakeOwned)
         else
             val key = keyGen.getAndIncrement()
             register(key, PendingOp.Read(promise, handle, eintrRetries, handshakeOwned))
@@ -349,6 +364,21 @@ final private[net] class IoUringDriver private[posix] (
             end match
         end if
     end submitRecv
+
+    /** Fire the recv `submitRecv` queued behind this handle's just-completed one (see [[PosixHandle.queuedRecv]]). Called from [[complete]]
+      * immediately after a Read CQE is fully routed (on every completion path, normal or abnormal, except an EINTR retry), so by the time this
+      * runs no recv is in flight for the handle: submitting the queued request now can never alias a buffer or race completion order with
+      * another recv. A no-op when nothing is queued (the overwhelmingly common case: this only ever populates during the narrow STARTTLS
+      * upgrade-transition window, see submitRecv).
+      */
+    private def drainQueuedRecv(handle: PosixHandle)(using AllowUnsafe, Frame): Unit =
+        handle.queuedRecv match
+            case PosixHandle.QueuedRecv.Queued(promise, handshakeOwned) =>
+                handle.queuedRecv = PosixHandle.QueuedRecv.None
+                java.lang.System.err.println(s"ZZTRACE-IOU drainQueuedRecv fd=${handle.readFd} handshakeOwned=$handshakeOwned")
+                submitRecv(handle, promise, eintrRetries = 0, handshakeOwned = handshakeOwned)
+            case _ => ()
+    end drainQueuedRecv
 
     def awaitWritable(handle: PosixHandle, promise: Promise.Unsafe[Unit, Abort[Closed]])(using AllowUnsafe, Frame): Unit =
         if handle.unsentTailBytes >= PosixHandle.WriteTailLowWater then
@@ -1432,14 +1462,20 @@ final private[net] class IoUringDriver private[posix] (
                 var deferredDecrement = false
                 op match
                     case PendingOp.Read(promise, h, eintrRetries, handshakeOwned) =>
-                        if res < 0 && -res == PosixConstants.EINTR && eintrRetries < maxTransientIoRetries && !h.isClosing() then
+                        // Named so the queued-recv drain below (which must NOT fire on an EINTR retry: that re-submits the SAME logical recv,
+                        // so nothing has actually completed) can check it without repeating the condition.
+                        val isEintrRetry = res < 0 && -res == PosixConstants.EINTR && eintrRetries < maxTransientIoRetries && !h.isClosing()
+                        if isEintrRetry then
                             // EINTR read CQE: a signal interrupted the recv before any byte was transferred (POSIX recv(2)); no data was moved and
                             // the socket still holds whatever the peer sent, so re-submit the recv on the SAME promise rather than failing it Closed
                             // and dropping a healthy connection (the io_uring twin of PollerIoDriver's recvNowWithRetry). Bounded by
                             // maxTransientIoRetries via the carried count so an EINTR storm cannot spin: past the bound the `else` below fails Closed.
                             // Skipped when the handle is already closing (a concurrent close): re-arming a freed handle would be a use-after-free.
                             submitRecv(h, promise, eintrRetries + 1, handshakeOwned)
-                        else if (h.upgradeActive || (h.upgrading && !handshakeOwned)) && !h.isClosing() then
+                        else if
+                            !h.isClosing() &&
+                            (h.upgradeActive || (h.upgrading && !handshakeOwned) || (handshakeOwned && h.isUpgraded))
+                        then
                             // STARTTLS stale recv: this recv was armed by the plaintext ReadPump before detachForUpgrade detached the connection, and
                             // io_uring cannot cancel it, so it just consumed the peer's first post-signal flight (the ClientHello / ServerHello, or a
                             // later boringssl flight such as the post-FINISHED NewSessionTicket). The discriminator is the handle's upgrade state plus
@@ -1448,15 +1484,30 @@ final private[net] class IoUringDriver private[posix] (
                             // one whose promise is still live when this CQE reaps. A `promise.done()` guard therefore mis-classifies that live-promise
                             // stale recv as a normal read and feeds the flight to the torn-down ReadPump, stranding the handshake's parked waiter (the
                             // residual stall). Single-source: upgradeActive stays set for the WHOLE upgrade and the handshake reads through the
-                            // upgradeHandoff slot, arming its OWN producer recv (armUpgradeProducerRead, handshakeOwned). Two routes reach here:
+                            // upgradeHandoff slot, arming its OWN producer recv (armUpgradeProducerRead, handshakeOwned). Three routes reach here:
                             // (1) upgradeActive set: ANY recv in flight belongs to the slot via the first clause -- the handshake's producer recv AND a
                             // kernel-owned stale pump recv can BOTH be in flight, both route here, one fulfils the parked waiter and the other
                             // stages/appends a Carryover (no double-read: the socket consumes each byte once); (2) upgradeActive cleared (only at
                             // onFinished) but `upgrading` still set AND this recv is not handshakeOwned: a stale plaintext-pump recv reaped in the narrow
                             // post-clear / pre-tls gap (boringssl multi-flight). Without the `upgrading` clause it would fall through to the raw
-                            // plainReadComplete branch and be delivered as plaintext (the upgrade-handoff drop). Either way the bytes belong to the
-                            // handshake. Route them through the single upgradeHandoff slot (fulfil the parked waiter, or stage/append a Carryover when
-                            // none is parked) instead of the settled/reused promise.
+                            // plainReadComplete branch and be delivered as plaintext (the upgrade-handoff drop); (3) handshakeOwned AND the handle has
+                            // EVER upgraded ([[PosixHandle.isUpgraded]], which -- unlike upgradeActive/upgrading -- is never cleared): the handshake's
+                            // own producer recv (armUpgradeProducerRead) reaping AFTER onFinished already cleared upgradeActive/upgrading and attached
+                            // `tls`. `driveUpgradeRead`'s "no stale recv in flight" check (hasInFlightRead) races the reap carrier's own engine-FIFO
+                            // ordering (a TOCTOU: enqueued-for-registration is not yet registered), so a producer recv can still be genuinely
+                            // kernel-owned when the handshake reaches Done from other bytes and onFinished runs. Without this clause that orphan falls
+                            // through to the ordinary TLS-feed branch below, feeding its ciphertext into the SAME engine the post-upgrade ReadPump's
+                            // own (now-concurrent) recv targets via the identical cached staging buffer (recvStagingFor) -- interleaving/duplicating
+                            // ciphertext delivery order (a fatal TLS record, or exactly the bad_record_mac corruption shape) -- and completing the
+                            // orphan's own throwaway producer promise with any decoded plaintext, which nothing observes (a silently dropped
+                            // application-data flight). Routing it here instead stages it as a Carryover; the post-upgrade ReadPump's own first recv
+                            // arm (submitRecv, gated on isUpgraded) QUEUES behind this orphan instead of racing it for the same staging buffer (see
+                            // PosixHandle.queuedRecv), so the Carryover is staged before any conflicting recv can be armed, preserving both
+                            // no-aliasing and wire order. `false` for a FRESH (non-STARTTLS) handshake's own handshakeOwned recvs: `isUpgraded` is
+                            // never set on a handle that never went through `upgradeRole`, so those still fall through unaffected (their `tls` stays
+                            // Absent until their own onFinished, exactly as before this fix). Either way the bytes belong to the handshake. Route
+                            // them through the single upgradeHandoff slot (fulfil the parked waiter, or stage/append a Carryover when none is
+                            // parked) instead of the settled/reused promise.
                             // upgradeActive is NOT cleared here: it must stay set until the handshake CARRIER actually consumes the bytes
                             // (driveUpgradeRead), otherwise a recvAndFeed running between this clear and the consume would read upgradeActive false,
                             // skip driveUpgradeRead, issue its own recv, and strand the staged Carryover. The handshake clears it once it takes the bytes.
@@ -1622,6 +1673,11 @@ final private[net] class IoUringDriver private[posix] (
                         else
                             promise.completeDiscard(Result.fail(Closed(label, summon[Frame], s"read errno=${-res}")))
                         end if
+                        // Fire any recv queued behind this one (single-recv-ordering enforcement, see submitRecv / PosixHandle.queuedRecv), on
+                        // EVERY completion path above -- normal (STARTTLS routing, TLS-feed, plain) AND abnormal (EOF, error) alike -- so a
+                        // queued request is never stranded on an error/EOF reap. Skipped on an EINTR retry (see isEintrRetry above): that
+                        // resubmitted the SAME logical recv, which is still in flight, so draining now would race it for the same buffer.
+                        if !isEintrRetry then drainQueuedRecv(h)
                     case PendingOp.Write(h, _, _, len) =>
                         deferredDecrement = true
                         // The raw-send CQE was reaped: account for it (advance the pending tail, re-submit the remainder on a partial send or any

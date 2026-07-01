@@ -1247,6 +1247,9 @@ final private[net] class PosixTransport private[posix] (
                         handle.upgrading = false
                         out.completeDiscard(Result.fail(NetAlreadyDetachedException()))
                     case Present(staged) =>
+                        // Committed to the upgrade: mark it durably (see PosixHandle.isUpgraded) before any handshakeOwned recv can be armed, so
+                        // the io_uring reap can recognize one that outlives onFinished's flag-clear even after upgradeActive/upgrading go false.
+                        handle.isUpgraded = true
                         // buildEngine fails closed (throws Closed) when a verifying STARTTLS client has no reference identity (no sniHostname),
                         // so a build failure must release the detached-but-open fd and fail the upgrade promise rather than escaping. No engine
                         // exists yet on this path, so only the fd is released (releaseFailedUpgrade also frees the engine, which is absent here).
@@ -1284,13 +1287,16 @@ final private[net] class PosixTransport private[posix] (
                             handle,
                             engine,
                             onFinished = () =>
-                                // Clear the upgrade flags before attaching the engine and starting the pumps. io_uring's driveUpgradeRead clears
-                                // upgradeActive after its single stale recv, but the poller keeps it set across the upgrade (the poll carrier is the
-                                // standing producer), and a handshake that completes purely from staged ciphertext (feedStaged / feedCoalescedHandshake)
-                                // never reaches driveUpgradeRead at all, so onFinished is the single clear point that covers every path. It runs on the
-                                // I/O carrier, so this clear happens-before the new ReadPump's recv is armed by upgraded.start(). handshakeReading is
-                                // cleared here too so the poller admits the upgraded connection's ReadPump read arm (the failure paths clear both via
-                                // PosixHandle.close).
+                                // Clear the upgrade flags before attaching the engine and starting the pumps. upgradeActive/upgrading stay set for
+                                // the WHOLE upgrade on every backend (driveUpgradeRead never clears them itself; see its scaladoc), and a handshake
+                                // that completes purely from staged ciphertext (feedStaged / feedCoalescedHandshake) never reaches driveUpgradeRead
+                                // at all, so onFinished is the single clear point that covers every path. It runs on the I/O carrier, so this clear
+                                // happens-before the new ReadPump's recv is armed by upgraded.start(). handshakeReading is cleared here too so the
+                                // poller admits the upgraded connection's ReadPump read arm (the failure paths clear both via PosixHandle.close).
+                                // PosixHandle.isUpgraded is NOT cleared here (and never is): it must outlive this clear so the io_uring reap can
+                                // still recognize an orphaned handshakeOwned recv and route it correctly (see IoUringDriver.complete), and so
+                                // IoUringDriver.submitRecv can recognize the upgraded connection's first post-upgrade recv and queue it behind
+                                // any such orphan still in flight (see PosixHandle.queuedRecv) instead of racing it for the same staging buffer.
                                 java.lang.System.err.println(
                                     s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} onFinished fd=${handle.readFd} slot=${handle.upgradeHandoff.get().getClass.getSimpleName} rmhm=${handle.readMightHaveMore} hasBufferedPlaintext=${engine.hasBufferedPlaintext}"
                                 )
@@ -1343,6 +1349,15 @@ final private[net] class PosixTransport private[posix] (
                                 java.lang.System.err.println(
                                     s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} preUpgradedStart fd=${handle.readFd} isOpen=${upgraded.isOpen}"
                                 )
+                                // upgraded.start() arms the new ReadPump's first recv immediately: it does NOT wait for any handshake-window recv
+                                // still in flight for this handle (the orphaned-producer TOCTOU, see PosixHandle.isUpgraded) to drain first.
+                                // Blocking here instead (parking a waiter and deferring start()) was tried and reverted: it can deadlock, since
+                                // BOTH peers of an upgrade can symmetrically be waiting on their own orphan to drain while that orphan's bytes are
+                                // exactly the OTHER peer's first post-upgrade write, which peer's own (symmetrically blocked) upgrade fiber never
+                                // reaches (io_uring-only stress-tested: IoUringMutualTlsStressTest hung with a "stalled-at=upgrade" Timeout under
+                                // the blocking variant). The ordering invariant instead lives entirely in IoUringDriver.awaitRead/submitRecv: the
+                                // new ReadPump's first recv arm QUEUES behind a still-in-flight orphan (PosixHandle.queuedRecv) rather than racing
+                                // it for the same staging buffer, and fires the moment that orphan's CQE reaps -- non-blocking, no fiber parked.
                                 upgraded.start()
                                 java.lang.System.err.println(
                                     s"${if handle.driver.inlineRecvSafe then "ZZTRACE-EPOLL" else "ZZTRACE-IOU"} postUpgradedStart fd=${handle.readFd} isOpen=${upgraded.isOpen}"
@@ -1917,7 +1932,9 @@ final private[net] class PosixTransport private[posix] (
         }
         // STARTTLS poller confinement: this is the handshake taking read ownership from the retiring plaintext pump. Mark handshakeReading so the poll
         // carrier admits this read arm (PollerIoDriver) while still rejecting the pump's stray re-arm. Gated on upgradeActive so it is a no-op on a
-        // fresh (non-upgrade) handshake and on io_uring (driveUpgradeRead clears upgradeActive before reaching here).
+        // fresh (non-upgrade) handshake; during a STARTTLS upgrade recvAndFeed always routes io_uring to driveUpgradeRead instead (upgradeActive
+        // stays set on every backend until onFinished, never cleared by driveUpgradeRead itself), so io_uring never reaches this arm with
+        // upgradeActive true either.
         if handle.upgradeActive then handle.handshakeReading = true
         if handle.upgradeActive then java.lang.System.err.println(s"ZZTRACE hsArm fd=${handle.readFd}")
         // awaitReadHandshake (not awaitRead): on io_uring this tags the recv handshakeOwned so the reap exempts the handshake's own ciphertext read
