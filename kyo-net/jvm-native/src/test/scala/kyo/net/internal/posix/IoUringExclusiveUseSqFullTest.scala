@@ -91,19 +91,25 @@ class IoUringExclusiveUseSqFullTest extends Test:
                                 "recvInFlight must stay false while the recv is only parked in stalledSubmits (no live SQE yet)"
                             )
                             // Wait for the real re-arm: reArmStalledSubmits runs every reap turn once the pinned batch's submit-and-wait flushes
-                            // the SQ, giving the target a genuine SQE. hasInFlightRead(targetH) becomes true once it registers in `pending`.
-                            awaitCondition(5.seconds)(drv.hasInFlightRead(targetH)).map { rearmed =>
+                            // the SQ, giving the target a genuine SQE. Poll `recvInFlight` itself (not `hasInFlightRead`): submitRecv's `Present(sqe)`
+                            // branch registers the op in `pending` (making `hasInFlightRead` true) BEFORE it sets `recvInFlight = true` a few
+                            // instructions later in that SAME synchronous call -- a gap invisible to any production caller (the reap carrier
+                            // runs submitRecv to completion with no suspension point in between, and it is the only writer of both, so no other
+                            // call can ever observe the intermediate state) but genuinely observable by THIS test's separate polling thread under
+                            // scheduler jitter (confirmed: this exact two-step check flaked under full-suite parallel load). Waiting on
+                            // `recvInFlight` directly -- the stronger, later-arriving signal -- removes the false assumption that the two writes
+                            // are simultaneous.
+                            awaitCondition(5.seconds)(targetH.recvInFlight).map { rearmed =>
                                 assert(
                                     rearmed,
                                     "target recv was never re-armed after the SQ-full park (a hang, not the guard hazard under test)"
                                 )
                                 // The guard must not have fired during the rearm: the target's own promise must still be pending (not failed
-                                // Closed by the exclusive-use guard), and recvInFlight is now true (a real SQE is live for it).
+                                // Closed by the exclusive-use guard).
                                 assert(
                                     targetP.poll().isEmpty,
                                     s"target promise must still be pending after a clean re-arm; got ${targetP.poll()}"
                                 )
-                                assert(targetH.recvInFlight, "recvInFlight must be true once the re-armed SQE is genuinely submitted")
 
                                 val payload = Array[Byte](11, 22, 33, 44)
                                 assert(sock.sendNow(
